@@ -1,0 +1,1 @@
+export { VimobLoader } from "./VimobLoader";

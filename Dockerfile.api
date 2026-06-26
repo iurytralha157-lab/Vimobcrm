@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1.7
+
+FROM golang:1.25-alpine AS builder
+WORKDIR /src
+
+COPY go.work ./
+COPY apps/api/go.mod apps/api/go.sum ./apps/api/
+COPY packages/auth/go.mod packages/auth/go.sum ./packages/auth/
+COPY packages/db/go.mod packages/db/go.sum ./packages/db/
+RUN cd apps/api && go mod download
+
+COPY apps/api ./apps/api
+COPY packages/auth ./packages/auth
+COPY packages/db ./packages/db
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -trimpath -ldflags="-s -w" -o /out/vimob-api ./apps/api/cmd/api
+
+FROM alpine:3.22
+WORKDIR /app
+
+RUN apk add --no-cache ca-certificates tzdata \
+  && addgroup -S vimob \
+  && adduser -S -G vimob vimob
+
+ENV API_HOST=0.0.0.0
+ENV API_PORT=8081
+ENV API_ENV=production
+
+COPY --from=builder /out/vimob-api /app/vimob-api
+
+USER vimob
+
+EXPOSE 8081
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:8081/readyz || exit 1
+
+CMD ["/app/vimob-api"]

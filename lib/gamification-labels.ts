@@ -1,0 +1,30 @@
+export const ACTION_LABELS: Record<string, string> = {
+  call_made: 'Ligação Realizada',
+  message_sent: 'Mensagem Enviada',
+  contact_made: 'Contato Realizado',
+  visit_scheduled: 'Visita Agendada',
+  sale_closed: 'Venda Concluída',
+  lead_created: 'Novo Lead Recebido',
+  prospecting_report: 'Relatório de Prospecção',
+  mission_bonus: 'Bônus de Missão',
+  meeting_held: 'Reunião Realizada',
+  meeting_scheduled: 'Reunião Agendada',
+  proposal_sent: 'Proposta Enviada',
+  contract_signed: 'Contrato Assinado',
+  visit_confirmed: 'Visita Realizada',
+  lead_created_manual: 'Lead Criado Manualmente',
+  property_created: 'Imóvel Captado',
+  manual_entry: 'Lançamento Manual',
+};
+
+export const SOURCE_LABELS: Record<string, string> = {
+  system: 'Sistema',
+  manual: 'Manual',
+  manual_entry: 'Lançamento Manual',
+  prospecting_report: 'Relatório de Prospecção',
+  activity: 'Atividade',
+  crm: 'CRM',
+  telephony: 'Telefonia',
+  schedule: 'Agenda',
+  automation: 'Automação',
+};

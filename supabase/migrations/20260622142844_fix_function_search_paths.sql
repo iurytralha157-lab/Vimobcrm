@@ -1,0 +1,26 @@
+alter function private.current_user_id() set search_path = public, private, pg_temp;
+alter function private.safe_uuid(value text) set search_path = public, private, pg_temp;
+alter function private.set_updated_at() set search_path = public, private, pg_temp;
+
+alter function public.cleanup_orphan_members() set search_path = public, private, pg_temp;
+alter function public.count_unique_sessions(p_organization_id uuid, p_date_from timestamptz, p_date_to timestamptz) set search_path = public, private, pg_temp;
+alter function public.create_default_stages_for_pipeline(p_org_id uuid, p_pipeline_id uuid) set search_path = public, private, pg_temp;
+alter function public.find_orphan_rr_members() set search_path = public, private, pg_temp;
+alter function public.find_orphan_team_members() set search_path = public, private, pg_temp;
+alter function public.get_dashboard_stats() set search_path = public, private, pg_temp;
+alter function public.get_dashboard_team_lead_ids(p_team_id uuid, p_date_from timestamptz, p_date_to timestamptz) set search_path = public, private, pg_temp;
+alter function public.get_funnel_data(p_date_from timestamptz, p_date_to timestamptz, p_team_id uuid, p_user_id uuid, p_source text, p_pipeline_id uuid, p_tag_id uuid, p_deal_status text) set search_path = public, private, pg_temp;
+alter function public.get_lead_sources_data(p_date_from timestamptz, p_date_to timestamptz, p_team_id uuid, p_user_id uuid, p_source text, p_pipeline_id uuid, p_tag_id uuid, p_deal_status text) set search_path = public, private, pg_temp;
+alter function public.get_user_led_team_ids() set search_path = public, private, pg_temp;
+alter function public.handle_lead_intake(p_lead_id uuid) set search_path = public, private, pg_temp;
+alter function public.is_team_leader(check_user_id uuid) set search_path = public, private, pg_temp;
+alter function public.list_all_organizations_admin() set search_path = public, private, pg_temp;
+alter function public.list_all_users_admin() set search_path = public, private, pg_temp;
+alter function public.list_contacts_paginated(p_search text, p_team_id uuid, p_pipeline_id uuid, p_stage_id uuid, p_assignee_id uuid, p_unassigned boolean, p_tag_id uuid, p_source text, p_deal_status text, p_created_from timestamptz, p_created_to timestamptz, p_sort_by text, p_sort_dir text, p_page integer, p_limit integer, p_campaign_id text, p_adset_id text, p_ad_id text) set search_path = public, private, pg_temp;
+alter function public.move_lead_stage(p_lead_id uuid, p_stage_id uuid, p_is_own_resource boolean, p_stage_entered_at timestamptz) set search_path = public, private, pg_temp;
+alter function public.rebind_whatsapp_conversation_session(p_conversation_id uuid, p_session_id uuid, p_remote_jid text) set search_path = public, private, pg_temp;
+alter function public.redistribute_lead_round_robin(p_lead_id uuid) set search_path = public, private, pg_temp;
+alter function public.register_lead_reentry(p_lead_id uuid, p_org_id uuid, p_entry_type text, p_source text, p_property_id uuid, p_valor_interesse numeric, p_campaign_name text, p_utm_source text, p_utm_medium text, p_utm_campaign text, p_metadata jsonb) set search_path = public, private, pg_temp;
+alter function public.reorder_stages(p_stages jsonb) set search_path = public, private, pg_temp;
+alter function public.transfer_lead_assignee(p_lead_id uuid, p_assigned_user_id uuid) set search_path = public, private, pg_temp;
+alter function public.user_has_permission(p_permission_key text, p_user_id uuid) set search_path = public, private, pg_temp;

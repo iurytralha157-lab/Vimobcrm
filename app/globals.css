@@ -1,26 +1,755 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #121212;
+  --foreground: #ffffff;
+  --vimob-accent: #ff4529;
+  --app-background: #121212;
+  --app-sidebar: #171717;
+  --app-surface: rgb(23 23 23 / 0.74);
+  --app-surface-solid: #171717;
+  --app-surface-soft: rgb(255 255 255 / 0.045);
+  --app-surface-hover: rgb(255 255 255 / 0.07);
+  --app-lead-card: #1a1a1a;
+  --app-lead-card-hover: #202020;
+  --app-lead-card-divider: rgb(255 255 255 / 0.026);
+  --lead-action-phone-bg: #0b1f4b;
+  --lead-action-phone-fg: #3b82f6;
+  --lead-action-phone-hover: #102a62;
+  --lead-action-whatsapp-bg: #331404;
+  --lead-action-whatsapp-fg: #f97316;
+  --lead-action-whatsapp-hover: #451a03;
+  --lead-action-email-bg: #26103f;
+  --lead-action-email-fg: #a855f7;
+  --lead-action-email-hover: #34145a;
+  --lead-value-bg: #063f2b;
+  --lead-value-fg: #34d399;
+  --lead-status-won-bg: var(--lead-value-bg);
+  --lead-status-won-fg: var(--lead-value-fg);
+  --lead-status-won-card: rgb(16 185 129 / 0.055);
+  --lead-status-won-card-hover: rgb(16 185 129 / 0.085);
+  --lead-status-lost-bg: #4a1111;
+  --lead-status-lost-fg: #f87171;
+  --lead-status-lost-card: rgb(239 68 68 / 0.055);
+  --lead-status-lost-card-hover: rgb(239 68 68 / 0.085);
+  --lead-action-phone-priority-bg: #0f2a5f;
+  --lead-action-phone-priority-fg: #60a5fa;
+  --lead-action-phone-priority-hover: #14387c;
+  --lead-action-whatsapp-priority-bg: #3a1704;
+  --lead-action-whatsapp-priority-fg: #fb923c;
+  --lead-action-whatsapp-priority-hover: #4a1d05;
+  --lead-action-email-priority-bg: #2b0f49;
+  --lead-action-email-priority-fg: #c084fc;
+  --lead-action-email-priority-hover: #3b1664;
+  --app-border: rgb(255 255 255 / 0.055);
+  --app-border-strong: rgb(255 255 255 / 0.095);
+  --app-text-primary: #ffffff;
+  --app-text-secondary: rgb(255 255 255 / 0.72);
+  --app-text-tertiary: rgb(255 255 255 / 0.48);
+  --card: var(--app-surface);
+  --card-foreground: var(--app-text-primary);
+  --popover: var(--app-surface-solid);
+  --popover-foreground: var(--app-text-primary);
+  --primary: var(--vimob-accent);
+  --primary-foreground: #ffffff;
+  --secondary: rgb(255 255 255 / 0.07);
+  --secondary-foreground: var(--app-text-primary);
+  --muted: rgb(255 255 255 / 0.08);
+  --muted-foreground: var(--app-text-tertiary);
+  --accent: rgb(255 69 41 / 0.16);
+  --accent-foreground: #ffffff;
+  --border: var(--app-border);
+  --input: rgb(255 255 255 / 0.09);
+  --ring: rgb(255 69 41 / 0.48);
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --chart-1: #ff7a45;
+  --chart-2: #38bdf8;
+  --chart-3: #a78bfa;
+  --chart-4: #f59e0b;
+  --chart-5: #10b981;
+  --color-background-primary: var(--app-surface-solid);
+  --color-text-primary: var(--app-text-primary);
+  --color-text-secondary: var(--app-text-secondary);
+  --color-text-tertiary: var(--app-text-tertiary);
+  --public-background: #f7f8f6;
+  --public-surface: #ffffff;
+  --public-foreground: #151515;
+  --public-muted: #626872;
+  --public-border: #e5e7eb;
+  --public-soft: #eef1f4;
+  --public-accent: var(--vimob-accent);
+  --auth-background: var(--background);
+  --auth-overlay-rgb: 10 10 10;
+  --auth-overlay-mobile: linear-gradient(
+    180deg,
+    rgb(var(--auth-overlay-rgb) / 0.16) 0%,
+    rgb(var(--auth-overlay-rgb) / 0.52) 44%,
+    rgb(var(--auth-overlay-rgb) / 0.88) 100%
+  );
+  --auth-overlay-desktop: linear-gradient(
+    90deg,
+    rgb(var(--auth-overlay-rgb) / 0.96) 0%,
+    rgb(var(--auth-overlay-rgb) / 0.9) 28%,
+    rgb(var(--auth-overlay-rgb) / 0.58) 58%,
+    rgb(var(--auth-overlay-rgb) / 0.14) 100%
+  );
+  --auth-vignette: linear-gradient(
+    0deg,
+    rgb(var(--auth-overlay-rgb) / 0.22),
+    transparent 38%,
+    rgb(var(--auth-overlay-rgb) / 0.06)
+  );
+}
+
+.dark {
+  --background: #121212;
+  --foreground: #ffffff;
+  --app-background: #121212;
+  --app-sidebar: #171717;
+  --app-surface: rgb(23 23 23 / 0.74);
+  --app-surface-solid: #171717;
+  --app-surface-soft: rgb(255 255 255 / 0.045);
+  --app-surface-hover: rgb(255 255 255 / 0.07);
+  --app-lead-card: #1a1a1a;
+  --app-lead-card-hover: #202020;
+  --app-lead-card-divider: rgb(255 255 255 / 0.026);
+  --lead-action-phone-bg: #0b1f4b;
+  --lead-action-phone-fg: #3b82f6;
+  --lead-action-phone-hover: #102a62;
+  --lead-action-whatsapp-bg: #331404;
+  --lead-action-whatsapp-fg: #f97316;
+  --lead-action-whatsapp-hover: #451a03;
+  --lead-action-email-bg: #26103f;
+  --lead-action-email-fg: #a855f7;
+  --lead-action-email-hover: #34145a;
+  --lead-value-bg: #063f2b;
+  --lead-value-fg: #34d399;
+  --lead-status-won-bg: var(--lead-value-bg);
+  --lead-status-won-fg: var(--lead-value-fg);
+  --lead-status-won-card: rgb(16 185 129 / 0.055);
+  --lead-status-won-card-hover: rgb(16 185 129 / 0.085);
+  --lead-status-lost-bg: #4a1111;
+  --lead-status-lost-fg: #f87171;
+  --lead-status-lost-card: rgb(239 68 68 / 0.055);
+  --lead-status-lost-card-hover: rgb(239 68 68 / 0.085);
+  --lead-action-phone-priority-bg: #0f2a5f;
+  --lead-action-phone-priority-fg: #60a5fa;
+  --lead-action-phone-priority-hover: #14387c;
+  --lead-action-whatsapp-priority-bg: #3a1704;
+  --lead-action-whatsapp-priority-fg: #fb923c;
+  --lead-action-whatsapp-priority-hover: #4a1d05;
+  --lead-action-email-priority-bg: #2b0f49;
+  --lead-action-email-priority-fg: #c084fc;
+  --lead-action-email-priority-hover: #3b1664;
+  --app-border: rgb(255 255 255 / 0.055);
+  --app-border-strong: rgb(255 255 255 / 0.095);
+  --app-text-primary: #ffffff;
+  --app-text-secondary: rgb(255 255 255 / 0.72);
+  --app-text-tertiary: rgb(255 255 255 / 0.48);
+  --card: var(--app-surface);
+  --card-foreground: var(--app-text-primary);
+  --popover: var(--app-surface-solid);
+  --popover-foreground: var(--app-text-primary);
+  --secondary: rgb(255 255 255 / 0.07);
+  --secondary-foreground: var(--app-text-primary);
+  --muted: rgb(255 255 255 / 0.08);
+  --muted-foreground: var(--app-text-tertiary);
+  --accent: rgb(255 69 41 / 0.16);
+  --accent-foreground: #ffffff;
+  --border: var(--app-border);
+  --input: rgb(255 255 255 / 0.09);
+  --ring: rgb(255 69 41 / 0.48);
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --chart-1: #ff7a45;
+  --chart-2: #38bdf8;
+  --chart-3: #a78bfa;
+  --chart-4: #f59e0b;
+  --chart-5: #10b981;
+  --color-background-primary: var(--app-surface-solid);
+  --color-text-primary: var(--app-text-primary);
+  --color-text-secondary: var(--app-text-secondary);
+  --color-text-tertiary: var(--app-text-tertiary);
+}
+
+.light {
+  --background: #f7f8f6;
+  --foreground: #151515;
+  --app-background: #f7f8f6;
+  --app-sidebar: #ffffff;
+  --app-surface: #ffffff;
+  --app-surface-solid: #ffffff;
+  --app-surface-soft: rgb(15 23 42 / 0.055);
+  --app-surface-hover: rgb(15 23 42 / 0.075);
+  --app-lead-card: #eef1ef;
+  --app-lead-card-hover: #e7ebe8;
+  --app-lead-card-divider: rgb(18 18 18 / 0.045);
+  --lead-action-phone-bg: #dbeafe;
+  --lead-action-phone-fg: #1d4ed8;
+  --lead-action-phone-hover: #bfdbfe;
+  --lead-action-whatsapp-bg: #ffedd5;
+  --lead-action-whatsapp-fg: #c2410c;
+  --lead-action-whatsapp-hover: #fed7aa;
+  --lead-action-email-bg: #ede9fe;
+  --lead-action-email-fg: #6d28d9;
+  --lead-action-email-hover: #ddd6fe;
+  --lead-value-bg: #bbf7d0;
+  --lead-value-fg: #047857;
+  --lead-status-won-bg: var(--lead-value-bg);
+  --lead-status-won-fg: var(--lead-value-fg);
+  --lead-status-won-card: #edf7f3;
+  --lead-status-won-card-hover: #e5f2ed;
+  --lead-status-lost-bg: #fee2e2;
+  --lead-status-lost-fg: #b91c1c;
+  --lead-status-lost-card: #fff1f1;
+  --lead-status-lost-card-hover: #fee8e8;
+  --lead-action-phone-priority-bg: #bfdbfe;
+  --lead-action-phone-priority-fg: #1e40af;
+  --lead-action-phone-priority-hover: #93c5fd;
+  --lead-action-whatsapp-priority-bg: #fed7aa;
+  --lead-action-whatsapp-priority-fg: #9a3412;
+  --lead-action-whatsapp-priority-hover: #fdba74;
+  --lead-action-email-priority-bg: #ddd6fe;
+  --lead-action-email-priority-fg: #5b21b6;
+  --lead-action-email-priority-hover: #c4b5fd;
+  --app-border: rgb(15 23 42 / 0.08);
+  --app-border-strong: rgb(15 23 42 / 0.14);
+  --app-text-primary: #151515;
+  --app-text-secondary: rgb(21 21 21 / 0.68);
+  --app-text-tertiary: rgb(21 21 21 / 0.46);
+  --card: #ffffff;
+  --card-foreground: var(--app-text-primary);
+  --popover: #ffffff;
+  --popover-foreground: var(--app-text-primary);
+  --secondary: rgb(15 23 42 / 0.06);
+  --secondary-foreground: var(--app-text-primary);
+  --muted: rgb(15 23 42 / 0.06);
+  --muted-foreground: var(--app-text-tertiary);
+  --accent: rgb(255 69 41 / 0.12);
+  --accent-foreground: var(--app-text-primary);
+  --border: var(--app-border);
+  --input: rgb(15 23 42 / 0.08);
+  --ring: rgb(255 69 41 / 0.42);
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --success: #059669;
+  --warning: #d97706;
+  --chart-1: #ff4529;
+  --chart-2: #0284c7;
+  --chart-3: #7c3aed;
+  --chart-4: #d97706;
+  --chart-5: #059669;
+  --color-background-primary: var(--app-surface-solid);
+  --color-text-primary: var(--app-text-primary);
+  --color-text-secondary: var(--app-text-secondary);
+  --color-text-tertiary: var(--app-text-tertiary);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-vimob-accent: var(--vimob-accent);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+.app-shell {
+  background: var(--app-background);
+  color: var(--app-text-primary);
+}
+
+.app-card {
+  background: var(--app-surface);
+  border: 0;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.app-toolbar {
+  background: var(--app-surface);
+  border: 0;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.lead-detail-dialog [class*="bg-white/[0.035]"],
+.lead-detail-dialog [class*="bg-white/[0.045]"],
+.lead-detail-dialog [class*="bg-background/50"] {
+  background-color: var(--app-surface-soft) !important;
+}
+
+.lead-detail-dialog [class*="border-white/[0.055]"],
+.lead-detail-dialog [class*="border-white/[0.08]"],
+.lead-detail-dialog [class*="border-primary/20"] {
+  border-color: transparent !important;
+}
+
+.lead-detail-dialog .shadow-sm,
+.lead-detail-dialog .shadow-md,
+.lead-detail-dialog .shadow-lg,
+.lead-detail-dialog .shadow-2xl {
+  box-shadow: none !important;
+}
+
+.lead-detail-dialog [role="tab"] {
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.lead-detail-dialog .rounded-xl {
+  border-radius: 8px;
+}
+
+.lead-detail-dialog .stage-tab-nav {
+  display: flex;
+  min-width: max-content;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.125rem 0.25rem 0.5rem;
+}
+
+.lead-detail-dialog .stage-tab-link {
+  display: inline-flex;
+  height: 2rem;
+  width: 2rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: var(--app-surface-soft);
+  color: var(--app-text-muted);
+  font-size: 0.75rem;
+  line-height: 1;
+  outline: none;
+  transition: background-color 160ms ease, color 160ms ease, opacity 160ms ease;
+}
+
+.lead-detail-dialog .stage-tab-link:hover,
+.lead-detail-dialog .stage-tab-link:focus-visible {
+  background: var(--app-surface-hover);
+  color: var(--app-text-primary);
+}
+
+.lead-detail-dialog .stage-tab-link.active {
+  background: #ff4529;
+  color: #ffffff;
+}
+
+.lead-detail-dialog .stage-tab-link.past {
+  background: rgba(255, 69, 41, 0.12);
+  color: #ff4529;
+}
+
+.lead-detail-dialog .stage-tab-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+}
+
+.pipeline-selector-menu {
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.14);
+}
+
+.dark .pipeline-selector-menu {
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.2);
+}
+
+.pipeline-selector-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 69, 41, 0.36) transparent;
+}
+
+.app-card-soft {
+  background: var(--app-surface-soft);
+  border: 0;
+  border-radius: 8px;
+}
+
+.app-subtle-border {
+  border-color: var(--app-border);
+}
+
+.card-hover {
+  background: var(--app-surface);
+  border-color: var(--app-border);
+  box-shadow: none;
+}
+
+.card-hover:hover {
+  background: var(--app-surface-hover);
+  border-color: var(--app-border-strong);
+}
+
+.app-data-table thead tr {
+  border-color: var(--app-border);
+  background: var(--app-surface-soft);
+}
+
+.app-data-table tbody tr {
+  border-color: var(--app-border);
+}
+
+.app-data-table tbody tr:hover {
+  background: var(--app-surface-hover);
+}
+
+.app-shell .border-white\/\[0\.045\],
+.app-shell .border-white\/\[0\.055\],
+.app-shell .border-white\/\[0\.08\] {
+  border-color: transparent !important;
+}
+
+.light .app-shell .border-white\/5,
+.light .app-shell .border-white\/10,
+.light .app-shell .border-white\/\[0\.025\],
+.light .app-shell .border-white\/\[0\.045\],
+.light .app-shell .border-white\/\[0\.055\],
+.light .app-shell .border-white\/\[0\.08\],
+.light .app-shell .border-white\/\[0\.10\],
+.light .app-shell .border-white\/\[0\.12\] {
+  border-color: var(--app-border) !important;
+}
+
+.light .app-shell .bg-white\/5,
+.light .app-shell .bg-white\/10,
+.light .app-shell .bg-white\/20,
+.light .app-shell .bg-white\/\[0\.025\],
+.light .app-shell .bg-white\/\[0\.035\],
+.light .app-shell .bg-white\/\[0\.04\],
+.light .app-shell .bg-white\/\[0\.045\],
+.light .app-shell .bg-white\/\[0\.055\],
+.light .app-shell .bg-white\/\[0\.06\],
+.light .app-shell .bg-white\/\[0\.07\],
+.light .app-shell .bg-white\/\[0\.08\] {
+  background-color: var(--app-surface-soft) !important;
+}
+
+.light .app-shell .hover\:bg-white\/5:hover,
+.light .app-shell .hover\:bg-white\/10:hover,
+.light .app-shell .hover\:bg-white\/20:hover,
+.light .app-shell .hover\:bg-white\/\[0\.035\]:hover,
+.light .app-shell .hover\:bg-white\/\[0\.045\]:hover,
+.light .app-shell .hover\:bg-white\/\[0\.055\]:hover,
+.light .app-shell .hover\:bg-white\/\[0\.06\]:hover,
+.light .app-shell .hover\:bg-white\/\[0\.07\]:hover,
+.light .app-shell .hover\:bg-white\/\[0\.08\]:hover {
+  background-color: var(--app-surface-hover) !important;
+}
+
+.light .app-shell .focus\:bg-white\/5:focus,
+.light .app-shell .focus\:bg-white\/\[0\.045\]:focus,
+.light .app-shell .focus\:bg-white\/\[0\.055\]:focus {
+  background-color: var(--app-surface-hover) !important;
+}
+
+.light .app-shell .text-white\/30,
+.light .app-shell .text-white\/35,
+.light .app-shell .text-white\/36,
+.light .app-shell .text-white\/38,
+.light .app-shell .text-white\/40,
+.light .app-shell .text-white\/42,
+.light .app-shell .text-white\/45,
+.light .app-shell .text-white\/48,
+.light .app-shell .text-white\/50,
+.light .app-shell .text-white\/52,
+.light .app-shell .text-white\/54,
+.light .app-shell .text-white\/55,
+.light .app-shell .text-white\/56,
+.light .app-shell .text-white\/58,
+.light .app-shell .text-white\/60,
+.light .app-shell .text-white\/62 {
+  color: var(--app-text-tertiary) !important;
+}
+
+.light .app-shell .text-white\/65,
+.light .app-shell .text-white\/70,
+.light .app-shell .text-white\/72,
+.light .app-shell .text-white\/74,
+.light .app-shell .text-white\/75,
+.light .app-shell .text-white\/80,
+.light .app-shell .text-white\/90 {
+  color: var(--app-text-secondary) !important;
+}
+
+.light .app-shell .hover\:text-white:hover,
+.light .app-shell .hover\:text-white\/70:hover,
+.light .app-shell .hover\:text-white\/80:hover,
+.light .app-shell .hover\:text-white\/90:hover,
+.light .app-shell .focus\:text-white:focus {
+  color: var(--app-text-primary) !important;
+}
+
+.light .app-shell .bg-\[\#121212\],
+.light .app-shell .bg-\[\#171717\],
+.light .app-shell .bg-\[\#000000\],
+.light .app-shell .bg-\[\#202020\],
+.light .app-shell .bg-\[\#242424\] {
+  background-color: var(--app-surface-soft) !important;
+}
+
+.light .app-shell .hover\:bg-\[\#171717\]:hover,
+.light .app-shell .hover\:bg-\[\#2a2a2a\]:hover,
+.light .app-shell .hover\:bg-\[\#2b2b2b\]:hover {
+  background-color: var(--app-surface-hover) !important;
+}
+
+.light .app-shell .bg-\[\#121212\].text-white,
+.light .app-shell .bg-\[\#171717\].text-white,
+.light .app-shell .bg-\[\#000000\].text-white,
+.light .app-shell .bg-\[\#202020\].text-white,
+.light .app-shell .bg-\[\#242424\].text-white,
+.light .app-shell input.text-white,
+.light .app-shell textarea.text-white,
+.light .app-shell button[role="combobox"].text-white {
+  color: var(--app-text-primary) !important;
+}
+
+.light .app-shell .text-zinc-100,
+.light .app-shell .text-zinc-200 {
+  color: var(--app-text-primary) !important;
+}
+
+.light .app-shell .text-zinc-300,
+.light .app-shell .text-zinc-400 {
+  color: var(--app-text-secondary) !important;
+}
+
+.light .app-shell .text-zinc-500,
+.light .app-shell .placeholder\:text-zinc-500::placeholder {
+  color: var(--app-text-tertiary) !important;
+}
+
+.app-layout-borderless header::after,
+.app-layout-borderless nav {
+  border-color: transparent !important;
+  background-image: none !important;
+}
+
+.app-layout-borderless header::after {
+  background: transparent !important;
+}
+
+.dashboard-borderless .app-card,
+.dashboard-borderless .app-card-soft,
+.dashboard-borderless .card-hover,
+.dashboard-borderless .border,
+.dashboard-borderless .border-t,
+.dashboard-borderless .border-b,
+.dashboard-borderless .border-l,
+.dashboard-borderless .border-r {
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.vimob-calendar .border-white\/\[0\.025\] {
+  border-color: rgb(255 255 255 / 0.012) !important;
+}
+
+.vimob-calendar .border-white\/\[0\.045\],
+.vimob-calendar .border-white\/\[0\.055\] {
+  border-color: rgb(255 255 255 / 0.018) !important;
+}
+
+.vimob-calendar .bg-white\/\[0\.045\] {
+  background-color: rgb(255 255 255 / 0.018) !important;
+}
+
+.app-data-table th {
+  color: var(--app-text-tertiary);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.contacts-toolbar-actions button {
+  border-width: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+[data-tour="contacts-lost"] {
+  border-width: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.contacts-period-first > div {
+  flex-direction: row-reverse;
+}
+
+.contacts-period-first > div > div:first-child > button:first-child {
+  background-color: var(--app-background) !important;
+}
+
+.contacts-period-first > div > div:first-child > button:first-child:hover {
+  background-color: var(--app-surface-hover) !important;
+}
+
+.contacts-period-first button[aria-haspopup="dialog"] {
+  background-color: var(--app-background) !important;
+}
+
+.contacts-period-first button[aria-haspopup="dialog"]:hover {
+  background-color: var(--app-surface-hover) !important;
+}
+
+.contacts-table-card {
+  background: var(--app-surface);
+}
+
+.contacts-table tr,
+.contacts-table th,
+.contacts-table td {
+  border-color: transparent !important;
+}
+
+.contacts-table thead tr {
+  background: var(--app-surface);
+}
+
+.contacts-table tbody tr {
+  border-bottom: 0 !important;
+}
+
+.contacts-table th {
+  white-space: nowrap;
+}
+
+@keyframes vimob-loader-pulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 rgb(255 69 41 / 0));
+    opacity: 0.72;
+    transform: scale(0.94);
+  }
+
+  50% {
+    filter: drop-shadow(0 0 10px rgb(255 69 41 / 0.34));
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+.vimob-loader-pulse {
+  animation: vimob-loader-pulse 1.15s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.auth-page {
+  --auth-background: #121212;
+  background: var(--auth-background);
+  color: #ffffff;
+}
+
+.auth-page-light {
+  --auth-background: #f7f8f6;
+  --auth-overlay-mobile: linear-gradient(
+    180deg,
+    rgb(247 248 246 / 0.68) 0%,
+    rgb(247 248 246 / 0.84) 50%,
+    rgb(247 248 246 / 0.96) 100%
+  );
+  --auth-overlay-desktop: linear-gradient(
+    90deg,
+    rgb(247 248 246 / 0.98) 0%,
+    rgb(247 248 246 / 0.92) 30%,
+    rgb(247 248 246 / 0.58) 62%,
+    rgb(247 248 246 / 0.16) 100%
+  );
+  --auth-vignette: linear-gradient(
+    0deg,
+    rgb(247 248 246 / 0.34),
+    transparent 42%,
+    rgb(247 248 246 / 0.18)
+  );
+  color: var(--public-foreground);
+}
+
+.auth-page-light .auth-theme-toggle {
+  border-color: rgb(21 21 21 / 0.08);
+  background: rgb(255 255 255 / 0.72);
+  color: var(--public-foreground);
+  box-shadow: 0 14px 40px rgb(15 23 42 / 0.12);
+}
+
+@media (max-width: 767px) {
+  .auth-page :where(input, select, textarea) {
+    font-size: 16px;
+  }
+
+  .auth-page :where(a, button, input, select, textarea) {
+    touch-action: manipulation;
+  }
+}
+
+.public-light {
+  background:
+    radial-gradient(circle at 12% 8%, rgb(255 69 41 / 0.09), transparent 26rem),
+    linear-gradient(180deg, var(--public-background) 0%, #ffffff 42%, var(--public-background) 100%);
+  color: var(--public-foreground);
+}
+
+.public-light-plain {
+  background: #ffffff;
+}
+
+.public-light ::selection {
+  background: rgb(255 69 41 / 0.18);
+  color: var(--public-foreground);
+}
+
+.auth-hero-overlay {
+  background: var(--auth-overlay-mobile);
+}
+
+.auth-hero-vignette {
+  background: var(--auth-vignette);
+}
+
+@media (min-width: 768px) {
+  .auth-hero-overlay {
+    background: var(--auth-overlay-desktop);
+  }
+}
+
+html,
+body {
+  min-height: 100%;
 }

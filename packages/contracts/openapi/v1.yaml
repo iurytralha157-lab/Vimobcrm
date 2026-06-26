@@ -1,0 +1,3132 @@
+openapi: 3.1.0
+info:
+  title: Vimob API
+  version: 0.1.0
+  description: Backend contract for Vimob CRM.
+servers:
+  - url: http://localhost:8081
+security:
+  - bearerAuth: []
+paths:
+  /healthz:
+    get:
+      summary: Liveness check
+      security: []
+      responses:
+        "200":
+          description: API process is alive.
+  /readyz:
+    get:
+      summary: Readiness check
+      security: []
+      responses:
+        "200":
+          description: API can reach dependencies.
+  /v1/me:
+    get:
+      summary: Current authenticated user and tenant context
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Current user and resolved context.
+  /v1/lead-enrichments:
+    get:
+      summary: List card enrichments for visible leads
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: ids
+          in: query
+          schema:
+            type: string
+          description: Comma-separated lead ids. Repeated `id` query params are also accepted.
+        - name: id
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+              format: uuid
+          style: form
+          explode: true
+      responses:
+        "200":
+          description: Lead enrichment list scoped by organization and lead visibility.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LeadEnrichment"
+  /v1/pipeline-board:
+    get:
+      summary: Get pipeline stages with visible leads and counts
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: pipelineId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 12
+      responses:
+        "200":
+          description: Pipeline board data.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PipelineBoardStage"
+  /v1/pipeline-stage-leads:
+    get:
+      summary: List more visible leads for one pipeline stage
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: pipelineId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: stageId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 12
+      responses:
+        "200":
+          description: Stage lead page.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stageId, leads]
+                properties:
+                  stageId:
+                    type: string
+                    format: uuid
+                  leads:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PipelineBoardLead"
+  /v1/pipeline-stage-counts:
+    get:
+      summary: Count visible leads by stage with pipeline filters
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: pipelineId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: stageIds
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Comma-separated stage ids.
+      responses:
+        "200":
+          description: Counts keyed by stage id.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    additionalProperties:
+                      type: integer
+                      format: int64
+  /v1/lead-meta-filters:
+    get:
+      summary: List campaign/adset/ad options from visible lead metadata
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: dateFrom
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: dateTo
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Meta Ads filter options.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/LeadMetaFilters"
+  /v1/dashboard/stats:
+    get:
+      summary: Get dashboard KPI stats for visible leads
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/DashboardDateFrom"
+        - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardTeamId"
+        - $ref: "#/components/parameters/DashboardUserId"
+        - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardAdSetId"
+        - $ref: "#/components/parameters/DashboardAdId"
+        - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardDealStatus"
+        - $ref: "#/components/parameters/DashboardSearchQuery"
+      responses:
+        "200":
+          description: Dashboard KPI stats.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStatsResponse"
+  /v1/dashboard/funnel:
+    get:
+      summary: Get dashboard funnel counts by pipeline stage
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/DashboardDateFrom"
+        - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardPipelineId"
+        - $ref: "#/components/parameters/DashboardTeamId"
+        - $ref: "#/components/parameters/DashboardUserId"
+        - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardAdSetId"
+        - $ref: "#/components/parameters/DashboardAdId"
+        - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardDealStatus"
+        - $ref: "#/components/parameters/DashboardSearchQuery"
+      responses:
+        "200":
+          description: Funnel data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardFunnelResponse"
+  /v1/dashboard/sources:
+    get:
+      summary: Get dashboard lead counts by source
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/DashboardDateFrom"
+        - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardPipelineId"
+        - $ref: "#/components/parameters/DashboardTeamId"
+        - $ref: "#/components/parameters/DashboardUserId"
+        - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardAdSetId"
+        - $ref: "#/components/parameters/DashboardAdId"
+        - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardDealStatus"
+        - $ref: "#/components/parameters/DashboardSearchQuery"
+      responses:
+        "200":
+          description: Source data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSourcesResponse"
+  /v1/dashboard/top-brokers:
+    get:
+      summary: Get top brokers from visible closed leads
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/DashboardDateFrom"
+        - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardTeamId"
+        - $ref: "#/components/parameters/DashboardUserId"
+        - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardAdSetId"
+        - $ref: "#/components/parameters/DashboardAdId"
+        - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardDealStatus"
+        - $ref: "#/components/parameters/DashboardSearchQuery"
+      responses:
+        "200":
+          description: Top brokers.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardTopBrokersResponse"
+  /v1/dashboard/upcoming-tasks:
+    get:
+      summary: Get upcoming open lead tasks
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 5
+      responses:
+        "200":
+          description: Upcoming tasks.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardUpcomingTasksResponse"
+  /v1/dashboard/deals-evolution:
+    get:
+      summary: Get dashboard deals evolution chart data
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/DashboardDateFrom"
+        - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardTeamId"
+        - $ref: "#/components/parameters/DashboardUserId"
+        - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardAdSetId"
+        - $ref: "#/components/parameters/DashboardAdId"
+        - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardDealStatus"
+        - $ref: "#/components/parameters/DashboardSearchQuery"
+      responses:
+        "200":
+          description: Deals evolution data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardDealsEvolutionResponse"
+  /v1/leads:
+    get:
+      summary: List leads visible to the current user
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: search
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+        - name: stageId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: assignedUserId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: dealStatus
+          in: query
+          schema:
+            type: string
+            enum: [open, won, lost]
+      responses:
+        "200":
+          description: Paginated lead list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeadListResponse"
+    post:
+      summary: Create a lead in the current organization
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLeadRequest"
+      responses:
+        "201":
+          description: Lead created or existing lead reentry registered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateLeadResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+  /v1/leads/{id}:
+    get:
+      summary: Get a lead visible to the current user
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Lead detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Lead"
+        "404":
+          $ref: "#/components/responses/APIError"
+    patch:
+      summary: Update a lead in the current organization
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateLeadRequest"
+      responses:
+        "200":
+          description: Lead updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Lead"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+    delete:
+      summary: Delete a lead in the current organization
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Lead deleted.
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+  /v1/leads/{id}/move-stage:
+    post:
+      summary: Move a lead to another pipeline stage
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MoveLeadStageRequest"
+      responses:
+        "200":
+          description: Lead moved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Lead"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+  /v1/leads/{id}/assign:
+    post:
+      summary: Transfer or clear the lead assignee
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignLeadRequest"
+      responses:
+        "200":
+          description: Lead assignee updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Lead"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+  /v1/leads/{id}/redistribute:
+    post:
+      summary: Assign a lead using the active round-robin queue
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Round-robin assignment result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoundRobinResult"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+  /v1/leads/{id}/tags:
+    post:
+      summary: Attach a tag to a lead
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LeadTagRequest"
+      responses:
+        "201":
+          description: Tag attached.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
+  /v1/leads/{id}/tags/{tagId}:
+    delete:
+      summary: Remove a tag from a lead
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: tagId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Tag removed or was not attached.
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+  /v1/properties:
+    get:
+      summary: List properties in the current organization
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: search
+          in: query
+          schema:
+            type: string
+            maxLength: 120
+        - name: tipo_de_negocio
+          in: query
+          schema:
+            type: string
+            maxLength: 80
+        - name: tipo_de_imovel
+          in: query
+          schema:
+            type: string
+            maxLength: 80
+        - name: cidade
+          in: query
+          schema:
+            type: string
+            maxLength: 120
+        - name: bairro
+          in: query
+          schema:
+            type: string
+            maxLength: 120
+        - name: responsavel_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: quartos_min
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: suites_min
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: banheiros_min
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: valor_min
+          in: query
+          schema:
+            type: number
+            minimum: 0
+        - name: valor_max
+          in: query
+          schema:
+            type: number
+            minimum: 0
+      responses:
+        "200":
+          description: Paginated property list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyListResponse"
+    post:
+      summary: Create a property in the current organization
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyMutationRequest"
+      responses:
+        "201":
+          description: Property created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+  /v1/properties/{id}:
+    get:
+      summary: Get a property in the current organization
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: Property detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyResponse"
+        "404":
+          $ref: "#/components/responses/APIError"
+    patch:
+      summary: Update a property in the current organization
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyMutationRequest"
+      responses:
+        "200":
+          description: Property updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+    delete:
+      summary: Delete a property in the current organization
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "204":
+          description: Property deleted.
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+  /v1/property-images:
+    post:
+      summary: Upload a property image through the backend
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: JPEG, PNG, WebP or GIF image up to 10MB.
+                propertyId:
+                  type: string
+                  format: uuid
+                  description: Optional property id. Omit while creating a new property.
+      responses:
+        "201":
+          description: Image uploaded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyImageUploadResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+  /v1/property-captors/{id}:
+    get:
+      summary: Get minimal captor data for property screens
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: Captor data or null when unavailable in the organization.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    oneOf:
+                      - $ref: "#/components/schemas/PropertyCaptor"
+                      - type: "null"
+        "403":
+          $ref: "#/components/responses/APIError"
+  /v1/property-site-info:
+    get:
+      summary: Get active public site information for property links
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Active organization site information or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    oneOf:
+                      - $ref: "#/components/schemas/PropertySiteInfo"
+                      - type: "null"
+        "403":
+          $ref: "#/components/responses/APIError"
+  /v1/property-summaries:
+    get:
+      summary: List minimal property summaries by id
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: ids
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Comma-separated property ids. Repeated `id` query params are also accepted.
+        - name: id
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+              format: uuid
+          style: form
+          explode: true
+      responses:
+        "200":
+          description: Property summaries in the current organization.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PropertySummary"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+  /v1/user-summaries:
+    get:
+      summary: List minimal user summaries by id
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: ids
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Comma-separated user ids. Repeated `id` query params are also accepted.
+        - name: id
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+              format: uuid
+          style: form
+          explode: true
+      responses:
+        "200":
+          description: User summaries visible in the current organization.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/UserSummary"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+  /v1/property-types:
+    get:
+      summary: List property type catalog items
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Property type catalog.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyCatalogListResponse"
+    post:
+      summary: Create a property type catalog item
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyCatalogCreateRequest"
+      responses:
+        "201":
+          description: Property type created or existing item returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyCatalogItemResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+  /v1/property-features:
+    get:
+      summary: List property feature catalog items
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Property feature catalog.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyCatalogListResponse"
+    post:
+      summary: Create a property feature catalog item
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyCatalogCreateRequest"
+      responses:
+        "201":
+          description: Property feature created or existing item returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyCatalogItemResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+  /v1/property-features/seed-defaults:
+    post:
+      summary: Seed default property feature catalog items
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyCatalogSeedRequest"
+      responses:
+        "201":
+          description: Default feature items ensured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyCatalogListResponse"
+  /v1/property-proximities:
+    get:
+      summary: List property proximity catalog items
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Property proximity catalog.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyCatalogListResponse"
+    post:
+      summary: Create a property proximity catalog item
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyCatalogCreateRequest"
+      responses:
+        "201":
+          description: Property proximity created or existing item returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyCatalogItemResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+  /v1/property-proximities/seed-defaults:
+    post:
+      summary: Seed default property proximity catalog items
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyCatalogSeedRequest"
+      responses:
+        "201":
+          description: Default proximity items ensured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyCatalogListResponse"
+  /v1/property-cities:
+    get:
+      summary: List property cities
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Property city list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyCityListResponse"
+    post:
+      summary: Create a property city
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePropertyCityRequest"
+      responses:
+        "201":
+          description: City created or existing item returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyCityResponse"
+  /v1/property-cities/{id}:
+    delete:
+      summary: Delete a property city
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "204":
+          description: City deleted.
+  /v1/property-neighborhoods:
+    get:
+      summary: List property neighborhoods
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: cityId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Property neighborhood list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyNeighborhoodListResponse"
+    post:
+      summary: Create a property neighborhood
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePropertyNeighborhoodRequest"
+      responses:
+        "201":
+          description: Neighborhood created or existing item returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyNeighborhoodResponse"
+  /v1/property-neighborhoods/{id}:
+    delete:
+      summary: Delete a property neighborhood
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "204":
+          description: Neighborhood deleted.
+  /v1/property-condominiums:
+    get:
+      summary: List property condominiums
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: neighborhoodId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Property condominium list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyCondominiumListResponse"
+    post:
+      summary: Create a property condominium
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePropertyCondominiumRequest"
+      responses:
+        "201":
+          description: Condominium created or existing item returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyCondominiumResponse"
+  /v1/property-condominiums/{id}:
+    delete:
+      summary: Delete a property condominium
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "204":
+          description: Condominium deleted.
+  /v1/pipelines:
+    get:
+      summary: List pipelines in the current organization
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Pipeline list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Pipeline"
+    post:
+      summary: Create a pipeline with default stages
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePipelineRequest"
+      responses:
+        "201":
+          description: Pipeline created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Pipeline"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+  /v1/pipelines/{id}:
+    patch:
+      summary: Update a pipeline
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePipelineRequest"
+      responses:
+        "200":
+          description: Pipeline updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Pipeline"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+    delete:
+      summary: Delete a pipeline without leads
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "204":
+          description: Pipeline deleted.
+        "409":
+          $ref: "#/components/responses/APIError"
+  /v1/stages:
+    get:
+      summary: List stages, optionally filtered by pipeline
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: pipelineId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Stage list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Stage"
+  /v1/pipelines/{id}/stages:
+    post:
+      summary: Create a stage in a pipeline
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStageRequest"
+      responses:
+        "201":
+          description: Stage created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Stage"
+  /v1/pipelines/{id}/stages/reorder:
+    post:
+      summary: Reorder and update stages in a pipeline
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReorderStagesRequest"
+      responses:
+        "200":
+          description: Stages reordered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Stage"
+  /v1/stages/{id}:
+    patch:
+      summary: Update a stage
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateStageRequest"
+      responses:
+        "200":
+          description: Stage updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Stage"
+    delete:
+      summary: Delete a stage without leads
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "204":
+          description: Stage deleted.
+        "409":
+          $ref: "#/components/responses/APIError"
+  /v1/pipelines/{id}/round-robin:
+    post:
+      summary: Set the active round-robin queue for a pipeline
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                roundRobinId:
+                  type: [string, "null"]
+                  format: uuid
+      responses:
+        "200":
+          description: Pipeline round-robin updated.
+  /v1/round-robins:
+    get:
+      summary: List round-robin queues
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Round-robin queue list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RoundRobin"
+    post:
+      summary: Create a round-robin queue with rules and members
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoundRobinMutationRequest"
+      responses:
+        "201":
+          description: Round-robin queue created.
+  /v1/round-robins/{id}:
+    patch:
+      summary: Update a round-robin queue
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoundRobinMutationRequest"
+      responses:
+        "200":
+          description: Round-robin queue updated.
+    delete:
+      summary: Delete a round-robin queue
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "204":
+          description: Round-robin queue deleted.
+  /v1/round-robins/{id}/rules:
+    get:
+      summary: List rules for a round-robin queue
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: Rule list.
+    post:
+      summary: Create a rule for a round-robin queue
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoundRobinRuleMutationRequest"
+      responses:
+        "201":
+          description: Rule created.
+  /v1/round-robin-rules/{id}:
+    patch:
+      summary: Update a round-robin rule
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoundRobinRuleMutationRequest"
+      responses:
+        "200":
+          description: Rule updated.
+    delete:
+      summary: Delete a round-robin rule
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "204":
+          description: Rule deleted.
+  /v1/round-robins/{id}/members:
+    post:
+      summary: Add a user or team to a round-robin queue
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoundRobinMemberMutationRequest"
+      responses:
+        "201":
+          description: Member added.
+  /v1/round-robin-members/{id}:
+    patch:
+      summary: Update a round-robin member
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoundRobinMemberMutationRequest"
+      responses:
+        "200":
+          description: Member updated.
+    delete:
+      summary: Remove a round-robin member
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "204":
+          description: Member removed.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    OrganizationIdHeader:
+      name: X-Organization-ID
+      in: header
+      required: false
+      schema:
+        type: string
+        format: uuid
+      description: Active organization when the user belongs to more than one organization.
+    PathId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DashboardDateFrom:
+      name: dateFrom
+      in: query
+      schema:
+        type: string
+        format: date-time
+    DashboardDateTo:
+      name: dateTo
+      in: query
+      schema:
+        type: string
+        format: date-time
+    DashboardPipelineId:
+      name: pipelineId
+      in: query
+      schema:
+        type: string
+        format: uuid
+    DashboardTeamId:
+      name: teamId
+      in: query
+      schema:
+        type: string
+        format: uuid
+    DashboardUserId:
+      name: userId
+      in: query
+      schema:
+        type: string
+        format: uuid
+    DashboardSource:
+      name: source
+      in: query
+      schema:
+        type: string
+    DashboardCampaignId:
+      name: campaignId
+      in: query
+      schema:
+        type: string
+    DashboardAdSetId:
+      name: adSetId
+      in: query
+      schema:
+        type: string
+    DashboardAdId:
+      name: adId
+      in: query
+      schema:
+        type: string
+    DashboardTagId:
+      name: tagId
+      in: query
+      schema:
+        type: string
+        format: uuid
+    DashboardDealStatus:
+      name: dealStatus
+      in: query
+      schema:
+        type: string
+        enum: [open, won, lost]
+    DashboardSearchQuery:
+      name: searchQuery
+      in: query
+      schema:
+        type: string
+  responses:
+    APIError:
+      description: Standard API error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/APIErrorEnvelope"
+  schemas:
+    APIErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            requestId:
+              type: string
+    Property:
+      type: object
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        title:
+          type: string
+        tipo_de_imovel:
+          type: string
+        tipo_de_negocio:
+          type: string
+        status:
+          type: string
+        bairro:
+          type: string
+        cidade:
+          type: string
+        uf:
+          type: string
+        preco:
+          type: [string, number, "null"]
+        valor_locacao:
+          type: [string, number, "null"]
+        cadastrado_por:
+          type: [string, "null"]
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PropertyListResponse:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Property"
+        total:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        offset:
+          type: integer
+    PropertyResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/Property"
+    PropertyImageUpload:
+      type: object
+      required: [url, path, bucket, contentType, size]
+      properties:
+        url:
+          type: string
+          format: uri
+        path:
+          type: string
+        bucket:
+          type: string
+          enum: [properties]
+        contentType:
+          type: string
+          enum: [image/jpeg, image/png, image/webp, image/gif]
+        size:
+          type: integer
+          format: int64
+    PropertyImageUploadResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/PropertyImageUpload"
+    PropertyCaptor:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: [string, "null"]
+        email:
+          type: [string, "null"]
+          format: email
+        whatsapp:
+          type: [string, "null"]
+        avatar_url:
+          type: [string, "null"]
+          format: uri
+    PropertySiteInfo:
+      type: object
+      properties:
+        subdomain:
+          type: [string, "null"]
+        custom_domain:
+          type: [string, "null"]
+        domain_verified:
+          type: [boolean, "null"]
+    PropertySummary:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: [string, "null"]
+        title:
+          type: [string, "null"]
+        preco:
+          type: [number, "null"]
+    UserSummary:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: [string, "null"]
+        avatar_url:
+          type: [string, "null"]
+          format: uri
+    PropertyMutationRequest:
+      type: object
+      minProperties: 1
+      additionalProperties: true
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        tipo_de_imovel:
+          type: string
+        tipo_de_negocio:
+          type: string
+        status:
+          type: string
+        descricao:
+          type: string
+        bairro:
+          type: string
+        cidade:
+          type: string
+        uf:
+          type: string
+        quartos:
+          type: [integer, "null"]
+        suites:
+          type: [integer, "null"]
+        banheiros:
+          type: [integer, "null"]
+        vagas:
+          type: [integer, "null"]
+        preco:
+          type: [string, number, "null"]
+        valor_locacao:
+          type: [string, number, "null"]
+    PropertyCatalogItem:
+      type: object
+      required: [id, organization_id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        icon:
+          type: [string, "null"]
+        created_at:
+          type: string
+    PropertyCatalogListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/PropertyCatalogItem"
+    PropertyCatalogItemResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/PropertyCatalogItem"
+    PropertyCatalogCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        icon:
+          type: [string, "null"]
+          maxLength: 80
+    PropertyCatalogSeedRequest:
+      type: object
+      additionalProperties: false
+      required: [names]
+      properties:
+        names:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+            minLength: 1
+            maxLength: 120
+    PropertyCity:
+      type: object
+      required: [id, organization_id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        uf:
+          type: [string, "null"]
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+    PropertyNeighborhood:
+      type: object
+      required: [id, organization_id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        city_id:
+          type: [string, "null"]
+          format: uuid
+        name:
+          type: string
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+        city:
+          $ref: "#/components/schemas/PropertyCity"
+    PropertyCondominium:
+      type: object
+      required: [id, organization_id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        city_id:
+          type: [string, "null"]
+          format: uuid
+        neighborhood_id:
+          type: [string, "null"]
+          format: uuid
+        name:
+          type: string
+        address:
+          type: [string, "null"]
+        latitude:
+          type: [number, "null"]
+        longitude:
+          type: [number, "null"]
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+        city:
+          $ref: "#/components/schemas/PropertyCity"
+        neighborhood:
+          $ref: "#/components/schemas/PropertyNeighborhood"
+    PropertyCityListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/PropertyCity"
+    PropertyCityResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/PropertyCity"
+    PropertyNeighborhoodListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/PropertyNeighborhood"
+    PropertyNeighborhoodResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/PropertyNeighborhood"
+    PropertyCondominiumListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/PropertyCondominium"
+    PropertyCondominiumResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/PropertyCondominium"
+    CreatePropertyCityRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        uf:
+          type: string
+          maxLength: 2
+    CreatePropertyNeighborhoodRequest:
+      type: object
+      additionalProperties: false
+      required: [name, city_id]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        city_id:
+          type: string
+          format: uuid
+    CreatePropertyCondominiumRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        city_id:
+          type: string
+          format: uuid
+        neighborhood_id:
+          type: string
+          format: uuid
+        address:
+          type: string
+          maxLength: 300
+        latitude:
+          type: number
+        longitude:
+          type: number
+    Pipeline:
+      type: object
+      required: [id, organizationId, name, isDefault, isActive, position, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        isDefault:
+          type: boolean
+        isActive:
+          type: boolean
+        position:
+          type: integer
+        defaultRoundRobinId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreatePipelineRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        isDefault:
+          type: boolean
+    UpdatePipelineRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        isDefault:
+          type: boolean
+    Stage:
+      type: object
+      required: [id, organizationId, pipelineId, name, position, isWon, isLost, isActive, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        pipelineId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        color:
+          type: string
+        stageKey:
+          type: string
+        position:
+          type: integer
+        isWon:
+          type: boolean
+        isLost:
+          type: boolean
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateStageRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        color:
+          type: string
+          maxLength: 20
+    UpdateStageRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        color:
+          type: string
+          maxLength: 20
+        stageKey:
+          type: string
+          maxLength: 80
+        isWon:
+          type: boolean
+        isLost:
+          type: boolean
+        isActive:
+          type: boolean
+    ReorderStagesRequest:
+      type: object
+      additionalProperties: false
+      required: [stages]
+      properties:
+        stages:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, name]
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+              color:
+                type: string
+              stageKey:
+                type: string
+    RoundRobin:
+      type: object
+      required: [id, organizationId, name, isActive, strategy, leadsDistributed, rules, members, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        isActive:
+          type: boolean
+        lastAssignedIndex:
+          type: integer
+        strategy:
+          type: string
+          enum: [simple, weighted]
+        leadsDistributed:
+          type: integer
+          format: int64
+        targetPipelineId:
+          type: string
+          format: uuid
+        targetStageId:
+          type: string
+          format: uuid
+        settings:
+          type: object
+          additionalProperties: true
+        reentryBehavior:
+          type: string
+          enum: [redistribute, keep_assignee]
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/RoundRobinRule"
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/RoundRobinMember"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    RoundRobinRule:
+      type: object
+      required: [id, roundRobinId, matchType, matchValue, priority, isActive]
+      properties:
+        id:
+          type: string
+          format: uuid
+        roundRobinId:
+          type: string
+          format: uuid
+        matchType:
+          type: string
+        matchValue:
+          type: string
+        match:
+          type: object
+          additionalProperties: true
+        priority:
+          type: integer
+        isActive:
+          type: boolean
+    RoundRobinMember:
+      type: object
+      required: [id, roundRobinId, userId, position, weight, isActive]
+      properties:
+        id:
+          type: string
+          format: uuid
+        roundRobinId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        teamId:
+          type: string
+          format: uuid
+        position:
+          type: integer
+        weight:
+          type: integer
+        isActive:
+          type: boolean
+        leadsCount:
+          type: integer
+          format: int64
+    RoundRobinMutationRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        strategy:
+          type: string
+          enum: [simple, weighted]
+        targetPipelineId:
+          type: [string, "null"]
+          format: uuid
+        targetStageId:
+          type: [string, "null"]
+          format: uuid
+        isActive:
+          type: boolean
+        settings:
+          type: object
+          additionalProperties: true
+        reentryBehavior:
+          type: string
+          enum: [redistribute, keep_assignee]
+        conditions:
+          type: array
+          items:
+            type: object
+            required: [type, values]
+            properties:
+              type:
+                type: string
+              values:
+                type: array
+                items:
+                  type: string
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/RoundRobinMemberMutationRequest"
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/RoundRobinRuleMutationRequest"
+    RoundRobinRuleMutationRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        roundRobinId:
+          type: string
+          format: uuid
+        matchType:
+          type: string
+        matchValue:
+          type: string
+        match:
+          type: object
+          additionalProperties: true
+        priority:
+          type: integer
+        isActive:
+          type: boolean
+    RoundRobinMemberMutationRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        userId:
+          type: string
+          format: uuid
+        teamId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [user, team]
+        entityId:
+          type: string
+          format: uuid
+        weight:
+          type: integer
+          minimum: 1
+        position:
+          type: integer
+          minimum: 0
+        isActive:
+          type: boolean
+    LeadListResponse:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Lead"
+        total:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        offset:
+          type: integer
+    CreateLeadRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 180
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        phone:
+          type: string
+          maxLength: 40
+        source:
+          type: string
+          maxLength: 80
+          default: manual
+        message:
+          type: string
+          maxLength: 2000
+        propertyCode:
+          type: string
+          maxLength: 80
+        propertyId:
+          type: string
+          format: uuid
+        pipelineId:
+          type: string
+          format: uuid
+        stageId:
+          type: string
+          format: uuid
+        assignedUserId:
+          type: string
+          format: uuid
+        interestValue:
+          type: string
+          description: Decimal string, mirrors Postgres numeric precision.
+        dealStatus:
+          type: string
+          enum: [open, won, lost]
+          default: open
+        lostReason:
+          type: string
+          maxLength: 300
+        isOwnResource:
+          type: boolean
+        conversationId:
+          type: string
+          format: uuid
+        tagIds:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: uuid
+        cargo:
+          type: string
+        empresa:
+          type: string
+        profissao:
+          type: string
+        endereco:
+          type: string
+        bairro:
+          type: string
+        numero:
+          type: string
+        cep:
+          type: string
+        cidade:
+          type: string
+        uf:
+          type: string
+          maxLength: 2
+        rendaFamiliar:
+          type: string
+        faixaValorImovel:
+          type: string
+    CreateLeadResponse:
+      type: object
+      required: [data, reentry]
+      properties:
+        data:
+          $ref: "#/components/schemas/Lead"
+        reentry:
+          type: boolean
+          description: True when the phone matched an existing lead and a reentry was registered.
+        assignedUserName:
+          type: string
+    LeadTagRequest:
+      type: object
+      required: [tagId]
+      additionalProperties: false
+      properties:
+        tagId:
+          type: string
+          format: uuid
+    MoveLeadStageRequest:
+      type: object
+      required: [stageId]
+      additionalProperties: false
+      properties:
+        stageId:
+          type: string
+          format: uuid
+        isOwnResource:
+          type: [boolean, "null"]
+        stageEnteredAt:
+          type: [string, "null"]
+          format: date-time
+    AssignLeadRequest:
+      type: object
+      required: [assignedUserId]
+      additionalProperties: false
+      properties:
+        assignedUserId:
+          type: [string, "null"]
+          format: uuid
+    RoundRobinResult:
+      type: object
+      required: [success, leadId, roundRobinUsed]
+      properties:
+        success:
+          type: boolean
+        leadId:
+          type: string
+          format: uuid
+        pipelineId:
+          type: string
+          format: uuid
+        stageId:
+          type: string
+          format: uuid
+        assignedUserId:
+          type: string
+          format: uuid
+        roundRobinUsed:
+          type: boolean
+        roundRobinId:
+          type: string
+          format: uuid
+        error:
+          type: string
+          enum: [no_queue, no_member]
+    UpdateLeadRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 180
+        email:
+          type: [string, "null"]
+          format: email
+          maxLength: 254
+        phone:
+          type: [string, "null"]
+          maxLength: 40
+        source:
+          type: [string, "null"]
+          maxLength: 80
+        message:
+          type: [string, "null"]
+          maxLength: 2000
+        propertyCode:
+          type: [string, "null"]
+          maxLength: 80
+        propertyId:
+          type: [string, "null"]
+          format: uuid
+        interestPropertyId:
+          type: [string, "null"]
+          format: uuid
+        pipelineId:
+          type: [string, "null"]
+          format: uuid
+        stageId:
+          type: [string, "null"]
+          format: uuid
+        assignedUserId:
+          type: [string, "null"]
+          format: uuid
+        interestValue:
+          type: [string, number, "null"]
+        commissionPercentage:
+          type: [string, number, "null"]
+        dealStatus:
+          type: [string, "null"]
+          enum: [open, won, lost, null]
+        lostReason:
+          type: [string, "null"]
+          maxLength: 300
+        feedback:
+          type: [string, "null"]
+          maxLength: 2000
+        cargo:
+          type: [string, "null"]
+        empresa:
+          type: [string, "null"]
+        profissao:
+          type: [string, "null"]
+        endereco:
+          type: [string, "null"]
+        numero:
+          type: [string, "null"]
+        complemento:
+          type: [string, "null"]
+        bairro:
+          type: [string, "null"]
+        cep:
+          type: [string, "null"]
+        cidade:
+          type: [string, "null"]
+        uf:
+          type: [string, "null"]
+          maxLength: 2
+        rendaFamiliar:
+          type: [string, "null"]
+        faixaValorImovel:
+          type: [string, "null"]
+        finalidadeCompra:
+          type: [string, "null"]
+        trabalha:
+          type: [boolean, "null"]
+        procuraFinanciamento:
+          type: [boolean, "null"]
+        isOwnResource:
+          type: [boolean, "null"]
+    Lead:
+      type: object
+      required:
+        - id
+        - organizationId
+        - name
+        - source
+        - status
+        - dealStatus
+        - priority
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        source:
+          type: string
+        status:
+          type: string
+        dealStatus:
+          type: string
+          enum: [open, won, lost]
+        lostReason:
+          type: string
+        priority:
+          type: string
+          enum: [low, normal, high, urgent]
+        message:
+          type: string
+        propertyCode:
+          type: string
+        propertyId:
+          type: string
+          format: uuid
+        interestPropertyId:
+          type: string
+          format: uuid
+        pipelineId:
+          type: string
+          format: uuid
+        stageId:
+          type: string
+          format: uuid
+        assignedUserId:
+          type: string
+          format: uuid
+        interestValue:
+          type: string
+        isOwnResource:
+          type: boolean
+        reentryCount:
+          type: integer
+        stage:
+          $ref: "#/components/schemas/LeadStage"
+        assignee:
+          $ref: "#/components/schemas/LeadAssignee"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        stageEnteredAt:
+          type: string
+          format: date-time
+        lastContactAt:
+          type: string
+          format: date-time
+        nextFollowUpAt:
+          type: string
+          format: date-time
+        additionalFields:
+          type: object
+          additionalProperties: true
+    LeadStage:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        color:
+          type: string
+        stageKey:
+          type: string
+    LeadAssignee:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        avatarUrl:
+          type: string
+    DashboardStatsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/DashboardStats"
+    DashboardStats:
+      type: object
+      required:
+        - totalLeads
+        - leadsInProgress
+        - leadsClosed
+        - leadsLost
+        - openLeads
+        - lostLeads
+        - conversionRate
+        - closedLeads
+        - wonConversionBuckets
+        - wonDeals
+        - avgResponseTime
+        - totalSalesValue
+        - leadsTrend
+        - openTrend
+        - lostTrend
+        - conversionTrend
+        - closedTrend
+      properties:
+        totalLeads:
+          type: integer
+          format: int64
+        leadsInProgress:
+          type: integer
+          format: int64
+        leadsClosed:
+          type: integer
+          format: int64
+        leadsLost:
+          type: integer
+          format: int64
+        openLeads:
+          type: integer
+          format: int64
+        lostLeads:
+          type: integer
+          format: int64
+        conversionRate:
+          type: number
+        closedLeads:
+          type: integer
+          format: int64
+        wonAverageConversionDays:
+          type: [integer, "null"]
+        wonConversionBuckets:
+          type: array
+          items:
+            $ref: "#/components/schemas/WonConversionBucket"
+        wonDeals:
+          type: array
+          items:
+            $ref: "#/components/schemas/WonDealDetail"
+        avgResponseTime:
+          type: string
+        totalSalesValue:
+          type: number
+        pendingCommissions:
+          type: number
+        leadsTrend:
+          type: integer
+        openTrend:
+          type: integer
+        lostTrend:
+          type: integer
+        conversionTrend:
+          type: integer
+        closedTrend:
+          type: integer
+        totalReceivables:
+          type: number
+        totalPayables:
+          type: number
+        overdueReceivables:
+          type: number
+        overduePayables:
+          type: number
+        paidCommissions:
+          type: number
+    WonConversionBucket:
+      type: object
+      required: [key, label, count, percentage, value, color]
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        count:
+          type: integer
+          format: int64
+        percentage:
+          type: number
+        value:
+          type: number
+        color:
+          type: string
+    WonDealDetail:
+      type: object
+      required: [id, name, value, assignedUserName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        phone:
+          type: [string, "null"]
+        source:
+          type: [string, "null"]
+        value:
+          type: number
+        createdAt:
+          type: [string, "null"]
+          format: date-time
+        wonAt:
+          type: [string, "null"]
+          format: date-time
+        conversionDays:
+          type: [integer, "null"]
+        assignedUserName:
+          type: string
+    DashboardFunnelResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardFunnelPoint"
+    DashboardFunnelPoint:
+      type: object
+      required: [name, value, percentage, stage_key]
+      properties:
+        name:
+          type: string
+        value:
+          type: integer
+          format: int64
+        percentage:
+          type: integer
+        stage_key:
+          type: string
+    DashboardSourcesResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardSourcePoint"
+    DashboardSourcePoint:
+      type: object
+      required: [name, value, rawSource]
+      properties:
+        name:
+          type: string
+        value:
+          type: integer
+          format: int64
+        rawSource:
+          type: string
+    DashboardTopBrokersResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/DashboardTopBrokers"
+    DashboardTopBrokers:
+      type: object
+      required: [brokers, isFallbackMode]
+      properties:
+        brokers:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardTopBroker"
+        isFallbackMode:
+          type: boolean
+    DashboardTopBroker:
+      type: object
+      required: [id, name, closedLeads, salesValue, totalCommissions]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        avatar_url:
+          type: [string, "null"]
+        closedLeads:
+          type: integer
+          format: int64
+        salesValue:
+          type: number
+        totalCommissions:
+          type: number
+    DashboardUpcomingTasksResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardUpcomingTask"
+    DashboardUpcomingTask:
+      type: object
+      required: [id, title, type, due_date, lead_name, lead_id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        type:
+          type: string
+          enum: [call, email, meeting, message, task]
+        due_date:
+          type: string
+          format: date-time
+        lead_name:
+          type: string
+        lead_id:
+          type: string
+          format: uuid
+    DashboardDealsEvolutionResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardDealsEvolutionPoint"
+    DashboardDealsEvolutionPoint:
+      type: object
+      required: [date, ganhos, perdas, abertos]
+      properties:
+        date:
+          type: string
+        ganhos:
+          type: integer
+          format: int64
+        perdas:
+          type: integer
+          format: int64
+        abertos:
+          type: integer
+          format: int64
+    LeadEnrichment:
+      type: object
+      required: [lead_id, tags, tasks_count, lead_meta]
+      properties:
+        lead_id:
+          type: string
+          format: uuid
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeadEnrichmentTag"
+        tasks_count:
+          $ref: "#/components/schemas/LeadTaskCount"
+        assignee:
+          oneOf:
+            - $ref: "#/components/schemas/UserSummary"
+            - type: "null"
+        interest_property:
+          oneOf:
+            - $ref: "#/components/schemas/PropertySummary"
+            - type: "null"
+        lead_meta:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeadMeta"
+    LeadEnrichmentTag:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: [string, "null"]
+        color:
+          type: [string, "null"]
+    LeadTaskCount:
+      type: object
+      required: [pending, completed]
+      properties:
+        pending:
+          type: integer
+        completed:
+          type: integer
+    LeadMeta:
+      type: object
+      required: [lead_id]
+      properties:
+        lead_id:
+          type: string
+          format: uuid
+        campaign_name:
+          type: [string, "null"]
+        campaign_id:
+          type: [string, "null"]
+        adset_name:
+          type: [string, "null"]
+        adset_id:
+          type: [string, "null"]
+        ad_name:
+          type: [string, "null"]
+        ad_id:
+          type: [string, "null"]
+        platform:
+          type: [string, "null"]
+    PipelineBoardStage:
+      type: object
+      required: [id, pipeline_id, name, leads, total_lead_count, has_more]
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        pipeline_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        leads:
+          type: array
+          items:
+            $ref: "#/components/schemas/PipelineBoardLead"
+        total_lead_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+    PipelineBoardLead:
+      type: object
+      required: [id, name, organization_id]
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        organization_id:
+          type: string
+          format: uuid
+        stage_id:
+          type: [string, "null"]
+          format: uuid
+        pipeline_id:
+          type: [string, "null"]
+          format: uuid
+        assigned_user_id:
+          type: [string, "null"]
+          format: uuid
+        assignee:
+          oneOf:
+            - $ref: "#/components/schemas/UserSummary"
+            - type: "null"
+        interest_property:
+          oneOf:
+            - $ref: "#/components/schemas/PropertySummary"
+            - type: "null"
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeadEnrichmentTag"
+        tasks_count:
+          $ref: "#/components/schemas/LeadTaskCount"
+        lead_meta:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeadMeta"
+    LeadMetaFilters:
+      type: object
+      required: [campaigns, adsets, ads]
+      properties:
+        campaigns:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeadMetaCampaignOption"
+        adsets:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeadMetaAdsetOption"
+        ads:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeadMetaAdOption"
+    LeadMetaCampaignOption:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    LeadMetaAdsetOption:
+      type: object
+      required: [id, name, campaignId]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        campaignId:
+          type: string
+    LeadMetaAdOption:
+      type: object
+      required: [id, name, adsetId, campaignId]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        adsetId:
+          type: string
+        campaignId:
+          type: string
