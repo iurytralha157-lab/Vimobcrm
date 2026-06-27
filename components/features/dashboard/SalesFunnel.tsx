@@ -172,11 +172,11 @@ export function SalesFunnel({ data, isLoading }: SalesFunnelProps) {
                   </TooltipTrigger>
                   <TooltipContent
                     side="right"
-                    className="app-card min-w-[160px] rounded-lg p-3 shadow-none animate-in fade-in zoom-in duration-200"
+                    className="min-w-[160px] rounded-lg border-0 bg-[var(--app-surface-solid)] p-3 text-[var(--app-text-primary)] shadow-[0_8px_20px_rgba(0,0,0,0.22)] animate-in fade-in zoom-in duration-200"
                   >
                     <div className="space-y-2">
                       <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{item.name}</p>
-                      <div className="space-y-1.5 border-t border-white/[0.045] pt-2">
+                      <div className="space-y-1.5 pt-2">
                         <div className="flex justify-between items-center gap-4">
                           <span className="text-xs text-muted-foreground font-medium">Leads:</span>
                           <span className="text-xs font-bold text-foreground tabular-nums">{item.value}</span>
@@ -195,7 +195,7 @@ export function SalesFunnel({ data, isLoading }: SalesFunnelProps) {
         </TooltipProvider>
 
         {/* Legenda inferior compacta */}
-        <div className="mt-2 pt-2 border-t border-white/[0.055]">
+        <div className="mt-2 pt-2">
           <div className="flex flex-wrap gap-x-3 gap-y-0.5 justify-center">
             {data.slice(0, 5).map((item, index) => (
               <div key={`${item.stage_key || item.name}-${index}`} className="flex items-center gap-1">

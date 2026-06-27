@@ -5,6 +5,7 @@ import { X, RotateCcw, Globe, Image as ImageIcon, Headphones, Video } from 'luci
 import { Button } from '@/components/ui/button';
 import { MessageBox } from '@/components/ui/message-box';
 import { cn } from '@/lib/utils';
+import { createClientId } from '@/lib/client-id';
 
 interface SimMessage {
   id: string;
@@ -61,7 +62,7 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
   }, [onHighlightNode]);
 
   const addMessage = useCallback((msg: Omit<SimMessage, 'id' | 'timestamp'>) => {
-    const newMsg: SimMessage = { ...msg, id: crypto.randomUUID(), timestamp: new Date() };
+    const newMsg: SimMessage = { ...msg, id: createClientId('sim-message'), timestamp: new Date() };
     setMessages(prev => [...prev, newMsg]);
     return newMsg;
   }, []);

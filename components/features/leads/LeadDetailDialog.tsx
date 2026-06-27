@@ -12,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Drawer, DrawerContent } from '@/components/ui/drawer';
+import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -497,7 +497,7 @@ export function LeadDetailDialog({
   const assigneeName = localLead.assignee?.name || '';
   const assigneeEmail = localLead.assignee?.email || '';
   const interestValue = Number(lead.valor_interesse || 0);
-  const leadTags = Array.isArray(lead.tags) ? lead.tags.filter(hasTagId) : [];
+  const leadTags = Array.isArray(localLead.tags) ? localLead.tags.filter(hasTagId) : [];
   const safeAllTags = Array.isArray(allTags) ? allTags.filter(Boolean) : [];
   const safeAllUsers = Array.isArray(allUsers) ? allUsers.filter(Boolean) : [];
   const canTransferLead = accessScope.canTransferAnyLead || (
@@ -530,35 +530,6 @@ export function LeadDetailDialog({
   const totalTasksCount = templateTasks.length;
   const leadTagIds = leadTags.map((tag) => tag.id);
   const availableTags = safeAllTags.filter(t => !leadTagIds.includes(t.id));
-  const handleAddTag = async (tagId: string) => {
-    // Optimistic update
-    const tagToAdd = safeAllTags.find(t => t.id === tagId);
-    if (tagToAdd && lead) {
-      // Logic for optimistic UI could go here if we wanted to manage local state
-    }
-
-    try {
-      setTagPopoverOpen(false);
-      await addTag.mutateAsync({
-        leadId: lead.id,
-        tagId
-      });
-      refetchStages();
-    } catch {
-      // Error handled by mutation
-    }
-  };
-  const handleRemoveTag = async (tagId: string) => {
-    try {
-      await removeTag.mutateAsync({
-        leadId: lead.id,
-        tagId
-      });
-      refetchStages();
-    } catch {
-      // Error handled by mutation
-    }
-  };
 
   const updatePipelineAssigneeCache = (nextLead: LeadDetailLead) => {
     const snapshots = queryClient.getQueriesData<PipelineCacheStage[]>({ queryKey: ['stages-with-leads'] });
@@ -617,6 +588,41 @@ export function LeadDetailDialog({
     return snapshots;
   };
 
+  const updatePipelineLeadCache = (leadIdToUpdate: string, patch: Partial<LeadDetailLead>) => {
+    const snapshots = queryClient.getQueriesData<PipelineCacheStage[]>({ queryKey: ['stages-with-leads'] });
+    const nextUpdatedAt = new Date().toISOString();
+
+    snapshots.forEach(([queryKey, cachedData]) => {
+      if (!Array.isArray(cachedData)) return;
+
+      let changed = false;
+      const nextStages = cachedData.map((stage) => {
+        if (!Array.isArray(stage?.leads)) return stage;
+
+        let stageChanged = false;
+        const nextLeads = stage.leads.map((stageLead) => {
+          if (stageLead?.id !== leadIdToUpdate) return stageLead;
+
+          changed = true;
+          stageChanged = true;
+          return {
+            ...stageLead,
+            ...patch,
+            updated_at: nextUpdatedAt,
+          };
+        });
+
+        return stageChanged ? { ...stage, leads: nextLeads } : stage;
+      });
+
+      if (changed) {
+        queryClient.setQueryData(queryKey, nextStages);
+      }
+    });
+
+    return snapshots;
+  };
+
   const restorePipelineCache = (snapshots: Array<[QueryKey, unknown]>) => {
     snapshots.forEach(([queryKey, data]) => {
       queryClient.setQueryData(queryKey, data);
@@ -626,6 +632,59 @@ export function LeadDetailDialog({
   const refreshPipelineInBackground = () => {
     queryClient.invalidateQueries({ queryKey: ['stages-with-leads'], refetchType: 'inactive' });
     refetchStages();
+  };
+
+  const handleAddTag = async (tagId: string) => {
+    const tagToAdd = safeAllTags.find(t => t.id === tagId);
+    if (!tagToAdd || !localLead) return;
+
+    const nextTags = [
+      ...leadTags,
+      {
+        id: tagToAdd.id,
+        name: tagToAdd.name,
+        color: tagToAdd.color,
+      },
+    ];
+    const previousLead: LeadDetailLead = { ...localLead, tags: localLead.tags ? [...localLead.tags] : [] };
+    const updatedLead: LeadDetailLead = { ...localLead, tags: nextTags };
+    const pipelineSnapshots = updatePipelineLeadCache(localLead.id, { tags: nextTags });
+
+    setTagPopoverOpen(false);
+    setLocalLead(updatedLead);
+
+    try {
+      await addTag.mutateAsync({
+        leadId: lead.id,
+        tagId
+      });
+      refreshPipelineInBackground();
+    } catch {
+      setLocalLead(previousLead);
+      restorePipelineCache(pipelineSnapshots);
+    }
+  };
+
+  const handleRemoveTag = async (tagId: string) => {
+    if (!localLead) return;
+
+    const nextTags = leadTags.filter((tag) => tag.id !== tagId);
+    const previousLead: LeadDetailLead = { ...localLead, tags: localLead.tags ? [...localLead.tags] : [] };
+    const updatedLead: LeadDetailLead = { ...localLead, tags: nextTags };
+    const pipelineSnapshots = updatePipelineLeadCache(localLead.id, { tags: nextTags });
+
+    setLocalLead(updatedLead);
+
+    try {
+      await removeTag.mutateAsync({
+        leadId: lead.id,
+        tagId
+      });
+      refreshPipelineInBackground();
+    } catch {
+      setLocalLead(previousLead);
+      restorePipelineCache(pipelineSnapshots);
+    }
   };
 
   const handleAssignUser = async (userId: string | null) => {
@@ -1046,7 +1105,7 @@ export function LeadDetailDialog({
   }];
 
   // Mobile content - defined as JSX variable (NOT a component function) to prevent re-mounting
-  const MobileContent = () => (<div className="flex flex-col h-full">
+  const MobileContent = () => (<div className="lead-detail-dialog flex h-full flex-col bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]">
       {/* Mobile Header - Compact */}
       <div className="relative px-4 pt-4 pb-3 border-b border-white/[0.055] bg-[var(--app-surface)]">
         {/* Close button */}
@@ -1117,7 +1176,7 @@ export function LeadDetailDialog({
         <div className="flex items-center gap-2 mb-3">
           {lead.phone && (
             <>
-              <Button variant="outline" size="sm" onClick={handleQuickPhone} className="h-9 flex-1 rounded-full border-2">
+              <Button variant="outline" size="sm" onClick={handleQuickPhone} className="h-9 flex-1 rounded-full border-0 bg-[var(--app-surface-soft)]">
                 <Phone className="h-4 w-4 mr-1.5" />
                 Ligar
               </Button>
@@ -1128,7 +1187,7 @@ export function LeadDetailDialog({
             </>
           )}
           {lead.email && (
-            <Button variant="outline" size="sm" onClick={handleQuickEmail} className="h-9 w-9 p-0 rounded-full border-2 shrink-0">
+            <Button variant="outline" size="sm" onClick={handleQuickEmail} className="h-9 w-9 shrink-0 rounded-full border-0 bg-[var(--app-surface-soft)] p-0">
               <Mail className="h-4 w-4" />
             </Button>
           )}
@@ -1152,10 +1211,10 @@ export function LeadDetailDialog({
                 <ChevronDown className="h-3 w-3 shrink-0 ml-auto" />
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-[calc(100vw-2rem)] p-2" align="start">
-              <div className="space-y-1 max-h-60 overflow-y-auto">
+            <PopoverContent className="w-[calc(100vw-2rem)] max-w-sm border-0 bg-[var(--app-surface-solid)] p-2 text-[var(--app-text-primary)] shadow-[0_14px_34px_rgba(0,0,0,0.22)]" align="start">
+              <div className="max-h-64 space-y-1 overflow-y-auto overscroll-contain pr-1 touch-pan-y scrollbar-thin">
                 {stages.map((stage, idx) => {
-                  const isActive = stage.id === lead.stage_id;
+                  const isActive = stage.id === localLead.stage_id;
                   const isPast = idx < currentStageIndex;
                   return (
                     <button key={stage.id} onClick={() => handleMoveToStage(stage.id)} className={cn("w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all", isActive ? "bg-primary text-primary-foreground" : isPast ? "bg-primary/10 text-primary hover:bg-primary/20" : "hover:bg-accent")}>
@@ -1223,8 +1282,8 @@ export function LeadDetailDialog({
       </div>
 
       {/* Mobile Tabs - Animated */}
-      <div className="border-b bg-background/95 backdrop-blur sticky top-0 z-10 overflow-hidden">
-        <div className="overflow-x-auto scrollbar-hide px-3 py-2">
+      <div className="sticky top-0 z-10 border-b border-transparent bg-[var(--app-surface-solid)]">
+        <div className="overflow-x-auto px-3 py-2 scrollbar-hide">
           <AnimatedTabNav
             tabs={tabs.map(tab => ({
               value: tab.id,
@@ -2989,7 +3048,10 @@ export function LeadDetailDialog({
     return (
       <>
         <Drawer open={!!lead} onOpenChange={() => onClose()} dismissible={!isEditingContact}>
-          <DrawerContent className="h-[95vh] max-h-[95vh] w-[95%] mx-auto rounded-t-xl" showHandle={!isEditingContact}>
+          <DrawerContent className="mx-auto h-[95vh] max-h-[95vh] w-[95%] overflow-hidden rounded-t-xl border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-[0_18px_42px_rgba(0,0,0,0.28)]" showHandle={!isEditingContact}>
+            <DrawerTitle className="sr-only">
+              {leadName ? `Detalhes do lead ${leadName}` : 'Detalhes do lead'}
+            </DrawerTitle>
             {/* Inline JSX instead of <MobileContent /> to prevent re-mounting */}
             {MobileContent()}
           </DrawerContent>

@@ -250,7 +250,7 @@ export function SiteAnalyticsTab() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-64">
+              <div className="h-64 min-h-[256px] min-w-[1px]">
                 <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                   <AreaChart data={chartData} margin={{ top: 8, right: 12, left: -18, bottom: 0 }}>
                     <defs>

@@ -37,7 +37,7 @@ export function DashboardChartTooltip({
 
   return (
     <div className={cn(
-      "app-card min-w-[140px] rounded-xl p-3 shadow-xl animate-in fade-in zoom-in duration-200",
+      "min-w-[140px] rounded-xl border-0 bg-[var(--app-surface-solid)] p-3 text-[var(--app-text-primary)] shadow-[0_8px_20px_rgba(0,0,0,0.22)] animate-in fade-in zoom-in duration-200",
       className
     )}>
       {displayTitle && (
@@ -68,7 +68,7 @@ export function DashboardChartTooltip({
         })}
 
         {showTotal && payload.length > 1 && (
-          <div className="mt-1.5 flex items-center justify-between gap-4 border-t border-white/[0.045] pt-1.5">
+          <div className="mt-1.5 flex items-center justify-between gap-4 pt-1.5">
             <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Total</span>
             <span className="text-xs font-black text-foreground tabular-nums">
               {payload.reduce((acc, entry) => acc + (Number(entry.value) || 0), 0)}

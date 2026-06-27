@@ -91,7 +91,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	siteHandler := site.NewHandler(site.NewRepository(postgres, site.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
-	}))
+	}), realtimeHub)
 	teamsHandler := teams.NewHandler(teams.NewRepository(postgres, teams.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,

@@ -99,6 +99,15 @@ const formatCompactCurrency = (value: number): string => {
   return `R$${value.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`;
 };
 
+const getLeadTagsSignature = (lead?: Pick<PipelineLead, 'tags'> | null) => {
+  if (!Array.isArray(lead?.tags)) return '';
+
+  return lead.tags
+    .map((tag) => `${tag?.id || ''}:${tag?.name || ''}:${tag?.color || ''}`)
+    .sort()
+    .join('|');
+};
+
 const NO_VISIBLE_USER_ID = '00000000-0000-0000-0000-000000000000';
 const PIPELINE_AUTO_SCROLLER_OPTIONS = {
   startFromPercentage: 0.2,
@@ -436,6 +445,7 @@ export default function Pipelines() {
         updatedLead.deal_status !== selectedLead.deal_status ||
         updatedLead.assigned_user_id !== selectedLead.assigned_user_id ||
         updatedLead.name !== selectedLead.name ||
+        getLeadTagsSignature(updatedLead) !== getLeadTagsSignature(selectedLead) ||
         updatedLead.updated_at !== selectedLead.updated_at;
 
       if (hasChanged) nextLead = updatedLead;
@@ -1031,7 +1041,7 @@ export default function Pipelines() {
                   align="start"
                   sideOffset={8}
                   collisionPadding={12}
-                  className="pipeline-selector-menu app-card w-64 overflow-hidden rounded-[8px] p-0 text-foreground"
+                  className="pipeline-selector-menu w-64 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)]"
                 >
                   <p className="px-3 pb-1.5 pt-3 text-[10px] font-extralight text-muted-foreground uppercase tracking-widest">Suas Pipelines</p>
                   <div className="pipeline-selector-scroll max-h-[320px] overflow-y-auto px-1 pb-1">

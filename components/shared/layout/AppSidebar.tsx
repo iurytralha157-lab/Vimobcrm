@@ -8,7 +8,7 @@ import {
   LayoutDashboard, Kanban, Building2, Shuffle,
   ChevronLeft, ChevronRight, Users, MessageSquare, Calendar, DollarSign,
   FileText, Receipt, TrendingUp, BarChart3, Zap, MapPin,
-  Globe, Trophy, CreditCard, Tags, Target, Activity, Palette, Search, Menu, Megaphone, Settings, Plug
+  Globe, Trophy, CreditCard, Tags, Target, Activity, Megaphone, Settings, Plug
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -52,6 +52,12 @@ const allNavItems: NavItem[] = [
       icon: LayoutDashboard,
       labelKey: 'dashboardGeneral',
       path: '/dashboard'
+    }, {
+      icon: Globe,
+      labelKey: 'dashboardSite',
+      path: '/dashboard/site',
+      adminOnly: true,
+      module: 'site'
     }, {
       icon: Megaphone,
       labelKey: 'dashboardCampaigns',
@@ -204,33 +210,6 @@ const allNavItems: NavItem[] = [
       labelKey: 'arenaActivities',
       path: '/gamificacao#activities'
     }]
-  }, {
-    icon: Globe,
-    labelKey: 'site',
-    path: '/settings/site',
-    adminOnly: true,
-    module: 'site',
-    children: [{
-      icon: Globe,
-      labelKey: 'siteGeneral',
-      path: '/settings/site'
-    }, {
-      icon: Palette,
-      labelKey: 'siteAppearance',
-      path: '/settings/site?tab=appearance'
-    }, {
-      icon: Menu,
-      labelKey: 'siteMenu',
-      path: '/settings/site?tab=menu'
-    }, {
-      icon: Search,
-      labelKey: 'siteSeo',
-      path: '/settings/site?tab=seo'
-    }, {
-      icon: BarChart3,
-      labelKey: 'siteAnalytics',
-      path: '/settings/site?tab=analytics'
-    }]
   }
 ];
 
@@ -257,6 +236,12 @@ const bottomItems: NavItem[] = [
       icon: Plug,
       labelKey: 'settingsIntegrations',
       path: '/settings?tab=integrations'
+    }, {
+      icon: Globe,
+      labelKey: 'site',
+      path: '/settings/site',
+      adminOnly: true,
+      module: 'site'
     }]
   }
 ];

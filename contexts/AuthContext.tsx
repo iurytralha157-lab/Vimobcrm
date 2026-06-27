@@ -634,7 +634,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Executar limpeza profunda e redirecionar para login com cache bust
     await performFullCacheClear({
       clearAuth: true,
-      redirectTo: '/login'
+      redirectTo: '/login',
+      clearBrowserCaches: false
     });
   };
 

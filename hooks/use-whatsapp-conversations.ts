@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient, type Query } from "@tanstack/rea
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import { whatsappAPI } from "@/lib/api/whatsapp";
+import { createClientId } from "@/lib/client-id";
 
 const WHATSAPP_SEND_COOLDOWN_MS = 1000;
 const lastWhatsAppSendByUser = new Map<string, number>();
@@ -237,7 +238,7 @@ export function useSendWhatsAppMessage() {
     },
     onMutate: async (variables) => {
       const conversationId = variables.conversation.id;
-      const optimisticId = crypto.randomUUID();
+      const optimisticId = createClientId('message');
       variables._optimisticId = optimisticId;
 
       const messagesPredicate = (q: Query) =>

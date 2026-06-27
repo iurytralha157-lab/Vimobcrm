@@ -10,17 +10,23 @@ import (
 	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 type Handler struct {
-	repo Repository
+	repo      Repository
+	publisher realtime.Publisher
 }
 
 const maxSiteAssetBytes = 10 << 20
 
-func NewHandler(repo Repository) Handler {
-	return Handler{repo: repo}
+func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
+	publisher := realtime.Publisher(realtime.NoopPublisher{})
+	if len(publishers) > 0 && publishers[0] != nil {
+		publisher = publishers[0]
+	}
+	return Handler{repo: repo, publisher: publisher}
 }
 
 func (handler Handler) ShowSite(w http.ResponseWriter, r *http.Request) {
@@ -311,6 +317,12 @@ func (handler Handler) SubmitPublicContact(w http.ResponseWriter, r *http.Reques
 		writeSiteError(w, r, err)
 		return
 	}
+	leadID, _ := result["lead_id"].(string)
+	handler.publishSiteEvent("lead.created", request.OrganizationID, map[string]any{
+		"leadId":    leadID,
+		"source":    "site",
+		"sessionId": optionalStringValue(request.SessionID),
+	})
 	httpserver.WriteJSON(w, http.StatusCreated, result)
 }
 
@@ -323,7 +335,28 @@ func (handler Handler) TrackPublicEvent(w http.ResponseWriter, r *http.Request) 
 		writeSiteError(w, r, err)
 		return
 	}
+	handler.publishSiteEvent("site.analytics_event.created", request.OrganizationID, map[string]any{
+		"eventType":  request.EventType,
+		"pagePath":   request.PagePath,
+		"propertyId": optionalStringValue(request.PropertyID),
+		"sessionId":  optionalStringValue(request.SessionID),
+	})
 	httpserver.WriteJSON(w, http.StatusCreated, map[string]bool{"ok": true})
+}
+
+func (handler Handler) publishSiteEvent(eventType string, organizationID string, data map[string]any) {
+	organizationID = strings.TrimSpace(organizationID)
+	if organizationID == "" {
+		return
+	}
+	handler.publisher.Publish(realtime.NewEvent(eventType, organizationID, "", data))
+}
+
+func optionalStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func organizationContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {

@@ -118,7 +118,7 @@ export function EditQueueDialog({ queue, open, onOpenChange }: EditQueueDialogPr
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="app-card max-w-2xl">
+      <DialogContent className="max-w-2xl border-0 bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] shadow-2xl">
         <DialogHeader>
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
@@ -135,13 +135,13 @@ export function EditQueueDialog({ queue, open, onOpenChange }: EditQueueDialogPr
 
         <div className="space-y-4 mt-4">
           {/* Info text */}
-          <div className="p-3 rounded-lg bg-white/[0.045] text-sm text-muted-foreground">
+          <div className="rounded-lg bg-[var(--app-surface-soft)] p-3 text-sm text-[var(--app-text-secondary)]">
             A distribuição será automática para todos os leads que entrarem nesta fila.
             Ajuste o percentual de cada usuário para determinar a proporção de leads que ele receberá.
           </div>
 
           {/* Members Table */}
-          <div className="border border-white/[0.055] rounded-lg overflow-hidden">
+          <div className="overflow-hidden rounded-lg border-0 bg-[var(--app-surface)]">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -255,7 +255,7 @@ export function EditQueueDialog({ queue, open, onOpenChange }: EditQueueDialogPr
           </div>
 
           {/* Actions */}
-          <div className="flex justify-end gap-2 pt-4 border-t">
+          <div className="flex justify-end gap-2 pt-4">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>

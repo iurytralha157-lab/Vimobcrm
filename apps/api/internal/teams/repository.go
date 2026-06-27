@@ -122,7 +122,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		return Team{}, err
 	}
 
-	if err := replaceMembers(ctx, tx, teamID, normalizeMemberInputs(request)); err != nil {
+	if err := replaceMembers(ctx, tx, tenantContext.OrganizationID, teamID, normalizeMemberInputs(request)); err != nil {
 		return Team{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -192,10 +192,10 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 				memberInputs[index].IsLeader = current[memberInputs[index].UserID]
 			}
 		}
-		if err := replaceMembers(ctx, tx, teamID, memberInputs); err != nil {
+		if err := replaceMembers(ctx, tx, tenantContext.OrganizationID, teamID, memberInputs); err != nil {
 			return Team{}, err
 		}
-		if err := syncRoundRobinWithTeam(ctx, tx, teamID, memberUserIDs(memberInputs)); err != nil {
+		if err := syncRoundRobinWithTeam(ctx, tx, tenantContext.OrganizationID, teamID, memberUserIDs(memberInputs)); err != nil {
 			return Team{}, err
 		}
 	}
@@ -582,16 +582,39 @@ func (repo Repository) currentLeaderMap(ctx context.Context, tx pgx.Tx, teamID s
 	return result, rows.Err()
 }
 
-func replaceMembers(ctx context.Context, tx pgx.Tx, teamID string, members []TeamMemberInput) error {
+func replaceMembers(ctx context.Context, tx pgx.Tx, organizationID string, teamID string, members []TeamMemberInput) error {
+	var teamExists bool
+	if err := tx.QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.teams
+			where organization_id = $1::uuid
+			  and id = $2::uuid
+		)
+	`, organizationID, teamID).Scan(&teamExists); err != nil {
+		return err
+	}
+	if !teamExists {
+		return ErrTeamNotFound
+	}
+
 	normalized := normalizeMembers(members)
 	ids := memberUserIDs(normalized)
 
 	if len(ids) == 0 {
-		_, err := tx.Exec(ctx, `delete from public.team_members where team_id = $1::uuid`, teamID)
+		_, err := tx.Exec(ctx, `
+			delete from public.team_members
+			where organization_id = $1::uuid
+			  and team_id = $2::uuid
+		`, organizationID, teamID)
 		return err
 	}
 
-	args := []any{teamID}
+	if err := ensureUsersBelongToOrganization(ctx, tx, organizationID, ids); err != nil {
+		return err
+	}
+
+	args := []any{organizationID, teamID}
 	placeholders := []string{}
 	for _, id := range ids {
 		args = append(args, id)
@@ -599,19 +622,34 @@ func replaceMembers(ctx context.Context, tx pgx.Tx, teamID string, members []Tea
 	}
 	if _, err := tx.Exec(ctx, `
 		delete from public.team_members
-		where team_id = $1::uuid
+		where organization_id = $1::uuid
+		  and team_id = $2::uuid
 		  and user_id not in (`+strings.Join(placeholders, ", ")+`)
 	`, args...); err != nil {
 		return err
 	}
 
 	for _, member := range normalized {
-		_, err := tx.Exec(ctx, `
-			insert into public.team_members (team_id, user_id, is_leader)
-			values ($1::uuid, $2::uuid, $3)
-			on conflict (team_id, user_id) do update
-			set is_leader = excluded.is_leader
-		`, teamID, member.UserID, member.IsLeader)
+		result, err := tx.Exec(ctx, `
+			update public.team_members
+			set is_leader = $4,
+			    is_active = true,
+			    updated_at = now()
+			where organization_id = $1::uuid
+			  and team_id = $2::uuid
+			  and user_id = $3::uuid
+		`, organizationID, teamID, member.UserID, member.IsLeader)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() > 0 {
+			continue
+		}
+
+		_, err = tx.Exec(ctx, `
+			insert into public.team_members (organization_id, team_id, user_id, is_leader)
+			values ($1::uuid, $2::uuid, $3::uuid, $4)
+		`, organizationID, teamID, member.UserID, member.IsLeader)
 		if err != nil {
 			return err
 		}
@@ -619,12 +657,49 @@ func replaceMembers(ctx context.Context, tx pgx.Tx, teamID string, members []Tea
 	return nil
 }
 
-func syncRoundRobinWithTeam(ctx context.Context, tx pgx.Tx, teamID string, newMemberIDs []string) error {
+func ensureUsersBelongToOrganization(ctx context.Context, tx pgx.Tx, organizationID string, userIDs []string) error {
+	args := []any{organizationID}
+	placeholders := make([]string, 0, len(userIDs))
+	for _, userID := range userIDs {
+		args = append(args, userID)
+		placeholders = append(placeholders, fmt.Sprintf("$%d::uuid", len(args)))
+	}
+
+	var validCount int
+	if err := tx.QueryRow(ctx, `
+		select count(distinct u.id)
+		from public.users u
+		left join public.organization_members om
+		  on om.user_id = u.id
+		 and om.organization_id = $1::uuid
+		 and om.is_active = true
+		where u.id in (`+strings.Join(placeholders, ", ")+`)
+		  and coalesce(u.is_active, true) = true
+		  and (u.organization_id = $1::uuid or om.id is not null)
+	`, args...).Scan(&validCount); err != nil {
+		return err
+	}
+	if validCount != len(userIDs) {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
+func syncRoundRobinWithTeam(ctx context.Context, tx pgx.Tx, organizationID string, teamID string, newMemberIDs []string) error {
 	rows, err := tx.Query(ctx, `
-		select id::text, round_robin_id::text, user_id::text, coalesce(position, 0), coalesce(weight, 10)
-		from public.round_robin_members
-		where team_id = $1::uuid
-	`, teamID)
+		select
+			rrm.id::text,
+			rrm.round_robin_id::text,
+			rrm.user_id::text,
+			coalesce(rrm.position, 0),
+			coalesce(rrm.weight, 10)
+		from public.round_robin_members rrm
+		join public.round_robins rr
+		  on rr.id = rrm.round_robin_id
+		 and rr.organization_id = rrm.organization_id
+		where rr.organization_id = $1::uuid
+		  and rr.team_id = $2::uuid
+	`, organizationID, teamID)
 	if err != nil {
 		return err
 	}
@@ -666,7 +741,11 @@ func syncRoundRobinWithTeam(ctx context.Context, tx pgx.Tx, teamID string, newMe
 				maxPosition = member.Position
 			}
 			if _, keep := nextIDs[member.UserID]; !keep {
-				if _, err := tx.Exec(ctx, `delete from public.round_robin_members where id = $1::uuid`, member.ID); err != nil {
+				if _, err := tx.Exec(ctx, `
+					delete from public.round_robin_members
+					where organization_id = $1::uuid
+					  and id = $2::uuid
+				`, organizationID, member.ID); err != nil {
 					return err
 				}
 			}
@@ -677,11 +756,13 @@ func syncRoundRobinWithTeam(ctx context.Context, tx pgx.Tx, teamID string, newMe
 				continue
 			}
 			if _, err := tx.Exec(ctx, `
-				insert into public.round_robin_members (round_robin_id, user_id, team_id, weight, position)
-				values ($1::uuid, $2::uuid, $3::uuid, $4, $5)
+				insert into public.round_robin_members (organization_id, round_robin_id, user_id, weight, position, is_active)
+				values ($1::uuid, $2::uuid, $3::uuid, $4, $5, true)
 				on conflict (round_robin_id, user_id) do update
-				set team_id = excluded.team_id
-			`, roundRobinID, userID, teamID, defaultWeight, position); err != nil {
+				set weight = excluded.weight,
+				    position = excluded.position,
+				    is_active = true
+			`, organizationID, roundRobinID, userID, defaultWeight, position); err != nil {
 				return err
 			}
 			position++

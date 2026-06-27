@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type MutableRefObject } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { connectBackendRealtime, type BackendRealtimeEvent } from "@/lib/api/realtime";
 import { useAuth } from "@/contexts/AuthContext";
 import { notifyLeadRealtimeChange } from "@/contexts/LeadRealtimeBus";
@@ -12,6 +12,24 @@ const WHATSAPP_MESSAGE_EVENTS = new Set([
   "whatsapp.message.updated",
   "whatsapp.message.received",
 ]);
+
+const DASHBOARD_REALTIME_QUERY_KEYS = [
+  "dashboard-stats",
+  "enhanced-dashboard-stats",
+  "leads-chart-data",
+  "funnel-data",
+  "lead-sources-data",
+  "deals-evolution",
+  "dashboard-extra-counts",
+  "dashboard-recent-activities",
+  "recent-activities",
+  "top-brokers",
+  "upcoming-tasks",
+  "dashboard-alerts",
+  "lead-analytics",
+  "site-analytics",
+  "site-analytics-detailed",
+] as const;
 
 export function BackendRealtimeBus() {
   const queryClient = useQueryClient();
@@ -41,6 +59,11 @@ export function BackendRealtimeBus() {
 
         if (event.type.startsWith("whatsapp.")) {
           handleWhatsAppEvent(event, queryClient);
+          return;
+        }
+
+        if (event.type.startsWith("site.")) {
+          invalidateDashboardRealtimeQueries(queryClient);
           return;
         }
 
@@ -76,13 +99,14 @@ function handleLeadEvent(event: BackendRealtimeEvent) {
 
 function handleScheduleEvent(
   event: BackendRealtimeEvent,
-  queryClient: ReturnType<typeof useQueryClient>,
+  queryClient: QueryClient,
   debounceRef: MutableRefObject<ReturnType<typeof setTimeout> | null>,
 ) {
   if (debounceRef.current) clearTimeout(debounceRef.current);
 
   debounceRef.current = setTimeout(() => {
     void queryClient.invalidateQueries({ queryKey: ["schedule-events"], refetchType: "active" });
+    invalidateDashboardRealtimeQueries(queryClient);
 
     const eventId = getString(event.data, "eventId");
     if (eventId) {
@@ -109,7 +133,7 @@ function handleScheduleEvent(
   }, 150);
 }
 
-function handleWhatsAppEvent(event: BackendRealtimeEvent, queryClient: ReturnType<typeof useQueryClient>) {
+function handleWhatsAppEvent(event: BackendRealtimeEvent, queryClient: QueryClient) {
   const conversationId = getString(event.data, "conversationId");
   const sessionId = getString(event.data, "sessionId");
   const leadId = getString(event.data, "leadId");
@@ -174,6 +198,15 @@ function handleWhatsAppEvent(event: BackendRealtimeEvent, queryClient: ReturnTyp
       });
     }
   }
+}
+
+function invalidateDashboardRealtimeQueries(queryClient: QueryClient) {
+  DASHBOARD_REALTIME_QUERY_KEYS.forEach((queryKey) => {
+    void queryClient.invalidateQueries({
+      queryKey: [queryKey],
+      refetchType: "active",
+    });
+  });
 }
 
 function getString(data: Record<string, unknown> | undefined, key: string) {

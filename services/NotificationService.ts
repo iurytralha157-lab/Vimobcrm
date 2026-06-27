@@ -35,6 +35,16 @@ export interface SendNotificationParams {
   isTest?: boolean;
 }
 
+function describeNotificationError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'object' && error && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message.trim()) return message;
+  }
+  if (typeof error === 'string') return error;
+  return 'notification dispatcher unavailable';
+}
+
 class NotificationService {
   /**
    * Centralized method to send notifications via the Dispatcher Edge Function
@@ -72,14 +82,16 @@ class NotificationService {
       });
 
       if (error) {
-        console.error(`[NotificationService] Error invoking dispatcher for ${finalEventKey}:`, error);
-        return { success: false, error };
+        const message = describeNotificationError(error);
+        console.warn(`[NotificationService] Dispatcher unavailable for ${finalEventKey}: ${message}`);
+        return { success: false, error: message };
       }
 
       return data;
     } catch (err) {
-      console.error(`[NotificationService] Unexpected error sending ${finalEventKey}:`, err);
-      return { success: false, error: err };
+      const message = describeNotificationError(err);
+      console.warn(`[NotificationService] Dispatcher unavailable for ${finalEventKey}: ${message}`);
+      return { success: false, error: message };
     }
   }
 }

@@ -6,8 +6,6 @@ import { notificationsAPI } from '@/lib/api/notifications';
 export type { Notification } from '@/lib/api/notifications';
 
 let globalAudioContext: AudioContext | null = null;
-let notificationBuffer: AudioBuffer | null = null;
-let newLeadBuffer: AudioBuffer | null = null;
 let audioInitialized = false;
 
 type WebkitAudioWindow = Window & typeof globalThis & {
@@ -21,26 +19,6 @@ async function initializeAudio(): Promise<void> {
     const AudioContextConstructor = window.AudioContext || (window as WebkitAudioWindow).webkitAudioContext;
     if (!AudioContextConstructor) return;
     globalAudioContext = new AudioContextConstructor();
-
-    const loadAudioBuffer = async (url: string): Promise<AudioBuffer | null> => {
-      try {
-        const response = await fetch(url);
-        if (!response.ok) return null;
-
-        const arrayBuffer = await response.arrayBuffer();
-        return await globalAudioContext!.decodeAudioData(arrayBuffer);
-      } catch {
-        return null;
-      }
-    };
-
-    const [notifBuffer, leadBuffer] = await Promise.all([
-      loadAudioBuffer('/sounds/notification.mp3'),
-      loadAudioBuffer('/sounds/new-lead.mp3'),
-    ]);
-
-    notificationBuffer = notifBuffer;
-    newLeadBuffer = leadBuffer;
     audioInitialized = true;
   } catch {
     audioInitialized = false;
@@ -60,23 +38,26 @@ async function resumeAudioContext(): Promise<void> {
 function playSound(type: 'notification' | 'new-lead', volume: number = 0.7): void {
   if (!globalAudioContext || !audioInitialized) return;
 
-  const buffer = type === 'new-lead' ? newLeadBuffer : notificationBuffer;
-  if (!buffer) return;
-
   try {
     if (globalAudioContext.state === 'suspended') {
       void globalAudioContext.resume();
     }
 
-    const source = globalAudioContext.createBufferSource();
-    source.buffer = buffer;
-
+    const now = globalAudioContext.currentTime;
+    const oscillator = globalAudioContext.createOscillator();
     const gainNode = globalAudioContext.createGain();
-    gainNode.gain.value = volume;
 
-    source.connect(gainNode);
+    oscillator.type = 'sine';
+    oscillator.frequency.value = type === 'new-lead' ? 880 : 660;
+
+    gainNode.gain.setValueAtTime(0.0001, now);
+    gainNode.gain.linearRampToValueAtTime(volume * 0.08, now + 0.01);
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+
+    oscillator.connect(gainNode);
     gainNode.connect(globalAudioContext.destination);
-    source.start(0);
+    oscillator.start(now);
+    oscillator.stop(now + 0.2);
   } catch {
     // Sound should never break notification rendering.
   }

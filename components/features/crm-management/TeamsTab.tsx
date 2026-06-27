@@ -95,7 +95,7 @@ export function TeamsTab() {
           <Skeleton className="h-8 w-48" />
           <Skeleton className="h-10 w-32" />
         </div>
-        <div className="space-y-2 rounded-lg border border-white/[0.055] bg-[var(--app-surface)] p-3">
+        <div className="space-y-2 rounded-lg border-0 bg-[var(--app-surface)] p-3">
           {[...Array(4)].map((_, index) => (
             <Skeleton key={index} className="h-16 w-full" />
           ))}
@@ -127,7 +127,7 @@ export function TeamsTab() {
         </div>
 
         {visibleTeams.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-white/[0.08] bg-white/[0.025] py-16 text-center">
+          <div className="rounded-xl border-0 bg-[var(--app-surface)] py-16 text-center">
             <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
               <Users className="h-8 w-8 text-primary" />
             </div>
@@ -143,10 +143,10 @@ export function TeamsTab() {
             )}
           </div>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-white/[0.055] bg-[var(--app-surface)] [&_td:nth-child(n+3)]:hidden [&_th:nth-child(n+3)]:hidden md:[&_td:nth-child(n+3)]:table-cell md:[&_th:nth-child(n+3)]:table-cell">
+          <div className="overflow-hidden rounded-lg border-0 bg-[var(--app-surface)] [&_td:nth-child(n+3)]:hidden [&_th:nth-child(n+3)]:hidden md:[&_td:nth-child(n+3)]:table-cell md:[&_th:nth-child(n+3)]:table-cell">
             <Table className="table-fixed md:table-auto">
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
+              <TableHeader className="[&_tr]:border-0">
+                <TableRow className="border-0 bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-soft)]">
                   <TableHead className="w-[64px] px-3 md:w-[72px] md:px-4">Status</TableHead>
                   <TableHead className="w-auto">Nome da equipe</TableHead>
                   <TableHead>Membros</TableHead>
@@ -161,7 +161,11 @@ export function TeamsTab() {
                   const creator = team.created_by_user?.name || team.created_by_user?.email || 'Não informado';
 
                   return (
-                    <TableRow key={team.id} className="cursor-pointer" onClick={() => handleEdit(team)}>
+                    <TableRow
+                      key={team.id}
+                      className="cursor-pointer border-0 bg-[var(--app-surface)] hover:bg-[var(--app-surface-hover)]"
+                      onClick={() => handleEdit(team)}
+                    >
                       <TableCell className="px-3 md:px-4" onClick={(event) => event.stopPropagation()}>
                         {accessScope.isAdmin ? (
                           <Switch
@@ -176,7 +180,7 @@ export function TeamsTab() {
 
                       <TableCell className="min-w-0">
                         <div className="flex min-w-0 items-center gap-2.5 md:gap-3">
-                          <Avatar className="h-9 w-9 shrink-0 border-2 border-background md:h-10 md:w-10">
+                          <Avatar className="h-9 w-9 shrink-0 border-0 md:h-10 md:w-10">
                             <AvatarImage src={team.logo_url || undefined} />
                             <AvatarFallback className="bg-primary text-primary-foreground text-xs">
                               {getInitials(team.name || 'EQ')}
@@ -208,7 +212,7 @@ export function TeamsTab() {
                                         openAvailability(member);
                                       }}
                                     >
-                                      <Avatar className="h-8 w-8 border border-background shadow-sm">
+                                      <Avatar className="h-8 w-8 border-0 shadow-sm">
                                         <AvatarImage src={member.user?.avatar_url || undefined} />
                                         <AvatarFallback className="bg-primary text-[10px] text-primary-foreground">
                                           {getInitials(member.user?.name || '?')}

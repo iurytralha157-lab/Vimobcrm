@@ -253,7 +253,7 @@ func (repo Repository) SlaSummary(ctx context.Context, tenantContext tenant.Cont
 		)
 		from public.leads l
 		where l.organization_id = $1::uuid
-		  and ($2 = '' or l.pipeline_id = $2::uuid)
+		  and ($2 = '' or l.pipeline_id = nullif($2, '')::uuid)
 	`, tenantContext.OrganizationID, values.Get("pipelineId"))
 }
 
@@ -274,7 +274,7 @@ func (repo Repository) SlaPerformanceByUser(ctx context.Context, tenantContext t
 		from public.users u
 		left join public.leads l on l.assigned_user_id = u.id
 		  and l.organization_id = $1::uuid
-		  and ($2 = '' or l.pipeline_id = $2::uuid)
+		  and ($2 = '' or l.pipeline_id = nullif($2, '')::uuid)
 		  and ($3 = '' or l.created_at >= nullif($3, '')::timestamptz)
 		  and ($4 = '' or l.created_at <= nullif($4, '')::timestamptz)
 		where u.organization_id = $1::uuid
@@ -343,8 +343,8 @@ func (repo Repository) VGVStats(ctx context.Context, tenantContext tenant.Contex
 		where l.organization_id = $1::uuid
 		  and ($2 = '' or l.created_at >= nullif($2, '')::timestamptz)
 		  and ($3 = '' or l.created_at <= nullif($3, '')::timestamptz)
-		  and ($4 = '' or l.assigned_user_id = $4::uuid)
-		  and ($5 = '' or l.pipeline_id = $5::uuid)
+		  and ($4 = '' or l.assigned_user_id = nullif($4, '')::uuid)
+		  and ($5 = '' or l.pipeline_id = nullif($5, '')::uuid)
 	`, tenantContext.OrganizationID, values.Get("dateFrom"), values.Get("dateTo"), values.Get("userId"), values.Get("pipelineId"))
 }
 
@@ -383,7 +383,7 @@ func (repo Repository) StageVGV(ctx context.Context, tenantContext tenant.Contex
 		)
 		from public.leads l
 		where l.organization_id = $1::uuid
-		  and ($2 = '' or l.pipeline_id = $2::uuid)
+		  and ($2 = '' or l.pipeline_id = nullif($2, '')::uuid)
 		  and l.stage_id is not null
 		group by l.stage_id
 	`, tenantContext.OrganizationID, values.Get("pipelineId"))

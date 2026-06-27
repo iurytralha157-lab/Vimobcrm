@@ -673,7 +673,7 @@ export function AccountTab() {
                     Sua senha fica protegida e só abre quando você escolher atualizar.
                   </p>
                 )}
-                <p className="text-xs text-amber-300/85">{passwordStatus.lastChangeText}</p>
+                <p className="text-xs text-[var(--app-text-tertiary)]">{passwordStatus.lastChangeText}</p>
                 {passwordStatus.isLocked && (
                   <p className="text-xs text-destructive">
                     Por segurança, nova alteração disponível em {passwordStatus.remainingText}.

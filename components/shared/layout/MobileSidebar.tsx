@@ -42,8 +42,6 @@ import {
   Activity,
   Tags,
   MapPin,
-  Palette,
-  Search,
   Settings,
   Megaphone,
   Plug,
@@ -75,6 +73,7 @@ const allNavItems: NavItem[] = [
     path: '/dashboard',
     children: [
       { icon: LayoutDashboard, labelKey: 'dashboardGeneral', path: '/dashboard' },
+      { icon: Globe, labelKey: 'dashboardSite', path: '/dashboard/site', adminOnly: true, module: 'site' },
       { icon: Megaphone, labelKey: 'dashboardCampaigns', path: '/dashboard/campaigns', adminOnly: true },
     ],
   },
@@ -146,20 +145,6 @@ const allNavItems: NavItem[] = [
       { icon: Activity, labelKey: 'arenaActivities', path: '/gamificacao#activities' },
     ],
   },
-  {
-    icon: Globe,
-    labelKey: 'site',
-    path: '/settings/site',
-    adminOnly: true,
-    module: 'site',
-    children: [
-      { icon: Globe, labelKey: 'siteGeneral', path: '/settings/site' },
-      { icon: Palette, labelKey: 'siteAppearance', path: '/settings/site?tab=appearance' },
-      { icon: Menu, labelKey: 'siteMenu', path: '/settings/site?tab=menu' },
-      { icon: Search, labelKey: 'siteSeo', path: '/settings/site?tab=seo' },
-      { icon: BarChart3, labelKey: 'siteAnalytics', path: '/settings/site?tab=analytics' },
-    ],
-  },
 ];
 
 const bottomItems: NavItem[] = [
@@ -172,6 +157,7 @@ const bottomItems: NavItem[] = [
       { icon: Users, labelKey: 'settingsUsers', path: '/settings?tab=team', adminOnly: true },
       { icon: CreditCard, labelKey: 'settingsBilling', path: '/settings?tab=subscription', adminOnly: true },
       { icon: Plug, labelKey: 'settingsIntegrations', path: '/settings?tab=integrations' },
+      { icon: Globe, labelKey: 'site', path: '/settings/site', adminOnly: true, module: 'site' },
     ],
   },
 ];

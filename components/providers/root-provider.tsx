@@ -7,6 +7,7 @@ import { ThemeProviderWrapper } from './theme-provider'
 import { TelemetryProvider } from './telemetry-provider'
 import { Toaster } from 'sonner'
 import { LanguageProvider } from '@/contexts/LanguageContext'
+import { SidebarProvider } from '@/contexts/SidebarContext'
 
 export function RootProvider({ children }: { children: ReactNode }) {
   return (
@@ -14,7 +15,9 @@ export function RootProvider({ children }: { children: ReactNode }) {
       <AuthProviderWrapper>
         <QueryProvider>
           <TelemetryProvider />
-          <LanguageProvider>{children}</LanguageProvider>
+          <LanguageProvider>
+            <SidebarProvider>{children}</SidebarProvider>
+          </LanguageProvider>
           <Toaster />
         </QueryProvider>
       </AuthProviderWrapper>

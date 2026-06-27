@@ -18,7 +18,7 @@ const DrawerOverlay = React.forwardRef<
   React.ElementRef<typeof DrawerPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Overlay>
 >(({ className, ...props }, ref) => (
-  <DrawerPrimitive.Overlay ref={ref} className={cn("fixed inset-0 z-50 bg-black/80", className)} {...props} />
+  <DrawerPrimitive.Overlay ref={ref} className={cn("vimob-dialog-overlay fixed inset-0 z-50 bg-black/80", className)} {...props} />
 ));
 DrawerOverlay.displayName = DrawerPrimitive.Overlay.displayName;
 
@@ -35,14 +35,14 @@ const DrawerContent = React.forwardRef<
     <DrawerPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed z-50 flex flex-col border bg-background",
+        "vimob-dialog-content fixed z-50 flex flex-col border-0 bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]",
         "inset-x-0 bottom-0 mt-24 h-auto rounded-t-[10px]",
         className,
       )}
       {...props}
     >
       {showHandle && (
-        <div className="mx-auto mt-4 h-2 w-[100px] rounded-full bg-muted" />
+        <div className="mx-auto mt-4 h-1.5 w-[86px] rounded-full bg-[var(--app-surface-hover)]" />
       )}
       {children}
     </DrawerPrimitive.Content>
@@ -66,7 +66,7 @@ const DrawerTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DrawerPrimitive.Title
     ref={ref}
-    className={cn("text-lg font-semibold leading-none tracking-tight", className)}
+    className={cn("text-lg font-extralight leading-none", className)}
     {...props}
   />
 ));

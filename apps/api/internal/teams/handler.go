@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -359,6 +360,12 @@ func writeTeamError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	default:
+		slog.Error("team operation failed",
+			"error", err,
+			"method", r.Method,
+			"path", r.URL.Path,
+			"request_id", httpserver.RequestIDFromContext(r.Context()),
+		)
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "team_operation_failed", "Unable to complete team operation.")
 	}
 }

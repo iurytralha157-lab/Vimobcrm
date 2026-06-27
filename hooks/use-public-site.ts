@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { publicSiteAPI } from "@/lib/api/public-site";
+import { createClientId } from "@/lib/client-id";
 
 export interface PublicSiteConfig {
   id: string;
@@ -96,7 +97,7 @@ function getVisitorSessionId() {
 
   let sessionId = window.localStorage.getItem('vimob_session_id');
   if (!sessionId) {
-    sessionId = crypto.randomUUID();
+    sessionId = createClientId('session');
     window.localStorage.setItem('vimob_session_id', sessionId);
   }
 

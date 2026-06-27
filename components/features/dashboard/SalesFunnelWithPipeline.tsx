@@ -146,7 +146,7 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
                     </TooltipTrigger>
                     <TooltipContent
                       side="right"
-                      className="app-card min-w-[160px] animate-in rounded-xl p-3 shadow-xl fade-in zoom-in duration-200"
+                      className="min-w-[160px] animate-in rounded-xl border-0 bg-[var(--app-surface-solid)] p-3 text-[var(--app-text-primary)] shadow-[0_8px_20px_rgba(0,0,0,0.22)] fade-in zoom-in duration-200"
                     >
                       <div className="space-y-2">
                         <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{item.name}</p>

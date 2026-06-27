@@ -1,10 +1,18 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode
+} from 'react';
 
 interface SidebarContextType {
   collapsed: boolean;
-  setCollapsed: (collapsed: boolean) => void;
+  setCollapsed: (collapsed: boolean | ((prev: boolean) => boolean)) => void;
   toggleCollapsed: () => void;
 }
 
@@ -14,28 +22,37 @@ const TABLET_MAX = 1024;
 
 const STORAGE_KEY = 'sidebar-collapsed';
 
-export function SidebarProvider({ children }: { children: ReactNode }) {
-  const [collapsed, setCollapsedState] = useState(false);
+function getInitialCollapsed() {
+  if (typeof window === 'undefined') return false;
 
-  const setCollapsed = (value: boolean | ((prev: boolean) => boolean)) => {
+  try {
+    const saved = window.localStorage.getItem(STORAGE_KEY);
+    if (saved !== null) return saved === 'true';
+  } catch (error) {
+    console.warn('[SidebarContext] Nao foi possivel ler o estado salvo:', error);
+  }
+
+  return window.innerWidth < TABLET_MAX;
+}
+
+export function SidebarProvider({ children }: { children: ReactNode }) {
+  const [collapsed, setCollapsedState] = useState(getInitialCollapsed);
+
+  const setCollapsed = useCallback((value: boolean | ((prev: boolean) => boolean)) => {
     setCollapsedState(prev => {
       const next = typeof value === 'function' ? value(prev) : value;
       if (typeof window !== 'undefined') {
-        localStorage.setItem(STORAGE_KEY, String(next));
+        try {
+          window.localStorage.setItem(STORAGE_KEY, String(next));
+        } catch (error) {
+          console.warn('[SidebarContext] Nao foi possivel salvar o estado:', error);
+        }
       }
       return next;
     });
-  };
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-
-    queueMicrotask(() => {
-      if (cancelled) return;
-      const saved = localStorage.getItem(STORAGE_KEY);
-      setCollapsedState(saved !== null ? saved === 'true' : window.innerWidth < TABLET_MAX);
-    });
-
     const handleResize = () => {
       const isTabletOrSmaller = window.innerWidth < TABLET_MAX;
       setCollapsed(prev => {
@@ -47,15 +64,19 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
 
     window.addEventListener('resize', handleResize);
     return () => {
-      cancelled = true;
       window.removeEventListener('resize', handleResize);
     };
-  }, []);
+  }, [setCollapsed]);
 
-  const toggleCollapsed = () => setCollapsed(prev => !prev);
+  const toggleCollapsed = useCallback(() => setCollapsed(prev => !prev), [setCollapsed]);
+
+  const value = useMemo(
+    () => ({ collapsed, setCollapsed, toggleCollapsed }),
+    [collapsed, setCollapsed, toggleCollapsed]
+  );
 
   return (
-    <SidebarContext.Provider value={{ collapsed, setCollapsed, toggleCollapsed }}>
+    <SidebarContext.Provider value={value}>
       {children}
     </SidebarContext.Provider>
   );

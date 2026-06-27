@@ -7,6 +7,7 @@ import {
 } from '@/components/ui/dialog';
 import { useMemo } from 'react';
 import { PropertyPickerDialog } from '@/components/features/properties/PropertyPickerDialog';
+import { createClientId } from '@/lib/client-id';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -233,7 +234,11 @@ function SortableMemberRow({
     : 0;
 
   return (
-    <TableRow ref={setNodeRef} style={style} className={cn(isDragging && "bg-muted")}>
+    <TableRow
+      ref={setNodeRef}
+      style={style}
+      className={cn('border-0 hover:bg-[var(--app-surface-hover)]', isDragging && 'bg-[var(--app-surface-hover)]')}
+    >
       <TableCell className="w-10">
         <button {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing p-1">
           <GripVertical className="h-4 w-4 text-muted-foreground" />
@@ -478,7 +483,7 @@ export function DistributionQueueEditor({
       ...prev,
       conditions: [
         ...prev.conditions,
-        { id: crypto.randomUUID(), type: 'source', values: [] }
+        { id: createClientId('condition'), type: 'source', values: [] }
       ],
     }));
   };
@@ -760,8 +765,8 @@ export function DistributionQueueEditor({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="app-card max-h-[90vh] w-[94vw] max-w-6xl overflow-hidden p-0">
-        <DialogHeader className="border-b border-white/[0.055] px-6 py-5">
+      <DialogContent className="max-h-[90vh] w-[94vw] max-w-6xl overflow-hidden border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-2xl">
+        <DialogHeader className="bg-[var(--app-surface-soft)] px-6 py-5">
           <DialogTitle>
             {queue ? 'Editar Fila de Distribuição' : 'Nova Fila de Distribuição'}
           </DialogTitle>
@@ -771,7 +776,7 @@ export function DistributionQueueEditor({
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div className="space-y-4">
               <Collapsible open={openSections.includes('basic')} onOpenChange={() => toggleSection('basic')}>
-                <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border border-white/[0.055] bg-white/[0.035] p-4 text-left transition-colors hover:bg-white/[0.055]">
+                <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
                   <div className="flex items-center gap-2">
                     <Settings2 className="h-4 w-4 text-primary" />
                     <span className="font-medium">Informações básicas</span>
@@ -857,7 +862,7 @@ export function DistributionQueueEditor({
               </Collapsible>
 
               <Collapsible open={openSections.includes('rules')} onOpenChange={() => toggleSection('rules')}>
-                <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border border-white/[0.055] bg-white/[0.035] p-4 text-left transition-colors hover:bg-white/[0.055]">
+                <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
                   <div className="flex items-center gap-2">
                     <Filter className="h-4 w-4 text-primary" />
                     <span className="font-medium">Regras de entrada</span>
@@ -867,7 +872,7 @@ export function DistributionQueueEditor({
                 </CollapsibleTrigger>
                 <CollapsibleContent className="space-y-4 px-1 pt-4">
                   {formData.conditions.map((condition) => (
-                    <div key={condition.id} className="space-y-3 rounded-lg border border-white/[0.055] bg-white/[0.025] p-3">
+                    <div key={condition.id} className="space-y-3 rounded-lg border-0 bg-[var(--app-surface-soft)] p-3">
                       <div className="flex items-center justify-between gap-2">
                         <Select
                           value={condition.type}
@@ -905,7 +910,7 @@ export function DistributionQueueEditor({
 
             <div className="space-y-4">
               <Collapsible open={openSections.includes('members')} onOpenChange={() => toggleSection('members')}>
-                <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border border-white/[0.055] bg-white/[0.035] p-4 text-left transition-colors hover:bg-white/[0.055]">
+                <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
                   <div className="flex items-center gap-2">
                     <Users className="h-4 w-4 text-primary" />
                     <span className="font-medium">Ordem de distribuição</span>
@@ -915,7 +920,7 @@ export function DistributionQueueEditor({
                 </CollapsibleTrigger>
                 <CollapsibleContent className="space-y-4 px-1 pt-4">
                   {formData.members.length > 0 && (
-                    <div className="overflow-hidden rounded-lg border border-white/[0.055] bg-[var(--app-surface)]">
+                    <div className="overflow-hidden rounded-lg border-0 bg-[var(--app-surface)]">
                       <DndContext
                         sensors={sensors}
                         collisionDetection={closestCenter}
@@ -923,8 +928,8 @@ export function DistributionQueueEditor({
                         modifiers={[restrictToVerticalAxis]}
                       >
                         <Table>
-                          <TableHeader>
-                            <TableRow>
+                          <TableHeader className="[&_tr]:border-0">
+                            <TableRow className="border-0 hover:bg-transparent">
                               <TableHead className="w-10" />
                               <TableHead>Participante</TableHead>
                               <TableHead className="w-32 text-center">
@@ -991,7 +996,7 @@ export function DistributionQueueEditor({
               </Collapsible>
 
               <Collapsible open={openSections.includes('redistribution')} onOpenChange={() => toggleSection('redistribution')}>
-                <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border border-white/[0.055] bg-white/[0.035] p-4 text-left transition-colors hover:bg-white/[0.055]">
+                <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
                   <div className="flex items-center gap-2">
                     <AlertCircle className="h-4 w-4 text-primary" />
                     <span className="font-medium">Redistribuição</span>
@@ -1000,7 +1005,7 @@ export function DistributionQueueEditor({
                   <ChevronDown className={cn('h-4 w-4 transition-transform', openSections.includes('redistribution') && 'rotate-180')} />
                 </CollapsibleTrigger>
                 <CollapsibleContent className="space-y-4 px-1 pt-4">
-                  <div className="space-y-4 rounded-lg border border-white/[0.055] bg-white/[0.025] p-4">
+                  <div className="space-y-4 rounded-lg border-0 bg-[var(--app-surface-soft)] p-4">
                     <div className="flex items-start justify-between gap-4">
                       <div className="space-y-1">
                         <Label>Ativar redistribuição de lead parado</Label>
@@ -1084,7 +1089,7 @@ export function DistributionQueueEditor({
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 border-t px-6 py-4">
+        <div className="flex justify-end gap-2 bg-[var(--app-surface-soft)] px-6 py-4">
           <Button variant="outline" className="rounded-xl" onClick={() => onOpenChange(false)}>Cancelar</Button>
           <Button className="rounded-xl" onClick={handleSave} disabled={!canSave}>
             {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />} Salvar

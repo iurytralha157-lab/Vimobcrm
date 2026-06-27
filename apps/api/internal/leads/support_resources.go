@@ -278,7 +278,7 @@ type LeadVisibility struct {
 }
 
 func ParseContactListFilter(values url.Values) (ContactListFilter, error) {
-	limit, err := parseBoundedInt(values.Get("limit"), 25, 1, 200)
+	limit, err := parseBoundedInt(values.Get("limit"), 25, 1, 500)
 	if err != nil {
 		return ContactListFilter{}, err
 	}

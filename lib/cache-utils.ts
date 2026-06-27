@@ -2,18 +2,20 @@
  * Utility to perform deep cache clearing and force system updates
  */
 
-const SUPABASE_STORAGE_KEY = 'sb-iemalzlfnbouobyjwlwi-auth-token';
+const SUPABASE_AUTH_STORAGE_KEY_PREFIX = 'sb-';
 
 export async function performFullCacheClear(options: {
   clearAuth?: boolean;
   reload?: boolean;
   redirectTo?: string;
+  clearBrowserCaches?: boolean;
 } = {}): Promise<void> {
   const clearAuth = options.clearAuth ?? false;
+  const clearBrowserCaches = options.clearBrowserCaches ?? !clearAuth;
   let reload = options.reload ?? false;
   let redirectTo = options.redirectTo;
 
-  console.log('[CacheUtils] Starting full cache clear...', { clearAuth, reload, redirectTo });
+  console.log('[CacheUtils] Starting full cache clear...', { clearAuth, reload, redirectTo, clearBrowserCaches });
 
   // Prevent cache clear + redirect/reload on public routes
   const publicRoutes = ['/login', '/cadastro', '/reset-password', '/onboarding', '/checkout', '/termos-de-uso', '/politica-de-privacidade'];
@@ -26,7 +28,7 @@ export async function performFullCacheClear(options: {
   }
 
   // 1. Unregister all Service Workers
-  if ('serviceWorker' in navigator) {
+  if (clearBrowserCaches && typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
     try {
       const registrations = await navigator.serviceWorker.getRegistrations();
       for (const registration of registrations) {
@@ -38,7 +40,7 @@ export async function performFullCacheClear(options: {
   }
 
   // 2. Clear all Cache Storage (PWA caches)
-  if ('caches' in window) {
+  if (clearBrowserCaches && typeof window !== 'undefined' && 'caches' in window) {
     try {
       const cacheNames = await caches.keys();
       await Promise.all(
@@ -52,7 +54,7 @@ export async function performFullCacheClear(options: {
   // 3. Clear localStorage
   const authKeysToKeep = clearAuth
     ? ['remember_me', 'remembered_email']
-    : [SUPABASE_STORAGE_KEY, 'impersonating', 'remember_me', 'remembered_email'];
+    : [SUPABASE_AUTH_STORAGE_KEY_PREFIX, 'impersonating', 'remember_me', 'remembered_email'];
   const keysToRemove: string[] = [];
 
   for (let i = 0; i < localStorage.length; i++) {

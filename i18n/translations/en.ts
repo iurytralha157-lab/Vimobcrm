@@ -31,6 +31,7 @@ export const en = {
   nav: {
     dashboard: 'Dashboard',
     dashboardGeneral: 'Main dashboard',
+    dashboardSite: 'Site dashboard',
     dashboardCampaigns: 'Campaign dashboard',
     pipelines: 'Pipelines',
     contacts: 'Contacts',

@@ -147,7 +147,7 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-48">
+              <div className="h-48 min-h-[192px] min-w-[1px]">
                 <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                   <BarChart data={funnelData} layout="vertical">
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
@@ -171,7 +171,7 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-48">
+              <div className="h-48 min-h-[192px] min-w-[1px]">
                 <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                   <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />

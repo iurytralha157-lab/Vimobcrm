@@ -31,6 +31,7 @@ export const ptBR = {
   nav: {
     dashboard: 'Dashboard',
     dashboardGeneral: 'Dashboard geral',
+    dashboardSite: 'Dashboard do site',
     dashboardCampaigns: 'Dashboard de campanhas',
     pipelines: 'Pipelines',
     contacts: 'Contatos',

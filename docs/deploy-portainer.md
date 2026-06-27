@@ -5,14 +5,21 @@ Este deploy usa duas imagens:
 - `vimob-crm-web`: Next.js em modo `standalone`, porta `3000`.
 - `vimob-crm-api`: API Go, porta `8081`.
 
+## Repositorio
+
+- GitHub: `https://github.com/iurytralha157-lab/Vimobcrm`
+- Stack recomendada no Portainer: `deploy/portainer-stack.yml`
+- Stack alternativa com build no proprio Portainer: `deploy/portainer-stack.build.yml`
+
 ## Fluxo recomendado
 
-1. Criar um repositorio GitHub privado para o projeto.
-2. Configurar as variaveis do GitHub Actions.
-3. Fazer push na branch `main`.
-4. O GitHub Actions publica imagens no GitHub Container Registry.
-5. Criar uma Stack no Portainer usando `deploy/portainer-stack.yml`.
-6. Apontar os dominios no proxy/reverse proxy.
+1. Configurar as variaveis do GitHub Actions.
+2. Fazer push na branch `main`.
+3. O GitHub Actions publica imagens no GitHub Container Registry.
+4. Criar uma Stack no Portainer usando `deploy/portainer-stack.yml`.
+5. Apontar os dominios no proxy/reverse proxy.
+
+Se quiser testar sem GHCR, crie a Stack apontando para `deploy/portainer-stack.build.yml`. Essa opcao faz o build das imagens no servidor, entao o primeiro deploy demora mais e precisa de mais CPU/RAM.
 
 ## Variaveis do GitHub Actions
 
@@ -31,8 +38,8 @@ Essas variaveis entram no build do Next.js. Se trocar a URL da API depois, gere 
 Configure na Stack, sem commitar valores reais:
 
 ```env
-VIMOB_WEB_IMAGE=ghcr.io/SEU_OWNER/vimob-crm-web:latest
-VIMOB_API_IMAGE=ghcr.io/SEU_OWNER/vimob-crm-api:latest
+VIMOB_WEB_IMAGE=ghcr.io/iurytralha157-lab/vimob-crm-web:latest
+VIMOB_API_IMAGE=ghcr.io/iurytralha157-lab/vimob-crm-api:latest
 
 WEB_PORT=3000
 API_PUBLIC_PORT=8081
@@ -60,6 +67,18 @@ EMAIL_INTERNAL_SECRET=
 ASAAS_API_KEY=
 ASAAS_BASE_URL=https://api.asaas.com/v3
 ```
+
+No Portainer:
+
+1. `Stacks` -> `Add stack`.
+2. Escolher `Repository`.
+3. Repository URL: `https://github.com/iurytralha157-lab/Vimobcrm`.
+4. Branch: `main`.
+5. Compose path:
+   - recomendado: `deploy/portainer-stack.yml`;
+   - build direto no servidor: `deploy/portainer-stack.build.yml`.
+6. Colar as variaveis acima em `Environment variables`.
+7. Deploy.
 
 ## Dominios
 

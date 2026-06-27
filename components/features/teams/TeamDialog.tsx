@@ -184,7 +184,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
   const displayLogo = logoPreview || logoUrl || undefined;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88vh] w-[calc(100vw-16px)] max-w-[560px] overflow-hidden border-0 bg-black/82 p-0 text-white shadow-2xl backdrop-blur-xl sm:rounded-[20px] [&>button]:hidden">
+      <DialogContent className="max-h-[88vh] w-[calc(100vw-16px)] max-w-[560px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-2xl backdrop-blur-xl sm:rounded-[20px] [&>button]:hidden">
         <div className="flex max-h-[88vh] flex-col p-4 sm:p-5">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
@@ -193,7 +193,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
             </div>
             <button
               type="button"
-              className="rounded-full p-1.5 text-white/65 transition hover:bg-white/10 hover:text-white"
+              className="rounded-full p-1.5 text-[var(--app-text-secondary)] transition hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
               onClick={() => onOpenChange(false)}
             >
               <X className="h-4 w-4" />
@@ -229,9 +229,9 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                   placeholder="Nome da equipe"
-                  className="h-10 rounded-xl border-0 bg-white/10 text-white placeholder:text-white/45 focus-visible:ring-primary"
+                  className="h-10 rounded-xl border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] placeholder:text-[var(--app-text-tertiary)] focus-visible:ring-primary"
                 />
-                <p className="mt-1.5 text-xs text-white/45">
+                <p className="mt-1.5 text-xs text-[var(--app-text-tertiary)]">
                   {selectedMembers.length} {selectedMembers.length === 1 ? 'membro selecionado' : 'membros selecionados'}
                 </p>
               </div>
@@ -248,7 +248,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                     <div
                       key={user.id}
                       className={`flex min-w-0 items-center gap-1.5 rounded-xl px-2 py-1 transition sm:gap-2 sm:px-2.5 ${
-                        isSelected ? 'bg-primary/14' : 'bg-white/8 hover:bg-white/12'
+                        isSelected ? 'bg-primary/14' : 'bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-hover)]'
                       }`}
                     >
                       {/*
@@ -273,7 +273,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                         </div>
                         <span
                           className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full transition ${
-                            isSelected ? 'bg-primary' : 'bg-white/12'
+                            isSelected ? 'bg-primary' : 'bg-[var(--app-surface-hover)]'
                           }`}
                         >
                           {isSelected && <span className="h-2 w-2 rounded-full bg-white" />}
@@ -281,11 +281,11 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                       </button>
 
                       {isSelected && (
-                        <div className="flex shrink-0 items-center gap-1 rounded-lg bg-black/20 px-1.5 py-1 sm:gap-1.5 sm:px-2">
+                        <div className="flex shrink-0 items-center gap-1 rounded-lg bg-[var(--app-surface-hover)] px-1.5 py-1 sm:gap-1.5 sm:px-2">
                           {savedMember && (
                             <button
                               type="button"
-                              className="flex h-8 w-8 items-center justify-center rounded-full text-white/60 transition hover:bg-white/10 hover:text-primary"
+                              className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-text-secondary)] transition hover:bg-[var(--app-surface-hover)] hover:text-primary"
                               title="Editar escala"
                               onClick={() =>
                                 setAvailabilityMember({
@@ -298,8 +298,8 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                               <Clock className="h-4 w-4" />
                             </button>
                           )}
-                          <div className="flex items-center gap-1.5 text-xs text-white/70">
-                            <Crown className={`h-3.5 w-3.5 ${memberData?.isLeader ? 'text-amber-400' : 'text-white/35'}`} />
+                          <div className="flex items-center gap-1.5 text-xs text-[var(--app-text-secondary)]">
+                            <Crown className={`h-3.5 w-3.5 ${memberData?.isLeader ? 'text-amber-400' : 'text-[var(--app-text-tertiary)]'}`} />
                             <span className="max-[440px]:hidden">Lider</span>
                           </div>
                           <Switch
@@ -319,7 +319,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
           <div className="mt-4 flex gap-3">
             <Button
               type="button"
-              className="h-10 w-[30%] rounded-xl bg-white/10 text-white hover:bg-white/15"
+              className="h-10 w-[30%] rounded-xl bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]"
               onClick={() => onOpenChange(false)}
             >
               Cancelar

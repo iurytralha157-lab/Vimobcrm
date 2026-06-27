@@ -1,6 +1,13 @@
 services:
   web:
-    image: ${VIMOB_WEB_IMAGE:-ghcr.io/iurytralha157-lab/vimob-crm-web:latest}
+    build:
+      context: ..
+      dockerfile: Dockerfile.web
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_VIMOB_API_URL: ${NEXT_PUBLIC_VIMOB_API_URL}
+    image: ${VIMOB_WEB_IMAGE:-vimob-crm-web:local}
     restart: unless-stopped
     depends_on:
       api:
@@ -23,7 +30,10 @@ services:
       - vimob
 
   api:
-    image: ${VIMOB_API_IMAGE:-ghcr.io/iurytralha157-lab/vimob-crm-api:latest}
+    build:
+      context: ..
+      dockerfile: Dockerfile.api
+    image: ${VIMOB_API_IMAGE:-vimob-crm-api:local}
     restart: unless-stopped
     environment:
       API_ENV: production

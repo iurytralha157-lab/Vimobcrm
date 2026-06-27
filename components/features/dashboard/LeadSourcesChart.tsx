@@ -73,7 +73,7 @@ function LeadSourcesTooltip({ active, payload }: LeadSourcesTooltipProps) {
   const leadLabel = value === 1 ? 'lead' : 'leads';
 
   return (
-    <div className="app-card min-w-[150px] px-3 py-2.5 shadow-xl shadow-black/20 animate-in fade-in zoom-in-95 duration-150">
+    <div className="min-w-[150px] rounded-xl border-0 bg-[var(--app-surface-solid)] px-3 py-2.5 text-[var(--app-text-primary)] shadow-[0_8px_20px_rgba(0,0,0,0.22)] animate-in fade-in zoom-in-95 duration-150">
       <div className="mb-1 flex items-center gap-2">
         <span
           className="h-2.5 w-2.5 rounded-full ring-2 ring-[var(--app-surface-solid)]"
@@ -181,7 +181,7 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
 
       <CardContent className="flex-1 p-4 pt-2 flex flex-col items-center justify-center">
         {/* Donut Chart Container */}
-        <div className="w-full aspect-square max-w-[280px] relative mt-2">
+        <div className="dashboard-recharts-focusless relative mt-2 aspect-square min-h-[220px] w-full min-w-[1px] max-w-[280px]">
           <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
             <PieChart>
               <Pie

@@ -43,6 +43,7 @@ export const AppHeader = React.memo(function AppHeader({
     userOrganizations: rawUserOrganizations = [],
   } = useAuth();
   const [isSwitching, setIsSwitching] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const queryClient = useQueryClient();
   const { hasModule } = useOrganizationModules();
   const router = useRouter();
@@ -102,6 +103,19 @@ export const AppHeader = React.memo(function AppHeader({
     if (route) router.push(route);
   };
 
+  const handleSignOut = React.useCallback(async () => {
+    if (isSigningOut) return;
+
+    setIsSigningOut(true);
+    try {
+      await signOut();
+    } catch (error) {
+      console.error('Erro no logout:', error);
+      toast.error('Erro ao sair. Redirecionando para o login...');
+      window.location.replace('/login');
+    }
+  }, [isSigningOut, signOut]);
+
   const getInitials = (name: string) => {
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   };
@@ -112,7 +126,7 @@ export const AppHeader = React.memo(function AppHeader({
   return (
     <header className="sticky top-0 z-40 h-16 flex items-center px-4 md:px-6 bg-background/80 backdrop-blur-md border-b border-border/10">
       {/* Page title - aligned with content */}
-      {title && <h1 className="text-base sm:text-xl font-bold text-foreground ml-2 lg:ml-0 tracking-tight truncate max-w-[140px] xs:max-w-[180px] sm:max-w-none">{title}</h1>}
+      {title && <h1 className="ml-2 max-w-[140px] truncate text-base font-extralight text-foreground xs:max-w-[180px] sm:max-w-none sm:text-lg lg:ml-0">{title}</h1>}
 
       {/* Right side actions - Capsule style redesign */}
       <div className="flex items-center gap-3 ml-auto">
@@ -331,18 +345,16 @@ export const AppHeader = React.memo(function AppHeader({
             </div>
             <DropdownMenuSeparator className="my-1 border-border/40" />
             <DropdownMenuItem
-              onClick={async () => {
-                try {
-                  await signOut();
-                } catch (error) {
-                  console.error('Erro no logout:', error);
-                }
-                window.location.href = '/login';
-              }}
+              disabled={isSigningOut}
+              onClick={() => void handleSignOut()}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90 focus:bg-destructive/90 cursor-pointer rounded-xl m-1 px-3 py-2 text-sm gap-2 transition-colors"
             >
-              <LogOut className="h-4 w-4" />
-              Sair
+              {isSigningOut ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <LogOut className="h-4 w-4" />
+              )}
+              {isSigningOut ? 'Saindo...' : 'Sair'}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

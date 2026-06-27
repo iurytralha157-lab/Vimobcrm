@@ -279,7 +279,7 @@ export function DistributionTab() {
         </div>
 
         {visibleRoundRobins.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-white/[0.08] bg-white/[0.025] py-16 text-center">
+          <div className="rounded-xl border-0 bg-[var(--app-surface)] py-16 text-center">
             <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
               <Shuffle className="h-8 w-8 text-primary" />
             </div>
@@ -293,7 +293,7 @@ export function DistributionTab() {
             </Button>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-white/[0.055] bg-[var(--app-surface)] [&_td:nth-child(n+4)]:hidden [&_th:nth-child(n+4)]:hidden md:[&_td:nth-child(n+4)]:table-cell md:[&_th:nth-child(n+4)]:table-cell">
+          <div className="overflow-hidden rounded-lg border-0 bg-[var(--app-surface)] [&_td:nth-child(n+4)]:hidden [&_th:nth-child(n+4)]:hidden md:[&_td:nth-child(n+4)]:table-cell md:[&_th:nth-child(n+4)]:table-cell">
             <Table className="table-fixed md:table-auto">
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
@@ -371,7 +371,7 @@ export function DistributionTab() {
                                 return (
                                   <Tooltip key={member.id}>
                                     <TooltipTrigger asChild>
-                                      <Avatar className="h-8 w-8 border-2 border-background">
+                                      <Avatar className="h-8 w-8 border-0">
                                         {member.user?.avatar_url && (
                                           <AvatarImage src={member.user.avatar_url} alt={memberName} />
                                         )}
@@ -387,7 +387,7 @@ export function DistributionTab() {
                               {queue.members.length > members.length && (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
-                                    <div className="h-8 w-8 rounded-full bg-white/[0.06] border-2 border-[var(--app-background)] flex items-center justify-center">
+                                    <div className="h-8 w-8 rounded-full border-0 bg-[var(--app-surface-soft)] flex items-center justify-center">
                                       <span className="text-xs text-muted-foreground">+{queue.members.length - members.length}</span>
                                     </div>
                                   </TooltipTrigger>

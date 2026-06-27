@@ -1,10 +1,11 @@
 import { useCallback } from 'react';
 import { publicSiteAPI } from '@/lib/api/public-site';
+import { createClientId } from '@/lib/client-id';
 
 function getSessionId(): string {
   let id = localStorage.getItem('vimob_session_id');
   if (!id) {
-    id = crypto.randomUUID();
+    id = createClientId('session');
     localStorage.setItem('vimob_session_id', id);
   }
   return id;

@@ -19,7 +19,6 @@ import { usePhoneReminder } from '@/hooks/use-phone-reminder';
 import { useWhatsAppSound } from '@/hooks/use-whatsapp-sound';
 import { useSystemSettings } from '@/hooks/use-system-settings';
 import { useAuth } from '@/contexts/AuthContext';
-import { SidebarProvider } from '@/contexts/SidebarContext';
 import { VimobLoader } from '@/components/shared/loading';
 import { Wrench } from 'lucide-react';
 
@@ -121,12 +120,10 @@ export function AppLayout({ children, title, disableMainScroll = false, borderle
   }
 
   return (
-    <SidebarProvider>
-      <FloatingChatProvider>
-        <AppLayoutContent title={title} disableMainScroll={disableMainScroll} borderless={borderless}>
-          {children}
-        </AppLayoutContent>
-      </FloatingChatProvider>
-    </SidebarProvider>
+    <FloatingChatProvider>
+      <AppLayoutContent title={title} disableMainScroll={disableMainScroll} borderless={borderless}>
+        {children}
+      </AppLayoutContent>
+    </FloatingChatProvider>
   );
 }

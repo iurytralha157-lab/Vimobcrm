@@ -67,7 +67,7 @@ export default function CRMManagement() {
 
   return (
     <AppLayout title="Gestão">
-      <div className="animate-in">
+      <div className="crm-management-surface animate-in">
         <Tabs value={activeTab}>
           <TabsContent value="teams" className="mt-0">
             <TeamsTab />

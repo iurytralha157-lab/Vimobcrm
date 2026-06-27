@@ -14,8 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
-import { Globe, Palette, Phone, Share2, Search, ExternalLink, Copy, Check, Loader2, Maximize2, Droplets, Menu, Info, BarChart3 } from "lucide-react";
-import { SiteAnalyticsTab } from "@/components/features/site/SiteAnalyticsTab";
+import { Globe, Palette, Phone, Share2, Search, ExternalLink, Copy, Check, Loader2, Maximize2, Droplets, Menu, Info } from "lucide-react";
 import { AnimatedIcon } from "@/components/shared/icons/AnimatedIcon";
 import GLOBE_JSON from "@/components/shared/icons/globe-icon.json";
 import { MenuTab } from "@/components/features/site/MenuTab";
@@ -139,12 +138,6 @@ const siteSections = [
     label: 'SEO',
     description: 'Metatags, pixels e scripts',
     icon: Search,
-  },
-  {
-    value: 'analytics',
-    label: 'Analytics',
-    description: 'Visitas e leads do site',
-    icon: BarChart3,
   },
 ] as const;
 
@@ -1620,9 +1613,6 @@ ${getWorkerCode()}`;
 
             </TabsContent>
 
-            <TabsContent value="analytics" className="space-y-6">
-              <SiteAnalyticsTab />
-            </TabsContent>
               </div>
             </div>
           </Tabs>
