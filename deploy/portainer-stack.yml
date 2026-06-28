@@ -1,10 +1,9 @@
 services:
   web:
     image: ${VIMOB_WEB_IMAGE:-ghcr.io/iurytralha157-lab/vimob-crm-web:latest}
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
+    deploy:
+      restart_policy:
+        condition: any
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
@@ -24,7 +23,9 @@ services:
 
   api:
     image: ${VIMOB_API_IMAGE:-ghcr.io/iurytralha157-lab/vimob-crm-api:latest}
-    restart: unless-stopped
+    deploy:
+      restart_policy:
+        condition: any
     environment:
       API_ENV: production
       API_HOST: 0.0.0.0
@@ -53,3 +54,5 @@ services:
 networks:
   vimob:
     name: vimob
+    driver: overlay
+    attachable: true

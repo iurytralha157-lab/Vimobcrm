@@ -10,8 +10,7 @@ services:
     image: ${VIMOB_WEB_IMAGE:-vimob-crm-web:local}
     restart: unless-stopped
     depends_on:
-      api:
-        condition: service_healthy
+      - api
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}

@@ -8,8 +8,8 @@ Este deploy usa duas imagens:
 ## Repositorio
 
 - GitHub: `https://github.com/iurytralha157-lab/Vimobcrm`
-- Stack recomendada no Portainer: `deploy/portainer-stack.yml`
-- Stack alternativa com build no proprio Portainer: `deploy/portainer-stack.build.yml`
+- Stack recomendada no Portainer Swarm: `deploy/portainer-stack.yml`
+- Stack alternativa apenas para Docker Compose standalone: `deploy/portainer-stack.build.yml`
 
 ## Fluxo recomendado
 
@@ -19,7 +19,9 @@ Este deploy usa duas imagens:
 4. Criar uma Stack no Portainer usando `deploy/portainer-stack.yml`.
 5. Apontar os dominios no proxy/reverse proxy.
 
-Se quiser testar sem GHCR, crie a Stack apontando para `deploy/portainer-stack.build.yml`. Essa opcao faz o build das imagens no servidor, entao o primeiro deploy demora mais e precisa de mais CPU/RAM.
+Se a tela do Portainer mostrar que o deploy usa `docker stack deploy`, voce esta em Swarm. Nesse caso, use `deploy/portainer-stack.yml`, porque Swarm espera imagens prontas e nao faz build a partir do Compose.
+
+Se quiser testar sem GHCR, use um ambiente Docker Compose standalone apontando para `deploy/portainer-stack.build.yml`. Essa opcao faz o build das imagens no servidor, entao o primeiro deploy demora mais e precisa de mais CPU/RAM.
 
 ## Variaveis do GitHub Actions
 
@@ -75,8 +77,8 @@ No Portainer:
 3. Repository URL: `https://github.com/iurytralha157-lab/Vimobcrm`.
 4. Branch: `main`.
 5. Compose path:
-   - recomendado: `deploy/portainer-stack.yml`;
-   - build direto no servidor: `deploy/portainer-stack.build.yml`.
+   - Portainer Swarm: `deploy/portainer-stack.yml`;
+   - Docker Compose standalone: `deploy/portainer-stack.build.yml`.
 6. Colar as variaveis acima em `Environment variables`.
 7. Deploy.
 
