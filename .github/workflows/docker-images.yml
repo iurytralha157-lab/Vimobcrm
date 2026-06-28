@@ -19,10 +19,32 @@ jobs:
   build-and-push:
     name: Build and push images
     runs-on: ubuntu-latest
+    env:
+      WEB_NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL || secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY || secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      WEB_NEXT_PUBLIC_VIMOB_API_URL: ${{ vars.NEXT_PUBLIC_VIMOB_API_URL || secrets.NEXT_PUBLIC_VIMOB_API_URL }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate web build variables
+        shell: bash
+        run: |
+          missing=0
+          if [ -z "$WEB_NEXT_PUBLIC_SUPABASE_URL" ]; then
+            echo "::error::Missing NEXT_PUBLIC_SUPABASE_URL in GitHub Actions variables or secrets."
+            missing=1
+          fi
+          if [ -z "$WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY" ]; then
+            echo "::error::Missing NEXT_PUBLIC_SUPABASE_ANON_KEY in GitHub Actions variables or secrets."
+            missing=1
+          fi
+          if [ -z "$WEB_NEXT_PUBLIC_VIMOB_API_URL" ]; then
+            echo "::error::Missing NEXT_PUBLIC_VIMOB_API_URL in GitHub Actions variables or secrets."
+            missing=1
+          fi
+          exit "$missing"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -51,9 +73,9 @@ jobs:
           file: Dockerfile.web
           push: true
           build-args: |
-            NEXT_PUBLIC_SUPABASE_URL=${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
-            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-            NEXT_PUBLIC_VIMOB_API_URL=${{ vars.NEXT_PUBLIC_VIMOB_API_URL }}
+            NEXT_PUBLIC_SUPABASE_URL=${{ env.WEB_NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ env.WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+            NEXT_PUBLIC_VIMOB_API_URL=${{ env.WEB_NEXT_PUBLIC_VIMOB_API_URL }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.WEB_IMAGE }}:latest
             ${{ env.REGISTRY }}/${{ env.WEB_IMAGE }}:${{ github.sha }}
