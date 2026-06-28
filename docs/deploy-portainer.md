@@ -44,14 +44,19 @@ VIMOB_WEB_IMAGE=ghcr.io/iurytralha157-lab/vimob-crm-web:latest
 VIMOB_API_IMAGE=ghcr.io/iurytralha157-lab/vimob-crm-api:latest
 
 WEB_PORT=3000
-API_PUBLIC_PORT=8081
+API_PUBLIC_PORT=18081
+TRAEFIK_NETWORK=public
+TRAEFIK_HTTPS_ENTRYPOINT=websecure
+TRAEFIK_CERT_RESOLVER=letsencrypt
+VIMOB_WEB_DOMAIN=app.vimobcrm.com.br
+VIMOB_API_DOMAIN=api.vimobcrm.com.br
 
 NEXT_PUBLIC_SUPABASE_URL=https://seu-projeto.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=sua-chave-publica
 NEXT_PUBLIC_VIMOB_API_URL=https://api.vimobcrm.com.br
 VIMOB_INTERNAL_API_URL=http://api:8081
 
-API_CORS_ALLOWED_ORIGINS=https://vimobcrm.com.br,https://www.vimobcrm.com.br
+API_CORS_ALLOWED_ORIGINS=https://app.vimobcrm.com.br
 SUPABASE_PROJECT_URL=https://seu-projeto.supabase.co
 SUPABASE_JWKS_URL=https://seu-projeto.supabase.co/auth/v1/.well-known/jwks.json
 SUPABASE_JWT_ISSUER=https://seu-projeto.supabase.co/auth/v1
@@ -86,13 +91,14 @@ No Portainer:
 
 No DNS/proxy:
 
-- `vimobcrm.com.br` e `www.vimobcrm.com.br` -> container/porta web `3000`.
-- `api.vimobcrm.com.br` -> container/porta API `8081`.
+- `app.vimobcrm.com.br` -> Traefik -> servico `web`, porta interna `3000`.
+- `api.vimobcrm.com.br` -> Traefik -> servico `api`, porta interna `8081`.
+- `vimobcrm.com.br` e `www.vimobcrm.com.br` ficam reservados para o site institucional.
 
 No Supabase Auth:
 
-- Site URL: `https://vimobcrm.com.br`
-- Redirect URLs: `https://vimobcrm.com.br/**`
+- Site URL: `https://app.vimobcrm.com.br`
+- Redirect URLs: `https://app.vimobcrm.com.br/**`
 
 ## Checklist de verificacao
 

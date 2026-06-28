@@ -4,6 +4,14 @@ services:
     deploy:
       restart_policy:
         condition: any
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=${TRAEFIK_NETWORK:-public}
+        - traefik.http.routers.vimob-web.rule=Host(`${VIMOB_WEB_DOMAIN:-app.vimobcrm.com.br}`)
+        - traefik.http.routers.vimob-web.entrypoints=${TRAEFIK_HTTPS_ENTRYPOINT:-websecure}
+        - traefik.http.routers.vimob-web.tls=true
+        - traefik.http.routers.vimob-web.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}
+        - traefik.http.services.vimob-web.loadbalancer.server.port=3000
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
@@ -20,12 +28,21 @@ services:
       - "${WEB_PORT:-3000}:3000"
     networks:
       - vimob
+      - traefik-public
 
   api:
     image: ${VIMOB_API_IMAGE:-ghcr.io/iurytralha157-lab/vimob-crm-api:latest}
     deploy:
       restart_policy:
         condition: any
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=${TRAEFIK_NETWORK:-public}
+        - traefik.http.routers.vimob-api.rule=Host(`${VIMOB_API_DOMAIN:-api.vimobcrm.com.br}`)
+        - traefik.http.routers.vimob-api.entrypoints=${TRAEFIK_HTTPS_ENTRYPOINT:-websecure}
+        - traefik.http.routers.vimob-api.tls=true
+        - traefik.http.routers.vimob-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}
+        - traefik.http.services.vimob-api.loadbalancer.server.port=8081
     environment:
       API_ENV: production
       API_HOST: 0.0.0.0
@@ -47,12 +64,16 @@ services:
       ASAAS_API_KEY: ${ASAAS_API_KEY:-}
       ASAAS_BASE_URL: ${ASAAS_BASE_URL:-https://api.asaas.com/v3}
     ports:
-      - "${API_PUBLIC_PORT:-8081}:8081"
+      - "${API_PUBLIC_PORT:-18081}:8081"
     networks:
       - vimob
+      - traefik-public
 
 networks:
   vimob:
     name: vimob
     driver: overlay
     attachable: true
+  traefik-public:
+    external: true
+    name: ${TRAEFIK_NETWORK:-public}
