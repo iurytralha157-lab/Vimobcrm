@@ -317,7 +317,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
 
         {/* Logo header */}
         <div className="p-4 pr-12">
-          <div className="relative h-8 w-[120px]">
+          <div className="relative h-7 w-[108px]">
             <NextImage
               src={brandLogoUrl}
               alt="Logo"

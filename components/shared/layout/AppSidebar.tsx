@@ -267,8 +267,8 @@ export const AppSidebar = React.memo(function AppSidebar() {
 
   const displayLogoUrl = logoUrl || (resolvedTheme === 'dark' ? DEFAULT_BRAND_LOGO_DARK : DEFAULT_BRAND_LOGO_LIGHT);
   const faviconUrl = useMemo(() => DEFAULT_BRAND_ICON, []);
-  const logoWidth = systemSettings?.logo_width || 120;
-  const logoHeight = systemSettings?.logo_height || 32;
+  const logoWidth = Math.min(systemSettings?.logo_width || 120, 108);
+  const logoHeight = Math.min(systemSettings?.logo_height || 32, 28);
   const isBillingBlocked = !isSuperAdmin && isBillingBlockedStatus(organization?.subscription_status);
   const activeOrganizationId = organization?.id || profile?.organization_id;
   const activeMemberRole = userOrganizations.find(org => org.organization_id === activeOrganizationId)?.member_role;
