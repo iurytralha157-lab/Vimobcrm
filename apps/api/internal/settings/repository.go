@@ -23,6 +23,7 @@ type Repository struct {
 	db        *dbpkg.Postgres
 	storage   storageClient
 	authAdmin authAdminClient
+	email     passwordNotificationClient
 }
 
 type apiKeyScanner interface {
@@ -38,6 +39,7 @@ func NewRepository(db *dbpkg.Postgres, externalConfig ExternalConfig) Repository
 		db:        db,
 		storage:   newStorageClient(externalConfig),
 		authAdmin: newAuthAdminClient(externalConfig),
+		email:     newPasswordNotificationClient(externalConfig),
 	}
 }
 
@@ -236,7 +238,38 @@ func (repo Repository) ChangePassword(ctx context.Context, tenantContext tenant.
 		return ChangePasswordResult{}, err
 	}
 
-	return ChangePasswordResult{Allowed: true, Message: "Senha alterada com sucesso!"}, nil
+	emailSent := repo.sendPasswordChangedNotification(ctx, tenantContext.UserID)
+
+	return ChangePasswordResult{
+		Allowed:               true,
+		Message:               "Senha alterada com sucesso!",
+		EmailNotificationSent: emailSent,
+	}, nil
+}
+
+func (repo Repository) sendPasswordChangedNotification(ctx context.Context, userID string) bool {
+	if !repo.email.isConfigured() {
+		return false
+	}
+
+	var name, email pgtype.Text
+	err := repo.db.Pool().QueryRow(ctx, `
+		select name, email
+		from public.users
+		where id = $1::uuid
+	`, userID).Scan(&name, &email)
+	if err != nil || !email.Valid || strings.TrimSpace(email.String) == "" {
+		return false
+	}
+
+	err = repo.email.sendPasswordChanged(ctx, passwordChangedEmailInput{
+		UserID:    userID,
+		Email:     email.String,
+		Name:      textValue(name),
+		ChangedAt: time.Now(),
+	})
+
+	return err == nil
 }
 
 func (repo Repository) PasswordStatus(ctx context.Context, tenantContext tenant.Context) (PasswordStatus, error) {
@@ -814,6 +847,14 @@ func textPointer(value pgtype.Text) *string {
 	}
 
 	return &value.String
+}
+
+func textValue(value pgtype.Text) string {
+	if !value.Valid {
+		return ""
+	}
+
+	return strings.TrimSpace(value.String)
 }
 
 func cleanStringPointer(value *string) *string {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/admin"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/ai"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/analytics"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/audit"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/automations"
@@ -69,6 +70,15 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 	}))
+	aiRepository := ai.NewRepository(postgres)
+	aiService := ai.NewService(aiRepository, ai.Config{
+		OpenAIAPIKey:  cfg.AI.OpenAIAPIKey,
+		OpenAIBaseURL: cfg.AI.OpenAIBaseURL,
+		DefaultModel:  cfg.AI.DefaultModel,
+		RealtimeModel: cfg.AI.RealtimeModel,
+		RealtimeVoice: cfg.AI.RealtimeVoice,
+	})
+	aiHandler := ai.NewHandler(aiRepository, aiService)
 	meHandler := me.NewHandler(me.NewRepository(postgres))
 	tenantRepository := tenant.NewRepository(postgres)
 	auditHandler := audit.NewHandler(audit.NewRepository(postgres))
@@ -85,8 +95,13 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	scheduleHandler := schedule.NewHandler(schedule.NewRepository(postgres), realtimeHub)
 	stageConfigHandler := stageconfig.NewHandler(stageconfig.NewRepository(postgres))
 	settingsHandler := settings.NewHandler(settings.NewRepository(postgres, settings.ExternalConfig{
-		ProjectURL: cfg.Storage.ProjectURL,
-		APIKey:     cfg.Storage.APIKey,
+		ProjectURL:   cfg.Storage.ProjectURL,
+		APIKey:       cfg.Storage.APIKey,
+		ResendAPIKey: cfg.Email.ResendAPIKey,
+		FromEmail:    cfg.Email.FromEmail,
+		ReplyTo:      cfg.Email.ReplyTo,
+		SupportEmail: cfg.Email.SupportEmail,
+		AppURL:       cfg.Email.AppURL,
 	}))
 	siteHandler := site.NewHandler(site.NewRepository(postgres, site.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
@@ -111,7 +126,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	whatsappHandler := whatsapp.NewHandler(whatsapp.NewRepository(postgres, whatsapp.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
-	}), realtimeHub)
+	}), realtimeHub).WithAutoReply(aiService, cfg.AI.AutoReplyToken)
 	webhooksHandler := webhooks.NewHandler(webhooks.NewRepository(postgres), realtimeHub)
 	integrationsHandler := integrations.NewHandler(integrations.NewRepository(postgres, integrations.ExternalConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
@@ -131,6 +146,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 	mux.HandleFunc("GET /healthz", healthHandler.Health)
 	mux.HandleFunc("GET /readyz", healthHandler.Ready)
+	mux.HandleFunc("POST /v1/internal/whatsapp/auto-reply", whatsappHandler.AutoReply)
 	mux.Handle("GET /v1/me", withAuthTenant(http.HandlerFunc(meHandler.Show)))
 	mux.Handle("GET /v1/me/profile", withAuthTenant(http.HandlerFunc(meHandler.ShowProfile)))
 	mux.Handle("POST /v1/me/switch-organization", withAuthTenant(http.HandlerFunc(meHandler.SwitchOrganization)))
@@ -228,6 +244,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("GET /v1/admin/dashboard/timeseries", withAuthTenant(http.HandlerFunc(adminHandler.DashboardTimeseries)))
 	mux.Handle("GET /v1/admin/dashboard/pending", withAuthTenant(http.HandlerFunc(adminHandler.DashboardPending)))
 	mux.Handle("GET /v1/admin/dashboard/feed", withAuthTenant(http.HandlerFunc(adminHandler.DashboardFeed)))
+	mux.Handle("GET /v1/admin/ai-agents", withAuthTenant(http.HandlerFunc(aiHandler.ListAgents)))
+	mux.Handle("POST /v1/admin/ai-agents", withAuthTenant(http.HandlerFunc(aiHandler.CreateAgent)))
+	mux.Handle("PATCH /v1/admin/ai-agents/{id}", withAuthTenant(http.HandlerFunc(aiHandler.UpdateAgent)))
+	mux.Handle("DELETE /v1/admin/ai-agents/{id}", withAuthTenant(http.HandlerFunc(aiHandler.DeleteAgent)))
 	mux.Handle("GET /v1/admin/tables/{table}", withAuthTenant(http.HandlerFunc(adminHandler.ListTableRows)))
 	mux.Handle("GET /v1/admin/tables/{table}/count", withAuthTenant(http.HandlerFunc(adminHandler.CountTableRows)))
 	mux.Handle("POST /v1/admin/tables/{table}", withAuthTenant(http.HandlerFunc(adminHandler.CreateTableRow)))
@@ -245,6 +265,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("GET /v1/dashboard/extra-counts", withOrganization(http.HandlerFunc(leadsHandler.ShowDashboardExtraCounts)))
 	mux.Handle("GET /v1/dashboard/recent-activities", withOrganization(http.HandlerFunc(leadsHandler.ListDashboardRecentActivities)))
 	mux.Handle("GET /v1/dashboard/team-lead-ids", withOrganization(http.HandlerFunc(leadsHandler.ListDashboardTeamLeadIDs)))
+	mux.Handle("POST /v1/ai/run", withOrganization(http.HandlerFunc(aiHandler.Run)))
 	mux.Handle("GET /v1/schedule/capabilities", withOrganization(http.HandlerFunc(scheduleHandler.ShowCapabilities)))
 	mux.Handle("GET /v1/schedule/events", withOrganization(http.HandlerFunc(scheduleHandler.ListEvents)))
 	mux.Handle("POST /v1/schedule/events", withOrganization(http.HandlerFunc(scheduleHandler.CreateEvent)))

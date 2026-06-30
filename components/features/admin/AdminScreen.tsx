@@ -6,7 +6,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
-  Bot,
   Building2,
   CalendarDays,
   Check,
@@ -20,7 +19,6 @@ import {
   Search,
   Settings,
   ShieldCheck,
-  Sparkles,
   Users,
   X,
 } from "lucide-react";
@@ -28,6 +26,7 @@ import { toast } from "sonner";
 
 import type { AdminSection } from "@/components/features/admin/admin-navigation";
 import { AnnouncementsContent } from "@/components/features/admin/AnnouncementsContent";
+import { AiAgentsContent } from "@/components/features/admin/AiAgentsContent";
 import { ErrorEventsContent } from "@/components/features/admin/ErrorEventsContent";
 import { VimobLoader } from "@/components/shared/loading";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -1875,57 +1874,7 @@ function DatabaseContent() {
 }
 
 function AiContent() {
-  const organizations = useAdminRows("organizations", 80);
-  const agentTables = [
-    { table: "ai_agents", label: "Agentes" },
-    { table: "conversation_ai_state", label: "Memória de conversa" },
-    { table: "events", label: "Eventos" },
-    { table: "jobs", label: "Jobs" },
-    { table: "outbox_messages", label: "Outbox" },
-  ];
-  const aiCounts = useSafeAdminQuery(
-    ["admin-ai-table-counts"],
-    async () => {
-      const results = await Promise.all(
-        agentTables.map(async (item) => {
-          try {
-            return { table: item.table, count: await countAdminTable(item.table), errorMessage: null };
-          } catch (error) {
-            return { table: item.table, count: 0, errorMessage: getErrorMessage(error) };
-          }
-        }),
-      );
-      return results;
-    },
-    [],
-  );
-  const countByTable = new Map((aiCounts.data?.data || []).map((item) => [item.table, item]));
-
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-3 md:grid-cols-3">
-        <KpiCard title="Organizações candidatas" value={formatNumber((organizations.data?.data || []).length)} icon={Building2} />
-        <KpiCard title="Estruturas de IA" value={agentTables.filter((item) => !countByTable.get(item.table)?.errorMessage).length} icon={Bot} />
-        <KpiCard title="Modo atual" value="Planejado" icon={Sparkles} helper="Sem acoplar ao core ainda" />
-      </div>
-      <div className="app-card p-4">
-        <h2 className="text-base font-semibold">Preparação para nova IA</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          A tela foi preparada para agents, memória, eventos e outbox, mas os controles de escrita ficam para a etapa de backend/SQL.
-        </p>
-        <div className="mt-4 grid gap-2 md:grid-cols-2">
-          {agentTables.map((item) => (
-            <div key={item.table} className="app-card-soft flex items-center justify-between gap-3 p-3">
-              <span>{item.label}</span>
-              <Badge className="border-0 bg-[var(--app-surface-soft)] text-muted-foreground">
-                {countByTable.get(item.table)?.errorMessage ? "Não conectado" : `${formatNumber(countByTable.get(item.table)?.count)} registros`}
-              </Badge>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
+  return <AiAgentsContent />;
 }
 
 function SettingsContent({ technical = false }: { technical?: boolean }) {

@@ -7,6 +7,7 @@ services:
         NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
         NEXT_PUBLIC_VIMOB_API_URL: ${NEXT_PUBLIC_VIMOB_API_URL}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-https://app.vimobcrm.com.br}
     image: ${VIMOB_WEB_IMAGE:-vimob-crm-web:local}
     restart: unless-stopped
     depends_on:
@@ -16,10 +17,11 @@ services:
       NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
       NEXT_PUBLIC_VIMOB_API_URL: ${NEXT_PUBLIC_VIMOB_API_URL}
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-https://app.vimobcrm.com.br}
       VIMOB_API_URL: ${VIMOB_INTERNAL_API_URL:-http://api:8081}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-Vimob CRM <naoresponde@vimobcrm.com.br>}
-      RESEND_REPLY_TO: ${RESEND_REPLY_TO:-suporte@vimobcrm.com.br}
+      RESEND_REPLY_TO: ${RESEND_REPLY_TO:-contato@vimobcrm.com.br}
       RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
       EMAIL_ASSET_BASE_URL: ${EMAIL_ASSET_BASE_URL:-https://vimobcrm.com.br}
       EMAIL_INTERNAL_SECRET: ${EMAIL_INTERNAL_SECRET:-}
@@ -52,6 +54,17 @@ services:
       DATABASE_MAX_CONN_LIFETIME: ${DATABASE_MAX_CONN_LIFETIME:-30m}
       DATABASE_MAX_CONN_IDLE_TIME: ${DATABASE_MAX_CONN_IDLE_TIME:-5m}
       DATABASE_HEALTH_TIMEOUT: ${DATABASE_HEALTH_TIMEOUT:-3s}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-Vimob CRM <naoresponde@vimobcrm.com.br>}
+      RESEND_REPLY_TO: ${RESEND_REPLY_TO:-contato@vimobcrm.com.br}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-contato@vimobcrm.com.br}
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-https://app.vimobcrm.com.br}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      OPENAI_TEXT_MODEL: ${OPENAI_TEXT_MODEL:-gpt-4.1-mini}
+      OPENAI_REALTIME_MODEL: ${OPENAI_REALTIME_MODEL:-gpt-realtime-2}
+      OPENAI_REALTIME_VOICE: ${OPENAI_REALTIME_VOICE:-cedar}
       ASAAS_API_KEY: ${ASAAS_API_KEY:-}
       ASAAS_BASE_URL: ${ASAAS_BASE_URL:-https://api.asaas.com/v3}
     ports:

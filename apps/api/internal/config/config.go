@@ -22,6 +22,8 @@ type Config struct {
 	Auth        authpkg.Config
 	Database    dbpkg.Config
 	Storage     StorageConfig
+	Email       EmailConfig
+	AI          AIConfig
 }
 
 type HTTPConfig struct {
@@ -37,6 +39,23 @@ type HTTPConfig struct {
 type StorageConfig struct {
 	ProjectURL string
 	APIKey     string
+}
+
+type EmailConfig struct {
+	ResendAPIKey string
+	FromEmail    string
+	ReplyTo      string
+	SupportEmail string
+	AppURL       string
+}
+
+type AIConfig struct {
+	OpenAIAPIKey   string
+	OpenAIBaseURL  string
+	DefaultModel   string
+	RealtimeModel  string
+	RealtimeVoice  string
+	AutoReplyToken string
 }
 
 func (cfg HTTPConfig) Addr() string {
@@ -78,6 +97,21 @@ func Load() (Config, error) {
 		Storage: StorageConfig{
 			ProjectURL: getEnv("SUPABASE_PROJECT_URL", getEnv("NEXT_PUBLIC_SUPABASE_URL", getEnv("SUPABASE_URL", ""))),
 			APIKey:     getEnv("SUPABASE_SERVICE_ROLE_KEY", os.Getenv("SUPABASE_SECRET_KEY")),
+		},
+		Email: EmailConfig{
+			ResendAPIKey: os.Getenv("RESEND_API_KEY"),
+			FromEmail:    getEnv("RESEND_FROM_EMAIL", "Vimob CRM <naoresponde@vimobcrm.com.br>"),
+			ReplyTo:      getEnv("RESEND_REPLY_TO", "contato@vimobcrm.com.br"),
+			SupportEmail: getEnv("SUPPORT_EMAIL", getEnv("RESEND_REPLY_TO", "contato@vimobcrm.com.br")),
+			AppURL:       getEnv("APP_PUBLIC_URL", getEnv("NEXT_PUBLIC_SITE_URL", "https://vimobcrm.com.br")),
+		},
+		AI: AIConfig{
+			OpenAIAPIKey:   os.Getenv("OPENAI_API_KEY"),
+			OpenAIBaseURL:  getEnv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+			DefaultModel:   getEnv("OPENAI_TEXT_MODEL", getEnv("OPENAI_MODEL", "gpt-4.1-mini")),
+			RealtimeModel:  getEnv("OPENAI_REALTIME_MODEL", "gpt-realtime-2"),
+			RealtimeVoice:  getEnv("OPENAI_REALTIME_VOICE", "cedar"),
+			AutoReplyToken: getEnv("AI_AUTOREPLY_TOKEN", os.Getenv("INTERNAL_WEBHOOK_TOKEN")),
 		},
 	}
 

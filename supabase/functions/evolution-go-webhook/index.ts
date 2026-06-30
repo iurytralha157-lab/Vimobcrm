@@ -14,6 +14,8 @@ type JsonRecord = Record<string, any>;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const EVOLUTION_GO_API_KEY = Deno.env.get("EVOLUTION_GO_API_KEY") || "";
+const VIMOB_API_URL = Deno.env.get("VIMOB_API_URL") || Deno.env.get("VIMOB_API_BASE_URL") || "";
+const AI_AUTOREPLY_TOKEN = Deno.env.get("AI_AUTOREPLY_TOKEN") || Deno.env.get("INTERNAL_WEBHOOK_TOKEN") || "";
 
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
@@ -899,6 +901,47 @@ async function logInbound(session: JsonRecord, conversation: JsonRecord, lead: J
   });
 }
 
+async function triggerAutoReply(
+  session: JsonRecord,
+  conversation: JsonRecord,
+  storedMessage: JsonRecord | null,
+  message: ReturnType<typeof normalizeMessage>,
+) {
+  if (!VIMOB_API_URL || !AI_AUTOREPLY_TOKEN) return;
+  if (!message || message.fromMe || message.isGroup || !storedMessage?.id) return;
+  if (!message.content || !String(message.content).trim()) return;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25_000);
+  try {
+    const response = await fetch(`${VIMOB_API_URL.replace(/\/$/, "")}/v1/internal/whatsapp/auto-reply`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Token": AI_AUTOREPLY_TOKEN,
+      },
+      body: JSON.stringify({
+        organizationId: session.organization_id,
+        sessionId: session.id,
+        conversationId: conversation.id,
+        messageId: storedMessage.id,
+        providerMessageId: message.messageId,
+        text: message.content,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      console.warn("AI auto-reply request failed", response.status, body.slice(0, 500));
+    }
+  } catch (error) {
+    console.warn("AI auto-reply request failed", error);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function handleMessages(session: JsonRecord, payload: any) {
   const messages = extractMessages(payload);
   let processed = 0;
@@ -913,6 +956,9 @@ async function handleMessages(session: JsonRecord, payload: any) {
     const result = await insertMessage(session, conversation, lead, message);
     await updateConversationAfterMessage(conversation, message, result.inserted);
     await logInbound(session, conversation, lead, rule, message);
+    if (result.inserted) {
+      await triggerAutoReply(session, conversation, result.message, message);
+    }
     processed += 1;
   }
 

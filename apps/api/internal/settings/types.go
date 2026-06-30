@@ -9,6 +9,7 @@ var (
 	ErrStorageOperation     = errors.New("settings storage operation failed")
 	ErrAuthNotConfigured    = errors.New("settings auth admin is not configured")
 	ErrAuthOperation        = errors.New("settings auth admin operation failed")
+	ErrEmailOperation       = errors.New("settings email notification failed")
 )
 
 type Envelope[T any] struct {
@@ -102,8 +103,9 @@ type ChangePasswordRequest struct {
 }
 
 type ChangePasswordResult struct {
-	Allowed bool   `json:"allowed"`
-	Message string `json:"message"`
+	Allowed               bool   `json:"allowed"`
+	Message               string `json:"message"`
+	EmailNotificationSent bool   `json:"emailNotificationSent"`
 }
 
 type PasswordChangeEvent struct {

@@ -11,8 +11,10 @@ import (
 )
 
 type Handler struct {
-	repo      Repository
-	publisher realtime.Publisher
+	repo           Repository
+	publisher      realtime.Publisher
+	aiRunner       aiRunner
+	autoReplyToken string
 }
 
 func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
