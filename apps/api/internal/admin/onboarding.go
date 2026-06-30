@@ -169,6 +169,15 @@ func (repo Repository) PublicOnboardingSignup(ctx context.Context, request Onboa
 			cpf
 		)
 		values ($1::uuid, $2::uuid, $3, $4, 'admin', true, $5, $6)
+		on conflict (id) do update set
+			organization_id = excluded.organization_id,
+			name = excluded.name,
+			email = excluded.email,
+			role = 'admin',
+			is_active = true,
+			whatsapp = excluded.whatsapp,
+			cpf = excluded.cpf,
+			updated_at = now()
 	`, createdUserID, createdOrganizationID, adminName, email, nullableText(fullPhone), nullableText(onlyDigitsAdmin(request.DocumentNumber))); err != nil {
 		return nil, err
 	}
