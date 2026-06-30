@@ -9,10 +9,12 @@ export interface AdminInvitation {
   role: string | null;
   token: string;
   organization_id: string;
+  organization_name?: string | null;
   expires_at: string;
   used_at: string | null;
   created_at: string | null;
   created_by: string | null;
+  email_sent?: boolean;
 }
 
 function normalizeInvitation(invitation: AdminInvitation): AdminInvitation {
@@ -77,7 +79,7 @@ export function useAdminInvitations(organizationId: string | undefined) {
   });
 
   const getInviteLink = (token: string) => {
-    return `${window.location.origin}/login?invite=${token}`;
+    return `${window.location.origin}/convite/${token}`;
   };
 
   return {

@@ -20,5 +20,7 @@ export function useAccessibleSessions() {
     },
     enabled: !!profile?.id && !!profile?.organization_id,
     staleTime: 1000 * 60 * 2,
+    retry: false,
+    refetchOnWindowFocus: false,
   });
 }

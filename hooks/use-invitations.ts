@@ -5,6 +5,7 @@ import { adminAPI } from '@/lib/api/admin';
 export interface Invitation {
   id: string;
   organization_id: string;
+  organization_name?: string | null;
   email: string | null;
   token: string;
   role: 'admin' | 'manager' | 'user';
@@ -12,6 +13,7 @@ export interface Invitation {
   expires_at: string;
   used_at: string | null;
   created_at: string;
+  email_sent?: boolean;
 }
 
 export function useInvitations() {
@@ -56,5 +58,5 @@ export function useDeleteInvitation() {
 }
 
 export function getInviteLink(token: string) {
-  return `${window.location.origin}/login?invite=${token}`;
+  return `${window.location.origin}/convite/${token}`;
 }

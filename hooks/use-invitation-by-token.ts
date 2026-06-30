@@ -6,6 +6,7 @@ interface InvitationByToken {
   email: string | null;
   role: 'admin' | 'manager' | 'user';
   organization_id: string;
+  organization_name?: string;
   expires_at: string;
 }
 

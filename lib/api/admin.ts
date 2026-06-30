@@ -77,6 +77,21 @@ export const adminAPI = {
     return response.data;
   },
 
+  async acceptInvitationPublic<T = AdminJSON>(token: string, body: AdminJSON) {
+    const response = await vimobPublicAPIRequest<Envelope<T>>(`/v1/public/invitations/${token}/accept`, {
+      method: 'POST',
+      body,
+    });
+    return response.data;
+  },
+
+  async acceptInvitationAuthenticated<T = AdminJSON>(token: string) {
+    const response = await vimobAPIRequest<Envelope<T>>(`/v1/invitations/${token}/accept`, {
+      method: 'POST',
+    });
+    return response.data;
+  },
+
   async myOnboardingRequest<T = AdminJSON | null>() {
     const response = await vimobAPIRequest<Envelope<T>>('/v1/onboarding-requests/mine');
     return response.data;

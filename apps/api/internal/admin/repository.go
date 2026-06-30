@@ -21,23 +21,38 @@ import (
 )
 
 type ExternalConfig struct {
-	ProjectURL string
-	APIKey     string
+	ProjectURL   string
+	APIKey       string
+	ResendAPIKey string
+	FromEmail    string
+	ReplyTo      string
+	SupportEmail string
+	AppURL       string
 }
 
 type Repository struct {
-	db         *dbpkg.Postgres
-	projectURL string
-	apiKey     string
-	httpClient *http.Client
+	db           *dbpkg.Postgres
+	projectURL   string
+	apiKey       string
+	resendAPIKey string
+	fromEmail    string
+	replyTo      string
+	supportEmail string
+	appURL       string
+	httpClient   *http.Client
 }
 
 func NewRepository(db *dbpkg.Postgres, externalConfig ExternalConfig) Repository {
 	return Repository{
-		db:         db,
-		projectURL: strings.TrimRight(strings.TrimSpace(externalConfig.ProjectURL), "/"),
-		apiKey:     strings.TrimSpace(externalConfig.APIKey),
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		db:           db,
+		projectURL:   strings.TrimRight(strings.TrimSpace(externalConfig.ProjectURL), "/"),
+		apiKey:       strings.TrimSpace(externalConfig.APIKey),
+		resendAPIKey: strings.TrimSpace(externalConfig.ResendAPIKey),
+		fromEmail:    cleanEmailHeader(firstNonEmpty(externalConfig.FromEmail, "Vimob CRM <naoresponde@vimobcrm.com.br>")),
+		replyTo:      cleanEmailHeader(firstNonEmpty(externalConfig.ReplyTo, "contato@vimobcrm.com.br")),
+		supportEmail: cleanEmailHeader(firstNonEmpty(externalConfig.SupportEmail, "contato@vimobcrm.com.br")),
+		appURL:       strings.TrimRight(firstNonEmpty(externalConfig.AppURL, "https://app.vimobcrm.com.br"), "/"),
+		httpClient:   &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -236,7 +251,7 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 		email = &normalizedEmail
 	}
 
-	return repo.queryJSONObject(ctx, `
+	item, err := repo.queryJSONObject(ctx, `
 		insert into public.invitations (
 			organization_id,
 			email,
@@ -253,6 +268,28 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 		)
 		returning to_jsonb(invitations)
 	`, resolvedOrganizationID, email, role, tenantContext.UserID, cleanString(request.ExpiresAt))
+	if err != nil {
+		return nil, err
+	}
+
+	emailSent := false
+	if email != nil {
+		organizationName, orgErr := repo.organizationName(ctx, resolvedOrganizationID)
+		if orgErr != nil {
+			return nil, orgErr
+		}
+		token, _ := item["token"].(string)
+		if token != "" {
+			emailSent = repo.sendInvitationEmail(ctx, invitationEmailInput{
+				Email:            *email,
+				OrganizationName: organizationName,
+				Role:             role,
+				InviteURL:        repo.invitationURL(token),
+			}) == nil
+		}
+	}
+	item["email_sent"] = emailSent
+	return item, nil
 }
 
 func (repo Repository) DeleteInvitation(ctx context.Context, tenantContext tenant.Context, invitationID string) error {
@@ -301,9 +338,11 @@ func (repo Repository) ShowInvitationByToken(ctx context.Context, token string) 
 			'email', i.email,
 			'role', i.role,
 			'organization_id', i.organization_id::text,
+			'organization_name', o.name,
 			'expires_at', i.expires_at
 		)
 		from public.invitations i
+		join public.organizations o on o.id = i.organization_id
 		where i.token = $1
 		  and i.used_at is null
 		  and i.expires_at > now()

@@ -2,6 +2,7 @@ import { supabase } from '@/integrations/supabase/client'
 
 const DEFAULT_API_URL = 'http://localhost:8081'
 const LOCAL_DEV_FALLBACK_API_URL = 'http://localhost:8081'
+const DEFAULT_REQUEST_TIMEOUT_MS = 12000
 
 type RequestOptions = {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
@@ -9,6 +10,7 @@ type RequestOptions = {
   body?: unknown
   organizationId?: string | null
   signal?: AbortSignal
+  timeoutMs?: number
   skipTelemetry?: boolean
 }
 
@@ -114,31 +116,75 @@ export async function vimobPublicAPIRequest<T>(path: string, options: Omit<Reque
 }
 
 async function makeRequest(path: string, options: RequestOptions, headers: Headers, baseURL: string) {
-  const response = await fetch(buildAPIURL(path, options.query, baseURL), {
-    method: options.method || 'GET',
-    headers,
-    body: serializeRequestBody(options.body),
-    signal: options.signal,
-  })
-  const text = await response.text()
+  const { signal, cleanup } = createRequestSignal(options.signal, options.timeoutMs)
 
-  return {
-    baseURL,
-    response,
-    text,
-    payload: text ? safeJSONParse(text) : null,
+  try {
+    const response = await fetch(buildAPIURL(path, options.query, baseURL), {
+      method: options.method || 'GET',
+      headers,
+      body: serializeRequestBody(options.body),
+      signal,
+    })
+    const text = await response.text()
+
+    return {
+      baseURL,
+      response,
+      text,
+      payload: text ? safeJSONParse(text) : null,
+    }
+  } finally {
+    cleanup()
   }
 }
 
 async function makeRequestOrThrow(path: string, options: RequestOptions, headers: Headers, baseURL: string) {
   try {
     return await makeRequest(path, options, headers, baseURL)
-  } catch {
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new VimobAPIError(`A Vimob API demorou para responder em ${baseURL}. Tente novamente em instantes.`, {
+        code: 'api_timeout',
+        status: 0,
+      })
+    }
+
     throw new VimobAPIError(`A Vimob API nao esta acessivel em ${baseURL}. Inicie apps/api ou ajuste NEXT_PUBLIC_VIMOB_API_URL.`, {
       code: 'api_unavailable',
       status: 0,
     })
   }
+}
+
+function createRequestSignal(externalSignal?: AbortSignal, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController()
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+
+  const abortRequest = () => controller.abort()
+
+  if (externalSignal?.aborted) {
+    controller.abort()
+  } else if (externalSignal) {
+    externalSignal.addEventListener('abort', abortRequest, { once: true })
+  }
+
+  if (timeoutMs > 0) {
+    timeoutId = setTimeout(abortRequest, timeoutMs)
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
+      externalSignal?.removeEventListener('abort', abortRequest)
+    },
+  }
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === 'AbortError'
 }
 
 export function buildAPIURL(path: string, query?: RequestOptions['query'], baseURL = getAPIBaseURL()) {

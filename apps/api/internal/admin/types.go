@@ -49,6 +49,23 @@ type InvitationRequest struct {
 	ExpiresAt      *string `json:"expires_at"`
 }
 
+type AcceptInvitationRequest struct {
+	Name            string  `json:"name"`
+	Password        string  `json:"password"`
+	Whatsapp        *string `json:"whatsapp"`
+	TermsAccepted   bool    `json:"termsAccepted"`
+	PrivacyAccepted bool    `json:"privacyAccepted"`
+}
+
+type AcceptInvitationResult struct {
+	Success          bool   `json:"success"`
+	RequiresLogin    bool   `json:"requiresLogin"`
+	Email            string `json:"email"`
+	OrganizationID   string `json:"organizationId"`
+	OrganizationName string `json:"organizationName"`
+	Message          string `json:"message,omitempty"`
+}
+
 type OnboardingSignupRequest struct {
 	CompanyName      string `json:"companyName"`
 	DocumentNumber   string `json:"documentNumber"`
@@ -74,20 +91,20 @@ type CheckoutPlanRequest struct {
 }
 
 type CreateOrganizationRequest struct {
-	Name         string  `json:"name"`
-	Segment      *string `json:"segment"`
-	AdminEmail   string  `json:"adminEmail"`
-	AdminName    string  `json:"adminName"`
-	AdminPassword string `json:"adminPassword"`
-	Whatsapp     *string `json:"whatsapp"`
-	Phone        *string `json:"phone"`
-	CNPJ         *string `json:"cnpj"`
-	Creci        *string `json:"creci"`
-	PlanID       *string `json:"planId"`
-	Address      *string `json:"address"`
-	City         *string `json:"city"`
-	Neighborhood *string `json:"neighborhood"`
-	Number       *string `json:"number"`
-	Complement   *string `json:"complement"`
-	CPF          *string `json:"cpf"`
+	Name          string  `json:"name"`
+	Segment       *string `json:"segment"`
+	AdminEmail    string  `json:"adminEmail"`
+	AdminName     string  `json:"adminName"`
+	AdminPassword string  `json:"adminPassword"`
+	Whatsapp      *string `json:"whatsapp"`
+	Phone         *string `json:"phone"`
+	CNPJ          *string `json:"cnpj"`
+	Creci         *string `json:"creci"`
+	PlanID        *string `json:"planId"`
+	Address       *string `json:"address"`
+	City          *string `json:"city"`
+	Neighborhood  *string `json:"neighborhood"`
+	Number        *string `json:"number"`
+	Complement    *string `json:"complement"`
+	CPF           *string `json:"cpf"`
 }

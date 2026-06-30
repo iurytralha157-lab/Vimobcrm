@@ -188,6 +188,38 @@ func (handler Handler) ShowInvitationByToken(w http.ResponseWriter, r *http.Requ
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[map[string]any]{Data: item})
 }
 
+func (handler Handler) AcceptInvitationPublic(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	var request AcceptInvitationRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+
+	result, err := handler.repo.AcceptInvitationPublic(r.Context(), r.PathValue("token"), request)
+	if err != nil {
+		writeAdminError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[AcceptInvitationResult]{Data: result})
+}
+
+func (handler Handler) AcceptInvitationAuthenticated(w http.ResponseWriter, r *http.Request) {
+	user, ok := httpserver.UserFromContext(r.Context())
+	if !ok || user.ID == "" {
+		httpserver.WriteError(w, r, http.StatusUnauthorized, "unauthorized", "Missing authenticated user.")
+		return
+	}
+
+	result, err := handler.repo.AcceptInvitationAuthenticated(r.Context(), user.ID, r.PathValue("token"))
+	if err != nil {
+		writeAdminError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[AcceptInvitationResult]{Data: result})
+}
+
 func (handler Handler) PublicOnboardingSignup(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var request OnboardingSignupRequest

@@ -73,6 +73,8 @@ interface ImpersonateSession {
 }
 
 const IMPERSONATING_STORAGE_KEY = 'impersonating';
+const AUTH_BOOTSTRAP_TIMEOUT_MS = 8000;
+const SIGN_IN_ROLE_TIMEOUT_MS = 3500;
 
 function isInvalidSessionError(error: unknown) {
   const candidate = error as { code?: unknown; message?: unknown; status?: unknown } | null;
@@ -81,6 +83,39 @@ function isInvalidSessionError(error: unknown) {
   const status = typeof candidate?.status === 'number' ? candidate.status : 0;
 
   return status === 401 && /bearer|token|session|sessao|expir/i.test(`${code} ${message}`);
+}
+
+function withSoftTimeout<T>(
+  task: Promise<T>,
+  fallback: T,
+  label: string,
+  timeoutMs = AUTH_BOOTSTRAP_TIMEOUT_MS,
+): Promise<T> {
+  let settled = false;
+
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      console.warn(`[AuthContext] ${label} timed out; continuing with degraded auth state.`);
+      resolve(fallback);
+    }, timeoutMs);
+
+    task
+      .then((value) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        console.error(`[AuthContext] ${label} failed:`, error);
+        resolve(fallback);
+      });
+  });
 }
 
 function readStoredImpersonation(): ImpersonateSession | null {
@@ -213,6 +248,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       '/cadastro',
       '/reset-password',
       '/onboarding',
+      '/convite',
       '/checkout',
       '/termos-de-uso',
       '/politica-de-privacidade'
@@ -497,10 +533,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('[AuthContext] login user loaded:', session.user.id);
 
       try {
-        // Sequencial to ensure organizations are loaded before setting initialized
-        await fetchProfileRef.current(session.user.id);
+        // Sequencial to ensure organizations are loaded before setting initialized.
+        // These calls depend on our backend, so they must not leave a valid Supabase
+        // session stuck if a secondary module/API is slow or temporarily unavailable.
+        await withSoftTimeout(fetchProfileRef.current(session.user.id), false, 'initial fetchProfile');
         if (userRef.current) {
-          await checkMultiOrgRef.current(session.user.id);
+          await withSoftTimeout(checkMultiOrgRef.current(session.user.id), undefined, 'initial checkMultiOrg');
         }
       } catch (err) {
         console.error('[AuthContext] Error during initial auth data fetch:', err);
@@ -508,6 +546,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (isMounted) {
           setLoading(false);
           setAuthInitialized(true);
+          setOrganizationsLoaded(true);
           console.log('[AuthContext] Auth initialization complete naturally');
         }
       }
@@ -547,6 +586,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             '/cadastro',
             '/reset-password',
             '/onboarding',
+            '/convite',
             '/checkout',
             '/termos-de-uso',
             '/politica-de-privacidade'
@@ -593,15 +633,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setTimeout(() => {
               if (!isMounted) return;
               Promise.all([
-                fetchProfileRef.current(session.user.id),
-                checkMultiOrgRef.current(session.user.id, {
+                withSoftTimeout(fetchProfileRef.current(session.user.id), false, 'signIn fetchProfile'),
+                withSoftTimeout(checkMultiOrgRef.current(session.user.id, {
                   forceSelectorForMultiOrg: authEvent === 'SIGNED_IN',
-                }),
-              ]).finally(() => {
+                }), undefined, 'signIn checkMultiOrg'),
+              ]).catch((error) => {
+                console.error('[AuthContext] Deferred auth bootstrap failed:', error);
+              }).finally(() => {
                 if (!isMounted) return;
                 setIsInitializingOrg(false);
                 setLoading(false);
                 setAuthInitialized(true);
+                setOrganizationsLoaded(true);
               });
             }, 0);
           } else {
@@ -642,10 +685,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { error, data } = await supabase.auth.signInWithPassword({ email, password });
     let signedInIsSuperAdmin = false;
 
-    // Log successful login (async to avoid blocking)
     if (!error && data.user) {
-      signedInIsSuperAdmin = await checkSuperAdmin(data.user.id);
-      await fetchProfile(data.user.id);
+      signedInIsSuperAdmin = await withSoftTimeout(
+        checkSuperAdmin(data.user.id),
+        false,
+        'signIn checkSuperAdmin',
+        SIGN_IN_ROLE_TIMEOUT_MS,
+      );
+
+      void fetchProfile(data.user.id).catch((profileError) => {
+        console.error('[AuthContext] Non-blocking signIn profile refresh failed:', profileError);
+      });
 
       setTimeout(() => {
         logAuditAction('login', 'session', data.user.id, undefined, {

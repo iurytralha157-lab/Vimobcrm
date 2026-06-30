@@ -8,12 +8,12 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from '@/components/ui/sheet';
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -235,28 +235,28 @@ export function RolesTab() {
   const isLoading = createRole.isPending || updateRole.isPending || updatePermissions.isPending;
 
   return (
-    <Card className="app-card">
+    <Card className="app-card border-0 shadow-none">
       <CardHeader className="flex flex-row items-center justify-between">
         <div>
           <CardTitle className="text-xl font-semibold text-foreground">Funções e Permissões</CardTitle>
           <CardDescription className="mt-0.5 text-sm text-muted-foreground">Crie funções personalizadas e defina o que cada cargo pode acessar</CardDescription>
         </div>
-        <Sheet open={createDialogOpen} onOpenChange={(open) => {
+        <Dialog open={createDialogOpen} onOpenChange={(open) => {
           setCreateDialogOpen(open);
           if (!open) resetForm();
         }}>
-          <SheetTrigger asChild>
+          <DialogTrigger asChild>
             <Button onClick={handleOpenCreate}>
               <Plus className="h-4 w-4 mr-2" />
               Nova Função
             </Button>
-          </SheetTrigger>
-          <SheetContent side="right" className="app-card w-[90%] sm:w-[650px] sm:max-w-[650px] p-6 flex flex-col overflow-y-auto">
-            <SheetHeader>
-              <SheetTitle>
+          </DialogTrigger>
+          <DialogContent className="app-card flex max-h-[86vh] w-[92vw] max-w-[720px] flex-col p-6">
+            <DialogHeader>
+              <DialogTitle>
                 {editingRole ? 'Editar Função' : 'Nova Função'}
-              </SheetTitle>
-            </SheetHeader>
+              </DialogTitle>
+            </DialogHeader>
 
             <div className="flex-1 overflow-y-auto space-y-6 py-4">
               {/* Informações básicas */}
@@ -442,16 +442,16 @@ export function RolesTab() {
             </div>
 
             <div className="flex gap-2 pt-4 border-t border-white/[0.055]">
-              <Button variant="outline" className="w-[40%] rounded-xl" onClick={() => setCreateDialogOpen(false)} disabled={isLoading}>
+              <Button variant="secondary" className="w-[40%]" onClick={() => setCreateDialogOpen(false)} disabled={isLoading}>
                 Cancelar
               </Button>
-              <Button className="w-[60%] rounded-xl" onClick={handleSave} disabled={!formName.trim() || isLoading}>
+              <Button className="w-[60%]" onClick={handleSave} disabled={!formName.trim() || isLoading}>
                 {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 {editingRole ? 'Salvar Alterações' : 'Criar Função'}
               </Button>
             </div>
-          </SheetContent>
-        </Sheet>
+          </DialogContent>
+        </Dialog>
       </CardHeader>
 
       <CardContent className="px-4 md:px-6 pb-5">

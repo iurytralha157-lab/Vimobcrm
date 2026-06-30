@@ -67,8 +67,13 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		APIKey:     cfg.Storage.APIKey,
 	}))
 	adminHandler := admin.NewHandler(admin.NewRepository(postgres, admin.ExternalConfig{
-		ProjectURL: cfg.Storage.ProjectURL,
-		APIKey:     cfg.Storage.APIKey,
+		ProjectURL:   cfg.Storage.ProjectURL,
+		APIKey:       cfg.Storage.APIKey,
+		ResendAPIKey: cfg.Email.ResendAPIKey,
+		FromEmail:    cfg.Email.FromEmail,
+		ReplyTo:      cfg.Email.ReplyTo,
+		SupportEmail: cfg.Email.SupportEmail,
+		AppURL:       cfg.Email.AppURL,
 	}))
 	aiRepository := ai.NewRepository(postgres)
 	aiService := ai.NewService(aiRepository, ai.Config{
@@ -234,6 +239,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("GET /v1/invitations", withAuthTenant(http.HandlerFunc(adminHandler.ListInvitations)))
 	mux.Handle("POST /v1/invitations", withAuthTenant(http.HandlerFunc(adminHandler.CreateInvitation)))
 	mux.Handle("DELETE /v1/invitations/{id}", withAuthTenant(http.HandlerFunc(adminHandler.DeleteInvitation)))
+	mux.Handle("POST /v1/invitations/{token}/accept", withAuthTenant(http.HandlerFunc(adminHandler.AcceptInvitationAuthenticated)))
 	mux.Handle("GET /v1/onboarding-requests/mine", withAuthTenant(http.HandlerFunc(adminHandler.ShowMyOnboardingRequest)))
 	mux.Handle("POST /v1/onboarding-requests", withAuthTenant(http.HandlerFunc(adminHandler.CreateOnboardingRequest)))
 	mux.Handle("GET /v1/admin/onboarding-requests", withAuthTenant(http.HandlerFunc(adminHandler.ListOnboardingRequestsAdmin)))
@@ -308,6 +314,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.HandleFunc("POST /v1/public/payments/charge", integrationsHandler.PublicCreateCharge)
 	mux.HandleFunc("POST /v1/public/payments/cancel", integrationsHandler.PublicCancelPayment)
 	mux.HandleFunc("GET /v1/public/invitations/{token}", adminHandler.ShowInvitationByToken)
+	mux.HandleFunc("POST /v1/public/invitations/{token}/accept", adminHandler.AcceptInvitationPublic)
 	mux.Handle("GET /v1/webhooks", withOrganization(http.HandlerFunc(webhooksHandler.List)))
 	mux.Handle("POST /v1/webhooks", withOrganization(http.HandlerFunc(webhooksHandler.Create)))
 	mux.Handle("PATCH /v1/webhooks/{id}", withOrganization(http.HandlerFunc(webhooksHandler.Update)))
