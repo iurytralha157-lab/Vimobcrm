@@ -8,6 +8,7 @@ import { performanceTracker } from '@/lib/performance';
 import { performFullCacheClear } from '@/lib/cache-utils';
 import { meAPI } from '@/lib/api/me';
 import { usersAPI } from '@/lib/api/users';
+import { ROUTES, getPublicAppUrl } from '@/config/constants';
 
 interface UserProfile {
   id: string;
@@ -151,11 +152,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [organizationsLoaded, setOrganizationsLoaded] = useState(false);
   const [isInitializingOrg, setIsInitializingOrg] = useState(false);
   const [userOrganizations, setUserOrganizations] = useState<UserOrganization[]>([]);
+  const organizationRef = useRef<Organization | null>(null);
   const lastSuperAdminRef = useRef(false);
   const authStateRef = useRef({
     authInitialized: false,
     organizationsLoaded: false,
   });
+
+  const setActiveOrganization = (nextOrganization: Organization | null) => {
+    organizationRef.current = nextOrganization;
+    setOrganization(nextOrganization);
+  };
 
   useEffect(() => {
     authStateRef.current = {
@@ -214,13 +221,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               await supabase.auth.signOut();
               return false;
             }
-            setOrganization({
+            setActiveOrganization({
               ...orgData,
               theme_mode: orgData.theme_mode || 'system',
               accent_color: orgData.accent_color || '#FF4529',
             } as Organization);
           } else {
-            setOrganization(null);
+            setActiveOrganization(null);
           }
 
           return true;
@@ -252,7 +259,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsSuperAdmin(data.context.isSuperAdmin);
     lastSuperAdminRef.current = data.context.isSuperAdmin;
     if (data.organization) {
-      setOrganization({
+      setActiveOrganization({
         ...data.organization,
         theme_mode: data.organization.theme_mode || 'system',
         accent_color: data.organization.accent_color || '#FF4529',
@@ -271,7 +278,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setImpersonating(null);
     clearStoredImpersonation();
-    setOrganization(null); // Limpa org impersonada imediatamente
+    setActiveOrganization(null); // Limpa org impersonada imediatamente
 
     // Recarregar org original do super admin (usando organization_id real do banco)
     if (user) {
@@ -306,7 +313,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (count === 1) {
           const onlyOrgId = uniqueOrgs[0].organization_id;
 
-          if (!organization || organization.id !== onlyOrgId) {
+          const currentOrganization = organizationRef.current;
+
+          if (!currentOrganization || currentOrganization.id !== onlyOrgId) {
             console.log('[AuthContext] auto-selecting single org:', onlyOrgId);
             setIsInitializingOrg(true);
             try {
@@ -318,14 +327,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } else if (count > 1) {
           if (options?.forceSelectorForMultiOrg) {
             console.log('[AuthContext] multiple organizations found; forcing organization selector');
-            setOrganization(null);
+            setActiveOrganization(null);
             setProfile(prev => prev ? { ...prev, organization_id: null } : prev);
             return;
           }
 
           const savedOrgId = localStorage.getItem(`vimob_active_organization_${userId}`);
 
-          if (savedOrgId && (!organization || organization.id !== savedOrgId)) {
+          const currentOrganization = organizationRef.current;
+
+          if (savedOrgId && (!currentOrganization || currentOrganization.id !== savedOrgId)) {
             const isValid = uniqueOrgs.some(o => o.organization_id === savedOrgId);
 
             if (isValid) {
@@ -374,7 +385,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(null);
       setUser(null);
       setProfile(null);
-      setOrganization(null);
+      setActiveOrganization(null);
       setIsSuperAdmin(false);
       lastSuperAdminRef.current = false;
       setImpersonating(null);
@@ -591,7 +602,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const resetPassword = async (email: string) => {
     try {
-      const redirectUrl = `${window.location.origin}/reset-password`;
+      const redirectUrl = getPublicAppUrl(ROUTES.RESET_PASSWORD);
       console.log('[AuthContext] Resetting password for:', email, 'redirectUrl:', redirectUrl);
 
       const { error } = await supabase.auth.resetPasswordForEmail(email, {

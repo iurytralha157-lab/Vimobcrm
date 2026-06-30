@@ -10,7 +10,7 @@ services:
         - traefik.http.routers.vimob-web.rule=Host(`${VIMOB_WEB_DOMAIN:-app.vimobcrm.com.br}`)
         - traefik.http.routers.vimob-web.entrypoints=${TRAEFIK_HTTPS_ENTRYPOINT:-websecure}
         - traefik.http.routers.vimob-web.tls=true
-        - traefik.http.routers.vimob-web.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}
+        - traefik.http.routers.vimob-web.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencryptresolver}
         - traefik.http.services.vimob-web.loadbalancer.server.port=3000
     environment:
       NODE_ENV: production
@@ -42,7 +42,7 @@ services:
         - traefik.http.routers.vimob-api.rule=Host(`${VIMOB_API_DOMAIN:-api.vimobcrm.com.br}`)
         - traefik.http.routers.vimob-api.entrypoints=${TRAEFIK_HTTPS_ENTRYPOINT:-websecure}
         - traefik.http.routers.vimob-api.tls=true
-        - traefik.http.routers.vimob-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}
+        - traefik.http.routers.vimob-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencryptresolver}
         - traefik.http.services.vimob-api.loadbalancer.server.port=8081
     environment:
       API_ENV: production
