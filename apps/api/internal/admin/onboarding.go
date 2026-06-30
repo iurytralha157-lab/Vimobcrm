@@ -184,7 +184,9 @@ func (repo Repository) PublicOnboardingSignup(ctx context.Context, request Onboa
 
 	if _, err := tx.Exec(ctx, `
 		insert into public.organization_members (organization_id, user_id, role, is_active)
-		values ($1::uuid, $2::uuid, 'owner', true)
+		values ($1::uuid, $2::uuid, 'admin', true)
+		on conflict (user_id, organization_id)
+		do update set role = 'admin', is_active = true, updated_at = now()
 	`, createdOrganizationID, createdUserID); err != nil {
 		return nil, err
 	}

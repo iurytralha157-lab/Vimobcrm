@@ -755,9 +755,9 @@ func (repo Repository) CreateOrganization(ctx context.Context, tenantContext ten
 
 	if _, err := tx.Exec(ctx, `
 		insert into public.organization_members (organization_id, user_id, role, is_active)
-		values ($1::uuid, $2::uuid, 'owner', true)
-		on conflict (organization_id, user_id)
-		do update set role = 'owner', is_active = true, updated_at = now()
+		values ($1::uuid, $2::uuid, 'admin', true)
+		on conflict (user_id, organization_id)
+		do update set role = 'admin', is_active = true, updated_at = now()
 	`, orgID, authUserID); err != nil {
 		return nil, err
 	}
