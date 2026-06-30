@@ -16,6 +16,20 @@ export const ROUTES = {
   RESET_PASSWORD: '/reset-password',
 } as const
 
+const DEFAULT_PUBLIC_APP_ORIGIN = 'https://vimobcrm.com.br'
+
+export function getPublicAppUrl(path: string) {
+  const configuredOrigin = process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/+$/, '')
+  const runtimeOrigin =
+    typeof window !== 'undefined'
+      ? window.location.origin.replace(/\/+$/, '')
+      : DEFAULT_PUBLIC_APP_ORIGIN
+  const origin = configuredOrigin || runtimeOrigin || DEFAULT_PUBLIC_APP_ORIGIN
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+
+  return `${origin}${normalizedPath}`
+}
+
 // Auth
 export const AUTH_CONFIG = {
   SESSION_TIMEOUT_MS: 30 * 60 * 1000, // 30 minutes
