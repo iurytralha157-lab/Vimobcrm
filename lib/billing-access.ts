@@ -1,7 +1,6 @@
 const BILLING_BLOCKED_STATUSES = new Set([
   'suspended',
   'suspenso',
-  'pending_payment',
   'overdue',
   'past_due',
   'blocked',
