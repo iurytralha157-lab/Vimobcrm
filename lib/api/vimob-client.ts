@@ -59,12 +59,7 @@ export async function vimobAPIRequest<T>(path: string, options: RequestOptions =
     headers.set('X-Organization-ID', options.organizationId)
   }
 
-  const baseURL = getAPIBaseURL()
-  let result = await makeRequestOrThrow(path, options, headers, baseURL)
-
-  if (shouldRetryLocalDevAPI(result, baseURL)) {
-    result = await makeRequestOrThrow(path, options, headers, LOCAL_DEV_FALLBACK_API_URL)
-  }
+  const result = await makeRequestWithLocalFallback(path, options, headers)
 
   if (!result.response.ok) {
     const envelope = result.payload as APIErrorEnvelope | null
@@ -95,12 +90,7 @@ export async function vimobPublicAPIRequest<T>(path: string, options: Omit<Reque
     headers.set('Content-Type', 'application/json')
   }
 
-  const baseURL = getAPIBaseURL()
-  let result = await makeRequestOrThrow(path, options, headers, baseURL)
-
-  if (shouldRetryLocalDevAPI(result, baseURL)) {
-    result = await makeRequestOrThrow(path, options, headers, LOCAL_DEV_FALLBACK_API_URL)
-  }
+  const result = await makeRequestWithLocalFallback(path, options, headers)
 
   if (!result.response.ok) {
     const envelope = result.payload as APIErrorEnvelope | null
@@ -156,6 +146,35 @@ async function makeRequestOrThrow(path: string, options: RequestOptions, headers
   }
 }
 
+async function makeRequestWithLocalFallback(path: string, options: RequestOptions, headers: Headers) {
+  const candidates = getAPIBaseURLCandidates()
+  let lastError: VimobAPIError | null = null
+
+  for (const baseURL of candidates) {
+    try {
+      const result = await makeRequestOrThrow(path, options, headers, baseURL)
+
+      if (shouldRetryLocalDevAPI(result, baseURL)) {
+        continue
+      }
+
+      return result
+    } catch (error) {
+      if (isRetryableLocalAPIError(error, baseURL)) {
+        lastError = error as VimobAPIError
+        continue
+      }
+
+      throw error
+    }
+  }
+
+  throw lastError || new VimobAPIError('A Vimob API nao esta acessivel.', {
+    code: 'api_unavailable',
+    status: 0,
+  })
+}
+
 function createRequestSignal(externalSignal?: AbortSignal, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
   const controller = new AbortController()
   let timeoutId: ReturnType<typeof setTimeout> | null = null
@@ -204,12 +223,54 @@ export function getAPIBaseURL() {
   return (process.env.NEXT_PUBLIC_VIMOB_API_URL || DEFAULT_API_URL).replace(/\/+$/, '')
 }
 
+function getAPIBaseURLCandidates() {
+  const primary = getAPIBaseURL()
+  const candidates = [primary]
+
+  if (isLocalDevelopmentAPI(primary)) {
+    try {
+      const parsed = new URL(primary)
+      parsed.port = '8081'
+      candidates.push(parsed.toString().replace(/\/+$/, ''))
+    } catch {
+      // Keep the primary URL if parsing fails.
+    }
+
+    candidates.push(LOCAL_DEV_FALLBACK_API_URL)
+  }
+
+  return Array.from(new Set(candidates))
+}
+
+function isLocalDevelopmentAPI(baseURL: string) {
+  if (process.env.NODE_ENV === 'production') return false
+
+  try {
+    const { hostname } = new URL(baseURL)
+    return hostname === 'localhost'
+      || hostname === '127.0.0.1'
+      || hostname === '0.0.0.0'
+      || hostname.startsWith('192.168.')
+      || hostname.startsWith('10.')
+      || /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+  } catch {
+    return false
+  }
+}
+
+function isRetryableLocalAPIError(error: unknown, baseURL: string) {
+  if (!isLocalDevelopmentAPI(baseURL)) return false
+  if (!(error instanceof VimobAPIError)) return false
+
+  return error.code === 'api_unavailable' || error.code === 'api_timeout'
+}
+
 function shouldRetryLocalDevAPI(
   result: Awaited<ReturnType<typeof makeRequest>>,
   baseURL: string,
 ) {
   if (result.response.ok || result.payload) return false
-  if (!baseURL.includes('localhost:8080') && !baseURL.includes('127.0.0.1:8080')) return false
+  if (!isLocalDevelopmentAPI(baseURL)) return false
 
   return result.response.status === 404 || result.response.headers.get('content-type')?.includes('text/html')
 }
