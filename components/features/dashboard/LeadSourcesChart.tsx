@@ -100,9 +100,9 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
     return (
       <Card className="app-card overflow-hidden h-full flex flex-col">
         <CardHeader className="pb-1 pt-4 px-4">
-          <CardTitle className="text-sm font-semibold flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground">
             <PieChartIcon className="h-4 w-4 text-primary" />
-            Origem dos Leads
+            Origem dos leads
           </CardTitle>
         </CardHeader>
         <CardContent className="flex-1 p-4">
@@ -142,9 +142,9 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
     return (
       <Card className="app-card overflow-hidden h-full flex flex-col">
         <CardHeader className="pb-1 pt-4 px-4">
-          <CardTitle className="text-sm font-semibold flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground">
             <PieChartIcon className="h-4 w-4 text-primary" />
-            Origem dos Leads
+            Origem dos leads
           </CardTitle>
         </CardHeader>
         <CardContent className="flex-1 flex items-center justify-center p-8 text-center">
@@ -163,9 +163,9 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
     <Card className="app-card overflow-hidden h-full flex flex-col">
       <CardHeader className="pb-0 pt-4 px-4">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-xs font-semibold flex items-center gap-2 uppercase tracking-widest text-muted-foreground">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground">
             <PieChartIcon className="h-3.5 w-3.5 text-primary" />
-            Origem dos Leads
+            Origem dos leads
           </CardTitle>
           {selectedSource && (
             <button
@@ -179,65 +179,67 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
         </div>
       </CardHeader>
 
-      <CardContent className="flex-1 p-4 pt-2 flex flex-col items-center justify-center">
+      <CardContent className="flex-1 min-h-0 overflow-hidden p-4 pt-2 flex flex-col items-center justify-center">
         {/* Donut Chart Container */}
-        <div className="dashboard-recharts-focusless relative mt-2 aspect-square min-h-[220px] w-full min-w-[1px] max-w-[280px]">
-          <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
-            <PieChart>
-              <Pie
-                data={chartData}
-                cx="50%"
-                cy="50%"
-                innerRadius="60%"
-                outerRadius="95%"
-                paddingAngle={3}
-                dataKey="value"
-                animationBegin={0}
-                animationDuration={1200}
-                stroke="transparent"
-                strokeWidth={0}
-                className="outline-none"
-              >
-                {chartData.map((entry, index) => {
-                  const isSelected = selectedSource ? (sourceLabels[selectedSource] || selectedSource) === entry.name : false;
-                  const hasSelection = !!selectedSource;
+        <div className="flex min-h-0 w-full flex-1 items-center justify-center">
+          <div className="dashboard-recharts-focusless relative min-h-0 min-w-[1px] max-w-full" style={{ width: 'min(100%, 280px)', height: 'min(100%, 280px)' }}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+              <PieChart>
+                <Pie
+                  data={chartData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius="60%"
+                  outerRadius="95%"
+                  paddingAngle={3}
+                  dataKey="value"
+                  animationBegin={0}
+                  animationDuration={1200}
+                  stroke="transparent"
+                  strokeWidth={0}
+                  className="outline-none"
+                >
+                  {chartData.map((entry, index) => {
+                    const isSelected = selectedSource ? (sourceLabels[selectedSource] || selectedSource) === entry.name : false;
+                    const hasSelection = !!selectedSource;
 
-                  return (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={entry.color}
-                      opacity={hasSelection && !isSelected ? 0.35 : 1}
-                      stroke={isSelected ? "white" : "transparent"}
-                      strokeWidth={isSelected ? 2 : 0}
-                      className={cn(
-                        "transition-all duration-300 hover:opacity-90 origin-center outline-none cursor-pointer",
-                        isSelected && "drop-shadow-md scale-[1.02]"
-                      )}
-                      onClick={() => handleSourceClick(entry)}
-                    />
-                  );
-                })}
-              </Pie>
-              <Tooltip
-                content={<LeadSourcesTooltip />}
-                cursor={false}
-                position={{ x: 12, y: 10 }}
-                allowEscapeViewBox={{ x: true, y: true }}
-                wrapperStyle={{ zIndex: 30, pointerEvents: 'none' }}
-              />
-            </PieChart>
-          </ResponsiveContainer>
+                    return (
+                      <Cell
+                        key={`cell-${index}`}
+                        fill={entry.color}
+                        opacity={hasSelection && !isSelected ? 0.35 : 1}
+                        stroke={isSelected ? "white" : "transparent"}
+                        strokeWidth={isSelected ? 2 : 0}
+                        className={cn(
+                          "transition-all duration-300 hover:opacity-90 origin-center outline-none cursor-pointer",
+                          isSelected && "drop-shadow-md scale-[1.02]"
+                        )}
+                        onClick={() => handleSourceClick(entry)}
+                      />
+                    );
+                  })}
+                </Pie>
+                <Tooltip
+                  content={<LeadSourcesTooltip />}
+                  cursor={false}
+                  position={{ x: 12, y: 10 }}
+                  allowEscapeViewBox={{ x: true, y: true }}
+                  wrapperStyle={{ zIndex: 30, pointerEvents: 'none' }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
 
-          {/* Central text for Donut - Improved Hierarchy */}
-          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none z-0">
-            <span className="text-[10px] sm:text-[11px] uppercase font-bold text-muted-foreground/70 tracking-[0.2em] mb-0.5">
-              Leads
-            </span>
-            <div className="relative">
-              <span className="text-4xl sm:text-5xl font-black text-foreground tracking-tighter tabular-nums drop-shadow-sm">
-                {total}
+            {/* Central text for Donut - Improved Hierarchy */}
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none z-0">
+              <span className="text-[10px] sm:text-[11px] uppercase font-bold text-muted-foreground/70 tracking-[0.2em] mb-0.5">
+                Leads
               </span>
-              <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-8 h-1 bg-primary/20 rounded-full blur-[2px]" />
+              <div className="relative">
+                <span className="text-4xl sm:text-5xl font-black text-foreground tracking-tighter tabular-nums drop-shadow-sm">
+                  {total}
+                </span>
+                <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-8 h-1 bg-primary/20 rounded-full blur-[2px]" />
+              </div>
             </div>
           </div>
         </div>

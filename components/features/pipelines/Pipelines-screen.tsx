@@ -254,9 +254,6 @@ export default function Pipelines() {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const isDraggingRef = useRef(false);
-  const [confirmationDialogOpen, setConfirmationDialogOpen] = useState(false);
-  const [pendingDragResult, setPendingDragResult] = useState<DropResult | null>(null);
-  const [contractResourceConfirmed, setContractResourceConfirmed] = useState(false);
 
   const { data: pipelines = [], isLoading: pipelinesLoading } = usePipelines();
   const createPipeline = useCreatePipeline();
@@ -756,20 +753,8 @@ export default function Pipelines() {
       return;
     }
 
-    const targetStage = stages.find(s => s.id === destination.droppableId);
-    if (
-      destination.droppableId !== source.droppableId &&
-      targetStage &&
-      (targetStage.name.toLowerCase().includes('fechamento') || targetStage.name.toLowerCase().includes('contrato'))
-    ) {
-      setPendingDragResult(result);
-      setContractResourceConfirmed(false);
-      setConfirmationDialogOpen(true);
-      return;
-    }
-
     executeLeadMove(result);
-  }, [executeLeadMove, stages]);
+  }, [executeLeadMove]);
 
   const handleManualRefresh = useCallback(async () => {
     setIsRefreshing(true);
@@ -1029,81 +1014,84 @@ export default function Pipelines() {
         <div className={cn("flex flex-col gap-2 px-2 pt-2", isMobile ? "mb-2" : "mb-4")}>
           <div className="flex flex-row items-center justify-between gap-2 lg:gap-3">
             <div className="flex min-w-0 items-center gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button data-tour="pipeline-selector" variant="ghost" className="h-9 min-w-0 gap-2 rounded-[6px] border border-transparent px-2 font-extralight tracking-wide text-foreground transition-colors hover:border-primary/40 hover:bg-[var(--app-surface-hover)]">
-                    <LayoutGrid className="h-4 w-4 text-[#FF4529]" />
-                    <span className="truncate max-w-[96px] sm:max-w-[200px]">{currentPipeline?.name || 'Pipeline'}</span>
-                    <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="start"
-                  sideOffset={8}
-                  collisionPadding={12}
-                  className="pipeline-selector-menu w-64 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)]"
-                >
-                  <p className="px-3 pb-1.5 pt-3 text-[10px] font-extralight text-muted-foreground uppercase tracking-widest">Suas Pipelines</p>
-                  <div className="pipeline-selector-scroll max-h-[320px] overflow-y-auto px-1 pb-1">
-                    {pipelines.map(pipeline => (
-                      <DropdownMenuItem
-                        key={pipeline.id}
-                        onSelect={() => handleSelectPipeline(pipeline.id)}
-                        className={cn(
-                          "group flex cursor-pointer items-center justify-between gap-2 rounded-[6px] py-2 pl-2 pr-1 text-muted-foreground outline-none hover:bg-[var(--app-surface-hover)] focus:bg-[var(--app-surface-hover)] focus:text-foreground font-extralight tracking-wide",
-                          pipeline.id === selectedPipelineId && "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal focus:text-[#FF4529]"
-                        )}
-                      >
-                        <span className="min-w-0 flex-1 truncate">{pipeline.name}</span>
-                        <span className="flex h-6 shrink-0 items-center gap-1">
-                          {pipeline.id === selectedPipelineId && <Check className="h-3.5 w-3.5" />}
-                          {canEditPipeline && (
-                            <button
-                              type="button"
-                              aria-label={`Excluir pipeline ${pipeline.name}`}
-                              className="inline-flex h-6 w-6 items-center justify-center rounded-[6px] text-muted-foreground opacity-0 transition-colors hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus:opacity-100"
-                              onClick={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                setPipelineToDelete({ id: pipeline.id, name: pipeline.name });
-                              }}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
+              <div className="flex h-8 min-w-0 items-center overflow-hidden rounded-[6px] bg-[var(--app-surface)] text-[var(--app-text-primary)]">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button data-tour="pipeline-selector" variant="ghost" className="h-8 min-w-0 gap-2 rounded-none border-0 bg-transparent px-2.5 font-extralight tracking-wide text-[var(--app-text-primary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] focus-visible:ring-1 focus-visible:ring-primary/30">
+                      <LayoutGrid className="h-4 w-4 text-[#FF4529]" />
+                      <span className="truncate max-w-[96px] sm:max-w-[200px]">{currentPipeline?.name || 'Pipeline'}</span>
+                      <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="start"
+                    sideOffset={8}
+                    collisionPadding={12}
+                    className="pipeline-selector-menu w-64 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)]"
+                  >
+                    <p className="px-3 pb-1.5 pt-3 text-[10px] font-extralight text-muted-foreground uppercase tracking-widest">Suas Pipelines</p>
+                    <div className="pipeline-selector-scroll max-h-[320px] overflow-y-auto px-1 pb-1">
+                      {pipelines.map(pipeline => (
+                        <DropdownMenuItem
+                          key={pipeline.id}
+                          onSelect={() => handleSelectPipeline(pipeline.id)}
+                          className={cn(
+                            "group flex cursor-pointer items-center justify-between gap-2 rounded-[6px] py-2 pl-2 pr-1 text-muted-foreground outline-none hover:bg-[var(--app-surface-hover)] focus:bg-[var(--app-surface-hover)] focus:text-foreground font-extralight tracking-wide",
+                            pipeline.id === selectedPipelineId && "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal focus:text-[#FF4529]"
                           )}
-                        </span>
-                      </DropdownMenuItem>
-                    ))}
-                  </div>
-                  {canEditPipeline && (
-                    <>
-                      <DropdownMenuSeparator className="my-1 bg-[var(--app-border)]" />
-                      <DropdownMenuItem
-                        onClick={() => setNewPipelineDialogOpen(true)}
-                        className="cursor-pointer rounded-[6px] bg-primary/10 py-2 font-extralight tracking-wide text-primary hover:bg-primary/15 focus:bg-primary/15 focus:text-primary"
-                      >
-                        <Plus className="h-4 w-4 mr-2" />
-                        Nova Pipeline
-                      </DropdownMenuItem>
-                    </>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
+                        >
+                          <span className="min-w-0 flex-1 truncate">{pipeline.name}</span>
+                          <span className="flex h-6 shrink-0 items-center gap-1">
+                            {pipeline.id === selectedPipelineId && <Check className="h-3.5 w-3.5" />}
+                            {canEditPipeline && (
+                              <button
+                                type="button"
+                                aria-label={`Excluir pipeline ${pipeline.name}`}
+                                className="inline-flex h-6 w-6 items-center justify-center rounded-[6px] text-muted-foreground opacity-0 transition-colors hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus:opacity-100"
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  setPipelineToDelete({ id: pipeline.id, name: pipeline.name });
+                                }}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </span>
+                        </DropdownMenuItem>
+                      ))}
+                    </div>
+                    {canEditPipeline && (
+                      <>
+                        <DropdownMenuSeparator className="my-1 bg-[var(--app-border)]" />
+                        <DropdownMenuItem
+                          onClick={() => setNewPipelineDialogOpen(true)}
+                          className="cursor-pointer rounded-[6px] bg-primary/10 py-2 font-extralight tracking-wide text-primary hover:bg-primary/15 focus:bg-primary/15 focus:text-primary"
+                        >
+                          <Plus className="h-4 w-4 mr-2" />
+                          Nova Pipeline
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
 
-              <div className="hidden lg:block h-6 w-px bg-[var(--app-border)] mx-1" />
-
-              {canEditPipeline && selectedPipelineId && !isMobile && (
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8 rounded-[6px] border-0 bg-transparent text-muted-foreground transition-colors hover:bg-[var(--app-surface-hover)] hover:text-foreground"
-                  onClick={() => setStagesEditorOpen(true)}
-                  disabled={!selectedPipelineId}
-                  title="Configurar colunas"
-                >
-                  <Settings className="h-3.5 w-3.5" />
-                </Button>
-              )}
+                {canEditPipeline && selectedPipelineId && !isMobile && (
+                  <>
+                    <div className="h-4 w-px bg-[var(--app-border)]" />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 rounded-none border-0 bg-transparent text-muted-foreground shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-foreground focus-visible:ring-1 focus-visible:ring-primary/30"
+                      onClick={() => setStagesEditorOpen(true)}
+                      disabled={!selectedPipelineId}
+                      title="Configurar colunas"
+                    >
+                      <Settings className="h-3.5 w-3.5" />
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
 
             <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
@@ -1573,55 +1561,6 @@ export default function Pipelines() {
           </AlertDialogContent>
         </AlertDialog>
       </div>
-      <Dialog open={confirmationDialogOpen} onOpenChange={(open) => {
-        setConfirmationDialogOpen(open);
-        if (!open) {
-          setPendingDragResult(null);
-          setContractResourceConfirmed(false);
-        }
-      }}>
-        <DialogContent className="sm:max-w-[425px] rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]">
-          <DialogHeader>
-            <DialogTitle className="font-extralight tracking-wide">Confirmação de Contrato</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <p className="text-sm font-extralight tracking-wide text-muted-foreground">
-              Você está movendo este lead para a etapa de Contrato/Fechamento.
-            </p>
-            <div className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                id="recurso_proprio"
-                className="h-4 w-4 rounded-[4px] border-0 bg-[var(--app-surface-soft)] text-[#FF4529] focus:ring-[#FF4529] focus:ring-offset-0"
-                checked={contractResourceConfirmed}
-                onChange={(event) => setContractResourceConfirmed(event.target.checked)}
-              />
-              <Label htmlFor="recurso_proprio" className="text-sm font-extralight tracking-wide cursor-pointer text-foreground">
-                Confirmo que o cliente possui recurso próprio validado.
-              </Label>
-            </div>
-          </div>
-          <div className="flex justify-end gap-3">
-            <Button variant="outline" className="h-12 rounded-[6px] border-0 text-[12px] font-extralight uppercase tracking-[0.08em] text-muted-foreground bg-transparent hover:bg-[var(--app-surface-hover)] hover:text-foreground focus-visible:border-[#FF4529]" onClick={() => {
-              setConfirmationDialogOpen(false);
-              setPendingDragResult(null);
-              setContractResourceConfirmed(false);
-            }}>
-              Cancelar
-            </Button>
-            <Button className="h-12 rounded-[6px] bg-[#FF4529] text-[12px] font-extralight uppercase tracking-[0.08em] text-white outline-none transition-opacity hover:opacity-90 disabled:opacity-50" disabled={!contractResourceConfirmed} onClick={() => {
-              if (pendingDragResult) {
-                executeLeadMove(pendingDragResult, { isOwnResource: true });
-              }
-              setConfirmationDialogOpen(false);
-              setPendingDragResult(null);
-              setContractResourceConfirmed(false);
-            }}>
-              Confirmar e Mover
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </AppLayout>
   );
 }

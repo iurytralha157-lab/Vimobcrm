@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type ReactNode } from 'react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { ExternalLink } from 'lucide-react';
 import { PropertyPickerDialog } from '@/components/features/properties/PropertyPickerDialog';
@@ -25,7 +25,7 @@ import {
   Briefcase, MapPin, DollarSign, Clock, ChevronRight, Calendar, Target,
   Lightbulb, FileEdit, Zap, Bot, Check, Activity, ListTodo, Contact,
   Handshake, History, ChevronDown, Trophy, XCircle, CircleDot, UserCheck,
-  RotateCcw, FileText, Download, Paperclip, BarChart3, Search
+  RotateCcw, FileText, Download, Paperclip, BarChart3
 } from 'lucide-react';
 import {
   Command,
@@ -60,6 +60,7 @@ import { LeadTrackingSection } from '@/components/features/leads/LeadTrackingSec
 import { LeadJourneySection } from '@/components/features/leads/LeadJourneySection';
 
 import { LeadMessagesTab } from '@/components/features/leads/LeadMessagesTab';
+import { LeadUnifiedThread } from '@/components/features/leads/LeadUnifiedThread';
 import { ReentryBadge } from '@/components/features/leads/ReentryBadge';
 import { LostReasonDialog } from '@/components/features/leads/LostReasonDialog';
 import { SdrDistributionButton } from '@/components/features/leads/SdrDistributionButton';
@@ -188,6 +189,33 @@ interface LeadDetailDialogProps {
   allUsers: AppUser[];
   refetchStages: () => void;
 }
+
+function InfoLine({ label, value, icon }: { label: string; value: ReactNode; icon?: ReactNode }) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-3 text-xs">
+      <span className="flex min-w-0 items-center gap-1.5 text-[var(--app-text-tertiary)]">
+        {icon}
+        {label}
+      </span>
+      <span className="max-w-[60%] truncate text-right font-medium text-[var(--app-text-primary)]">
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function getDealStatusTriggerClass(status?: string | null) {
+  if (status === 'won') {
+    return 'bg-[var(--lead-status-won-bg)] text-[var(--lead-status-won-fg)]';
+  }
+
+  if (status === 'lost') {
+    return 'bg-[var(--lead-status-lost-bg)] text-[var(--lead-status-lost-fg)]';
+  }
+
+  return 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]';
+}
+
 export function LeadDetailDialog({
   lead: leadProp,
   stages,
@@ -227,6 +255,8 @@ export function LeadDetailDialog({
   const [historyEventDialogOpen, setHistoryEventDialogOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const v2LeadInfoScrollRef = useRef<HTMLDivElement>(null);
+  const v2LeadWorkScrollRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
 
   const leadId = leadProp?.id ?? null;
@@ -242,6 +272,7 @@ export function LeadDetailDialog({
         lead_id: lead.id,
         type: 'note',
         content: feedback,
+        metadata: { kind: 'feedback' },
       });
 
       // Também podemos salvar como o feedback mais recente no lead
@@ -318,6 +349,9 @@ export function LeadDetailDialog({
 
   useEffect(() => {
     if (!leadProp) return;
+
+    v2LeadInfoScrollRef.current?.scrollTo({ top: 0 });
+    v2LeadWorkScrollRef.current?.scrollTo({ top: 0 });
 
     const valorStr = leadProp.valor_interesse ? leadProp.valor_interesse.toString() : '';
     const nextForm = {
@@ -1134,7 +1168,7 @@ export function LeadDetailDialog({
                 return (
                   <Badge
                     key={tag.id}
-                    className="flex items-center gap-1 pr-1 py-0 text-[10px] rounded-full h-5 leading-none"
+                    className="flex h-5 items-center gap-1 rounded-[4px] border-0 py-0 pr-1 text-[10px] leading-none"
                     style={{
                       backgroundColor: tagColor,
                       color: '#FFFFFF',
@@ -1143,7 +1177,7 @@ export function LeadDetailDialog({
                   >
                     <div className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: tagColor }} />
                     {tag.name || 'Tag'}
-                    <button onClick={() => handleRemoveTag(tag.id)} className="ml-0.5 p-0.5 hover:bg-black/10 rounded-full">
+                    <button onClick={() => handleRemoveTag(tag.id)} className="ml-0.5 rounded-[3px] p-0.5 hover:bg-black/10">
                       <X className="h-2 w-2" />
                     </button>
                   </Badge>
@@ -1156,7 +1190,7 @@ export function LeadDetailDialog({
               )}
               <Popover open={tagPopoverOpen} onOpenChange={setTagPopoverOpen}>
                 <PopoverTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-5 w-5 p-0 rounded-full border border-dashed shrink-0">
+                  <Button variant="ghost" size="sm" className="h-5 w-5 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-0">
                     <Plus className="h-3 w-3" />
                   </Button>
                 </PopoverTrigger>
@@ -1176,18 +1210,18 @@ export function LeadDetailDialog({
         <div className="flex items-center gap-2 mb-3">
           {lead.phone && (
             <>
-              <Button variant="outline" size="sm" onClick={handleQuickPhone} className="h-9 flex-1 rounded-full border-0 bg-[var(--app-surface-soft)]">
+              <Button variant="outline" size="sm" onClick={handleQuickPhone} className="h-9 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
                 <Phone className="h-4 w-4 mr-1.5" />
                 Ligar
               </Button>
-              <Button size="sm" onClick={handleQuickWhatsApp} className="h-9 flex-1 rounded-full">
+              <Button size="sm" onClick={handleQuickWhatsApp} className="h-9 flex-1 rounded-[6px]">
                 <MessageCircle className="h-4 w-4 mr-1.5" />
                 Chat
               </Button>
             </>
           )}
           {lead.email && (
-            <Button variant="outline" size="sm" onClick={handleQuickEmail} className="h-9 w-9 shrink-0 rounded-full border-0 bg-[var(--app-surface-soft)] p-0">
+            <Button variant="outline" size="sm" onClick={handleQuickEmail} className="h-9 w-9 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-0">
               <Mail className="h-4 w-4" />
             </Button>
           )}
@@ -1196,7 +1230,7 @@ export function LeadDetailDialog({
         {/* Row 3 - Estágio + Deal Status lado a lado */}
         <div className="flex items-center gap-2 flex-wrap">
           {lead.is_own_resource && (
-            <Badge variant="secondary" className="bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border-none px-2 rounded-full text-[10px] font-bold">
+            <Badge variant="secondary" className="rounded-[4px] border-none bg-amber-100 px-2 text-[10px] font-bold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
               <DollarSign className="h-3 w-3 mr-0.5" />
               Recurso Próprio
             </Badge>
@@ -1205,19 +1239,19 @@ export function LeadDetailDialog({
           <Popover open={stagePopoverOpen} onOpenChange={setStagePopoverOpen}>
 
             <PopoverTrigger asChild>
-              <button className="flex-1 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium min-w-0 overflow-hidden">
+              <button className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden rounded-[6px] bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
                 <div className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse shrink-0" />
                 <span className="truncate">{currentStage?.name || 'Sem estágio'}</span>
                 <ChevronDown className="h-3 w-3 shrink-0 ml-auto" />
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-[calc(100vw-2rem)] max-w-sm border-0 bg-[var(--app-surface-solid)] p-2 text-[var(--app-text-primary)] shadow-[0_14px_34px_rgba(0,0,0,0.22)]" align="start">
-              <div className="max-h-64 space-y-1 overflow-y-auto overscroll-contain pr-1 touch-pan-y scrollbar-thin">
+            <PopoverContent className="w-[calc(100vw-2rem)] max-w-sm border-0 bg-[var(--app-surface-solid)] p-2 text-[var(--app-text-primary)] shadow-[0_14px_34px_rgba(0,0,0,0.22)]" align="start" collisionPadding={12}>
+              <div className="max-h-[min(70vh,22rem)] space-y-1 overflow-y-auto overscroll-contain pr-1 touch-pan-y scrollbar-thin">
                 {stages.map((stage, idx) => {
                   const isActive = stage.id === localLead.stage_id;
                   const isPast = idx < currentStageIndex;
                   return (
-                    <button key={stage.id} onClick={() => handleMoveToStage(stage.id)} className={cn("w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all", isActive ? "bg-primary text-primary-foreground" : isPast ? "bg-primary/10 text-primary hover:bg-primary/20" : "hover:bg-accent")}>
+                    <button key={stage.id} onClick={() => handleMoveToStage(stage.id)} className={cn("flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-left transition-all", isActive ? "bg-primary text-primary-foreground" : isPast ? "bg-primary/10 text-primary hover:bg-primary/20" : "hover:bg-accent")}>
                       {isPast && <Check className="h-4 w-4 shrink-0" />}
                       {isActive && <div className="h-2 w-2 rounded-full bg-primary-foreground animate-pulse" />}
                       {!isPast && !isActive && <div className="h-2 w-2 rounded-full bg-muted" />}
@@ -1231,14 +1265,12 @@ export function LeadDetailDialog({
 
           {/* Deal Status pill */}
           <Select value={lead.deal_status || 'open'} onValueChange={handleDealStatusChange}>
-            <SelectTrigger
-              className={cn(
-                "h-auto w-auto rounded-full px-3 py-1.5 text-xs font-medium border-0 shrink-0 gap-1.5",
-                lead.deal_status === 'won' && "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300",
-                lead.deal_status === 'lost' && "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300",
-                (!lead.deal_status || lead.deal_status === 'open') && "bg-muted text-muted-foreground"
-              )}
-            >
+              <SelectTrigger
+                className={cn(
+                  "h-auto w-auto shrink-0 gap-1.5 rounded-[6px] border-0 px-3 py-1.5 text-xs font-medium",
+                  getDealStatusTriggerClass(lead.deal_status)
+                )}
+              >
               <SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>
@@ -1685,13 +1717,10 @@ export function LeadDetailDialog({
                       <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                     </button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-[320px] sm:w-[380px] p-0 shadow-2xl border-primary/20" align="start">
-                    <Command className="border-none">
-                      <div className="flex items-center border-b px-3">
-                        <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
-                        <CommandInput placeholder="Buscar responsável..." className="border-none focus:ring-0 h-11" />
-                      </div>
-                      <CommandList className="max-h-[450px] p-1 overflow-y-auto">
+                  <PopoverContent className="w-[calc(100vw-2rem)] max-w-[380px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1 shadow-2xl" align="start" collisionPadding={12}>
+                    <Command className="max-h-[min(72vh,460px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
+                      <CommandInput placeholder="Buscar responsável..." className="h-10 border-none focus:ring-0" />
+                      <CommandList className="max-h-[min(58vh,360px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin">
                         <CommandEmpty className="py-6 text-center text-sm text-muted-foreground">
                           Nenhum usuário encontrado.
                         </CommandEmpty>
@@ -1701,7 +1730,7 @@ export function LeadDetailDialog({
                               handleAssignUser(null);
                               setAssigneePopoverOpen(false);
                             }}
-                            className="flex items-center gap-3 px-3 py-2.5 cursor-pointer rounded-lg"
+                            className="flex cursor-pointer items-center gap-3 rounded-[6px] px-3 py-2.5"
                           >
                             <div className="h-9 w-9 rounded-lg bg-muted flex items-center justify-center shrink-0">
                               <X className="h-5 w-5 text-muted-foreground" />
@@ -1726,7 +1755,7 @@ export function LeadDetailDialog({
                                   setAssigneePopoverOpen(false);
                                 }}
                                 className={cn(
-                                  "flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-all rounded-lg my-0.5",
+                                  "my-0.5 flex cursor-pointer items-center gap-3 rounded-[6px] px-3 py-2.5 transition-all",
                                   user.id === localLead.assigned_user_id && "bg-primary/10 shadow-sm"
                                 )}
                               >
@@ -1981,6 +2010,869 @@ export function LeadDetailDialog({
       )}
     </div>);
 
+  void MobileContent; // Legacy mobile kept available while the V2 layout is validated.
+
+  const MobileContentV2 = () => {
+    const leadAvatarUrl = lead.whatsapp_picture || lead.whatsapp_avatar_url || lead.contact_picture || null;
+    const dealStatusLabel = lead.deal_status === 'won' ? 'Ganho' : lead.deal_status === 'lost' ? 'Perdido' : 'Aberto';
+    const mobileActiveTab = ['summary', 'actions', 'history'].includes(activeTab) ? activeTab : 'summary';
+    const contactRows: Array<{ label: string; value: string }> = [
+      { label: 'Nome', value: lead.name },
+      { label: 'Telefone', value: formatPhoneForDisplay(lead.phone || '') },
+      { label: 'E-mail', value: lead.email },
+      { label: 'Cargo', value: lead.cargo },
+      { label: 'Empresa', value: lead.empresa },
+      { label: 'Origem', value: sourceLabels[leadSource] || leadSource },
+      { label: 'Criado em', value: lead.created_at ? format(new Date(lead.created_at), 'dd/MM/yy HH:mm', { locale: dateLocale }) : null },
+    ]
+      .filter((row) => Boolean(row.value))
+      .map((row) => ({ ...row, value: row.value || '' }));
+    const trackingRows = [
+      { label: 'Campanha', value: leadMeta?.campaign_name || leadMeta?.utm_campaign },
+      { label: 'Conjunto', value: leadMeta?.adset_name },
+      { label: 'Anuncio', value: leadMeta?.ad_name },
+      { label: 'Formulario', value: leadMeta?.form_name },
+      { label: 'UTM source', value: leadMeta?.utm_source },
+      { label: 'UTM medium', value: leadMeta?.utm_medium },
+    ].filter((row): row is { label: string; value: string } => Boolean(row.value));
+
+    const mobileTabs = [
+      { id: 'summary', label: 'Resumo', icon: Contact },
+      { id: 'actions', label: 'Ações', icon: Activity, badge: scheduleEvents.length ? String(scheduleEvents.length) : undefined },
+      { id: 'history', label: 'Histórico', icon: MessageCircle },
+    ];
+
+    return (
+      <div className="lead-detail-dialog lead-detail-v2 flex h-full min-h-0 flex-col bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]">
+        <div className="lead-mobile-drawer-header shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-3 pb-3">
+          <div className="mb-3 flex items-center gap-2">
+            <div className="lead-detail-v2-scroll flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pb-0.5">
+              {stages.map((stage, idx) => {
+                const isActive = stage.id === localLead.stage_id;
+                const isPast = idx < currentStageIndex;
+
+                return (
+                  <button
+                    key={stage.id}
+                    type="button"
+                    title={stage.name}
+                    onClick={() => handleMoveToStage(stage.id)}
+                    className={cn(
+                      'lead-stage-step relative flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-[11px] font-medium',
+                      isActive
+                        ? 'bg-primary text-white'
+                        : isPast
+                          ? 'bg-primary/10 text-primary'
+                          : 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]',
+                    )}
+                  >
+                    {idx + 1}
+                  </button>
+                );
+              })}
+            </div>
+            <button type="button" onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)]">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="flex items-start gap-2.5">
+            <Avatar className="h-10 w-10 shrink-0 border-0">
+              <AvatarImage src={leadAvatarUrl || undefined} alt={leadName} />
+              <AvatarFallback className="bg-primary text-sm font-semibold text-white">
+                {leadName?.[0]?.toUpperCase() || <User className="h-5 w-5" />}
+              </AvatarFallback>
+            </Avatar>
+
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-2">
+                <h2 className="truncate text-base font-semibold leading-tight">{leadName}</h2>
+                <ReentryBadge count={lead.reentry_count} lastEntryAt={lead.last_entry_at} />
+              </div>
+
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {leadTags.slice(0, 4).map((tag) => {
+                  const tagColor = getTagColor(tag);
+                  return (
+                    <Badge
+                      key={tag.id}
+                      className="flex h-5 items-center gap-1 rounded-[4px] border-0 px-1.5 text-[10px]"
+                      style={{ backgroundColor: tagColor, color: '#fff' }}
+                    >
+                      <span className="max-w-[82px] truncate">{tag.name || 'Tag'}</span>
+                      <button type="button" className="rounded-[3px] p-0.5 hover:bg-black/10" onClick={() => handleRemoveTag(tag.id)}>
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </Badge>
+                  );
+                })}
+                {leadTags.length > 4 && (
+                  <Badge variant="secondary" className="h-5 rounded-[4px] border-0 px-1.5 text-[10px]">
+                    +{leadTags.length - 4}
+                  </Badge>
+                )}
+                <Popover open={tagPopoverOpen} onOpenChange={setTagPopoverOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="ghost" size="sm" className="h-5 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-1.5 text-[10px]">
+                      <Plus className="mr-1 h-3 w-3" />
+                      Tag
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64 p-0" align="start">
+                    <TagSelectorPopoverContent availableTags={availableTags} onAddTag={handleAddTag} onClose={() => setTagPopoverOpen(false)} />
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+            <Popover open={assigneePopoverOpen} onOpenChange={setAssigneePopoverOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  className="h-8 min-w-0 justify-start rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-xs text-[var(--app-text-secondary)]"
+                  disabled={!canTransferLead}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <User className="mr-1.5 h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{assigneeName || 'Sem responsável'}</span>
+                  {isUpdatingAssignee ? <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" /> : <ChevronDown className="ml-auto h-3.5 w-3.5" />}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[calc(100vw-2rem)] max-w-[380px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1 shadow-2xl" align="start" collisionPadding={12}>
+                <Command className="max-h-[min(72vh,430px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
+                  <CommandInput placeholder="Buscar responsável..." className="h-10 border-none focus:ring-0" />
+                  <CommandList className="max-h-[min(58vh,340px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin">
+                    <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">Nenhum encontrado.</CommandEmpty>
+                    <CommandGroup>
+                      <CommandItem onSelect={() => handleAssignUser(null)} className="cursor-pointer rounded-[6px] px-3 py-2">
+                        Sem responsável
+                      </CommandItem>
+                      {assignableUsers.map((user) => (
+                        <CommandItem key={user.id} onSelect={() => handleAssignUser(user.id)} className="cursor-pointer rounded-[6px] px-3 py-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <Avatar className="h-7 w-7">
+                              <AvatarImage src={user.avatar_url || undefined} />
+                              <AvatarFallback className="text-[10px]">{(user.name || user.email || 'U')[0]}</AvatarFallback>
+                            </Avatar>
+                            <span className="truncate">{user.name || user.email}</span>
+                          </div>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+
+            <Select value={lead.deal_status || 'open'} onValueChange={handleDealStatusChange}>
+              <SelectTrigger className={cn('h-8 w-[92px] gap-1 rounded-[6px] border-0 px-2 text-xs font-medium', getDealStatusTriggerClass(lead.deal_status))}>
+                <SelectValue>{dealStatusLabel}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="open">Aberto</SelectItem>
+                <SelectItem value="won">Ganho</SelectItem>
+                <SelectItem value="lost">Perdido</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {lead.phone && (
+              <Button variant="outline" size="sm" onClick={handleQuickPhone} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+                <Phone className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            {lead.phone && (
+              <Button size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
+                <MessageCircle className="mr-1 h-3.5 w-3.5" />
+                Chat
+              </Button>
+            )}
+            {lead.email && (
+              <Button variant="outline" size="sm" onClick={handleQuickEmail} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+                <Mail className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <div className="shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-3 py-2">
+          <div className="grid grid-cols-3 gap-1 rounded-[7px] bg-[var(--app-surface-soft)] p-1">
+            {mobileTabs.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = mobileActiveTab === tab.id;
+
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  className={cn(
+                    'flex h-8 items-center justify-center gap-1.5 rounded-[5px] text-[11px] font-medium transition-colors',
+                    isActive ? 'bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]' : 'text-[var(--app-text-secondary)]',
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {tab.label}
+                  {tab.badge && <span className="rounded-[4px] bg-primary/15 px-1 text-[9px] text-primary">{tab.badge}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {mobileActiveTab === 'summary' && (
+            <div className="lead-detail-v2-scroll h-full overflow-y-auto p-3">
+              <div className="space-y-3 pb-4">
+                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h3 className="text-xs font-semibold">Dados do contato</h3>
+                    <Button variant="ghost" size="sm" className="h-7 rounded-[5px] px-2 text-[10px]" onClick={() => setIsEditingContact((value) => !value)}>
+                      <FileEdit className="mr-1 h-3 w-3" />
+                      {isEditingContact ? 'Fechar' : 'Editar'}
+                    </Button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {contactRows.map((row) => (
+                      <InfoLine key={row.label} label={row.label} value={row.value} />
+                    ))}
+                  </div>
+
+                  {trackingRows.length > 0 && (
+                    <div className="mt-3 border-t border-[var(--app-border)] pt-3">
+                  <p className="mb-2 text-[10px] font-medium uppercase text-[var(--app-text-tertiary)]">Rastreamento</p>
+                      <div className="space-y-2">
+                        {trackingRows.slice(0, 4).map((row) => (
+                          <InfoLine key={row.label} label={row.label} value={row.value} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {isEditingContact && (
+                    <div className="mt-3 space-y-2">
+                      <Input value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} className="h-8 rounded-[6px]" placeholder="Nome" />
+                      <PhoneInput value={editForm.phone} onChange={(value) => setEditForm({ ...editForm, phone: value })} />
+                      <Input value={editForm.email} onChange={(event) => setEditForm({ ...editForm, email: event.target.value })} className="h-8 rounded-[6px]" placeholder="E-mail" />
+                      <div className="grid grid-cols-2 gap-2">
+                        <Input value={editForm.cargo} onChange={(event) => setEditForm({ ...editForm, cargo: event.target.value })} className="h-8 rounded-[6px]" placeholder="Cargo" />
+                        <Input value={editForm.empresa} onChange={(event) => setEditForm({ ...editForm, empresa: event.target.value })} className="h-8 rounded-[6px]" placeholder="Empresa" />
+                      </div>
+                      <Button size="sm" className="h-8 w-full rounded-[6px]" onClick={handleSaveContact}>
+                        <Save className="mr-1.5 h-3.5 w-3.5" />
+                        Salvar dados
+                      </Button>
+                    </div>
+                  )}
+                </section>
+
+                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h3 className="text-xs font-semibold">Documentação</h3>
+                    {(profile?.role === 'admin' || profile?.id === lead.assigned_user_id) && (
+                      <>
+                        <Button variant="ghost" size="sm" className="h-7 rounded-[5px] px-2 text-[10px]" disabled={isUploading} onClick={() => fileInputRef.current?.click()}>
+                          {isUploading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Paperclip className="mr-1 h-3 w-3" />}
+                          Anexar
+                        </Button>
+                        <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileUpload} />
+                      </>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {attachments.length === 0 ? (
+                      <p className="text-xs text-[var(--app-text-tertiary)]">Nenhum documento anexado</p>
+                    ) : (
+                      attachments.map((doc) => (
+                        <button
+                          key={doc.id}
+                          type="button"
+                          className="flex w-full items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2 py-2 text-left text-xs"
+                          onClick={() => window.open(doc.file_url, '_blank')}
+                        >
+                          <FileText className="h-3.5 w-3.5 text-primary" />
+                          <span className="truncate">{doc.file_name}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </section>
+              </div>
+            </div>
+          )}
+
+          {mobileActiveTab === 'actions' && (
+            <div className="lead-detail-v2-scroll h-full overflow-y-auto p-3">
+              <div className="space-y-3 pb-4">
+                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                  <div className="flex justify-center">
+                    <PropertyPickerDialog
+                      properties={properties}
+                      selectedPropertyId={lead.interest_property_id || editForm.property_id || null}
+                      onSelect={(property) => {
+                        const nextPropertyPrice = property.preco || null;
+                        const nextPropertyCommission =
+                          'commission_percentage' in property && typeof property.commission_percentage === 'number'
+                            ? property.commission_percentage
+                            : null;
+                        setEditForm({
+                          ...editForm,
+                          property_id: property.id,
+                          valor_interesse: nextPropertyPrice ? nextPropertyPrice.toString() : editForm.valor_interesse,
+                          commission_percentage: nextPropertyCommission ? nextPropertyCommission.toString() : editForm.commission_percentage,
+                        });
+                        updateLead.mutateAsync({
+                          id: lead.id,
+                          interest_property_id: property.id,
+                          valor_interesse: nextPropertyPrice || lead.valor_interesse,
+                          commission_percentage: nextPropertyCommission || lead.commission_percentage,
+                        }).then(() => refetchStages());
+                      }}
+                    />
+                  </div>
+                </section>
+
+                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xs font-semibold">Agenda</h3>
+                      <p className="text-[10px] text-[var(--app-text-tertiary)]">{scheduleEvents.length} compromisso(s)</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      className="h-8 rounded-[6px]"
+                      onClick={() => {
+                        setEditingScheduleEvent(null);
+                        setScheduleDefaultType('visit');
+                        setScheduleFormOpen(true);
+                      }}
+                    >
+                      <Calendar className="mr-1.5 h-3.5 w-3.5" />
+                      Agendar
+                    </Button>
+                  </div>
+                </section>
+
+                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xs font-semibold">Cadência</h3>
+                      <p className="text-[10px] text-[var(--app-text-tertiary)]">{stageTemplate?.name || 'Sem cadência configurada'}</p>
+                    </div>
+                    {totalTasksCount > 0 && (
+                      <Badge variant="outline" className="rounded-[5px] border-0 bg-[var(--app-surface-solid)] text-[10px]">
+                        {completedTasksCount}/{totalTasksCount}
+                      </Badge>
+                    )}
+                  </div>
+                  {leadTasksLoading ? (
+                    <div className="flex items-center justify-center py-5">
+                      <Loader2 className="h-4 w-4 animate-spin text-[var(--app-text-tertiary)]" />
+                    </div>
+                  ) : templateTasks.length === 0 ? (
+                    <p className="rounded-[6px] bg-[var(--app-surface-solid)] px-3 py-2 text-xs text-[var(--app-text-tertiary)]">
+                      Nenhuma cadência configurada para esta etapa
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {templateTasks.slice(0, 5).map((task) => {
+                        const taskType = getCadenceTaskType(task.type);
+                        const existingTask = leadTasksMap.get(`${task.title}-${task.day_offset}-${task.type}`);
+                        const isDone = existingTask?.is_done || false;
+                        const TaskIcon = activityTypeIcons[taskType] || Clock;
+
+                        return (
+                          <button
+                            key={task.id}
+                            type="button"
+                            onClick={() => handleCadenceTaskClick(task)}
+                            className={cn(
+                              'flex w-full items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-2 text-left transition-colors hover:bg-primary/10',
+                              isDone && 'opacity-65',
+                            )}
+                          >
+                            <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]', isDone ? 'bg-emerald-500/18 text-emerald-500' : 'bg-primary/12 text-primary')}>
+                              {isDone ? <Check className="h-3 w-3" /> : <TaskIcon className="h-3 w-3" />}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className={cn('block truncate text-xs font-medium', isDone && 'line-through')}>
+                                {task.title}
+                              </span>
+                              <span className="block text-[10px] text-[var(--app-text-tertiary)]">
+                                {taskTypeLabels[taskType]} - Dia {task.day_offset}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+
+                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                  <div className="mb-3 flex items-center gap-2">
+                    <div className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-primary/12 text-primary">
+                      <MessageCircle className="h-3.5 w-3.5" />
+                    </div>
+                    <h3 className="text-xs font-semibold">Feedback do lead</h3>
+                  </div>
+                  <Textarea
+                    placeholder="Registre o feedback sobre atendimento, perfil ou proximos passos..."
+                    value={feedback}
+                    onChange={(event) => setFeedback(event.target.value)}
+                    className="min-h-[92px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"
+                  />
+                  <Button className="mt-2 h-8 w-full rounded-[6px]" disabled={!feedback.trim() || createActivityMutation.isPending} onClick={handleSaveFeedback}>
+                    <Save className="mr-1.5 h-3.5 w-3.5" />
+                    Registrar feedback
+                  </Button>
+                </section>
+              </div>
+            </div>
+          )}
+
+          {mobileActiveTab === 'history' && (
+            <div className="h-full p-2">
+              <LeadUnifiedThread
+                leadId={lead.id}
+                leadName={leadName}
+                leadAvatarUrl={leadAvatarUrl}
+                leadPhone={lead.phone || null}
+                whatsappVerified={lead.whatsapp_verified ?? null}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const DesktopContentV2 = () => {
+    const leadAvatarUrl = lead.whatsapp_picture || lead.whatsapp_avatar_url || lead.contact_picture || null;
+    const dealStatusLabel = lead.deal_status === 'won' ? 'Ganho' : lead.deal_status === 'lost' ? 'Perdido' : 'Aberto';
+    const contactRows: Array<{ label: string; value: string; icon?: ReactNode }> = [
+      { label: 'Nome', value: lead.name },
+      { label: 'Telefone', value: formatPhoneForDisplay(lead.phone || '') },
+      { label: 'E-mail', value: lead.email },
+      { label: 'Cargo', value: lead.cargo },
+      { label: 'Empresa', value: lead.empresa },
+      { label: 'Origem', value: sourceLabels[leadSource] || leadSource },
+      { label: 'Criado em', value: lead.created_at ? format(new Date(lead.created_at), 'dd/MM/yy HH:mm', { locale: dateLocale }) : null },
+    ]
+      .filter((row) => Boolean(row.value))
+      .map((row) => ({ ...row, value: row.value || '' }));
+    const trackingRows = [
+      { label: 'Campanha', value: leadMeta?.campaign_name || leadMeta?.utm_campaign },
+      { label: 'Conjunto', value: leadMeta?.adset_name },
+      { label: 'Anuncio', value: leadMeta?.ad_name },
+      { label: 'Formulario', value: leadMeta?.form_name },
+      { label: 'UTM source', value: leadMeta?.utm_source },
+      { label: 'UTM medium', value: leadMeta?.utm_medium },
+    ].filter((row): row is { label: string; value: string } => Boolean(row.value));
+
+    return (
+      <div className="lead-detail-dialog lead-detail-v2 flex h-full max-h-[84vh] flex-col bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]">
+        <div className="border-b border-transparent bg-[var(--app-surface-solid)] px-4 pt-4">
+          <DialogHeader className="sr-only">
+            <DialogTitle>{leadName}</DialogTitle>
+          </DialogHeader>
+
+          <ScrollArea className="w-full" type="scroll">
+            <TooltipProvider delayDuration={0}>
+              <nav className="lead-stage-rail flex min-w-max items-center gap-1.5 pb-3">
+                {stages.map((stage, idx) => {
+                  const isActive = stage.id === localLead.stage_id;
+                  const isPast = idx < currentStageIndex;
+
+                  return (
+                    <Tooltip key={stage.id}>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => handleMoveToStage(stage.id)}
+                          className={cn(
+                            'lead-stage-step group relative flex h-8 w-8 items-center justify-center rounded-[6px] text-xs font-medium transition-colors',
+                            isActive
+                              ? 'bg-primary text-white'
+                              : isPast
+                                ? 'bg-primary/10 text-primary'
+                                : 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-primary/10 hover:text-primary',
+                          )}
+                        >
+                          {idx + 1}
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="text-xs">
+                        {stage.name}
+                      </TooltipContent>
+                    </Tooltip>
+                  );
+                })}
+              </nav>
+            </TooltipProvider>
+            <ScrollBar orientation="horizontal" className="h-1" />
+          </ScrollArea>
+        </div>
+
+        <div className="grid min-h-0 flex-1 grid-cols-[330px_minmax(360px,1fr)_390px] grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden">
+          <aside className="lead-detail-v2-column border-r border-[var(--app-border)]">
+            <div ref={v2LeadInfoScrollRef} className="lead-detail-v2-scroll h-full overflow-y-auto p-4">
+              <section className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <Avatar className="h-11 w-11 shrink-0 border-0">
+                    <AvatarImage src={leadAvatarUrl || undefined} alt={leadName} />
+                    <AvatarFallback className="bg-primary text-sm font-semibold text-white">
+                      {leadName?.[0]?.toUpperCase() || <User className="h-5 w-5" />}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h2 className="truncate text-base font-semibold leading-tight">{leadName}</h2>
+                      <ReentryBadge count={lead.reentry_count} lastEntryAt={lead.last_entry_at} />
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {leadTags.map((tag) => {
+                        const tagColor = getTagColor(tag);
+                        return (
+                          <Badge
+                            key={tag.id}
+                            className="flex h-6 items-center gap-1 rounded-[5px] border-0 px-2 text-[10px]"
+                            style={{ backgroundColor: tagColor, color: '#fff' }}
+                          >
+                            {tag.name || 'Tag'}
+                            <button type="button" className="rounded-[3px] p-0.5 hover:bg-black/10" onClick={() => handleRemoveTag(tag.id)}>
+                              <X className="h-2.5 w-2.5" />
+                            </button>
+                          </Badge>
+                        );
+                      })}
+                      <Popover open={tagPopoverOpen} onOpenChange={setTagPopoverOpen}>
+                        <PopoverTrigger asChild>
+                          <Button variant="ghost" size="sm" className="h-6 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-2 text-[10px]">
+                            <Plus className="mr-1 h-3 w-3" />
+                            Tag
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-64 p-0" align="start">
+                          <TagSelectorPopoverContent availableTags={availableTags} onAddTag={handleAddTag} onClose={() => setTagPopoverOpen(false)} />
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                  <Popover open={assigneePopoverOpen} onOpenChange={setAssigneePopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        className="h-8 min-w-0 justify-start rounded-[6px] bg-[var(--app-surface-soft)] px-3 text-xs text-[var(--app-text-secondary)]"
+                        disabled={!canTransferLead}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <User className="mr-1.5 h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{assigneeName || 'Sem responsavel'}</span>
+                        {isUpdatingAssignee ? <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" /> : <ChevronDown className="ml-auto h-3.5 w-3.5" />}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[300px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1 shadow-[0_18px_50px_rgba(0,0,0,0.16)]" align="start" collisionPadding={12}>
+                      <Command className="max-h-[min(72vh,420px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
+                        <CommandInput placeholder="Buscar..." className="h-9 border-none focus:ring-0" />
+                        <CommandList className="max-h-[min(56vh,320px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin">
+                          <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">Nenhum encontrado.</CommandEmpty>
+                          <CommandGroup>
+                            <CommandItem onSelect={() => handleAssignUser(null)} className="cursor-pointer rounded-[6px] px-3 py-2">
+                              Sem responsavel
+                            </CommandItem>
+                            {assignableUsers.map((user) => (
+                              <CommandItem key={user.id} onSelect={() => handleAssignUser(user.id)} className="cursor-pointer rounded-[6px] px-3 py-2">
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <Avatar className="h-7 w-7">
+                                    <AvatarImage src={user.avatar_url || undefined} />
+                                    <AvatarFallback className="text-[10px]">{(user.name || user.email || 'U')[0]}</AvatarFallback>
+                                  </Avatar>
+                                  <span className="truncate">{user.name || user.email}</span>
+                                </div>
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+
+                  <div onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+                    <Select value={lead.deal_status || 'open'} onValueChange={handleDealStatusChange}>
+                      <SelectTrigger
+                        className={cn(
+                          'h-8 w-[92px] gap-1 rounded-[6px] border-0 px-2 text-xs font-medium',
+                          getDealStatusTriggerClass(lead.deal_status),
+                        )}
+                      >
+                        <SelectValue>{dealStatusLabel}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="open">Aberto</SelectItem>
+                        <SelectItem value="won">Ganho</SelectItem>
+                        <SelectItem value="lost">Perdido</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  {lead.phone && (
+                    <Button variant="outline" size="sm" onClick={handleQuickPhone} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+                      <Phone className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                  {lead.phone && (
+                    <Button size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
+                      <MessageCircle className="mr-1 h-3.5 w-3.5" />
+                      Chat
+                    </Button>
+                  )}
+                  {lead.email && (
+                    <Button variant="outline" size="sm" onClick={handleQuickEmail} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+                      <Mail className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </div>
+
+                <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h3 className="text-xs font-semibold">Dados do contato</h3>
+                    <Button variant="ghost" size="sm" className="h-7 rounded-[5px] px-2 text-[10px]" onClick={() => setIsEditingContact((value) => !value)}>
+                      <FileEdit className="mr-1 h-3 w-3" />
+                      {isEditingContact ? 'Fechar' : 'Editar'}
+                    </Button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {contactRows.map((row) => (
+                      <InfoLine key={row.label} label={row.label} value={row.value} icon={row.icon} />
+                    ))}
+                  </div>
+
+                  {trackingRows.length > 0 && (
+                    <div className="mt-3 border-t border-[var(--app-border)] pt-3">
+                      <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-[var(--app-text-tertiary)]">Rastreamento</p>
+                      <div className="space-y-2">
+                        {trackingRows.slice(0, 4).map((row) => (
+                          <InfoLine key={row.label} label={row.label} value={row.value} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {isEditingContact && (
+                    <div className="mt-3 space-y-2">
+                      <Input value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} className="h-8 rounded-[6px]" placeholder="Nome" />
+                      <PhoneInput value={editForm.phone} onChange={(value) => setEditForm({ ...editForm, phone: value })} />
+                      <Input value={editForm.email} onChange={(event) => setEditForm({ ...editForm, email: event.target.value })} className="h-8 rounded-[6px]" placeholder="E-mail" />
+                      <div className="grid grid-cols-2 gap-2">
+                        <Input value={editForm.cargo} onChange={(event) => setEditForm({ ...editForm, cargo: event.target.value })} className="h-8 rounded-[6px]" placeholder="Cargo" />
+                        <Input value={editForm.empresa} onChange={(event) => setEditForm({ ...editForm, empresa: event.target.value })} className="h-8 rounded-[6px]" placeholder="Empresa" />
+                      </div>
+                      <Button size="sm" className="h-8 w-full rounded-[6px]" onClick={handleSaveContact}>
+                        <Save className="mr-1.5 h-3.5 w-3.5" />
+                        Salvar dados
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h3 className="text-xs font-semibold">Documentacao</h3>
+                    {(profile?.role === 'admin' || profile?.id === lead.assigned_user_id) && (
+                      <>
+                        <Button variant="ghost" size="sm" className="h-7 rounded-[5px] px-2 text-[10px]" disabled={isUploading} onClick={() => fileInputRef.current?.click()}>
+                          {isUploading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Paperclip className="mr-1 h-3 w-3" />}
+                          Anexar
+                        </Button>
+                        <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileUpload} />
+                      </>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {attachments.length === 0 ? (
+                      <p className="text-xs text-[var(--app-text-tertiary)]">Nenhum documento anexado</p>
+                    ) : (
+                      attachments.slice(0, 4).map((doc) => (
+                        <button
+                          key={doc.id}
+                          type="button"
+                          className="flex w-full items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2 py-2 text-left text-xs"
+                          onClick={() => window.open(doc.file_url, '_blank')}
+                        >
+                          <FileText className="h-3.5 w-3.5 text-primary" />
+                          <span className="truncate">{doc.file_name}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+              </section>
+            </div>
+          </aside>
+
+          <main className="lead-detail-v2-column">
+            <div ref={v2LeadWorkScrollRef} className="lead-detail-v2-scroll h-full overflow-y-auto p-4">
+              <div className="space-y-4">
+                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                  <div className="flex justify-center">
+                    <PropertyPickerDialog
+                      properties={properties}
+                      selectedPropertyId={lead.interest_property_id || editForm.property_id || null}
+                      onSelect={(property) => {
+                        const nextPropertyPrice = property.preco || null;
+                        const nextPropertyCommission =
+                          'commission_percentage' in property && typeof property.commission_percentage === 'number'
+                            ? property.commission_percentage
+                            : null;
+                        setEditForm({
+                          ...editForm,
+                          property_id: property.id,
+                          valor_interesse: nextPropertyPrice ? nextPropertyPrice.toString() : editForm.valor_interesse,
+                          commission_percentage: nextPropertyCommission ? nextPropertyCommission.toString() : editForm.commission_percentage,
+                        });
+                        updateLead.mutateAsync({
+                          id: lead.id,
+                          interest_property_id: property.id,
+                          valor_interesse: nextPropertyPrice || lead.valor_interesse,
+                          commission_percentage: nextPropertyCommission || lead.commission_percentage,
+                        }).then(() => refetchStages());
+                      }}
+                    />
+                  </div>
+                </section>
+
+                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xs font-semibold">Agenda</h3>
+                      <p className="text-[10px] text-[var(--app-text-tertiary)]">{scheduleEvents.length} compromisso(s)</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      className="h-8 rounded-[6px]"
+                      onClick={() => {
+                        setEditingScheduleEvent(null);
+                        setScheduleDefaultType('visit');
+                        setScheduleFormOpen(true);
+                      }}
+                    >
+                      <Calendar className="mr-1.5 h-3.5 w-3.5" />
+                      Agendar
+                    </Button>
+                  </div>
+                </section>
+
+                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xs font-semibold">Cadencia</h3>
+                      <p className="text-[10px] text-[var(--app-text-tertiary)]">{stageTemplate?.name || 'Sem cadencia configurada'}</p>
+                    </div>
+                    {totalTasksCount > 0 && (
+                      <Badge variant="outline" className="rounded-[5px] border-0 bg-[var(--app-surface-solid)] text-[10px]">
+                        {completedTasksCount}/{totalTasksCount}
+                      </Badge>
+                    )}
+                  </div>
+                  {leadTasksLoading ? (
+                    <div className="flex items-center justify-center py-5">
+                      <Loader2 className="h-4 w-4 animate-spin text-[var(--app-text-tertiary)]" />
+                    </div>
+                  ) : templateTasks.length === 0 ? (
+                    <p className="rounded-[6px] bg-[var(--app-surface-solid)] px-3 py-2 text-xs text-[var(--app-text-tertiary)]">
+                      Nenhuma cadencia configurada para esta etapa
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {templateTasks.slice(0, 3).map((task) => {
+                        const taskType = getCadenceTaskType(task.type);
+                        const existingTask = leadTasksMap.get(`${task.title}-${task.day_offset}-${task.type}`);
+                        const isDone = existingTask?.is_done || false;
+                        const TaskIcon = activityTypeIcons[taskType] || Clock;
+
+                        return (
+                          <button
+                            key={task.id}
+                            type="button"
+                            onClick={() => handleCadenceTaskClick(task)}
+                            className={cn(
+                              'flex w-full items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-1.5 text-left transition-colors hover:bg-primary/10',
+                              isDone && 'opacity-65',
+                            )}
+                          >
+                            <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px]', isDone ? 'bg-emerald-500/18 text-emerald-500' : 'bg-primary/12 text-primary')}>
+                              {isDone ? <Check className="h-3 w-3" /> : <TaskIcon className="h-3 w-3" />}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className={cn('block truncate text-xs font-medium', isDone && 'line-through')}>
+                                {task.title}
+                              </span>
+                              <span className="block text-[10px] text-[var(--app-text-tertiary)]">
+                                {taskTypeLabels[taskType]} - Dia {task.day_offset}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                      {templateTasks.length > 3 && (
+                        <p className="px-1 text-[10px] text-[var(--app-text-tertiary)]">+{templateTasks.length - 3} tarefa(s) na cadencia</p>
+                      )}
+                    </div>
+                  )}
+                </section>
+
+                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                  <div className="mb-3 flex items-center gap-2">
+                    <div className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-primary/12 text-primary">
+                      <MessageCircle className="h-3.5 w-3.5" />
+                    </div>
+                    <h3 className="text-xs font-semibold">Feedback do lead</h3>
+                  </div>
+                  <Textarea
+                    placeholder="Registre o feedback sobre atendimento, perfil ou proximos passos..."
+                    value={feedback}
+                    onChange={(event) => setFeedback(event.target.value)}
+                    className="min-h-[74px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"
+                  />
+                  <Button
+                    className="mt-2 h-8 w-full rounded-[6px]"
+                    disabled={!feedback.trim() || createActivityMutation.isPending}
+                    onClick={handleSaveFeedback}
+                  >
+                    <Save className="mr-1.5 h-3.5 w-3.5" />
+                    Registrar feedback
+                  </Button>
+                </section>
+              </div>
+            </div>
+          </main>
+
+          <aside className="lead-detail-v2-column border-l border-[var(--app-border)]">
+            <LeadUnifiedThread
+              leadId={lead.id}
+              leadName={leadName}
+              leadAvatarUrl={leadAvatarUrl}
+              leadPhone={lead.phone || null}
+              whatsappVerified={lead.whatsapp_verified ?? null}
+            />
+          </aside>
+        </div>
+      </div>
+    );
+  };
+
   // Desktop content - defined as JSX variable (NOT a component function) to prevent re-mounting
   const DesktopContent = () => (
     <div className="lead-detail-dialog flex h-full max-h-[84vh] flex-col bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]">
@@ -2006,9 +2898,7 @@ export function LeadDetailDialog({
               <SelectTrigger
                 className={cn(
                   "h-7 w-auto gap-1.5 rounded-[6px] border-0 px-3 text-xs font-medium",
-                  lead.deal_status === 'won' && "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300",
-                  lead.deal_status === 'lost' && "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
-                  (!lead.deal_status || lead.deal_status === 'open') && "bg-muted text-muted-foreground"
+                  getDealStatusTriggerClass(lead.deal_status)
                 )}
               >
                 {lead.deal_status === 'won' && <Trophy className="h-3 w-3" />}
@@ -2048,7 +2938,7 @@ export function LeadDetailDialog({
                   style={{ backgroundColor: tagColor, color: '#FFFFFF', borderColor: tagColor }}
                 >
                   {tag.name || 'Tag'}
-                  <button onClick={() => handleRemoveTag(tag.id)} className="ml-0.5 hover:bg-black/10 rounded-full p-0.5 transition-colors">
+                  <button onClick={() => handleRemoveTag(tag.id)} className="ml-0.5 rounded-[3px] p-0.5 transition-colors hover:bg-black/10">
                     <X className="h-3 w-3" />
                   </button>
                 </Badge>
@@ -2121,13 +3011,10 @@ export function LeadDetailDialog({
                       )}
                     </button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-[300px] border-0 p-0 shadow-[0_18px_50px_rgba(0,0,0,0.16)]" align="start">
-                    <Command className="border-none">
-                      <div className="flex items-center border-b px-3">
-                        <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
-                        <CommandInput placeholder="Buscar..." className="border-none focus:ring-0 h-10" />
-                      </div>
-                      <CommandList className="max-h-[350px] p-1 overflow-y-auto">
+                  <PopoverContent className="w-[300px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1 shadow-[0_18px_50px_rgba(0,0,0,0.16)]" align="start" collisionPadding={12}>
+                    <Command className="max-h-[min(70vh,430px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
+                      <CommandInput placeholder="Buscar..." className="h-10 border-none focus:ring-0" />
+                      <CommandList className="max-h-[min(58vh,350px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin">
                         <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">
                           Nenhum encontrado.
                         </CommandEmpty>
@@ -2138,7 +3025,7 @@ export function LeadDetailDialog({
                               setAssigneePopoverOpen(false);
                             }}
                             className={cn(
-                              "flex items-center gap-2.5 px-3 py-2.5 cursor-pointer transition-colors rounded-lg",
+                              "flex cursor-pointer items-center gap-2.5 rounded-[6px] px-3 py-2.5 transition-colors",
                               !localLead.assigned_user_id && "bg-accent"
                             )}
                           >
@@ -2159,7 +3046,7 @@ export function LeadDetailDialog({
                                   setAssigneePopoverOpen(false);
                                 }}
                                 className={cn(
-                                  "flex items-center gap-2.5 px-3 py-2.5 cursor-pointer transition-all rounded-lg my-0.5",
+                                  "my-0.5 flex cursor-pointer items-center gap-2.5 rounded-[6px] px-3 py-2.5 transition-all",
                                   localLead.assigned_user_id === user.id && "bg-primary/10"
                                 )}
                               >
@@ -3048,12 +3935,11 @@ export function LeadDetailDialog({
     return (
       <>
         <Drawer open={!!lead} onOpenChange={() => onClose()} dismissible={!isEditingContact}>
-          <DrawerContent className="mx-auto h-[95vh] max-h-[95vh] w-[95%] overflow-hidden rounded-t-xl border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-[0_18px_42px_rgba(0,0,0,0.28)]" showHandle={!isEditingContact}>
+          <DrawerContent className="lead-mobile-drawer mx-auto w-full overflow-hidden rounded-t-[10px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-[0_18px_42px_rgba(0,0,0,0.28)]" showHandle={false}>
             <DrawerTitle className="sr-only">
               {leadName ? `Detalhes do lead ${leadName}` : 'Detalhes do lead'}
             </DrawerTitle>
-            {/* Inline JSX instead of <MobileContent /> to prevent re-mounting */}
-            {MobileContent()}
+            {MobileContentV2()}
           </DrawerContent>
         </Drawer>
         {RoteiroDialog()}
@@ -3068,12 +3954,22 @@ export function LeadDetailDialog({
       </>
     );
   }
+  const useLeadDetailV2 = true;
+
   return (
     <>
       <Dialog open={!!lead} onOpenChange={() => onClose()}>
-        <DialogContent className="w-[min(1180px,92vw)] max-w-[1180px] max-h-[84vh] overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none animate-scale-in">
+        <DialogContent
+          className="h-[min(720px,84vh)] w-[min(1180px,92vw)] max-w-[1180px] max-h-[84vh] overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none animate-scale-in"
+          onInteractOutside={(event) => {
+            const target = event.target as HTMLElement | null;
+            if (target?.closest('[data-radix-popper-content-wrapper], [role="listbox"]')) {
+              event.preventDefault();
+            }
+          }}
+        >
           {/* Inline JSX instead of <DesktopContent /> to prevent re-mounting */}
-          {DesktopContent()}
+          {useLeadDetailV2 ? DesktopContentV2() : DesktopContent()}
         </DialogContent>
       </Dialog>
       {RoteiroDialog()}

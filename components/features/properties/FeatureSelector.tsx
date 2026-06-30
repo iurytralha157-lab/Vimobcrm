@@ -134,10 +134,10 @@ export function FeatureSelector({
                 onClick={() => toggleItem(option)}
                 className={cn(
                   "px-3 py-1.5 rounded-full text-sm font-medium transition-all",
-                  "border-2 focus:outline-none focus:ring-2 focus:ring-primary/20",
+                  "border-0 focus:outline-none focus:ring-2 focus:ring-primary/20",
                   isSelected
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-white/[0.045] text-muted-foreground border-white/[0.055] hover:border-primary/50 hover:text-foreground"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-[var(--app-surface-soft)] text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground"
                 )}
               >
                 {option}

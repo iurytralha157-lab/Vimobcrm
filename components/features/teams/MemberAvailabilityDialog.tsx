@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useMemberAvailability, useBulkUpdateMemberAvailability, getDayName } from '@/hooks/use-member-availability';
+import { useMemberAvailability, useBulkUpdateMemberAvailability, getDayName, type MemberAvailability } from '@/hooks/use-member-availability';
 
 interface MemberAvailabilityDialogProps {
   open: boolean;
@@ -37,6 +37,7 @@ const TIME_OPTIONS = [
 
 const DEFAULT_START = '08:00';
 const DEFAULT_END = '18:00';
+const EMPTY_AVAILABILITY: MemberAvailability[] = [];
 
 export function MemberAvailabilityDialog({
   open,
@@ -45,7 +46,8 @@ export function MemberAvailabilityDialog({
   memberName,
   memberAvatar,
 }: MemberAvailabilityDialogProps) {
-  const { data: existingAvailability = [], isLoading } = useMemberAvailability(teamMemberId);
+  const { data: existingAvailabilityData, isLoading } = useMemberAvailability(teamMemberId);
+  const existingAvailability = existingAvailabilityData ?? EMPTY_AVAILABILITY;
   const bulkUpdate = useBulkUpdateMemberAvailability();
 
   const [schedules, setSchedules] = useState<DaySchedule[]>([]);

@@ -31,9 +31,10 @@ Em `Settings > Secrets and variables > Actions > Variables`:
 NEXT_PUBLIC_SUPABASE_URL=https://seu-projeto.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=sua-chave-publica
 NEXT_PUBLIC_VIMOB_API_URL=https://api.vimobcrm.com.br
+NEXT_PUBLIC_SITE_URL=https://vimobcrm.com.br
 ```
 
-Essas variaveis entram no build do Next.js. Se trocar a URL da API depois, gere uma nova imagem web.
+Essas variaveis entram no build do Next.js. Se trocar a URL da API ou o dominio publico depois, gere uma nova imagem web.
 
 ## Variaveis da Stack no Portainer
 
@@ -48,15 +49,17 @@ API_PUBLIC_PORT=18081
 TRAEFIK_NETWORK=public
 TRAEFIK_HTTPS_ENTRYPOINT=websecure
 TRAEFIK_CERT_RESOLVER=letsencrypt
-VIMOB_WEB_DOMAIN=app.vimobcrm.com.br
+VIMOB_WEB_DOMAIN=vimobcrm.com.br
 VIMOB_API_DOMAIN=api.vimobcrm.com.br
 
 NEXT_PUBLIC_SUPABASE_URL=https://seu-projeto.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=sua-chave-publica
 NEXT_PUBLIC_VIMOB_API_URL=https://api.vimobcrm.com.br
+NEXT_PUBLIC_SITE_URL=https://vimobcrm.com.br
+APP_PUBLIC_URL=https://vimobcrm.com.br
 VIMOB_INTERNAL_API_URL=http://api:8081
 
-API_CORS_ALLOWED_ORIGINS=https://app.vimobcrm.com.br
+API_CORS_ALLOWED_ORIGINS=https://vimobcrm.com.br
 SUPABASE_PROJECT_URL=https://seu-projeto.supabase.co
 SUPABASE_JWKS_URL=https://seu-projeto.supabase.co/auth/v1/.well-known/jwks.json
 SUPABASE_JWT_ISSUER=https://seu-projeto.supabase.co/auth/v1
@@ -66,10 +69,11 @@ DATABASE_URL=postgresql://...
 
 RESEND_API_KEY=
 RESEND_FROM_EMAIL=Vimob CRM <naoresponde@vimobcrm.com.br>
-RESEND_REPLY_TO=suporte@vimobcrm.com.br
+RESEND_REPLY_TO=contato@vimobcrm.com.br
 RESEND_WEBHOOK_SECRET=
 EMAIL_ASSET_BASE_URL=https://vimobcrm.com.br
 EMAIL_INTERNAL_SECRET=
+SUPPORT_EMAIL=contato@vimobcrm.com.br
 
 ASAAS_API_KEY=
 ASAAS_BASE_URL=https://api.asaas.com/v3
@@ -91,14 +95,30 @@ No Portainer:
 
 No DNS/proxy:
 
-- `app.vimobcrm.com.br` -> Traefik -> servico `web`, porta interna `3000`.
+- `vimobcrm.com.br` -> Traefik -> servico `web`, porta interna `3000`.
 - `api.vimobcrm.com.br` -> Traefik -> servico `api`, porta interna `8081`.
-- `vimobcrm.com.br` e `www.vimobcrm.com.br` ficam reservados para o site institucional.
+- `www.vimobcrm.com.br` pode apontar para o mesmo servico web ou para o site institucional, conforme decisao de DNS.
 
 No Supabase Auth:
 
-- Site URL: `https://app.vimobcrm.com.br`
-- Redirect URLs: `https://app.vimobcrm.com.br/**`
+- Site URL: `https://vimobcrm.com.br`
+- Redirect URLs: `https://vimobcrm.com.br/**`
+
+## Usar Supabase antigo como producao oficial
+
+Para usar o Supabase antigo como banco oficial do Vimob novo, configure todas as variaveis de Supabase com os dados do projeto antigo:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://projeto-antigo.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=chave-publica-do-projeto-antigo
+SUPABASE_PROJECT_URL=https://projeto-antigo.supabase.co
+SUPABASE_JWKS_URL=https://projeto-antigo.supabase.co/auth/v1/.well-known/jwks.json
+SUPABASE_JWT_ISSUER=https://projeto-antigo.supabase.co/auth/v1
+SUPABASE_SERVICE_ROLE_KEY=service-role-do-projeto-antigo
+DATABASE_URL=postgresql://...
+```
+
+Com esse apontamento, leitura, escrita, upload, edicao, exclusao, reset de senha e Auth usam o Supabase antigo normalmente.
 
 ## Checklist de verificacao
 

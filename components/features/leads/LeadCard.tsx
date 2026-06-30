@@ -253,7 +253,7 @@ export const LeadCard = memo(function LeadCard({
               {/* Tags - primeira tag em destaque */}
               {lead.tags && lead.tags.length > 0 ? (
                   <>
-                    <span className="text-[9px] px-1.5 py-0.5 font-medium rounded-full border" style={{
+                    <span className="text-[9px] px-1.5 py-0.5 font-medium rounded-[4px] border-0" style={{
                       backgroundColor: lead.tags[0].color || '#6b7280',
                       color: '#FFFFFF',
                       borderColor: lead.tags[0].color || '#6b7280'

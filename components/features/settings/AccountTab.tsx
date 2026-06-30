@@ -540,7 +540,7 @@ export function AccountTab() {
             </div>
 
             {/* Preferences */}
-            <div className="flex flex-wrap items-center gap-x-8 gap-y-3 pt-4 border-t border-white/[0.045]">
+            <div className="flex flex-col gap-3 pt-4 border-t border-white/[0.045] sm:flex-row sm:items-center sm:justify-between">
               <div className="flex w-full items-center gap-3 sm:w-auto">
                 <Label className="flex items-center gap-2 text-sm">
                   <Globe className="h-4 w-4" />
@@ -556,7 +556,7 @@ export function AccountTab() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex w-full items-center gap-3 sm:w-auto">
+              <div className="flex w-full items-center gap-3 sm:w-auto sm:justify-end">
                 <Label className="flex items-center gap-2 text-sm">
                   <Monitor className="h-4 w-4" />
                   Tema

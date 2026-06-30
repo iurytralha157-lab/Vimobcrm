@@ -269,7 +269,7 @@ export default function Dashboard() {
         </div>
 
         {/* ===== MOBILE LAYOUT ===== */}
-        <div className={cn("lg:hidden flex flex-col gap-4 overflow-y-auto", !isMobile ? "flex-1 min-h-0" : "")}>
+        <div className={cn("app-scrollbar lg:hidden flex flex-col gap-4 overflow-y-auto", !isMobile ? "flex-1 min-h-0" : "")}>
           <KPICards
             data={kpiData}
             isLoading={statsLoading || extraCountsLoading}

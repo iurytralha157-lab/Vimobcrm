@@ -90,7 +90,7 @@ export function MobileBottomNav() {
 
   return (
     <>
-      <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-[var(--app-border)] bg-[var(--app-sidebar)] pb-[env(safe-area-inset-bottom)]">
+      <nav className="app-mobile-bottom-nav fixed bottom-0 left-0 right-0 z-50 border-t border-[var(--app-border)] bg-[var(--app-sidebar)] pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-end justify-around px-1 h-16 py-[4px] pb-[10px]">
           {tabs.map((tab) => {
             if (tab === 'fab') {

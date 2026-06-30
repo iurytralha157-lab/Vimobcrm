@@ -1186,7 +1186,7 @@ func (repo Repository) insertScheduleNotifications(ctx context.Context, tx pgx.T
 				$4,
 				'schedule',
 				'in_app',
-				'/schedule',
+				'/agenda',
 				$5::jsonb
 			)
 		`, organizationID, recipientID, title, content, jsonb(metadata))

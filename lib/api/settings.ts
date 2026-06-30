@@ -185,7 +185,7 @@ export const settingsAPI = {
   },
 
   async changePassword(input: { password: string; source?: string }, organizationId?: string | null) {
-    return vimobAPIRequest<{ allowed: boolean; message: string }>('/v1/settings/password', {
+    return vimobAPIRequest<{ allowed: boolean; message: string; emailNotificationSent?: boolean }>('/v1/settings/password', {
       method: 'POST',
       organizationId,
       body: input,

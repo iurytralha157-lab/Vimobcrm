@@ -212,7 +212,7 @@ export function ImageUploader({
           <label
             className={cn(
               'flex flex-col items-center justify-center w-full min-h-[200px] border-2 border-dashed rounded-lg cursor-pointer',
-              'hover:bg-white/[0.055] transition-colors border-primary/50',
+              'border-primary/35 bg-primary/5 transition-colors hover:border-primary/45 hover:bg-primary/10',
               uploadingMain && 'opacity-50 cursor-not-allowed',
             )}
           >
@@ -250,7 +250,7 @@ export function ImageUploader({
         <label
           className={cn(
             'flex flex-col items-center justify-center w-full h-28 border-2 border-dashed rounded-lg cursor-pointer',
-            'hover:bg-white/[0.055] transition-colors',
+            'border-[var(--app-border)] bg-[var(--app-surface-soft)] transition-colors hover:border-primary/35 hover:bg-[var(--app-surface-hover)]',
             uploadingGallery && 'opacity-50 cursor-not-allowed',
           )}
         >
@@ -300,7 +300,7 @@ export function ImageUploader({
                             {...draggableProps}
                             style={style as CSSProperties}
                             className={cn(
-                              'relative aspect-square rounded-lg overflow-hidden group border',
+                              'relative aspect-square overflow-hidden rounded-lg border-0 bg-[var(--app-surface-soft)] group',
                               snapshot.isDragging && 'ring-2 ring-primary shadow-lg',
                             )}
                           >
@@ -355,7 +355,7 @@ export function ImageUploader({
             </Droppable>
           </DragDropContext>
         ) : (
-          <div className="flex items-center gap-3 p-4 rounded-lg bg-white/[0.055]">
+          <div className="flex items-center gap-3 rounded-lg bg-[var(--app-surface-soft)] p-4">
             <ImageIcon className="h-8 w-8 text-muted-foreground" />
             <div>
               <p className="text-sm font-medium">Nenhuma foto na galeria</p>

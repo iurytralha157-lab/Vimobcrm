@@ -142,6 +142,8 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 	if messageID == "" {
 		messageID = clientMessageID
 	}
+	messageID = stripNullBytes(messageID)
+	clientMessageID = stripNullBytes(clientMessageID)
 	senderName := repo.userDisplayName(ctx, tenantContext.UserID)
 	messageType := input.MediaType
 	if messageType == "" {

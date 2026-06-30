@@ -107,7 +107,7 @@ export default function PropertyRentals() {
         {properties.length === 0 && (
           <Card className="app-card">
             <CardContent className="py-12 text-center">
-              <div className="h-12 w-12 rounded-full bg-white/[0.055] flex items-center justify-center mx-auto mb-4">
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--app-surface-soft)]">
                 <Home className="h-6 w-6 text-muted-foreground" />
               </div>
               <h3 className="font-medium mb-2">Nenhum imóvel para aluguel</h3>

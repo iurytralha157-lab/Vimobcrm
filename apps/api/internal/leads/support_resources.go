@@ -3,6 +3,7 @@ package leads
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -256,19 +257,21 @@ type Notification struct {
 	OrganizationID string    `json:"organization_id"`
 	Title          string    `json:"title"`
 	Content        *string   `json:"content"`
-	Type           string    `json:"type"`
-	IsRead         bool      `json:"is_read"`
-	LeadID         *string   `json:"lead_id"`
-	CreatedAt      time.Time `json:"created_at"`
+	Type           string         `json:"type"`
+	IsRead         bool           `json:"is_read"`
+	LeadID         *string        `json:"lead_id"`
+	Metadata       map[string]any `json:"metadata"`
+	CreatedAt      time.Time      `json:"created_at"`
 }
 
 type CreateNotificationRequest struct {
 	UserID         string  `json:"user_id"`
 	OrganizationID string  `json:"organization_id"`
 	Title          string  `json:"title"`
-	Content        *string `json:"content"`
-	Type           string  `json:"type"`
-	LeadID         *string `json:"lead_id"`
+	Content        *string        `json:"content"`
+	Type           string         `json:"type"`
+	LeadID         *string        `json:"lead_id"`
+	Metadata       map[string]any `json:"metadata"`
 }
 
 type LeadVisibility struct {
@@ -761,7 +764,7 @@ func (repo Repository) GetLeadMeta(ctx context.Context, tenantContext tenant.Con
 		order by lm.created_at desc
 		limit 1
 	`, tenantContext.OrganizationID, canViewAllLeads(tenantContext), tenantContext.UserID, tenantContext.HasPermission("lead_view_team"), leadID))
-	if err == pgx.ErrNoRows {
+	if err == pgx.ErrNoRows || errors.Is(err, ErrInvalidReference) {
 		return nil, nil
 	}
 	if err != nil {
@@ -1088,7 +1091,7 @@ func (repo Repository) ListNotifications(ctx context.Context, tenantContext tena
 	}
 	limit = max(1, min(limit, 100))
 	rows, err := repo.db.Pool().Query(ctx, `
-		select id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, created_at
+		select id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, coalesce(metadata, '{}'::jsonb)::text, created_at
 		from public.notifications
 		where organization_id = $1::uuid and user_id = $2::uuid
 		order by created_at desc
@@ -1180,11 +1183,15 @@ func (repo Repository) CreateNotification(ctx context.Context, tenantContext ten
 	if notificationType == "" {
 		notificationType = "info"
 	}
+	metadata := request.Metadata
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
 	return scanNotification(repo.db.Pool().QueryRow(ctx, `
-		insert into public.notifications (user_id, organization_id, title, content, type, lead_id, is_read)
-		values ($1::uuid, $2::uuid, $3, $4, $5, $6, false)
-		returning id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, created_at
-	`, userID, organizationID, title, optionalStringFromPointer(request.Content, 1_000), notificationType, request.LeadID))
+		insert into public.notifications (user_id, organization_id, title, content, type, lead_id, is_read, metadata)
+		values ($1::uuid, $2::uuid, $3, $4, $5, $6, false, $7::jsonb)
+		returning id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, coalesce(metadata, '{}'::jsonb)::text, created_at
+	`, userID, organizationID, title, optionalStringFromPointer(request.Content, 1_000), notificationType, request.LeadID, jsonb(metadata)))
 }
 
 func (repo Repository) GetLeadVisibility(ctx context.Context, tenantContext tenant.Context) (LeadVisibility, error) {
@@ -1656,7 +1663,7 @@ func scanLeadTask(row scanner) (LeadTask, error) {
 
 func scanNotification(row scanner) (Notification, error) {
 	var notification Notification
-	var content, leadID pgtype.Text
+	var content, leadID, metadataRaw pgtype.Text
 	if err := row.Scan(
 		&notification.ID,
 		&notification.UserID,
@@ -1666,6 +1673,7 @@ func scanNotification(row scanner) (Notification, error) {
 		&notification.Type,
 		&notification.IsRead,
 		&leadID,
+		&metadataRaw,
 		&notification.CreatedAt,
 	); err != nil {
 		if err == pgx.ErrNoRows {
@@ -1675,7 +1683,21 @@ func scanNotification(row scanner) (Notification, error) {
 	}
 	notification.Content = textPtr(content)
 	notification.LeadID = textPtr(leadID)
+	notification.Metadata = jsonMap(textValue(metadataRaw))
 	return notification, nil
+}
+
+func jsonMap(value string) map[string]any {
+	if strings.TrimSpace(value) == "" {
+		return map[string]any{}
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal([]byte(value), &result); err != nil {
+		return map[string]any{}
+	}
+
+	return result
 }
 
 type taskLead struct {

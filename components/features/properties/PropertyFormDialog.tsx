@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -24,6 +24,12 @@ import { Property } from '@/hooks/use-properties';
 import { ImageUploader } from './ImageUploader';
 import { FeatureSelector } from './FeatureSelector';
 import { useIsMobile } from '@/hooks/use-mobile';
+
+const onlyCepDigits = (value: string) => value.replace(/\D/g, '').slice(0, 8);
+const formatCep = (value: string) => {
+  const digits = onlyCepDigits(value);
+  return digits.length > 5 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : digits;
+};
 
 interface FormData {
   title: string;
@@ -115,6 +121,40 @@ export function PropertyFormDialog({
 }: PropertyFormDialogProps) {
   const isMobile = useIsMobile();
   const [activeTab, setActiveTab] = useState('overview');
+  const [isCepLoading, setIsCepLoading] = useState(false);
+  const lastCepLookupRef = useRef('');
+
+  const lookupCep = async (rawCep: string) => {
+    const cep = onlyCepDigits(rawCep);
+    if (cep.length !== 8 || lastCepLookupRef.current === cep) return;
+
+    lastCepLookupRef.current = cep;
+    setIsCepLoading(true);
+    try {
+      const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+      if (!res.ok) throw new Error('cep_lookup_failed');
+      const data = await res.json() as {
+        erro?: boolean;
+        logradouro?: string;
+        bairro?: string;
+        localidade?: string;
+        uf?: string;
+      };
+      if (data.erro) return;
+
+      setFormData((prev) => ({
+        ...prev,
+        endereco: data.logradouro || prev.endereco,
+        bairro: data.bairro || prev.bairro,
+        cidade: data.localidade || prev.cidade,
+        uf: data.uf || prev.uf,
+      }));
+    } catch {
+      lastCepLookupRef.current = '';
+    } finally {
+      setIsCepLoading(false);
+    }
+  };
 
   const isFormValid =
     formData.title.trim() !== '' &&
@@ -175,7 +215,7 @@ export function PropertyFormDialog({
             {editingProperty && (
               <div className="space-y-2">
                 <Label>Código</Label>
-                <Input value={editingProperty.code} readOnly className="bg-white/[0.045] font-mono" />
+                <Input value={editingProperty.code} readOnly className="bg-[var(--app-surface-soft)] font-mono" />
               </div>
             )}
             <div className="space-y-2">
@@ -269,7 +309,7 @@ export function PropertyFormDialog({
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex items-center justify-between p-3 border rounded-lg">
+              <div className="flex items-center justify-between gap-3 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-3 text-[var(--app-text-primary)] transition-colors hover:bg-[var(--app-surface-hover)]">
                 <Label>Imóvel em Destaque</Label>
                 <Switch
                   checked={formData.destaque}
@@ -328,36 +368,26 @@ export function PropertyFormDialog({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>CEP</Label>
-                <Input
-                  placeholder="00000-000"
-                  value={formData.cep}
-                  onChange={(e) => {
-                    const value = e.target.value.replace(/\D/g, '').slice(0, 8);
-                    const formatted = value.length > 5 ? `${value.slice(0, 5)}-${value.slice(5)}` : value;
-                    setFormData({ ...formData, cep: formatted });
-                  }}
-                  onBlur={async () => {
-                    const cep = formData.cep.replace(/\D/g, '');
-                    if (cep.length === 8) {
-                      try {
-                        const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
-                        const data = await res.json();
-                        if (!data.erro) {
-                          setFormData({
-                            ...formData,
-                            endereco: data.logradouro || formData.endereco,
-                            bairro: data.bairro || formData.bairro,
-                            cidade: data.localidade || formData.cidade,
-                            uf: data.uf || formData.uf,
-                          });
-                        }
-                      } catch {
-                        // noop
+                <div className="relative">
+                  <Input
+                    placeholder="00000-000"
+                    value={formData.cep}
+                    onChange={(e) => {
+                      const digits = onlyCepDigits(e.target.value);
+                      const formatted = formatCep(digits);
+                      setFormData((prev) => ({ ...prev, cep: formatted }));
+                      if (digits.length === 8) {
+                        void lookupCep(digits);
                       }
-                    }
-                  }}
-                />
-                <p className="text-xs text-muted-foreground">Digite o CEP para preencher automaticamente</p>
+                    }}
+                    onBlur={() => void lookupCep(formData.cep)}
+                    className="pr-9"
+                  />
+                  {isCepLoading && (
+                    <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">Ao completar o CEP, o endereço é preenchido automaticamente</p>
               </div>
               <div className="space-y-2">
                 <Label>Estado (UF)</Label>
@@ -474,7 +504,7 @@ export function PropertyFormDialog({
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex items-center justify-between p-3 border rounded-lg">
+            <div className="flex items-center justify-between gap-3 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-3 text-[var(--app-text-primary)] transition-colors hover:bg-[var(--app-surface-hover)]">
               <Label>Aceita Pet</Label>
               <Switch
                 checked={formData.regra_pet}

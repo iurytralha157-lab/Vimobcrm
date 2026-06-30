@@ -51,8 +51,8 @@ const DEFAULT_BRAND_LOGO_DARK = "/images/logo-white.png";
 const DEFAULT_BRAND_LOGO_LIGHT = "/images/logo-black.png";
 const MOBILE_LOGO_WIDTH = 120;
 const SIDEBAR_BACKGROUND = "var(--app-sidebar)";
-const SIDEBAR_ICON_STROKE = 1.6;
-const SIDEBAR_CHEVRON_STROKE = 1.7;
+const SIDEBAR_ICON_STROKE = 1.32;
+const SIDEBAR_CHEVRON_STROKE = 1.4;
 
 interface NavItem {
   icon: ElementType;
@@ -309,7 +309,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
       )}
       <SheetContent
         side="left"
-        className="w-[280px] border-0 border-r-0 p-0 flex flex-col text-[var(--app-text-primary)] data-[state=open]:duration-200 data-[state=closed]:duration-150"
+        className="app-sidebar w-[280px] border-0 border-r-0 p-0 flex flex-col text-[var(--app-text-primary)] data-[state=open]:duration-200 data-[state=closed]:duration-150"
         style={{ backgroundColor: SIDEBAR_BACKGROUND }}
       >
         <SheetTitle className="sr-only">Menu principal</SheetTitle>

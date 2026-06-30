@@ -46,11 +46,6 @@ function ChartSkeleton() {
           </div>
         ))}
       </div>
-      <div className="flex justify-center gap-6">
-        <Skeleton className="h-3 w-16" />
-        <Skeleton className="h-3 w-16" />
-        <Skeleton className="h-3 w-16" />
-      </div>
     </div>
   );
 }
@@ -147,16 +142,6 @@ export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProp
     );
   }
 
-  // Calculate totals for the legend
-  const totals = data.reduce(
-    (acc, item) => ({
-      ganhos: acc.ganhos + item.ganhos,
-      perdas: acc.perdas + item.perdas,
-      abertos: acc.abertos + item.abertos,
-    }),
-    { ganhos: 0, perdas: 0, abertos: 0 }
-  );
-
   const maxValue = Math.max(...data.map(d => Math.max(d.ganhos, d.perdas, d.abertos)), 1);
   const tickInterval = getXInterval(chartSize.width, data.length);
   const yTickCount = getYTickCount(chartSize.height, maxValue);
@@ -169,7 +154,7 @@ export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProp
           Evolução de Negócios
         </CardTitle>
       </CardHeader>
-      <CardContent className="pb-2 flex-1 flex flex-col px-0">
+      <CardContent className="pb-3 flex-1 flex flex-col px-0">
         {/* Chart */}
         <div className="dashboard-recharts-focusless relative min-h-[260px] w-full flex-1">
           <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} onResize={handleResize}>
@@ -253,25 +238,6 @@ export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProp
               />
             </AreaChart>
           </ResponsiveContainer>
-        </div>
-
-        {/* Legend with totals */}
-        <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 pt-3 mt-2">
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            <div className="w-3 h-3 rounded-full bg-[#22C55E]" />
-            <span className="text-xs text-muted-foreground">Ganhos</span>
-            <span className="text-xs font-semibold text-foreground">{totals.ganhos}</span>
-          </div>
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            <div className="w-3 h-3 rounded-full bg-[#EF4444]" />
-            <span className="text-xs text-muted-foreground">Perdas</span>
-            <span className="text-xs font-semibold text-foreground">{totals.perdas}</span>
-          </div>
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            <div className="w-3 h-3 rounded-full bg-[#3B82F6]" />
-            <span className="text-xs text-muted-foreground">Em Aberto</span>
-            <span className="text-xs font-semibold text-foreground">{totals.abertos}</span>
-          </div>
         </div>
       </CardContent>
     </Card>

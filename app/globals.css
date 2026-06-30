@@ -9,6 +9,7 @@
   --app-surface: rgb(23 23 23 / 0.74);
   --app-surface-solid: #171717;
   --app-surface-soft: rgb(255 255 255 / 0.045);
+  --app-surface-muted: rgb(255 255 255 / 0.032);
   --app-surface-hover: rgb(255 255 255 / 0.07);
   --app-lead-card: #1a1a1a;
   --app-lead-card-hover: #202020;
@@ -46,6 +47,8 @@
   --app-text-primary: #ffffff;
   --app-text-secondary: rgb(255 255 255 / 0.72);
   --app-text-tertiary: rgb(255 255 255 / 0.48);
+  --app-icon-stroke: 1.45;
+  --app-sidebar-icon-stroke: 1.32;
   --card: var(--app-surface);
   --card-foreground: var(--app-text-primary);
   --popover: var(--app-surface-solid);
@@ -112,6 +115,7 @@
   --app-surface: rgb(23 23 23 / 0.74);
   --app-surface-solid: #171717;
   --app-surface-soft: rgb(255 255 255 / 0.045);
+  --app-surface-muted: rgb(255 255 255 / 0.032);
   --app-surface-hover: rgb(255 255 255 / 0.07);
   --app-lead-card: #1a1a1a;
   --app-lead-card-hover: #202020;
@@ -185,6 +189,7 @@
   --app-surface: #ffffff;
   --app-surface-solid: #ffffff;
   --app-surface-soft: rgb(15 23 42 / 0.055);
+  --app-surface-muted: rgb(15 23 42 / 0.035);
   --app-surface-hover: rgb(15 23 42 / 0.075);
   --app-lead-card: #eef1ef;
   --app-lead-card-hover: #e7ebe8;
@@ -352,6 +357,14 @@ body {
 
 .app-shell :where(.tracking-tight, .tracking-wide, .tracking-wider, .tracking-widest) {
   letter-spacing: 0 !important;
+}
+
+.app-shell svg.lucide {
+  stroke-width: var(--app-icon-stroke) !important;
+}
+
+.app-shell :where(.app-sidebar, .app-mobile-bottom-nav) svg.lucide {
+  stroke-width: var(--app-sidebar-icon-stroke) !important;
 }
 
 .vimob-dialog-overlay {
@@ -614,6 +627,43 @@ body {
 .pipeline-selector-scroll {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 69, 41, 0.36) transparent;
+}
+
+.app-scrollbar,
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--primary) 42%, transparent) transparent;
+}
+
+.app-scrollbar::-webkit-scrollbar,
+.scrollbar-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.app-scrollbar::-webkit-scrollbar-track,
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.app-scrollbar::-webkit-scrollbar-thumb,
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  min-height: 2.5rem;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary) 34%, transparent);
+  background-clip: content-box;
+}
+
+.app-scrollbar::-webkit-scrollbar-thumb:hover,
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--primary) 54%, transparent);
+  background-clip: content-box;
+}
+
+.app-scrollbar::-webkit-scrollbar-corner,
+.scrollbar-thin::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .app-card-soft {
@@ -931,6 +981,236 @@ body {
 .crm-management-surface .border-t,
 .crm-management-surface .border-b {
   border-color: transparent !important;
+}
+
+.automation-builder-shell {
+  box-shadow: 0 18px 48px rgb(0 0 0 / 0.18);
+}
+
+.automation-header,
+.automation-sidebar {
+  border-color: transparent !important;
+}
+
+.automation-sidebar-scroll {
+  scrollbar-width: none;
+}
+
+.automation-sidebar-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.automation-palette-card {
+  background: color-mix(in srgb, var(--app-surface-solid) 88%, var(--app-surface-soft));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-border) 42%, transparent);
+}
+
+.automation-palette-card:hover {
+  box-shadow: inset 0 0 0 1px rgb(255 69 41 / 0.34);
+}
+
+.automation-canvas {
+  background:
+    radial-gradient(circle at 24px 24px, var(--app-border-strong) 1px, transparent 1px),
+    linear-gradient(180deg, var(--app-background), var(--app-background));
+  background-size: 24px 24px, 100% 100%;
+}
+
+.automation-node {
+  border: 1px solid color-mix(in srgb, var(--node-accent, var(--primary)) 60%, transparent);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--node-accent, var(--primary)) 24%, var(--app-surface-solid)) 0%,
+      color-mix(in srgb, var(--node-accent, var(--primary)) 11%, var(--app-surface-solid)) 100%
+    );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--node-accent, var(--primary)) 16%, transparent);
+}
+
+.automation-node:hover {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--node-accent, var(--primary)) 30%, var(--app-surface-solid)) 0%,
+      color-mix(in srgb, var(--node-accent, var(--primary)) 14%, var(--app-surface-solid)) 100%
+    );
+}
+
+.automation-node :where(.text-muted-foreground) {
+  color: color-mix(in srgb, var(--app-text-secondary) 84%, var(--node-accent, var(--primary)));
+}
+
+.automation-canvas .react-flow__controls {
+  overflow: hidden;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--app-surface-solid) 90%, transparent);
+  box-shadow: 0 14px 32px rgb(0 0 0 / 0.14);
+}
+
+.automation-canvas .react-flow__controls-button {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--app-text-secondary);
+}
+
+.automation-canvas .react-flow__controls-button:hover {
+  background: var(--app-surface-hover);
+  color: var(--app-text-primary);
+}
+
+.automation-canvas .react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+.automation-canvas .react-flow__attribution {
+  display: none;
+}
+
+.automation-canvas .react-flow__edge-path {
+  stroke-width: 1.7;
+}
+
+.automation-canvas .react-flow__handle {
+  border: 2px solid var(--app-surface-solid);
+}
+
+.automation-canvas .react-flow__panel {
+  border-color: transparent !important;
+}
+
+.automation-preview-panel {
+  border-color: transparent !important;
+}
+
+.automation-preview-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 69 41 / 0.55) transparent;
+}
+
+.automation-preview-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.automation-preview-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.automation-preview-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgb(255 69 41 / 0.55);
+  background-clip: padding-box;
+}
+
+.automation-preview-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 69 41 / 0.78);
+  background-clip: padding-box;
+}
+
+.lead-detail-v2 {
+  --lead-detail-column: color-mix(in srgb, var(--app-surface-solid) 82%, var(--app-surface-soft));
+}
+
+.lead-mobile-drawer {
+  height: min(88dvh, calc(100dvh - max(5rem, env(safe-area-inset-top, 0px))));
+  max-height: min(88dvh, calc(100dvh - max(5rem, env(safe-area-inset-top, 0px))));
+}
+
+.lead-mobile-drawer-header {
+  padding-top: max(0.75rem, env(safe-area-inset-top, 0px));
+}
+
+@supports not (height: 100dvh) {
+  .lead-mobile-drawer {
+    height: min(88vh, calc(100vh - max(5rem, env(safe-area-inset-top, 0px))));
+    max-height: min(88vh, calc(100vh - max(5rem, env(safe-area-inset-top, 0px))));
+  }
+}
+
+@media (max-width: 480px) {
+  .lead-mobile-drawer {
+    height: min(90dvh, calc(100dvh - max(5rem, env(safe-area-inset-top, 0px))));
+    max-height: min(90dvh, calc(100dvh - max(5rem, env(safe-area-inset-top, 0px))));
+  }
+
+  @supports not (height: 100dvh) {
+    .lead-mobile-drawer {
+      height: min(90vh, calc(100vh - max(5rem, env(safe-area-inset-top, 0px))));
+      max-height: min(90vh, calc(100vh - max(5rem, env(safe-area-inset-top, 0px))));
+    }
+  }
+}
+
+.lead-detail-v2-column {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--lead-detail-column);
+}
+
+.lead-detail-v2-scroll {
+  scrollbar-width: none;
+}
+
+.lead-detail-v2-scroll::-webkit-scrollbar,
+.lead-thread-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.lead-detail-v2-scroll::-webkit-scrollbar-track,
+.lead-thread-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.lead-detail-v2-scroll::-webkit-scrollbar-thumb,
+.lead-thread-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary) 34%, transparent);
+  background-clip: content-box;
+}
+
+.lead-thread-scroll {
+  scrollbar-width: none;
+}
+
+.lead-stage-rail {
+  position: relative;
+  isolation: isolate;
+}
+
+.lead-stage-rail::before {
+  display: none;
+}
+
+.lead-stage-step {
+  z-index: 1;
+}
+
+.lead-stage-step:not(:last-child)::after {
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  z-index: -1;
+  width: 0.375rem;
+  height: 1px;
+  content: "";
+  background: var(--app-border-strong);
+  transform: translateY(-50%);
+}
+
+@media (max-width: 767px) {
+  .automation-preview-panel {
+    display: none;
+  }
 }
 
 @keyframes vimob-loader-pulse {

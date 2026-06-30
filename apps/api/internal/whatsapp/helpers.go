@@ -19,13 +19,38 @@ var (
 	filenameLikePattern = regexp.MustCompile(`(?i)^\S+\.(png|jpg|jpeg|gif|webp|mp4|mp3|ogg|pdf|doc|docx|webm)$`)
 )
 
-func jsonb(value any) []byte {
-	raw, _ := json.Marshal(value)
+func jsonb(value any) string {
+	raw, _ := json.Marshal(sanitizeJSONValue(value))
 	if len(raw) == 0 {
-		return []byte("{}")
+		return "{}"
 	}
 
-	return raw
+	return string(raw)
+}
+
+func sanitizeJSONValue(value any) any {
+	switch typed := value.(type) {
+	case string:
+		return stripNullBytes(typed)
+	case []any:
+		items := make([]any, 0, len(typed))
+		for _, item := range typed {
+			items = append(items, sanitizeJSONValue(item))
+		}
+		return items
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[stripNullBytes(key)] = sanitizeJSONValue(item)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func stripNullBytes(value string) string {
+	return strings.ReplaceAll(value, "\x00", "")
 }
 
 func randomHex(bytesLen int) string {

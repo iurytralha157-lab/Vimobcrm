@@ -1,9 +1,13 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 )
+
+const StatusClientClosedRequest = 499
 
 type ErrorEnvelope struct {
 	Error APIError `json:"error"`
@@ -22,6 +26,11 @@ func WriteJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 func WriteError(w http.ResponseWriter, r *http.Request, status int, code string, message string) {
+	if err := r.Context().Err(); errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		w.WriteHeader(StatusClientClosedRequest)
+		return
+	}
+
 	WriteJSON(w, status, ErrorEnvelope{
 		Error: APIError{
 			Code:      code,

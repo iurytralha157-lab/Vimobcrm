@@ -162,7 +162,7 @@ export function VistaImportDialog({ open, onOpenChange }: Props) {
         ) : (
           /* --- CONNECTED STATE --- */
           <div className="space-y-4">
-            <div className="p-4 rounded-lg border border-white/[0.055] bg-white/[0.045] space-y-3">
+            <div className="space-y-3 rounded-lg border-0 bg-[var(--app-surface-soft)] p-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">Status</span>
                 <Badge variant="default" className="bg-success text-success-foreground">

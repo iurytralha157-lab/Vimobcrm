@@ -28,8 +28,8 @@ const DEFAULT_BRAND_LOGO_DARK = "/images/logo-white.png";
 const DEFAULT_BRAND_LOGO_LIGHT = "/images/logo-black.png";
 const DEFAULT_BRAND_ICON = "/favicon.ico";
 const SIDEBAR_BACKGROUND = "var(--app-sidebar)";
-const SIDEBAR_ICON_STROKE = 1.6;
-const SIDEBAR_CHEVRON_STROKE = 1.7;
+const SIDEBAR_ICON_STROKE = 1.32;
+const SIDEBAR_CHEVRON_STROKE = 1.4;
 
 interface NavItem {
   icon: React.ElementType;
@@ -401,6 +401,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
   const renderNavItem = (item: NavItem) => {
     const Icon = item.icon;
     const isActive = item.children ? isActiveParent(item) : isPathActive(item.path, { parent: true });
+    const shouldLiftDropdown = item.path === '/settings';
 
     if (item.children) {
       return (
@@ -427,6 +428,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
           <DropdownMenuContent
             side="right"
             align="start"
+            alignOffset={shouldLiftDropdown ? -76 : 0}
             sideOffset={8}
             className="w-60 rounded-[6px] border-0 bg-[var(--app-sidebar)] p-1.5 text-[var(--app-text-primary)] shadow-[0_8px_18px_rgba(0,0,0,0.045)] backdrop-blur-md dark:shadow-[0_8px_18px_rgba(0,0,0,0.14)]"
           >
@@ -478,7 +480,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
 
   return (
     <aside className={cn(
-      "h-[calc(100%-16px)] rounded-[6px] relative flex flex-col transition-all duration-300 my-2 ml-2 mr-0 flex-shrink-0",
+      "app-sidebar h-[calc(100%-16px)] rounded-[6px] relative flex flex-col transition-all duration-300 my-2 ml-2 mr-0 flex-shrink-0",
       collapsed ? "w-16" : "w-56"
     )}
     style={{ backgroundColor: SIDEBAR_BACKGROUND }}>

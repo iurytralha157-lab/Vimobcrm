@@ -70,118 +70,128 @@ type fieldDef struct {
 }
 
 var writableFields = map[string]fieldDef{
-	"aceita_financiamento":      {column: "aceita_financiamento", kind: fieldBool},
-	"aceita_permuta":            {column: "aceita_permuta", kind: fieldBool},
-	"andar":                     {column: "andar", kind: fieldInt},
-	"ano_construcao":            {column: "ano_construcao", kind: fieldInt},
-	"ano_reforma":               {column: "ano_reforma", kind: fieldInt},
-	"anunciar":                  {column: "published_on_site", kind: fieldBool},
-	"aprovacao_ambiental":       {column: "aprovacao_ambiental", kind: fieldText},
-	"area_total":                {column: "area_total", kind: fieldNumeric},
-	"area_util":                 {column: "area_util", kind: fieldNumeric},
-	"arquivos":                  {column: "documents", kind: fieldJSON},
-	"bairro":                    {column: "bairro", kind: fieldText},
-	"banheiros":                 {column: "banheiros", kind: fieldInt},
-	"cadastrado_por":            {column: "responsible_user_id", kind: fieldUUID},
-	"cep":                       {column: "cep", kind: fieldText},
-	"cidade":                    {column: "cidade", kind: fieldText},
-	"city_id":                   {column: "city_id", kind: fieldUUID},
-	"code":                      {column: "code", kind: fieldText},
-	"codigo_agua":               {column: "codigo_agua", kind: fieldText},
-	"codigo_eletricidade":       {column: "codigo_eletricidade", kind: fieldText},
-	"codigo_iptu":               {column: "codigo_iptu", kind: fieldText},
-	"comentarios_internos":      {column: "comentarios_internos", kind: fieldText},
-	"comissao_locacao":          {column: "comissao_locacao", kind: fieldNumeric},
-	"comissao_venda":            {column: "comissao_venda", kind: fieldNumeric},
-	"complemento":               {column: "complemento", kind: fieldText},
-	"condicao_comercial":        {column: "condicao_comercial", kind: fieldText},
-	"condominio":                {column: "condominio", kind: fieldNumeric},
-	"condominium_id":            {column: "condominium_id", kind: fieldUUID},
-	"created_by":                {column: "created_by", kind: fieldUUID},
-	"descricao":                 {column: "descricao", kind: fieldText},
-	"descricao_site":            {column: "descricao_site", kind: fieldText},
-	"destaque":                  {column: "is_featured", kind: fieldBool},
-	"documents":                 {column: "documents", kind: fieldJSON},
-	"endereco":                  {column: "endereco", kind: fieldText},
-	"external_id":               {column: "external_id", kind: fieldText},
-	"external_provider":         {column: "external_provider", kind: fieldText},
-	"fotos":                     {column: "image_urls", kind: fieldTextArray},
-	"image_urls":                {column: "image_urls", kind: fieldTextArray},
-	"iptu":                      {column: "iptu", kind: fieldNumeric},
-	"is_featured":               {column: "is_featured", kind: fieldBool},
-	"latitude":                  {column: "latitude", kind: fieldNumeric},
-	"local_chaves":              {column: "local_chaves", kind: fieldText},
-	"longitude":                 {column: "longitude", kind: fieldNumeric},
-	"metadata":                  {column: "metadata", kind: fieldJSON},
-	"mobiliado":                 {column: "mobiliado", kind: fieldBool},
-	"neighborhood_id":           {column: "neighborhood_id", kind: fieldUUID},
-	"numero":                    {column: "numero", kind: fieldText},
-	"numero_matricula":          {column: "numero_matricula", kind: fieldText},
-	"observacoes_documentacao":  {column: "observacoes_documentacao", kind: fieldText},
-	"origin_media":              {column: "origin_media", kind: fieldText},
-	"owner_cellphone":           {column: "owner_cellphone", kind: fieldText},
-	"owner_email":               {column: "owner_email", kind: fieldText},
-	"owner_media_source":        {column: "origin_media", kind: fieldText},
-	"owner_name":                {column: "owner_name", kind: fieldText},
-	"owner_phone_commercial":    {column: "owner_phone_commercial", kind: fieldText},
-	"owner_phone_residential":   {column: "owner_phone_residential", kind: fieldText},
-	"preco":                     {column: "preco", kind: fieldNumeric},
-	"property_type_id":          {column: "property_type_id", kind: fieldUUID},
-	"public_address_visibility": {column: "address_visibility", kind: fieldText},
-	"published_on_site":         {column: "published_on_site", kind: fieldBool},
-	"quartos":                   {column: "quartos", kind: fieldInt},
-	"referencia_alternativa":    {column: "referencia_alternativa", kind: fieldText},
-	"responsible_user_id":       {column: "responsible_user_id", kind: fieldUUID},
-	"seguro_incendio":           {column: "seguro_incendio", kind: fieldNumeric},
-	"status":                    {column: "status", kind: fieldStatus},
-	"status_descritivo":         {column: "status_descritivo", kind: fieldText},
-	"suites":                    {column: "suites", kind: fieldInt},
-	"taxa_de_servico":           {column: "taxa_de_servico", kind: fieldNumeric},
-	"tipo":                      {column: "tipo", kind: fieldText},
-	"tipo_de_imovel":            {column: "tipo", kind: fieldText},
-	"tipo_de_negocio":           {column: "finalidade", kind: fieldDealType},
-	"title":                     {column: "title", kind: fieldText},
-	"tour_virtual":              {column: "tour_virtual", kind: fieldText},
-	"uf":                        {column: "uf", kind: fieldText},
-	"vagas":                     {column: "vagas", kind: fieldInt},
-	"valor_itr":                 {column: "valor_itr", kind: fieldNumeric},
-	"valor_locacao":             {column: "valor_locacao", kind: fieldNumeric},
-	"valor_seguro_fianca":       {column: "valor_seguro_fianca", kind: fieldNumeric},
-	"video_imovel":              {column: "video_imovel", kind: fieldText},
+	"aceita_financiamento":       {column: "aceita_financiamento", kind: fieldBool},
+	"aceita_permuta":             {column: "aceita_permuta", kind: fieldBool},
+	"andar":                      {column: "andar", kind: fieldInt},
+	"ano_construcao":             {column: "ano_construcao", kind: fieldInt},
+	"ano_reforma":                {column: "ano_reforma", kind: fieldInt},
+	"anunciar":                   {column: "published_on_site", kind: fieldBool},
+	"aprovacao_ambiental":        {column: "aprovacao_ambiental", kind: fieldText},
+	"area_total":                 {column: "area_total", kind: fieldNumeric},
+	"area_util":                  {column: "area_util", kind: fieldNumeric},
+	"arquivos":                   {column: "documents", kind: fieldJSON},
+	"autorizado_comercializacao": {column: "autorizado_comercializacao", kind: fieldBool},
+	"bairro":                     {column: "bairro", kind: fieldText},
+	"banheiros":                  {column: "banheiros", kind: fieldInt},
+	"cadastrado_por":             {column: "responsible_user_id", kind: fieldUUID},
+	"cep":                        {column: "cep", kind: fieldText},
+	"cidade":                     {column: "cidade", kind: fieldText},
+	"city_id":                    {column: "city_id", kind: fieldUUID},
+	"code":                       {column: "code", kind: fieldText},
+	"codigo_agua":                {column: "codigo_agua", kind: fieldText},
+	"codigo_eletricidade":        {column: "codigo_eletricidade", kind: fieldText},
+	"codigo_iptu":                {column: "codigo_iptu", kind: fieldText},
+	"comentarios_internos":       {column: "comentarios_internos", kind: fieldText},
+	"comissao_locacao":           {column: "comissao_locacao", kind: fieldNumeric},
+	"comissao_venda":             {column: "comissao_venda", kind: fieldNumeric},
+	"commission_percentage":      {column: "commission_percentage", kind: fieldNumeric},
+	"complemento":                {column: "complemento", kind: fieldText},
+	"condicao_comercial":         {column: "condicao_comercial", kind: fieldText},
+	"condicao_pagamento":         {column: "condicao_pagamento", kind: fieldText},
+	"condominio":                 {column: "condominio", kind: fieldNumeric},
+	"condominium_id":             {column: "condominium_id", kind: fieldUUID},
+	"corretor_id":                {column: "corretor_id", kind: fieldUUID},
+	"created_by":                 {column: "created_by", kind: fieldUUID},
+	"data_inicio_comissao":       {column: "data_inicio_comissao", kind: fieldDate},
+	"descricao":                  {column: "descricao", kind: fieldText},
+	"descricao_site":             {column: "descricao_site", kind: fieldText},
+	"destaque":                   {column: "is_featured", kind: fieldBool},
+	"detalhes_extras":            {column: "detalhes_extras", kind: fieldTextArray},
+	"documents":                  {column: "documents", kind: fieldJSON},
+	"endereco":                   {column: "endereco", kind: fieldText},
+	"exclusividade":              {column: "exclusividade", kind: fieldBool},
+	"external_id":                {column: "external_id", kind: fieldText},
+	"external_provider":          {column: "external_provider", kind: fieldText},
+	"faixa_valor_imovel":         {column: "faixa_valor_imovel", kind: fieldText},
+	"fotos":                      {column: "image_urls", kind: fieldTextArray},
+	"finalidade":                 {column: "finalidade_uso", kind: fieldText},
+	"image_urls":                 {column: "image_urls", kind: fieldTextArray},
+	"imagem_principal":           {column: "imagem_principal", kind: fieldText},
+	"imoview_codigo":             {column: "imoview_codigo", kind: fieldText},
+	"iptu":                       {column: "iptu", kind: fieldNumeric},
+	"is_featured":                {column: "is_featured", kind: fieldBool},
+	"is_demo":                    {column: "is_demo", kind: fieldBool},
+	"latitude":                   {column: "latitude", kind: fieldNumeric},
+	"local_chaves":               {column: "local_chaves", kind: fieldText},
+	"longitude":                  {column: "longitude", kind: fieldNumeric},
+	"marcadores":                 {column: "marcadores", kind: fieldTextArray},
+	"mobilia":                    {column: "mobilia", kind: fieldText},
+	"metadata":                   {column: "metadata", kind: fieldJSON},
+	"mobiliado":                  {column: "mobiliado", kind: fieldBool},
+	"neighborhood_id":            {column: "neighborhood_id", kind: fieldUUID},
+	"numero":                     {column: "numero", kind: fieldText},
+	"numero_matricula":           {column: "numero_matricula", kind: fieldText},
+	"observacoes_documentacao":   {column: "observacoes_documentacao", kind: fieldText},
+	"ocupacao":                   {column: "ocupacao", kind: fieldText},
+	"origin_media":               {column: "origin_media", kind: fieldText},
+	"owner_cellphone":            {column: "owner_cellphone", kind: fieldText},
+	"owner_email":                {column: "owner_email", kind: fieldText},
+	"owner_media_source":         {column: "origin_media", kind: fieldText},
+	"owner_name":                 {column: "owner_name", kind: fieldText},
+	"owner_notify_email":         {column: "owner_notify_email", kind: fieldBool},
+	"owner_phone_commercial":     {column: "owner_phone_commercial", kind: fieldText},
+	"owner_phone_residential":    {column: "owner_phone_residential", kind: fieldText},
+	"padrao":                     {column: "padrao", kind: fieldText},
+	"pais":                       {column: "pais", kind: fieldText},
+	"placa_no_local":             {column: "placa_no_local", kind: fieldBool},
+	"posicao_localizacao":        {column: "posicao_localizacao", kind: fieldText},
+	"preco":                      {column: "preco", kind: fieldNumeric},
+	"projeto_aprovado":           {column: "projeto_aprovado", kind: fieldBool},
+	"property_type_id":           {column: "property_type_id", kind: fieldUUID},
+	"proximidades":               {column: "proximidades", kind: fieldTextArray},
+	"public_address_visibility":  {column: "address_visibility", kind: fieldText},
+	"published_on_site":          {column: "published_on_site", kind: fieldBool},
+	"quartos":                    {column: "quartos", kind: fieldInt},
+	"referencia_alternativa":     {column: "referencia_alternativa", kind: fieldText},
+	"regra_pet":                  {column: "regra_pet", kind: fieldBool},
+	"renda_familiar":             {column: "renda_familiar", kind: fieldNumeric},
+	"responsible_user_id":        {column: "responsible_user_id", kind: fieldUUID},
+	"seguro_incendio":            {column: "seguro_incendio", kind: fieldNumeric},
+	"situacao_imovel":            {column: "situacao_imovel", kind: fieldText},
+	"status":                     {column: "status", kind: fieldStatus},
+	"status_descritivo":          {column: "status_descritivo", kind: fieldText},
+	"suites":                     {column: "suites", kind: fieldInt},
+	"super_destaque":             {column: "super_destaque", kind: fieldBool},
+	"taxa_de_servico":            {column: "taxa_de_servico", kind: fieldNumeric},
+	"tipo_comissao":              {column: "tipo_comissao", kind: fieldText},
+	"tipo":                       {column: "tipo", kind: fieldText},
+	"tipo_de_imovel":             {column: "tipo", kind: fieldText},
+	"tipo_de_negocio":            {column: "finalidade", kind: fieldDealType},
+	"title":                      {column: "title", kind: fieldText},
+	"tour_virtual":               {column: "tour_virtual", kind: fieldText},
+	"uf":                         {column: "uf", kind: fieldText},
+	"usou_fgts":                  {column: "usou_fgts", kind: fieldBool},
+	"vagas":                      {column: "vagas", kind: fieldInt},
+	"valor_itr":                  {column: "valor_itr", kind: fieldNumeric},
+	"valor_locacao":              {column: "valor_locacao", kind: fieldNumeric},
+	"valor_locacao_avaliado":     {column: "valor_locacao_avaliado", kind: fieldNumeric},
+	"valor_seguro_fianca":        {column: "valor_seguro_fianca", kind: fieldNumeric},
+	"valor_venda_avaliado":       {column: "valor_venda_avaliado", kind: fieldNumeric},
+	"video_imovel":               {column: "video_imovel", kind: fieldText},
+	"vista_codigo":               {column: "vista_codigo", kind: fieldText},
+	"zoneamento":                 {column: "zoneamento", kind: fieldText},
 }
 
-var legacyMetadataFields = map[string]struct{}{
-	"autorizado_comercializacao": {},
-	"commission_percentage":      {},
-	"condicao_pagamento":         {},
-	"corretor_id":                {},
-	"data_inicio_comissao":       {},
-	"detalhes_extras":            {},
-	"exclusividade":              {},
-	"faixa_valor_imovel":         {},
-	"finalidade":                 {},
-	"imoview_codigo":             {},
-	"is_demo":                    {},
-	"marcadores":                 {},
-	"mobilia":                    {},
-	"ocupacao":                   {},
-	"owner_notify_email":         {},
-	"padrao":                     {},
-	"pais":                       {},
-	"placa_no_local":             {},
-	"posicao_localizacao":        {},
-	"projeto_aprovado":           {},
-	"proximidades":               {},
-	"regra_pet":                  {},
-	"renda_familiar":             {},
-	"situacao_imovel":            {},
-	"super_destaque":             {},
-	"tipo_comissao":              {},
-	"usou_fgts":                  {},
-	"valor_locacao_avaliado":     {},
-	"valor_venda_avaliado":       {},
-	"vista_codigo":               {},
-	"zoneamento":                 {},
+var compatibilityColumns = map[string]fieldDef{
+	"anunciar":                  {column: "anunciar", kind: fieldBool},
+	"arquivos":                  {column: "arquivos", kind: fieldJSON},
+	"cadastrado_por":            {column: "cadastrado_por", kind: fieldUUID},
+	"destaque":                  {column: "destaque", kind: fieldBool},
+	"fotos":                     {column: "fotos", kind: fieldTextArray},
+	"owner_media_source":        {column: "owner_media_source", kind: fieldText},
+	"public_address_visibility": {column: "public_address_visibility", kind: fieldText},
+	"tipo_de_imovel":            {column: "tipo_de_imovel", kind: fieldText},
+	"tipo_de_negocio":           {column: "tipo_de_negocio", kind: fieldText},
 }
 
 var writableColumns = buildWritableColumns()
@@ -190,6 +200,9 @@ func buildWritableColumns() map[string]fieldDef {
 	columns := map[string]fieldDef{}
 	for _, def := range writableFields {
 		columns[def.column] = def
+	}
+	for key, def := range compatibilityColumns {
+		columns[key] = def
 	}
 	return columns
 }
@@ -257,20 +270,15 @@ func (request propertyRequest) ValidateUpdate() (propertyRequest, error) {
 
 func sanitizePayload(request propertyRequest) (propertyRequest, error) {
 	out := propertyRequest{}
-	legacy := map[string]any{}
 	var mainImage any
 
 	for key, value := range request {
 		if key == "imagem_principal" {
 			mainImage = value
-			continue
 		}
 
 		def, ok := writableFields[key]
 		if !ok {
-			if _, isLegacy := legacyMetadataFields[key]; isLegacy {
-				legacy[key] = value
-			}
 			continue
 		}
 		if key == "id" || key == "organization_id" || key == "created_at" || key == "updated_at" || key == "code" {
@@ -294,11 +302,20 @@ func sanitizePayload(request propertyRequest) (propertyRequest, error) {
 		}
 	}
 
-	if len(legacy) > 0 {
-		out["metadata"] = mergeLegacyMetadata(out["metadata"], legacy)
-	}
+	mirrorPropertyCompatibilityFields(out)
 
 	return out, nil
+}
+
+func mirrorPropertyCompatibilityFields(out propertyRequest) {
+	// Reads still expose legacy aliases in normalizePropertyOutput. Writes use the
+	// canonical columns only because older projects can keep legacy columns with
+	// different types, such as fotos jsonb and cadastrado_por text.
+	if _, hasMainImage := out["imagem_principal"]; !hasMainImage {
+		if images, ok := out["image_urls"].([]string); ok && len(images) > 0 {
+			out["imagem_principal"] = images[0]
+		}
+	}
 }
 
 func normalizeValue(value any, kind fieldKind) (any, error) {

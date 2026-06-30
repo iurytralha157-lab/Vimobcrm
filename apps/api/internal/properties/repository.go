@@ -119,7 +119,38 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
 			count(*) over() as total_count,
-			to_jsonb(p)::text
+			jsonb_build_object(
+				'id', p.id,
+				'organization_id', p.organization_id,
+				'code', p.code,
+				'title', p.title,
+				'tipo', p.tipo,
+				'tipo_de_imovel', p.tipo_de_imovel,
+				'finalidade', p.finalidade,
+				'finalidade_uso', p.finalidade_uso,
+				'status', p.status,
+				'bairro', p.bairro,
+				'cidade', p.cidade,
+				'uf', p.uf,
+				'endereco', p.endereco,
+				'numero', p.numero,
+				'quartos', p.quartos,
+				'suites', p.suites,
+				'banheiros', p.banheiros,
+				'vagas', p.vagas,
+				'area_util', p.area_util,
+				'area_total', p.area_total,
+				'preco', p.preco,
+				'valor_locacao', p.valor_locacao,
+				'is_featured', p.is_featured,
+				'destaque', p.destaque,
+				'published_on_site', p.published_on_site,
+				'created_by', p.created_by,
+				'responsible_user_id', p.responsible_user_id,
+				'cadastrado_por', p.cadastrado_por,
+				'commission_percentage', p.commission_percentage,
+				'imagem_principal', coalesce(nullif(p.imagem_principal, ''), '')
+			)::text
 		from public.properties p
 		where `+strings.Join(where, " and ")+`
 		order by p.created_at desc, p.id desc
@@ -629,13 +660,23 @@ func normalizePropertyOutput(property Property) Property {
 	if _, ok := property["tipo_de_imovel"]; !ok {
 		property["tipo_de_imovel"] = anyString(property["tipo"])
 	}
-	property["tipo_de_negocio"] = displayDealType(anyString(property["finalidade"]))
+	dealType := anyString(property["finalidade"])
+	property["tipo_de_negocio"] = displayDealType(dealType)
+	if usage := anyString(property["finalidade_uso"]); usage != "" {
+		property["finalidade"] = usage
+	}
 	property["status"] = displayPropertyStatus(anyString(property["status"]))
 	property["destaque"] = anyBool(property["is_featured"])
 	property["anunciar"] = anyBool(property["published_on_site"])
-	property["public_address_visibility"] = anyString(property["address_visibility"])
-	property["owner_media_source"] = anyString(property["origin_media"])
-	property["arquivos"] = property["documents"]
+	if addressVisibility := anyString(property["address_visibility"]); addressVisibility != "" {
+		property["public_address_visibility"] = addressVisibility
+	}
+	if originMedia := anyString(property["origin_media"]); originMedia != "" {
+		property["owner_media_source"] = originMedia
+	}
+	if documents := property["documents"]; documents != nil {
+		property["arquivos"] = documents
+	}
 
 	responsibleID := anyString(property["responsible_user_id"])
 	if responsibleID == "" {
@@ -644,11 +685,16 @@ func normalizePropertyOutput(property Property) Property {
 	property["cadastrado_por"] = responsibleID
 
 	imageURLs := anyStringSlice(property["image_urls"])
+	if len(imageURLs) == 0 {
+		imageURLs = anyStringSlice(property["fotos"])
+	}
 	property["fotos"] = imageURLs
-	if len(imageURLs) > 0 {
-		property["imagem_principal"] = imageURLs[0]
-	} else {
-		property["imagem_principal"] = ""
+	if mainImage := anyString(property["imagem_principal"]); mainImage == "" {
+		if len(imageURLs) > 0 {
+			property["imagem_principal"] = imageURLs[0]
+		} else {
+			property["imagem_principal"] = ""
+		}
 	}
 
 	metadata, _ := property["metadata"].(map[string]any)

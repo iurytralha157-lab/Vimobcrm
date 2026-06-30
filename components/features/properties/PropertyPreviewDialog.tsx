@@ -172,49 +172,49 @@ export function PropertyPreviewDialog({
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
         {property.tipo_de_imovel && (
-          <div className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.045]">
+          <div className="flex items-center gap-2 p-2 rounded-lg bg-[var(--app-surface-soft)]">
             <Home className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground">Tipo:</span>
             <span className="font-medium ml-auto">{property.tipo_de_imovel}</span>
           </div>
         )}
         {property.suites !== null && property.suites !== undefined && property.suites > 0 && (
-          <div className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.045]">
+          <div className="flex items-center gap-2 p-2 rounded-lg bg-[var(--app-surface-soft)]">
             <Bed className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground">Suítes:</span>
             <span className="font-medium ml-auto">{property.suites}</span>
           </div>
         )}
         {property.andar && (
-          <div className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.045]">
+          <div className="flex items-center gap-2 p-2 rounded-lg bg-[var(--app-surface-soft)]">
             <Layers className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground">Andar:</span>
             <span className="font-medium ml-auto">{property.andar}º</span>
           </div>
         )}
         {property.area_total && (
-          <div className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.045]">
+          <div className="flex items-center gap-2 p-2 rounded-lg bg-[var(--app-surface-soft)]">
             <Maximize2 className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground">Área Total:</span>
             <span className="font-medium ml-auto">{property.area_total}m²</span>
           </div>
         )}
         {property.ano_construcao && (
-          <div className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.045]">
+          <div className="flex items-center gap-2 p-2 rounded-lg bg-[var(--app-surface-soft)]">
             <Calendar className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground">Ano:</span>
             <span className="font-medium ml-auto">{property.ano_construcao}</span>
           </div>
         )}
         {property.mobilia && (
-          <div className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.045]">
+          <div className="flex items-center gap-2 p-2 rounded-lg bg-[var(--app-surface-soft)]">
             <Sofa className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground">Mobília:</span>
             <span className="font-medium ml-auto">{property.mobilia}</span>
           </div>
         )}
         {property.regra_pet !== null && property.regra_pet !== undefined && (
-          <div className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.045]">
+          <div className="flex items-center gap-2 p-2 rounded-lg bg-[var(--app-surface-soft)]">
             <PawPrint className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground">Pet:</span>
             <span className={`font-medium ml-auto flex items-center gap-1 ${property.regra_pet ? 'text-green-600' : ''}`}>
@@ -255,7 +255,7 @@ export function PropertyPreviewDialog({
       </h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
         {extraDetailItems.map(({ icon: Icon, label, value }) => (
-          <div key={label} className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.045] min-w-0">
+          <div key={label} className="flex items-center gap-2 p-2 rounded-lg bg-[var(--app-surface-soft)] min-w-0">
             <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className="text-muted-foreground">{label}:</span>
             <span className="font-medium ml-auto min-w-0 truncate text-right">{value}</span>
@@ -272,7 +272,7 @@ export function PropertyPreviewDialog({
       </h3>
       <div className="grid grid-cols-1 gap-1.5 text-sm sm:grid-cols-2">
         {property.condominio && (
-          <div className="flex items-center justify-between gap-3 rounded-lg bg-white/[0.045] px-2.5 py-2">
+          <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--app-surface-soft)] px-2.5 py-2">
             <span className="text-xs text-muted-foreground block">Condomínio</span>
             <span className="font-semibold text-primary">
               R$ {property.condominio.toLocaleString('pt-BR')}
@@ -280,7 +280,7 @@ export function PropertyPreviewDialog({
           </div>
         )}
         {property.iptu && (
-          <div className="flex items-center justify-between gap-3 rounded-lg bg-white/[0.045] px-2.5 py-2">
+          <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--app-surface-soft)] px-2.5 py-2">
             <span className="text-xs text-muted-foreground block">IPTU</span>
             <span className="font-semibold text-primary">
               R$ {property.iptu.toLocaleString('pt-BR')}
@@ -288,7 +288,7 @@ export function PropertyPreviewDialog({
           </div>
         )}
         {property.seguro_incendio && (
-          <div className="flex items-center justify-between gap-3 rounded-lg bg-white/[0.045] px-2.5 py-2">
+          <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--app-surface-soft)] px-2.5 py-2">
             <span className="text-xs text-muted-foreground block">Seguro incêndio</span>
             <span className="font-semibold text-primary">
               R$ {property.seguro_incendio.toLocaleString('pt-BR')}
@@ -296,7 +296,7 @@ export function PropertyPreviewDialog({
           </div>
         )}
         {property.taxa_de_servico && (
-          <div className="flex items-center justify-between gap-3 rounded-lg bg-white/[0.045] px-2.5 py-2">
+          <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--app-surface-soft)] px-2.5 py-2">
             <span className="text-xs text-muted-foreground block">Taxa de serviço</span>
             <span className="font-semibold text-primary">
               R$ {property.taxa_de_servico.toLocaleString('pt-BR')}
@@ -362,7 +362,7 @@ export function PropertyPreviewDialog({
 
       <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
         {property.quartos !== null && property.quartos !== undefined && property.quartos > 0 && (
-          <div className="flex min-h-[54px] items-center justify-between gap-2 rounded-lg bg-white/[0.05] px-2.5 py-2">
+          <div className="flex min-h-[54px] items-center justify-between gap-2 rounded-lg bg-[var(--app-surface-soft)] px-2.5 py-2">
             <Bed className="h-5 w-5 shrink-0 text-primary" />
             <div className="text-right leading-tight">
               <span className="block font-bold">{property.quartos}</span>
@@ -371,7 +371,7 @@ export function PropertyPreviewDialog({
           </div>
         )}
         {property.banheiros !== null && property.banheiros !== undefined && property.banheiros > 0 && (
-          <div className="flex min-h-[54px] items-center justify-between gap-2 rounded-lg bg-white/[0.05] px-2.5 py-2">
+          <div className="flex min-h-[54px] items-center justify-between gap-2 rounded-lg bg-[var(--app-surface-soft)] px-2.5 py-2">
             <Bath className="h-5 w-5 shrink-0 text-primary" />
             <div className="text-right leading-tight">
               <span className="block font-bold">{property.banheiros}</span>
@@ -380,7 +380,7 @@ export function PropertyPreviewDialog({
           </div>
         )}
         {property.vagas !== null && property.vagas !== undefined && property.vagas > 0 && (
-          <div className="flex min-h-[54px] items-center justify-between gap-2 rounded-lg bg-white/[0.05] px-2.5 py-2">
+          <div className="flex min-h-[54px] items-center justify-between gap-2 rounded-lg bg-[var(--app-surface-soft)] px-2.5 py-2">
             <Car className="h-5 w-5 shrink-0 text-primary" />
             <div className="text-right leading-tight">
               <span className="block font-bold">{property.vagas}</span>
@@ -389,7 +389,7 @@ export function PropertyPreviewDialog({
           </div>
         )}
         {displayArea && (
-          <div className="flex min-h-[54px] items-center justify-between gap-2 rounded-lg bg-white/[0.05] px-2.5 py-2">
+          <div className="flex min-h-[54px] items-center justify-between gap-2 rounded-lg bg-[var(--app-surface-soft)] px-2.5 py-2">
             <Ruler className="h-5 w-5 shrink-0 text-primary" />
             <div className="text-right leading-tight">
               <span className="block font-bold">{displayArea}</span>
@@ -410,7 +410,7 @@ export function PropertyPreviewDialog({
       </h3>
       <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
         {hasOwnerInfo && (
-          <div className="space-y-2 rounded-lg border border-white/[0.055] bg-white/[0.035] p-3">
+          <div className="space-y-2 rounded-lg border-0 bg-[var(--app-surface-soft)] p-3">
             <div className="flex items-center gap-2 font-medium">
               <User className="h-4 w-4 text-primary" />
               Proprietário
@@ -432,7 +432,7 @@ export function PropertyPreviewDialog({
         )}
 
         {hasCaptorInfo && (
-          <div className="space-y-2 rounded-lg border border-white/[0.055] bg-white/[0.035] p-3">
+          <div className="space-y-2 rounded-lg border-0 bg-[var(--app-surface-soft)] p-3">
             <div className="flex items-center gap-2 font-medium">
               <Avatar className="h-7 w-7">
                 <AvatarImage src={captorUser?.avatar_url || undefined} />
@@ -477,7 +477,7 @@ export function PropertyPreviewDialog({
       <div className="lg:w-[52%] min-h-0 flex flex-col lg:overflow-y-auto lg:pr-1">
         {/* Main Image with Embla Carousel */}
         <div className={cn(
-          "relative shrink-0 rounded-xl overflow-hidden bg-white/[0.045] group",
+          "relative shrink-0 rounded-xl overflow-hidden bg-[var(--app-surface-soft)] group",
           isMobile ? "aspect-[16/10] w-full shadow-sm" : "aspect-video"
         )}>
           {allImages.length > 0 ? (
@@ -598,7 +598,7 @@ export function PropertyPreviewDialog({
                 </h3>
                 <div className="flex flex-wrap gap-2">
                   {proximities.map((item, index) => (
-                    <div key={index} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/[0.06] text-sm">
+                    <div key={index} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--app-surface-soft)] text-sm">
                       <MapPin className="h-3 w-3 text-muted-foreground" />
                       <span>{item}</span>
                     </div>
@@ -633,11 +633,11 @@ export function PropertyPreviewDialog({
   if (isMobile) {
     return (
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent side="bottom" className="left-2 right-2 bottom-2 h-[90vh] w-auto overflow-hidden rounded-t-[1.5rem] border p-0">
-          <SheetHeader className="px-4 pb-3 pt-4">
+        <SheetContent side="bottom" className="left-2 right-2 bottom-2 flex h-[90vh] w-auto flex-col overflow-hidden rounded-t-[1.5rem] border p-0">
+          <SheetHeader className="shrink-0 px-4 pb-2 pt-4">
             <SheetTitle>Visualizar Imóvel</SheetTitle>
           </SheetHeader>
-          <ScrollArea className="h-[calc(90vh-72px)] px-4 pb-4">
+          <ScrollArea className="min-h-0 flex-1 px-4 pb-4">
             {content}
           </ScrollArea>
         </SheetContent>
@@ -647,11 +647,11 @@ export function PropertyPreviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[80vh] w-[80vw] max-w-[80vw] max-h-[80vh] overflow-hidden p-0 gap-0">
-        <DialogHeader className="border-b px-5 py-4">
+      <DialogContent className="flex h-[80vh] max-h-[80vh] w-[80vw] max-w-[80vw] flex-col overflow-hidden p-0 gap-0">
+        <DialogHeader className="shrink-0 border-b px-4 pb-1 pt-3">
           <DialogTitle>Visualizar Imóvel</DialogTitle>
         </DialogHeader>
-        <div className="h-[calc(80vh-73px)] min-h-0 overflow-hidden p-5">
+        <div className="min-h-0 flex-1 overflow-hidden px-4 pb-4 pt-1">
           {content}
         </div>
       </DialogContent>

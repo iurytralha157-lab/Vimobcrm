@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/shared/layout/AppLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -159,10 +159,16 @@ const formatCurrencyDisplay = (value: string): string => {
 };
 
 const parseCurrencyInput = (value: string): string => value.replace(/\D/g, '');
+const onlyCepDigits = (value: string) => value.replace(/\D/g, '').slice(0, 8);
+const formatCep = (value: string) => {
+  const digits = onlyCepDigits(value);
+  return digits.length > 5 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : digits;
+};
 
 const DRAFT_KEY = 'property-form-draft';
 
 const RequiredMark = () => <span className="ml-0.5 text-primary">*</span>;
+const togglePanelClass = "flex items-center justify-between gap-3 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-3 text-[var(--app-text-primary)] transition-colors hover:bg-[var(--app-surface-hover)]";
 
 type PropertyFormTab = {
   value: string;
@@ -279,6 +285,8 @@ export default function PropertyForm() {
   const [hasTriedSubmit, setHasTriedSubmit] = useState(false);
   const [newTypeName, setNewTypeName] = useState('');
   const [showAddType, setShowAddType] = useState(false);
+  const [isCepLoading, setIsCepLoading] = useState(false);
+  const lastCepLookupRef = useRef('');
 
   const { data: property, isLoading: loadingProperty } = useProperty(propertyId);
   const { data: propertyTypes = [] } = usePropertyTypes();
@@ -300,6 +308,44 @@ export default function PropertyForm() {
 
   const set = <K extends keyof PropertyFormData>(field: K, value: PropertyFormData[K]) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const lookupCep = async (rawCep: string) => {
+    const cep = onlyCepDigits(rawCep);
+    if (cep.length !== 8 || lastCepLookupRef.current === cep) return;
+
+    lastCepLookupRef.current = cep;
+    setIsCepLoading(true);
+    try {
+      const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+      if (!res.ok) throw new Error('cep_lookup_failed');
+
+      const data = await res.json() as {
+        erro?: boolean;
+        logradouro?: string;
+        bairro?: string;
+        localidade?: string;
+        uf?: string;
+      };
+
+      if (data.erro) {
+        toast.error('CEP não encontrado.');
+        return;
+      }
+
+      setFormData(prev => ({
+        ...prev,
+        endereco: data.logradouro || prev.endereco,
+        bairro: data.bairro || prev.bairro,
+        cidade: data.localidade || prev.cidade,
+        uf: data.uf || prev.uf,
+      }));
+    } catch {
+      lastCepLookupRef.current = '';
+      toast.error('Não foi possível preencher o endereço pelo CEP agora.');
+    } finally {
+      setIsCepLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -489,7 +535,7 @@ export default function PropertyForm() {
   ];
   return (
     <AppLayout title={isEditing ? 'Editar Imóvel' : 'Novo Imóvel'} disableMainScroll>
-      <form onSubmit={handleSubmit} className="h-full min-h-0 flex flex-col gap-4 animate-in">
+      <form onSubmit={handleSubmit} className="h-full min-h-0 flex flex-col gap-3 animate-in">
         {/* Top bar */}
         <div className="flex flex-col gap-3 flex-shrink-0 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-2">
@@ -501,7 +547,12 @@ export default function PropertyForm() {
             )}
           </div>
           <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
-            <Button type="button" variant="outline" className="min-w-0" onClick={() => { clearDraft(); router.push('/properties'); }}>
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-w-0 border-0 bg-[var(--app-surface-soft)] text-foreground hover:bg-[var(--app-surface-hover)]"
+              onClick={() => { clearDraft(); router.push('/properties'); }}
+            >
               Cancelar
             </Button>
             <Button type="submit" className="min-w-0" disabled={createProperty.isPending || updateProperty.isPending || !canEdit}>
@@ -537,8 +588,8 @@ export default function PropertyForm() {
           </div>
         )}
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col gap-4">
-          <nav className="app-card flex gap-2 overflow-x-auto p-2 xl:grid xl:grid-cols-5">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col gap-3">
+          <nav className="app-card app-scrollbar flex flex-nowrap gap-1.5 overflow-x-auto overflow-y-hidden p-1.5">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.value;
@@ -550,24 +601,24 @@ export default function PropertyForm() {
                   type="button"
                   onClick={() => setActiveTab(tab.value)}
                   className={cn(
-                    "flex min-w-[172px] items-center gap-3 rounded-[6px] px-3 py-2.5 text-left transition-colors xl:min-w-0",
+                    "flex min-w-[140px] items-center gap-2 rounded-[6px] px-2.5 py-2 text-left transition-colors",
                     isActive
                       ? "bg-primary text-primary-foreground"
                       : "text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground"
                   )}
                 >
                   <span className={cn(
-                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px]",
+                    "flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]",
                     isActive ? "bg-white/15" : "bg-[var(--app-surface-soft)]"
                   )}>
-                    <Icon className="h-4 w-4" />
+                    <Icon className="h-3.5 w-3.5" />
                   </span>
                   <span className="min-w-0">
-                    <span className="flex items-center gap-1 text-sm font-medium">
+                    <span className="flex items-center gap-1 text-xs font-medium">
                       {tab.label}
                       {tabHasIssue && <span className={cn("h-1.5 w-1.5 rounded-full", isActive ? "bg-white" : "bg-primary")} />}
                     </span>
-                    <span className={cn("line-clamp-1 text-xs", isActive ? "text-primary-foreground/75" : "text-muted-foreground")}>
+                    <span className={cn("line-clamp-1 text-[11px]", isActive ? "text-primary-foreground/75" : "text-muted-foreground")}>
                       {tab.description}
                     </span>
                   </span>
@@ -576,7 +627,7 @@ export default function PropertyForm() {
             })}
           </nav>
 
-          <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-6">
+          <div className="app-scrollbar flex-1 min-h-0 overflow-y-auto pr-1 space-y-4">
           {/* 1. Proprietário */}
           <TabsContent value="owner">
             <Card className="app-card">
@@ -649,7 +700,7 @@ export default function PropertyForm() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="flex items-center justify-between p-3 border rounded-lg">
+                  <div className={togglePanelClass}>
                     <Label>Enviar avisos por e-mail para o proprietário</Label>
                     <Switch checked={formData.owner_notify_email} onCheckedChange={v => set('owner_notify_email', v)} />
                   </div>
@@ -772,36 +823,28 @@ export default function PropertyForm() {
                 </div>
                 <div className="space-y-2">
                   <Label>CEP</Label>
-                  <Input
-                    value={formData.cep}
-                    onChange={e => {
-                      const value = e.target.value.replace(/\D/g, '').slice(0, 8);
-                      const formatted = value.length > 5 ? `${value.slice(0, 5)}-${value.slice(5)}` : value;
-                      set('cep', formatted);
-                    }}
-                    onBlur={async () => {
-                      const cep = formData.cep.replace(/\D/g, '');
-                      if (cep.length === 8) {
-                        try {
-                          const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
-                          const data = await res.json();
-                          if (!data.erro) {
-                            setFormData(prev => ({
-                              ...prev,
-                              endereco: data.logradouro || prev.endereco,
-                              bairro: data.bairro || prev.bairro,
-                              cidade: data.localidade || prev.cidade,
-                              uf: data.uf || prev.uf,
-                            }));
-                          }
-                        } catch {
-                          // noop
+                  <div className="relative">
+                    <Input
+                      value={formData.cep}
+                      onChange={e => {
+                        const digits = onlyCepDigits(e.target.value);
+                        const formatted = formatCep(digits);
+                        set('cep', formatted);
+                        if (digits.length === 8) {
+                          void lookupCep(digits);
                         }
-                      }
-                    }}
-                    placeholder="00000-000"
-                  />
-                  <p className="text-xs text-muted-foreground">Digite o CEP para preencher automaticamente</p>
+                      }}
+                      onBlur={() => void lookupCep(formData.cep)}
+                      placeholder="00000-000"
+                      className="pr-9"
+                    />
+                    {isCepLoading && (
+                      <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Ao completar o CEP, rua, bairro, cidade e UF são preenchidos automaticamente.
+                  </p>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-2 md:col-span-2">
@@ -984,15 +1027,15 @@ export default function PropertyForm() {
                     </Select>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="flex items-center justify-between p-3 border rounded-lg">
+                    <div className={togglePanelClass}>
                       <Label>Aceita Pet</Label>
                       <Switch checked={formData.regra_pet} onCheckedChange={v => set('regra_pet', v)} />
                     </div>
-                    <div className="flex items-center justify-between p-3 border rounded-lg">
+                    <div className={togglePanelClass}>
                       <Label>Autorizado para Comercialização</Label>
                       <Switch checked={formData.autorizado_comercializacao} onCheckedChange={v => set('autorizado_comercializacao', v)} />
                     </div>
-                    <div className="flex items-center justify-between p-3 border rounded-lg">
+                    <div className={togglePanelClass}>
                       <Label>Exclusividade</Label>
                       <Switch checked={formData.exclusividade} onCheckedChange={v => set('exclusividade', v)} />
                     </div>
@@ -1005,11 +1048,11 @@ export default function PropertyForm() {
                 <CardHeader><CardTitle className="text-lg">Financiamento e Outros</CardTitle></CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="flex items-center justify-between p-3 border rounded-lg">
+                    <div className={togglePanelClass}>
                       <Label>Usou FGTS nos últimos 3 anos?</Label>
                       <Switch checked={formData.usou_fgts} onCheckedChange={v => set('usou_fgts', v)} />
                     </div>
-                    <div className="flex items-center justify-between p-3 border rounded-lg">
+                    <div className={togglePanelClass}>
                       <Label>Aceita Financiamento</Label>
                       <Switch checked={formData.aceita_financiamento} onCheckedChange={v => set('aceita_financiamento', v)} />
                     </div>
@@ -1154,20 +1197,20 @@ export default function PropertyForm() {
               <CardHeader><CardTitle className="text-lg">Publicação na Web</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="flex items-center justify-between p-3 border rounded-lg">
+                  <div className={togglePanelClass}>
                     <Label>Anunciar</Label>
                     <Switch checked={formData.anunciar} onCheckedChange={v => set('anunciar', v)} />
                   </div>
-                  <div className="flex items-center justify-between p-3 border rounded-lg">
+                  <div className={togglePanelClass}>
                     <Label>Imóvel em Destaque</Label>
                     <Switch checked={formData.destaque} onCheckedChange={v => set('destaque', v)} />
                   </div>
-                  <div className="flex items-center justify-between p-3 border rounded-lg">
+                  <div className={togglePanelClass}>
                     <Label>Super Destaque</Label>
                     <Switch checked={formData.super_destaque} onCheckedChange={v => set('super_destaque', v)} />
                   </div>
                 </div>
-                <div className="flex items-center justify-between p-3 border rounded-lg">
+                <div className={togglePanelClass}>
                   <Label>Placa no Local</Label>
                   <Switch checked={formData.placa_no_local} onCheckedChange={v => set('placa_no_local', v)} />
                 </div>
@@ -1258,7 +1301,7 @@ export default function PropertyForm() {
                     <Input value={formData.aprovacao_ambiental} onChange={e => set('aprovacao_ambiental', e.target.value)} placeholder="Detalhes" />
                   </div>
                 </div>
-                <div className="flex items-center justify-between p-3 border rounded-lg">
+                <div className={togglePanelClass}>
                   <Label>Projeto Aprovado</Label>
                   <Switch checked={formData.projeto_aprovado} onCheckedChange={v => set('projeto_aprovado', v)} />
                 </div>

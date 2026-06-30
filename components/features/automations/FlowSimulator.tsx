@@ -1,9 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import NextImage from 'next/image';
 import { Node, Edge } from 'reactflow';
-import { X, RotateCcw, Globe, Image as ImageIcon, Headphones, Video } from 'lucide-react';
+import { X, RotateCcw, Globe, Image as ImageIcon, Headphones, Video, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { MessageBox } from '@/components/ui/message-box';
 import { cn } from '@/lib/utils';
 import { createClientId } from '@/lib/client-id';
 
@@ -452,17 +451,17 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
   };
 
   return (
-    <div className="w-[360px] flex flex-col h-full border-l border-white/[0.055] bg-[var(--app-surface)]">
+    <div className="automation-preview-panel flex h-full w-[360px] max-w-[38vw] flex-col border-l border-[var(--app-border)] bg-[var(--app-surface)]">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.055] bg-white/[0.035]">
+      <div className="flex items-center justify-between border-b border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.06] text-xs font-medium text-muted-foreground">
+          <div className="flex items-center gap-1.5 rounded-[6px] bg-[var(--app-surface-hover)] px-2.5 py-1 text-xs font-medium text-muted-foreground">
             <Globe className="h-3 w-3" />
             Preview
           </div>
           <button
             onClick={handleRestart}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium text-muted-foreground hover:bg-white/[0.06] transition-colors"
+            className="flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-[var(--app-surface-hover)]"
           >
             <RotateCcw className="h-3 w-3" />
             Reiniciar
@@ -476,7 +475,7 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
       {/* Chat area */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto p-4 space-y-3 bg-[var(--app-background)]"
+        className="automation-preview-scroll flex-1 space-y-3 overflow-y-auto bg-[var(--app-background)] p-4"
       >
         {messages.map((msg) => (
           <div key={msg.id} className={cn(
@@ -485,13 +484,13 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
             msg.type === 'system' ? 'mx-auto max-w-full' : '',
           )}>
             {msg.type === 'system' ? (
-              <div className="text-[11px] text-muted-foreground text-center py-1 px-3 bg-white/[0.055] rounded-lg">
+              <div className="rounded-[6px] bg-[var(--app-surface-muted)] px-3 py-1 text-center text-[11px] text-muted-foreground">
                 {msg.content}
               </div>
             ) : msg.type === 'bot' ? (
-              <div className="bg-white/[0.045] border border-white/[0.055] rounded-2xl rounded-tl-sm px-3.5 py-2.5 shadow-sm">
+              <div className="rounded-[8px] rounded-tl-sm border border-[var(--app-border)] bg-[var(--app-surface)] px-3.5 py-2.5 shadow-sm">
                 {msg.mediaType === 'image' && msg.mediaUrl && (
-                  <div className="mb-2 rounded-xl overflow-hidden bg-white/[0.06]">
+                  <div className="mb-2 overflow-hidden rounded-[8px] bg-[var(--app-surface-muted)]">
                     <NextImage
                       src={msg.mediaUrl}
                       alt="Imagem enviada"
@@ -503,17 +502,17 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
                   </div>
                 )}
                 {msg.mediaType === 'image' && !msg.mediaUrl && (
-                  <div className="mb-2 rounded-xl bg-white/[0.06] flex items-center justify-center h-32">
+                  <div className="mb-2 flex h-32 items-center justify-center rounded-[8px] bg-[var(--app-surface-muted)]">
                     <ImageIcon className="h-8 w-8 text-muted-foreground/50" />
                   </div>
                 )}
                 {msg.mediaType === 'audio' && msg.mediaUrl && (
-                  <div className="mb-2 rounded-xl overflow-hidden bg-white/[0.06] px-3 py-2">
+                  <div className="mb-2 overflow-hidden rounded-[8px] bg-[var(--app-surface-muted)] px-3 py-2">
                     <audio controls src={msg.mediaUrl} className="w-full h-8" style={{ minWidth: 200 }} />
                   </div>
                 )}
                 {msg.mediaType === 'audio' && !msg.mediaUrl && (
-                  <div className="mb-2 flex items-center gap-2 bg-white/[0.06] rounded-xl px-3 py-2">
+                  <div className="mb-2 flex items-center gap-2 rounded-[8px] bg-[var(--app-surface-muted)] px-3 py-2">
                     <Headphones className="h-4 w-4 text-muted-foreground" />
                     <div className="flex-1 h-1 bg-muted-foreground/20 rounded-full">
                       <div className="h-full w-2/3 bg-primary rounded-full" />
@@ -522,14 +521,14 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
                   </div>
                 )}
                 {msg.mediaType === 'video' && (
-                  <div className="mb-2 rounded-xl bg-white/[0.06] flex items-center justify-center h-32">
+                  <div className="mb-2 flex h-32 items-center justify-center rounded-[8px] bg-[var(--app-surface-muted)]">
                     <Video className="h-8 w-8 text-muted-foreground/50" />
                   </div>
                 )}
                 <p className="text-sm text-foreground whitespace-pre-wrap">{msg.content}</p>
               </div>
             ) : (
-              <div className="bg-primary text-primary-foreground rounded-2xl rounded-tr-sm px-3.5 py-2.5 shadow-sm">
+              <div className="rounded-[8px] rounded-tr-sm bg-primary px-3.5 py-2.5 text-primary-foreground shadow-sm">
                 <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
               </div>
             )}
@@ -538,7 +537,7 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
 
         {isTyping && (
           <div className="max-w-[85%] animate-in fade-in">
-            <div className="bg-white/[0.045] border border-white/[0.055] rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm inline-flex items-center gap-1">
+            <div className="inline-flex items-center gap-1 rounded-[8px] rounded-tl-sm border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-3 shadow-sm">
               <span className="w-2 h-2 bg-muted-foreground/40 rounded-full animate-bounce [animation-delay:0ms]" />
               <span className="w-2 h-2 bg-muted-foreground/40 rounded-full animate-bounce [animation-delay:150ms]" />
               <span className="w-2 h-2 bg-muted-foreground/40 rounded-full animate-bounce [animation-delay:300ms]" />
@@ -549,8 +548,8 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
 
       {/* Wait countdown bar */}
       {waitCountdown !== null && (
-        <div className="px-4 py-2 border-t border-white/[0.055] bg-white/[0.035] flex items-center gap-2">
-          <div className="flex-1 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
+        <div className="flex items-center gap-2 border-t border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-2">
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--app-surface-hover)]">
             <div
               className="h-full bg-primary rounded-full transition-all duration-1000 ease-linear"
               style={{ width: `${(waitCountdown / 60) * 100}%` }}
@@ -563,16 +562,26 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
       )}
 
       {/* Input */}
-      <div className="p-3 border-t border-white/[0.055] bg-[var(--app-surface)]">
-        <MessageBox
-          value={userInput}
-          onChange={setUserInput}
-          onSend={handleSend}
-          placeholder={waitingForReply ? 'Digite sua resposta...' : 'Aguardando...'}
-          disabled={!waitingForReply}
-          compact
-        />
-      </div>
+      <form
+        className="border-t border-[var(--app-border)] bg-[var(--app-surface)] p-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          handleSend();
+        }}
+      >
+        <div className="flex items-center gap-2 rounded-[8px] border border-[var(--app-border)] bg-[var(--app-background)] px-3 py-2">
+          <input
+            value={userInput}
+            onChange={(event) => setUserInput(event.target.value)}
+            placeholder={waitingForReply ? 'Digite sua resposta...' : 'Aguardando...'}
+            disabled={!waitingForReply}
+            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
+          />
+          <Button type="submit" size="icon" className="h-8 w-8" disabled={!waitingForReply || !userInput.trim()}>
+            <Send className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </form>
     </div>
   );
 }

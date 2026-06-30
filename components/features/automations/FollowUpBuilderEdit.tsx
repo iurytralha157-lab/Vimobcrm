@@ -18,7 +18,6 @@ import 'reactflow/dist/style.css';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Save,
   ArrowLeft,
@@ -742,24 +741,24 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-[var(--app-surface)] text-foreground rounded-2xl border border-white/[0.055]">
+    <div className="automation-builder-shell flex h-full flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface)] text-foreground">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-white/[0.055] automation-header">
+      <div className="automation-header flex items-center justify-between bg-[var(--app-surface)] p-3">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={onBack} className="text-muted-foreground hover:text-foreground hover:bg-white/[0.06]">
+          <Button variant="ghost" size="icon" onClick={onBack} className="text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground">
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="text-lg font-semibold h-8 w-auto min-w-[200px] border-none focus-visible:ring-1 bg-transparent text-foreground placeholder:text-muted-foreground"
+              className="h-9 min-w-[220px] rounded-[8px] border-0 bg-[var(--app-background)] px-3 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus-visible:ring-1"
               placeholder="Nome da automação"
             />
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 bg-white/[0.045] px-3 py-1.5 rounded-full border border-white/[0.055]">
+          <div className="flex items-center gap-2 rounded-[8px] border border-[var(--app-border)] bg-[var(--app-background)] px-3 py-1.5">
             <span className={`text-[10px] font-bold uppercase tracking-wider ${isActive ? 'text-green-500' : 'text-muted-foreground'}`}>
               {isActive ? 'Ativa' : 'Inativa'}
             </span>
@@ -793,15 +792,15 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
       {/* Main Content */}
       <div className="flex-1 flex min-h-0">
         {/* Left Panel - Typebot-style */}
-        <div className="w-64 border-r border-white/[0.055] automation-sidebar flex flex-col">
-          <ScrollArea className="flex-1">
-            <div className="p-3 space-y-1">
+        <div className="automation-sidebar flex w-64 flex-col bg-[var(--app-surface-muted)]">
+          <div className="automation-sidebar-scroll flex-1 overflow-y-auto overscroll-contain">
+            <div className="space-y-1 p-3">
               {(['bubbles', 'conditionals', 'actions'] as NodeCategory[]).map((category) => {
                 const items = NODE_PALETTE.filter(item => item.category === category);
                 const isExpanded = expandedCategories[category];
                 return (
                   <div key={category}>
-                    <button className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium hover:bg-white/[0.055] transition-colors"
+                    <button className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm font-medium transition-colors hover:bg-[var(--app-surface-hover)]"
                       onClick={() => setExpandedCategories(prev => ({ ...prev, [category]: !prev[category] }))}>
                       {isExpanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
                       <span className={CATEGORY_COLORS[category]}>{CATEGORY_LABELS[category]}</span>
@@ -818,10 +817,10 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
                                 e.dataTransfer.setData('application/reactflow-data', JSON.stringify(item.defaultData));
                                 e.dataTransfer.effectAllowed = 'move';
                               }}
-                              className="flex items-center gap-2 px-3 py-2.5 rounded-xl border border-white/[0.055] bg-white/[0.045] hover:bg-orange-500 hover:text-white hover:border-orange-500 transition-all text-left group cursor-grab active:cursor-grabbing"
+                              className="automation-palette-card group flex cursor-grab items-center gap-2 rounded-[8px] px-3 py-2.5 text-left transition-all hover:bg-primary/10 active:cursor-grabbing"
                               onClick={() => handleAddNode(item)}>
-                              <div className={`p-1 rounded-lg ${item.color}`}><Icon className="h-3.5 w-3.5" /></div>
-                              <span className="text-xs font-medium truncate text-foreground group-hover:text-white">{item.label}</span>
+                              <div className={`rounded-[6px] p-1 ${item.color}`}><Icon className="h-3.5 w-3.5" /></div>
+                              <span className="truncate text-xs font-medium text-foreground">{item.label}</span>
                             </div>
                           );
                         })}
@@ -831,17 +830,17 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
                 );
               })}
 
-              <button className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium hover:bg-white/[0.055] transition-colors text-muted-foreground">
+              <button className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-[var(--app-surface-hover)]">
                 📋 Variáveis
               </button>
               <div className="px-3 pb-2 text-xs text-muted-foreground space-y-0.5">
-                <code className="block bg-white/[0.06] px-1.5 py-0.5 rounded text-[10px] text-foreground">{'{{lead.name}}'}</code>
-                <code className="block bg-white/[0.06] px-1.5 py-0.5 rounded text-[10px] text-foreground">{'{{lead.phone}}'}</code>
-                <code className="block bg-white/[0.06] px-1.5 py-0.5 rounded text-[10px] text-foreground">{'{{lead.email}}'}</code>
-                <code className="block bg-white/[0.06] px-1.5 py-0.5 rounded text-[10px] text-foreground">{'{{organization.name}}'}</code>
+                <code className="block rounded-[4px] bg-[var(--app-surface-hover)] px-1.5 py-0.5 text-[10px] text-foreground">{'{{lead.name}}'}</code>
+                <code className="block rounded-[4px] bg-[var(--app-surface-hover)] px-1.5 py-0.5 text-[10px] text-foreground">{'{{lead.phone}}'}</code>
+                <code className="block rounded-[4px] bg-[var(--app-surface-hover)] px-1.5 py-0.5 text-[10px] text-foreground">{'{{lead.email}}'}</code>
+                <code className="block rounded-[4px] bg-[var(--app-surface-hover)] px-1.5 py-0.5 text-[10px] text-foreground">{'{{organization.name}}'}</code>
               </div>
             </div>
-          </ScrollArea>
+          </div>
         </div>
 
         {/* Flow Editor */}
@@ -863,7 +862,7 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
           >
             <Controls />
             <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="hsl(var(--muted-foreground) / 0.15)" />
-            <Panel position="bottom-center" className="!bg-[var(--app-surface)] rounded-xl px-4 py-2.5 text-xs text-muted-foreground border border-white/[0.055]">
+            <Panel position="bottom-center" className="rounded-[8px] border-0 !bg-[var(--app-surface)] px-4 py-2.5 text-xs text-muted-foreground shadow-sm">
               Arraste para conectar • Clique para editar • Ctrl+C/V para copiar/colar
             </Panel>
           </ReactFlow>

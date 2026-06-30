@@ -116,6 +116,7 @@ export type UpdateScheduleEventInput = Partial<
 export const scheduleAPI = {
   async getScheduleEvents(params: {
     organizationId?: string | null
+    eventId?: string
     userId?: string
     leadId?: string
     startDate?: Date
@@ -124,6 +125,7 @@ export const scheduleAPI = {
     const response = await vimobAPIRequest<Envelope<ScheduleEvent[]>>('/v1/schedule/events', {
       organizationId: params.organizationId,
       query: {
+        eventId: params.eventId,
         userId: params.userId,
         leadId: params.leadId,
         startDate: params.startDate?.toISOString(),

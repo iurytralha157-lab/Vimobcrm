@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { Bell, Check, CheckCheck, Loader2, UserPlus, CheckSquare, FileText, DollarSign, Info, MessageCircle, Settings, AlertTriangle, Zap, SlidersHorizontal } from 'lucide-react';
+import { Bell, Check, CheckCheck, Loader2, UserPlus, CheckSquare, Info, MessageCircle, Settings, AlertTriangle, Zap, SlidersHorizontal } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useRouter } from 'next/navigation';
@@ -23,8 +23,7 @@ const typeIcons: Record<string, typeof Bell> = {
   lead: UserPlus,
   new_lead: UserPlus,
   task: CheckSquare,
-  contract: FileText,
-  commission: DollarSign,
+  schedule: CheckSquare,
   system: Bell,
   info: Info,
   message: MessageCircle,
@@ -37,8 +36,7 @@ const typeLabels: Record<string, string> = {
   lead: 'Novo Lead',
   new_lead: 'Novo Lead',
   task: 'Tarefa',
-  contract: 'Contrato',
-  commission: 'Comissão',
+  schedule: 'Agenda',
   system: 'Sistema',
   info: 'Informação',
   message: 'WhatsApp',
@@ -52,8 +50,7 @@ const notificationCategories = {
   leads: { label: 'Leads', types: ['lead', 'new_lead'], icon: UserPlus },
   whatsapp: { label: 'WhatsApp', types: ['message', 'whatsapp'], icon: MessageCircle },
   system: { label: 'Sistema', types: ['warning', 'automation', 'system', 'info'], icon: Settings },
-  financial: { label: 'Financeiro', types: ['commission', 'contract'], icon: DollarSign },
-  tasks: { label: 'Tarefas', types: ['task'], icon: CheckSquare },
+  tasks: { label: 'Tarefas', types: ['task', 'schedule'], icon: CheckSquare },
 };
 
 type CategoryKey = keyof typeof notificationCategories;
@@ -76,7 +73,6 @@ export default function Notifications() {
       leads: 0,
       whatsapp: 0,
       system: 0,
-      financial: 0,
       tasks: 0,
     };
 
@@ -130,39 +126,8 @@ export default function Notifications() {
   };
 
   return (
-    <AppLayout title={isMobile ? 'Notificações' : undefined}>
+    <AppLayout title="Notificações">
       <div className="space-y-6">
-        {/* Desktop: título inline como antes */}
-        {!isMobile && (
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold flex items-center gap-2">
-                <Bell className="h-8 w-8" />
-                Notificações
-              </h1>
-              <p className="text-muted-foreground mt-1">
-                {unreadCount > 0
-                  ? `Você tem ${unreadCount} notificação${unreadCount > 1 ? 'ões' : ''} não lida${unreadCount > 1 ? 's' : ''}`
-                  : 'Todas as notificações lidas'}
-              </p>
-            </div>
-            {unreadCount > 0 && (
-              <Button
-                variant="outline"
-                onClick={handleMarkAllAsRead}
-                disabled={markAllAsRead.isPending}
-              >
-                {markAllAsRead.isPending ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <CheckCheck className="h-4 w-4 mr-2" />
-                )}
-                Marcar todas como lidas
-              </Button>
-            )}
-          </div>
-        )}
-
         {/* Mobile: actions row with filter popover + mark all */}
         {isMobile && (
           <div className="flex items-center justify-between gap-2">
@@ -286,12 +251,12 @@ export default function Notifications() {
                 )}
               </div>
               <Tabs value={filter} onValueChange={(v) => setFilter(v as 'all' | 'unread')}>
-                <TabsList>
-                  <TabsTrigger value="all">Todas</TabsTrigger>
-                  <TabsTrigger value="unread" className="gap-1">
+                <TabsList className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-1">
+                  <TabsTrigger value="all" className="h-7 rounded-[4px] px-3 text-xs font-normal data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:shadow-none">Todas</TabsTrigger>
+                  <TabsTrigger value="unread" className="h-7 gap-1 rounded-[4px] px-3 text-xs font-normal data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:shadow-none">
                     Não lidas
                     {unreadCount > 0 && (
-                      <span className="ml-1 bg-primary text-primary-foreground text-xs rounded-full px-1.5">
+                      <span className="ml-1 rounded-[4px] bg-primary px-1.5 text-xs text-primary-foreground">
                         {unreadCount}
                       </span>
                     )}

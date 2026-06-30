@@ -161,10 +161,18 @@ function getErrorMessage(error: unknown) {
 export default function SiteSettings() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { profile } = useAuth();
+  const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
   const { data: site, isLoading } = useOrganizationSite();
   const createSite = useCreateOrganizationSite();
   const updateSite = useUpdateOrganizationSite();
+  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
+  const isAdmin =
+    isSuperAdmin ||
+    profile?.role === 'admin' ||
+    profile?.role === 'super_admin' ||
+    activeMemberRole === 'admin' ||
+    activeMemberRole === 'owner';
 
 
   const [formData, setFormData] = useState<SiteFormData>({
@@ -492,7 +500,27 @@ ${getWorkerCode()}`;
     );
   }
 
-  const isAdmin = profile?.role === 'admin';
+  if (!isAdmin) {
+    return (
+      <AppLayout title="Configurações">
+        <Card className="app-card">
+          <CardContent className="p-6">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] text-muted-foreground">
+                <Globe className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold">Acesso restrito</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  As configurações do site estão disponíveis apenas para administradores.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout title="Configurações do Site">

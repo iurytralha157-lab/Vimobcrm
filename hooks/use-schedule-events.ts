@@ -20,6 +20,8 @@ export type {
 }
 
 interface UseScheduleEventsOptions {
+  enabled?: boolean
+  eventId?: string
   userId?: string
   leadId?: string
   startDate?: Date
@@ -45,12 +47,13 @@ export function useScheduleEvents(options: UseScheduleEventsOptions = {}) {
     queryFn: () =>
       scheduleAPI.getScheduleEvents({
         organizationId: profile?.organization_id,
+        eventId: options.eventId,
         userId: options.userId,
         leadId: options.leadId,
         startDate: options.startDate,
         endDate: options.endDate,
       }),
-    enabled: !!profile?.organization_id,
+    enabled: !!profile?.organization_id && options.enabled !== false,
     staleTime: 1000 * 60 * 5,
   })
 }

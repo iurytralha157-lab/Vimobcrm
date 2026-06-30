@@ -192,7 +192,7 @@ export function PropertyPickerDialog({ properties, selectedPropertyId, onSelect,
                       setOpen(false);
                     }}
                   >
-                    <div className="aspect-[4/3] bg-white/[0.045] relative">
+                    <div className="relative aspect-[4/3] bg-[var(--app-surface-soft)]">
                       {p.imagem_principal ? (
                         <NextImage
                           src={p.imagem_principal}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   format,
   startOfDay,
@@ -68,6 +69,10 @@ const isAgendaViewMode = (value: string | null): value is AgendaViewMode =>
 
 export default function Agenda() {
   const { profile } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const searchParamsString = searchParams.toString();
+  const focusedEventId = searchParams.get("event") || searchParams.get("task");
 
   const { data: scheduleCapabilities } = useScheduleCapabilities();
 
@@ -123,6 +128,10 @@ export default function Agenda() {
     startDate: dateRange.startDate,
     endDate: dateRange.endDate,
   });
+  const { data: focusedEvents = [] } = useScheduleEvents({
+    enabled: Boolean(focusedEventId),
+    eventId: focusedEventId || undefined,
+  });
 
   const upcomingEvents = useMemo(() => {
     const today = startOfDay(new Date());
@@ -144,6 +153,35 @@ export default function Agenda() {
     setSheetEvent(event);
     setSheetOpen(true);
   };
+
+  useEffect(() => {
+    if (!focusedEventId) return;
+
+    const focusedEvent = events.find((event) => event.id === focusedEventId) || focusedEvents[0];
+    if (!focusedEvent) return;
+
+    const eventDate = new Date(focusedEvent.start_time);
+    let isActive = true;
+
+    queueMicrotask(() => {
+      if (!isActive) return;
+
+      setSelectedDate(eventDate);
+      setPivotDate(eventDate);
+      setSheetEvent(focusedEvent);
+      setSheetOpen(true);
+
+      const cleanParams = new URLSearchParams(searchParamsString);
+      cleanParams.delete("event");
+      cleanParams.delete("task");
+      const cleanSearch = cleanParams.toString();
+      router.replace(`/agenda${cleanSearch ? `?${cleanSearch}` : ""}`);
+    });
+
+    return () => {
+      isActive = false;
+    };
+  }, [events, focusedEventId, focusedEvents, router, searchParamsString]);
 
 
   const canFilterUsers = profile?.role === "admin" || Boolean(scheduleCapabilities?.isTeamLeader);

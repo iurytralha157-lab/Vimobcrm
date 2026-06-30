@@ -4,13 +4,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
+import { ArrowRight, Building2, LogOut, Shield, User } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-// removed useUserOrganizations import
 import { useSystemSettings } from '@/hooks/use-system-settings';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Card } from '@/components/ui/card';
 import { VimobLoader } from '@/components/shared/loading';
-import { Building2, Shield, User } from 'lucide-react';
 
 const defaultOrganizationRedirectPath = '/dashboard';
 const blockedOrganizationRedirectPrefixes = [
@@ -42,47 +40,57 @@ function getCurrentRedirectPath() {
   return getSafeRedirectPath(params.get('redirectTo'));
 }
 
-const getInitials = (name?: string | null) => {
+function getInitials(name?: string | null) {
   const parts = (name || 'OR').trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return 'OR';
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[1][0]).toUpperCase();
-};
+}
 
-const formatLastAccess = (iso: string | null) => {
+function formatLastAccess(iso: string | null) {
   if (!iso) return null;
+
   try {
-    const d = new Date(iso);
-    return d.toLocaleString('pt-BR', {
+    const date = new Date(iso);
+    return date.toLocaleString('pt-BR', {
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
-      second: '2-digit',
-    }).replace(',', ' às');
+    }).replace(',', ' as');
   } catch {
     return null;
   }
-};
+}
 
 export default function SelectOrganization() {
-  const { user, loading, authInitialized, isSuperAdmin, switchOrganization, signOut, userOrganizations: rawOrganizations = [], organizationsLoaded, isInitializingOrg } = useAuth();
+  const {
+    user,
+    loading,
+    authInitialized,
+    isSuperAdmin,
+    switchOrganization,
+    signOut,
+    userOrganizations: rawOrganizations = [],
+    organizationsLoaded,
+    isInitializingOrg,
+  } = useAuth();
   const router = useRouter();
   const { data: systemSettings } = useSystemSettings();
   const { resolvedTheme } = useTheme();
   const [emptyStateReadyKey, setEmptyStateReadyKey] = useState<string | null>(null);
+  const [pendingOrgId, setPendingOrgId] = useState<string | null>(null);
   const autoRoutingOrgIdRef = useRef<string | null>(null);
 
-  // Filtrar organizações duplicadas
   const organizations = useMemo(() => {
-    const map = new Map();
-    rawOrganizations.forEach(org => {
+    const map = new Map<string, (typeof rawOrganizations)[number]>();
+    rawOrganizations.forEach((org) => {
       if (!map.has(org.organization_id)) {
         map.set(org.organization_id, org);
       }
     });
-    return Array.from(map.values()) as typeof rawOrganizations;
+    return Array.from(map.values());
   }, [rawOrganizations]);
 
   const logoUrl = useMemo(() => {
@@ -96,7 +104,7 @@ export default function SelectOrganization() {
     if (!loading && authInitialized && !user) {
       router.replace('/login');
     }
-  }, [loading, authInitialized, user, router]);
+  }, [authInitialized, loading, router, user]);
 
   const emptyStateKey = `${organizationsLoaded}:${organizations.length}`;
   const showEmptyState = emptyStateReadyKey === emptyStateKey && organizationsLoaded && organizations.length === 0;
@@ -105,7 +113,7 @@ export default function SelectOrganization() {
     if (!organizationsLoaded || organizations.length !== 0) return;
     const timer = setTimeout(() => setEmptyStateReadyKey(emptyStateKey), 500);
     return () => clearTimeout(timer);
-  }, [emptyStateKey, organizationsLoaded, organizations.length]);
+  }, [emptyStateKey, organizations.length, organizationsLoaded]);
 
   const shouldAutoRouteSingleOrg =
     organizationsLoaded && !loading && !isInitializingOrg && organizations.length === 1;
@@ -124,24 +132,26 @@ export default function SelectOrganization() {
       .catch(() => {
         autoRoutingOrgIdRef.current = null;
       });
-  }, [
-    organizations,
-    router,
-    shouldAutoRouteSingleOrg,
-    switchOrganization,
-  ]);
+  }, [organizations, router, shouldAutoRouteSingleOrg, switchOrganization]);
 
-  const handleSelectOrg = async (orgId: string) => {
-    await switchOrganization(orgId);
-    router.replace(getCurrentRedirectPath());
-  };
+  async function handleSelectOrg(orgId: string) {
+    setPendingOrgId(orgId);
+    try {
+      await switchOrganization(orgId);
+      router.replace(getCurrentRedirectPath());
+    } finally {
+      setPendingOrgId(null);
+    }
+  }
 
   if (loading || !organizationsLoaded || isInitializingOrg || shouldAutoRouteSingleOrg) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="dark flex min-h-screen items-center justify-center bg-[#090909]">
         <div className="flex flex-col items-center gap-4">
           <VimobLoader size="lg" label="Carregando ambiente..." />
-          <p className="text-sm text-muted-foreground animate-pulse">Carregando seu ambiente...</p>
+          <p className="animate-pulse text-sm font-extralight tracking-wide text-white/48">
+            Carregando seu ambiente...
+          </p>
         </div>
       </div>
     );
@@ -149,19 +159,21 @@ export default function SelectOrganization() {
 
   if (showEmptyState && organizations.length === 0) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4 text-center space-y-4">
-        <Building2 className="h-12 w-12 text-muted-foreground" />
-        <div className="space-y-2">
-          <h2 className="text-xl font-semibold">Nenhuma organização encontrada</h2>
-          <p className="text-muted-foreground max-w-xs">
-            Você não possui acesso a nenhuma organização ativa no momento.
-          </p>
+      <div className="dark flex min-h-screen flex-col items-center justify-center bg-[#090909] p-4 text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-[8px] bg-white/[0.055] text-white/48">
+          <Building2 className="h-6 w-6" strokeWidth={1.35} />
         </div>
+        <h2 className="mt-5 text-xl font-extralight tracking-wide text-white">
+          Nenhuma organização encontrada
+        </h2>
+        <p className="mt-2 max-w-xs text-sm font-extralight leading-6 tracking-wide text-white/48">
+          Você não possui acesso a nenhuma organização ativa no momento.
+        </p>
 
-        <div className="flex flex-col gap-2">
+        <div className="mt-8 flex flex-col gap-2">
           <button
             onClick={() => window.location.reload()}
-            className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity"
+            className="h-10 rounded-[6px] bg-[#FF4529] px-5 text-sm font-light text-white transition-colors hover:bg-[#ff583f]"
           >
             Tentar novamente
           </button>
@@ -169,7 +181,7 @@ export default function SelectOrganization() {
           {isSuperAdmin && (
             <button
               onClick={() => router.push('/admin')}
-              className="text-primary hover:underline font-medium"
+              className="h-10 text-sm font-extralight tracking-wide text-white/48 transition-colors hover:text-[#FF4529]"
             >
               Acessar Painel Super Admin
             </button>
@@ -177,7 +189,7 @@ export default function SelectOrganization() {
 
           <button
             onClick={signOut}
-            className="text-muted-foreground hover:text-foreground transition-colors"
+            className="h-10 text-sm font-extralight tracking-wide text-white/48 transition-colors hover:text-white"
           >
             Sair
           </button>
@@ -188,101 +200,131 @@ export default function SelectOrganization() {
 
   if (organizations.length === 0) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="dark flex min-h-screen items-center justify-center bg-[#090909]">
         <div className="flex flex-col items-center gap-4">
           <VimobLoader size="lg" label="Verificando acessos..." />
-          <p className="text-sm text-muted-foreground animate-pulse">Verificando acessos...</p>
+          <p className="animate-pulse text-sm font-extralight tracking-wide text-white/48">
+            Verificando acessos...
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="dark min-h-screen flex items-center justify-center bg-background p-6">
-      <div className="w-full max-w-5xl space-y-10">
-        {/* Header */}
-        <div className="text-center space-y-4">
-          <div className="flex items-center justify-center">
-            {logoUrl ? (
-              <NextImage src={logoUrl} alt="Logo" width={180} height={48} className="h-12 w-auto object-contain" unoptimized />
-            ) : (
-              <Building2 className="h-12 w-12 text-primary" />
-            )}
-          </div>
-          <h1 className="text-3xl font-bold text-foreground">Selecione a organização</h1>
-          <p className="text-muted-foreground text-sm">
-            Você tem acesso a múltiplas organizações. Escolha qual deseja acessar.
-          </p>
-        </div>
-
-        {/* Cards grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {organizations.map((org) => {
-            const name = org.organization_name || 'Organização';
-            const lastAccess = formatLastAccess(org.last_accessed_at);
-            const isAdmin = org.member_role === 'admin' || org.member_role === 'super_admin';
-            return (
-              <Card
-                key={org.organization_id}
-                onClick={() => handleSelectOrg(org.organization_id)}
-                className="p-6 cursor-pointer rounded-2xl hover:border-primary/60 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 group flex flex-col items-center text-center"
-              >
-                <Avatar className="h-20 w-20 rounded-full border border-white/[0.055] mb-4">
-                  {org.organization_logo ? (
-                    <AvatarImage
-                      src={org.organization_logo}
-                      className="object-contain rounded-full"
-                    />
-                  ) : null}
-                  <AvatarFallback className="rounded-full bg-primary text-primary-foreground font-bold text-xl">
-                    {getInitials(name)}
-                  </AvatarFallback>
-                </Avatar>
-
-                <p className="font-semibold text-foreground uppercase tracking-wide text-sm break-words group-hover:text-primary transition-colors">
-                  {name}
-                </p>
-
-                {lastAccess && (
-                  <div className="mt-3 text-xs text-muted-foreground">
-                    <p>Último acesso:</p>
-                    <p>{lastAccess}</p>
-                  </div>
-                )}
-
-                <div className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.045] px-3 py-1 text-xs text-foreground">
-                  {isAdmin ? (
-                    <>
-                      <Shield className="h-3 w-3 text-primary" /> Administrador
-                    </>
-                  ) : (
-                    <>
-                      <User className="h-3 w-3 text-primary" /> Usuário
-                    </>
-                  )}
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-
-        {isSuperAdmin && (
-          <button
-            onClick={() => router.push('/admin')}
-            className="w-full text-center text-sm text-muted-foreground hover:text-primary transition-colors py-2"
-          >
-            Acessar Painel Super Admin
-          </button>
-        )}
-
-        {/* Logout button */}
-        <div className="flex justify-center">
+    <div className="dark min-h-screen bg-[#090909] px-5 py-8 text-white sm:px-8">
+      <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-6xl flex-col">
+        <div className="flex items-center justify-end">
           <button
             onClick={signOut}
-            className="px-8 py-2.5 rounded-xl bg-red-500/80 hover:bg-red-500 text-white font-medium transition-colors mt-6"
+            className="inline-flex h-9 items-center gap-2 rounded-[6px] bg-white/[0.055] px-3 text-xs font-extralight tracking-wide text-white/70 transition-colors hover:bg-white/[0.085] hover:text-white"
           >
+            <LogOut className="h-3.5 w-3.5" strokeWidth={1.35} />
             Sair
           </button>
+        </div>
+
+        <div className="flex flex-1 flex-col justify-center py-10">
+          <div className="mx-auto w-full max-w-3xl text-center">
+            {logoUrl ? (
+              <NextImage
+                src={logoUrl}
+                alt="Vimob"
+                width={180}
+                height={48}
+                className="mx-auto h-auto w-[136px] object-contain"
+                unoptimized
+              />
+            ) : (
+              <NextImage
+                src="/images/logo-white.png"
+                alt="Vimob"
+                width={1228}
+                height={429}
+                className="mx-auto h-auto w-[136px]"
+                priority
+              />
+            )}
+            <h1 className="mt-7 text-[28px] font-extralight tracking-wide text-white sm:text-[34px]">
+              Selecione a organização
+            </h1>
+            <p className="mx-auto mt-2 max-w-xl text-sm font-extralight leading-6 tracking-wide text-white/48">
+              Você tem acesso a múltiplas organizações. Escolha o ambiente para continuar.
+            </p>
+          </div>
+
+          <div className="mx-auto mt-8 grid w-full max-w-5xl grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {organizations.map((org) => {
+              const name = org.organization_name || 'Organização';
+              const lastAccess = formatLastAccess(org.last_accessed_at);
+              const isAdmin = org.member_role === 'admin' || org.member_role === 'super_admin';
+              const isPending = pendingOrgId === org.organization_id;
+
+              return (
+                <button
+                  key={org.organization_id}
+                  type="button"
+                  onClick={() => handleSelectOrg(org.organization_id)}
+                  disabled={pendingOrgId !== null}
+                  className="group flex min-h-[148px] flex-col rounded-[8px] bg-[#121212] p-5 text-left transition-colors hover:bg-[#171717] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF4529]/70 disabled:cursor-wait disabled:opacity-70"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <Avatar className="h-12 w-12 rounded-full bg-black/40">
+                      {org.organization_logo ? (
+                        <AvatarImage src={org.organization_logo} className="object-contain" />
+                      ) : null}
+                      <AvatarFallback className="rounded-full bg-[#FF4529] text-sm font-light tracking-wide text-white">
+                        {getInitials(name)}
+                      </AvatarFallback>
+                    </Avatar>
+
+                    <span className="inline-flex h-8 w-8 items-center justify-center rounded-[6px] bg-white/[0.045] text-white/38 transition-colors group-hover:bg-[#FF4529] group-hover:text-white">
+                      <ArrowRight className="h-4 w-4" strokeWidth={1.35} />
+                    </span>
+                  </div>
+
+                  <div className="mt-5 min-w-0">
+                    <p className="truncate text-sm font-light tracking-wide text-white">
+                      {name}
+                    </p>
+                    <p className="mt-1 text-xs font-extralight tracking-wide text-white/38">
+                      {lastAccess ? `Último acesso ${lastAccess}` : 'Primeiro acesso'}
+                    </p>
+                  </div>
+
+                  <div className="mt-auto flex items-center justify-between gap-3 pt-5">
+                    <span className="inline-flex h-7 items-center gap-2 rounded-[6px] bg-white/[0.055] px-2.5 text-xs font-extralight tracking-wide text-white/68">
+                      {isAdmin ? (
+                        <>
+                          <Shield className="h-3.5 w-3.5 text-[#FF4529]" strokeWidth={1.35} /> Administrador
+                        </>
+                      ) : (
+                        <>
+                          <User className="h-3.5 w-3.5 text-[#FF4529]" strokeWidth={1.35} /> Usuário
+                        </>
+                      )}
+                    </span>
+                    {isPending ? (
+                      <span className="text-xs font-extralight tracking-wide text-[#FF4529]">
+                        Entrando...
+                      </span>
+                    ) : null}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {isSuperAdmin && (
+            <button
+              onClick={() => router.push('/admin')}
+              className="mx-auto mt-8 block text-center text-sm font-extralight tracking-wide text-white/42 transition-colors hover:text-[#FF4529]"
+            >
+              Acessar Painel Super Admin
+            </button>
+          )}
+
+          <div className="mx-auto mt-10 h-px w-full max-w-5xl bg-white/[0.045]" />
         </div>
       </div>
     </div>

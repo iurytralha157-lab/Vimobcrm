@@ -13,6 +13,7 @@ export interface Notification {
   type: string
   is_read: boolean
   lead_id: string | null
+  metadata?: Record<string, unknown> | null
   created_at: string
 }
 
@@ -52,6 +53,7 @@ export const notificationsAPI = {
     content?: string
     type?: string
     lead_id?: string
+    metadata?: Record<string, unknown>
   }) {
     const response = await vimobAPIRequest<Envelope<Notification>>('/v1/notifications', {
       method: 'POST',

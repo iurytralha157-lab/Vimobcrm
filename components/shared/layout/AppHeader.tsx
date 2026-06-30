@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
-import { Bell, Loader2, LogOut, ChevronDown, UserPlus, CheckSquare, FileText, DollarSign, Info, Settings, Shield, Building2, Check, Key } from 'lucide-react';
+import { Bell, Loader2, LogOut, ChevronDown, UserPlus, CheckSquare, FileText, Info, Settings, Shield, Building2, Check, Key } from 'lucide-react';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
@@ -19,9 +19,9 @@ import { getNotificationRoute } from '@/lib/notification-routing';
 
 const notificationIcons: Record<string, typeof Bell> = {
   lead: UserPlus,
+  new_lead: UserPlus,
   task: CheckSquare,
-  contract: FileText,
-  commission: DollarSign,
+  schedule: CheckSquare,
   system: Bell,
   info: Info
 };

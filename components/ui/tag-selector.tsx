@@ -122,7 +122,7 @@ export function TagSelector({
       {showSelectedBadges && selectedTags.map(tag => (
         <Badge
           key={tag.id}
-          className="flex items-center gap-1 pr-1 py-0.5 text-xs rounded-full"
+          className="flex items-center gap-1 rounded-[4px] border-0 py-0.5 pr-1 text-xs"
           style={{
             backgroundColor: `${tag.color}15`,
             color: tag.color,
@@ -137,7 +137,7 @@ export function TagSelector({
           {onRemoveTag && (
             <button
               onClick={() => onRemoveTag(tag.id)}
-              className="ml-0.5 p-0.5 hover:bg-black/10 rounded-full"
+              className="ml-0.5 rounded-[3px] p-0.5 hover:bg-black/10"
             >
               <X className="h-2.5 w-2.5" />
             </button>
@@ -153,7 +153,7 @@ export function TagSelector({
               variant="ghost"
               size="sm"
               className={cn(
-                "h-6 px-2 rounded-full text-xs border border-dashed",
+                "h-6 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 text-xs",
                 triggerClassName
               )}
               disabled={disabled}
@@ -206,7 +206,7 @@ export function TagSelector({
                     <button
                       onClick={handleCreateTag}
                       disabled={isCreating}
-                      className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-left text-sm text-primary font-medium transition-colors"
+                      className="w-full flex items-center gap-2 rounded-[6px] bg-primary/10 px-2 py-1.5 text-left text-sm font-medium text-primary transition-colors hover:bg-primary/20"
                     >
                       {isCreating ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -227,7 +227,7 @@ export function TagSelector({
                           if (!multiple) setOpen(false);
                           setSearchTerm('');
                         }}
-                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-accent text-left text-sm transition-colors"
+                        className="w-full flex items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
                       >
                         <div
                           className="w-2.5 h-2.5 rounded-full flex-shrink-0"
@@ -359,7 +359,7 @@ export function InlineTagSelector({
               <Badge
                 key={tag.id}
                 variant={isSelected ? "default" : "outline"}
-                className="cursor-pointer transition-colors"
+                className="cursor-pointer rounded-[4px] transition-colors"
                 style={{
                   backgroundColor: isSelected ? tag.color : 'transparent',
                   borderColor: tag.color,
@@ -452,7 +452,7 @@ export function TagSelectorPopoverContent({
             <button
               onClick={handleCreateTag}
               disabled={isCreating}
-              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-left text-sm text-primary font-medium"
+              className="w-full flex items-center gap-2 rounded-[6px] bg-primary/10 px-2 py-1.5 text-left text-sm font-medium text-primary hover:bg-primary/20"
             >
               {isCreating ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -470,7 +470,7 @@ export function TagSelectorPopoverContent({
                   onAddTag(tag.id);
                   onClose();
                 }}
-                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-accent text-left text-sm"
+                className="w-full flex items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-sm hover:bg-accent"
               >
                 <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: tag.color }} />
                 {tag.name}

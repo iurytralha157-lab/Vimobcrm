@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -215,6 +216,9 @@ func (repo Repository) getPermissions(ctx context.Context, userID string, organi
 		  and uor.organization_id = $2::uuid
 		  and uor.is_active = true
 	`, userID, organizationID).Scan(&csv)
+	if isUndefinedSchemaError(err) {
+		return repo.getLegacyPermissions(ctx, userID, organizationID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -224,6 +228,47 @@ func (repo Repository) getPermissions(ctx context.Context, userID string, organi
 	}
 
 	return strings.Split(csv, ","), nil
+}
+
+func (repo Repository) getLegacyPermissions(ctx context.Context, userID string, organizationID string) ([]string, error) {
+	var csv string
+
+	err := repo.db.Pool().QueryRow(ctx, `
+		select coalesce(string_agg(distinct orp.permission_key, ',' order by orp.permission_key), '')
+		from public.user_organization_roles uor
+		join public.organization_roles org_role
+		  on org_role.id = uor.organization_role_id
+		join public.organization_role_permissions orp
+		  on orp.organization_role_id = org_role.id
+		where uor.user_id = $1::uuid
+		  and org_role.organization_id = $2::uuid
+		  and coalesce(org_role.is_active, true) = true
+	`, userID, organizationID).Scan(&csv)
+	if isUndefinedSchemaError(err) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if csv == "" {
+		return []string{}, nil
+	}
+
+	return strings.Split(csv, ","), nil
+}
+
+func isUndefinedSchemaError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+
+	return pgErr.Code == "42703" || pgErr.Code == "42P01"
 }
 
 func normalizeUUID(value string) (string, bool) {

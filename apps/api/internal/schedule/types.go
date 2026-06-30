@@ -190,6 +190,7 @@ type AddAssigneeRequest struct {
 
 func ParseListFilter(values url.Values) (ListFilter, error) {
 	filter := ListFilter{
+		EventID: strings.TrimSpace(values.Get("eventId")),
 		UserID: strings.TrimSpace(values.Get("userId")),
 		LeadID: strings.TrimSpace(values.Get("leadId")),
 	}
@@ -198,6 +199,7 @@ func ParseListFilter(values url.Values) (ListFilter, error) {
 		name  string
 		value string
 	}{
+		{name: "eventId", value: filter.EventID},
 		{name: "userId", value: filter.UserID},
 		{name: "leadId", value: filter.LeadID},
 	} {
@@ -206,7 +208,9 @@ func ParseListFilter(values url.Values) (ListFilter, error) {
 			if !ok {
 				return ListFilter{}, fmt.Errorf("%w: %s is invalid", ErrInvalidInput, item.name)
 			}
-			if item.name == "userId" {
+			if item.name == "eventId" {
+				filter.EventID = normalized
+			} else if item.name == "userId" {
 				filter.UserID = normalized
 			} else {
 				filter.LeadID = normalized

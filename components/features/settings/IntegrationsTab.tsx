@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import { Key, MessageCircle, Search, Settings2, Webhook } from "lucide-react";
+import { Key, Lock, MessageCircle, Search, Settings2, Webhook } from "lucide-react";
 import NextImage from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,14 +18,27 @@ import { useWhatsAppSessions } from "@/hooks/use-whatsapp-sessions";
 import { useVistaIntegration } from "@/hooks/use-vista-integration";
 import { useImoviewIntegration } from "@/hooks/use-imoview-integration";
 import { useGoogleCalendarStatus } from "@/hooks/use-google-calendar";
+import { useAuth } from "@/contexts/AuthContext";
 
 type IntegrationKey = "whatsapp" | "meta" | "google-calendar" | "vista" | "imoview" | "webhooks" | "api";
+const ADMIN_ONLY_INTEGRATIONS = new Set<IntegrationKey>(["meta", "vista", "imoview"]);
 
 interface MetaOAuthPayload {
   pages?: MetaPage[];
   user_token?: string;
   facebook_user_id?: string;
   facebook_user_name?: string;
+}
+
+interface IntegrationItem {
+  key: IntegrationKey;
+  title: string;
+  description: string;
+  enabled: boolean;
+  connected: boolean;
+  detail: string;
+  icon: import("react").ReactNode;
+  requiresAdmin?: boolean;
 }
 
 interface IntegrationsTabProps {
@@ -41,10 +54,24 @@ export function IntegrationsTab({
   hasWebhooksModule,
   hasAPIModule,
 }: IntegrationsTabProps) {
+  const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
+  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
+  const canManageAdminIntegrations =
+    isSuperAdmin ||
+    profile?.role === "admin" ||
+    profile?.role === "super_admin" ||
+    activeMemberRole === "admin" ||
+    activeMemberRole === "owner";
+  const defaultIntegrationKey = isIntegrationKey(defaultIntegration) ? defaultIntegration : null;
+  const defaultIntegrationLocked =
+    defaultIntegrationKey !== null &&
+    ADMIN_ONLY_INTEGRATIONS.has(defaultIntegrationKey) &&
+    !canManageAdminIntegrations;
   const [search, setSearch] = useState("");
   const [metaOAuthPayload, setMetaOAuthPayload] = useState<MetaOAuthPayload | null>(null);
   const [activeIntegration, setActiveIntegration] = useState<IntegrationKey | null>(
-    isIntegrationKey(defaultIntegration) ? defaultIntegration : null,
+    defaultIntegrationKey && !defaultIntegrationLocked ? defaultIntegrationKey : null,
   );
   const { data: metaIntegrations = [] } = useMetaIntegrations();
   const { data: whatsappSessions = [] } = useWhatsAppSessions();
@@ -101,7 +128,7 @@ export function IntegrationsTab({
     return () => window.removeEventListener("message", handleMessage);
   }, []);
 
-  const integrations = useMemo(() => {
+  const integrations = useMemo<IntegrationItem[]>(() => {
     const metaConnected = metaIntegrations.some((item) => item.is_connected);
     const whatsappConnected = whatsappSessions.some((item) => item.status === "connected");
     const googleCalendarConnected = !!googleCalendarStatus;
@@ -121,6 +148,7 @@ export function IntegrationsTab({
         title: "Facebook / Meta",
         description: "Receba leads de formulários do Facebook e Instagram no CRM.",
         enabled: true,
+        requiresAdmin: true,
         connected: metaConnected,
         detail: `${metaIntegrations.length} página${metaIntegrations.length === 1 ? "" : "s"}`,
         icon: <LogoImage src="https://cdn.simpleicons.org/facebook/1877F2" alt="Facebook" />,
@@ -139,6 +167,7 @@ export function IntegrationsTab({
         title: "Portal Vista",
         description: "Conecte o Vista para importar e sincronizar sua carteira de imóveis.",
         enabled: true,
+        requiresAdmin: true,
         connected: !!vistaIntegration,
         detail: "Imóveis",
         icon: <LogoImage src="https://www.google.com/s2/favicons?domain=vistahost.com.br&sz=64" alt="Portal Vista" />,
@@ -148,6 +177,7 @@ export function IntegrationsTab({
         title: "Imoview",
         description: "Conecte o Imoview para trazer seus imóveis para o CRM.",
         enabled: true,
+        requiresAdmin: true,
         connected: !!imoviewIntegration,
         detail: "Imóveis",
         icon: <LogoImage src="https://www.google.com/s2/favicons?domain=imoview.com.br&sz=64" alt="Imoview" />,
@@ -179,7 +209,11 @@ export function IntegrationsTab({
     return `${item.title} ${item.description}`.toLowerCase().includes(query);
   });
 
-  const activeTitle = integrations.find((item) => item.key === activeIntegration)?.title;
+  const effectiveActiveIntegration =
+    activeIntegration && ADMIN_ONLY_INTEGRATIONS.has(activeIntegration) && !canManageAdminIntegrations
+      ? null
+      : activeIntegration;
+  const activeTitle = integrations.find((item) => item.key === effectiveActiveIntegration)?.title;
 
   return (
     <div className="space-y-5">
@@ -202,13 +236,15 @@ export function IntegrationsTab({
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {filteredIntegrations.map((item) => {
           const isTemporarilyDisabled = disabledIntegrations.has(item.key);
+          const isAccessLocked = item.requiresAdmin && !canManageAdminIntegrations;
+          const isDisabled = isTemporarilyDisabled || isAccessLocked;
 
           return (
-            <Card key={item.key} className={`overflow-hidden ${isTemporarilyDisabled ? "opacity-50 grayscale" : ""}`}>
+            <Card key={item.key} className={`overflow-hidden shadow-none ${isDisabled ? "opacity-60 grayscale" : ""}`}>
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="h-11 w-11 rounded-md border bg-background flex items-center justify-center shrink-0">
+                    <div className="h-11 w-11 rounded-[6px] flex items-center justify-center shrink-0">
                       {item.icon}
                     </div>
                     <div className="min-w-0">
@@ -216,21 +252,30 @@ export function IntegrationsTab({
                       <CardDescription className="text-xs">{item.detail}</CardDescription>
                     </div>
                   </div>
-                  <Badge variant={item.connected ? "default" : "outline"}>
-                    {isTemporarilyDisabled ? "Em breve" : item.connected ? "Integrado" : "Não integrado"}
+                  <Badge variant={isAccessLocked || !item.connected ? "outline" : "default"}>
+                    {isAccessLocked ? "Sem acesso" : isTemporarilyDisabled ? "Em breve" : item.connected ? "Integrado" : "Não integrado"}
                   </Badge>
                 </div>
               </CardHeader>
               <CardContent className="px-4 md:px-6 pb-4 space-y-4">
                 <p className="text-sm text-muted-foreground min-h-[40px]">{item.description}</p>
+                {isAccessLocked && (
+                  <p className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                    <Lock className="h-3.5 w-3.5" />
+                    Acesso apenas para administradores.
+                  </p>
+                )}
                 <Button
                   variant={item.connected ? "outline" : "default"}
                   className="w-full gap-2"
-                  disabled={isTemporarilyDisabled}
-                  onClick={() => setActiveIntegration(item.key)}
+                  disabled={isDisabled}
+                  onClick={() => {
+                    if (isDisabled) return;
+                    setActiveIntegration(item.key);
+                  }}
                 >
-                  <Settings2 className="h-4 w-4" />
-                  {isTemporarilyDisabled ? "Indisponível" : item.connected ? "Gerenciar" : "Conectar"}
+                  {isAccessLocked ? <Lock className="h-4 w-4" /> : <Settings2 className="h-4 w-4" />}
+                  {isAccessLocked ? "Sem acesso" : isTemporarilyDisabled ? "Indisponível" : item.connected ? "Gerenciar" : "Conectar"}
                 </Button>
               </CardContent>
             </Card>
@@ -239,12 +284,12 @@ export function IntegrationsTab({
       </div>
 
       <Dialog
-        open={!!activeIntegration && activeIntegration !== "vista" && activeIntegration !== "imoview"}
+        open={!!effectiveActiveIntegration && effectiveActiveIntegration !== "vista" && effectiveActiveIntegration !== "imoview"}
         onOpenChange={(open) => !open && setActiveIntegration(null)}
       >
         <DialogContent
           className={
-            activeIntegration === "whatsapp" ?
+            effectiveActiveIntegration === "whatsapp" ?
             "w-[96vw] max-w-[96vw] max-h-[90vh] overflow-y-auto lg:w-[80vw] lg:max-w-[80vw] lg:max-h-[80vh]" :
             "max-w-[96vw] lg:max-w-6xl max-h-[90vh] overflow-y-auto"
           }
@@ -252,15 +297,15 @@ export function IntegrationsTab({
           <DialogHeader>
             <DialogTitle>{activeTitle ? `Integração com ${activeTitle}` : "Integração"}</DialogTitle>
           </DialogHeader>
-          {activeIntegration === "whatsapp" && <WhatsAppTab embedded />}
-          {activeIntegration === "meta" && <MetaIntegrationSettings oauthPayload={metaOAuthPayload} />}
-          {activeIntegration === "google-calendar" && <GoogleCalendarConnect />}
-          {activeIntegration === "webhooks" && <WebhooksTab />}
-          {activeIntegration === "api" && <APITab />}
+          {effectiveActiveIntegration === "whatsapp" && <WhatsAppTab embedded />}
+          {effectiveActiveIntegration === "meta" && <MetaIntegrationSettings oauthPayload={metaOAuthPayload} />}
+          {effectiveActiveIntegration === "google-calendar" && <GoogleCalendarConnect />}
+          {effectiveActiveIntegration === "webhooks" && <WebhooksTab />}
+          {effectiveActiveIntegration === "api" && <APITab />}
         </DialogContent>
       </Dialog>
-      <VistaImportDialog open={activeIntegration === "vista"} onOpenChange={(open) => !open && setActiveIntegration(null)} />
-      <ImoviewImportDialog open={activeIntegration === "imoview"} onOpenChange={(open) => !open && setActiveIntegration(null)} />
+      <VistaImportDialog open={effectiveActiveIntegration === "vista"} onOpenChange={(open) => !open && setActiveIntegration(null)} />
+      <ImoviewImportDialog open={effectiveActiveIntegration === "imoview"} onOpenChange={(open) => !open && setActiveIntegration(null)} />
     </div>
   );
 }

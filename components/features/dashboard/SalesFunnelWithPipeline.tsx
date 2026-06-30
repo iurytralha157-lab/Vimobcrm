@@ -65,9 +65,9 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
     <Card className="app-card overflow-hidden h-full flex flex-col">
       <CardHeader className="pb-3 pt-4 px-4 shrink-0">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <CardTitle className="text-xs font-semibold flex items-center gap-2 uppercase tracking-widest text-muted-foreground">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground">
             <TrendingDown className="h-3.5 w-3.5 text-primary" />
-            Funil de Vendas
+            Funil de vendas
           </CardTitle>
           <div className="flex items-center gap-2">
             {pipelines.length > 1 && (
@@ -91,7 +91,7 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
         </div>
       </CardHeader>
 
-      <CardContent className="pt-0 pb-4 flex-1 min-h-0 overflow-y-auto px-4 scrollbar-thin scrollbar-thumb-primary/10 hover:scrollbar-thumb-primary/20 transition-colors">
+      <CardContent className="app-scrollbar pt-0 pb-4 flex-1 min-h-0 overflow-y-auto px-4 transition-colors">
         {isLoading ? (
           <FunnelSkeleton />
         ) : funnelData.length === 0 ? (
@@ -167,27 +167,6 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
               })}
             </div>
           </TooltipProvider>
-        )}
-
-        {funnelData.length > 0 && (
-          <div className="mt-4 pt-3">
-            <div className="flex flex-wrap gap-x-3 gap-y-1.5 justify-center">
-              {funnelData.slice(0, 6).map((item, index) => (
-                <div key={`${item.stage_key || item.name}-${index}`} className="flex items-center gap-1.5">
-                  <div
-                    className={cn(
-                      'w-2 h-2 rounded-full shadow-sm',
-                      funnelGradients[index % funnelGradients.length].split(' ')[0].replace('from-', 'bg-')
-                    )}
-                  />
-                  <span className="text-[10px] font-medium text-muted-foreground">{item.name}</span>
-                </div>
-              ))}
-              {funnelData.length > 6 && (
-                <span className="text-[10px] font-bold text-primary">+{funnelData.length - 6}</span>
-              )}
-            </div>
-          </div>
         )}
       </CardContent>
     </Card>
