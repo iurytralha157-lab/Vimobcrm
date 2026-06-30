@@ -74,6 +74,15 @@ interface ImpersonateSession {
 
 const IMPERSONATING_STORAGE_KEY = 'impersonating';
 
+function isInvalidSessionError(error: unknown) {
+  const candidate = error as { code?: unknown; message?: unknown; status?: unknown } | null;
+  const message = typeof candidate?.message === 'string' ? candidate.message : '';
+  const code = typeof candidate?.code === 'string' ? candidate.code : '';
+  const status = typeof candidate?.status === 'number' ? candidate.status : 0;
+
+  return status === 401 && /bearer|token|session|sessao|expir/i.test(`${code} ${message}`);
+}
+
 function readStoredImpersonation(): ImpersonateSession | null {
   if (typeof window === 'undefined') return null;
 
@@ -164,6 +173,60 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setOrganization(nextOrganization);
   };
 
+  const resetClientAuthState = () => {
+    const currentUserId = userRef.current?.id;
+    if (currentUserId) {
+      localStorage.removeItem(`vimob_active_organization_${currentUserId}`);
+    }
+
+    setSession(null);
+    setUser(null);
+    userRef.current = null;
+    setProfile(null);
+    setActiveOrganization(null);
+    setIsSuperAdmin(false);
+    lastSuperAdminRef.current = false;
+    setImpersonating(null);
+    clearStoredImpersonation();
+    setUserOrganizations([]);
+    setIsInitializingOrg(false);
+    setOrganizationsLoaded(true);
+    setAuthInitialized(true);
+    setLoading(false);
+  };
+
+  const recoverFromInvalidSession = async () => {
+    if (isLoggingOutRef.current) return;
+
+    isLoggingOutRef.current = true;
+
+    try {
+      await supabase.auth.signOut({ scope: 'local' });
+    } catch {
+      // A sessao ja pode estar invalida no Supabase; a limpeza local ainda resolve o app.
+    }
+
+    resetClientAuthState();
+
+    const isPublicRoute = typeof window !== 'undefined' && [
+      '/login',
+      '/cadastro',
+      '/reset-password',
+      '/onboarding',
+      '/checkout',
+      '/termos-de-uso',
+      '/politica-de-privacidade'
+    ].some(route => window.location.pathname.startsWith(route));
+
+    if (!isPublicRoute) {
+      await performFullCacheClear({
+        clearAuth: true,
+        redirectTo: '/login',
+        clearBrowserCaches: false
+      });
+    }
+  };
+
   useEffect(() => {
     authStateRef.current = {
       authInitialized,
@@ -235,6 +298,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return false;
       } catch (error) {
         console.error('Error fetching profile:', error);
+        if (isInvalidSessionError(error)) {
+          await recoverFromInvalidSession();
+        }
         return false;
       }
     });
@@ -357,6 +423,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } catch (err) {
         console.error('[AuthContext] Error in checkMultiOrg:', err);
+        if (isInvalidSessionError(err)) {
+          await recoverFromInvalidSession();
+          return;
+        }
       } finally {
         setOrganizationsLoaded(true);
       }
@@ -429,7 +499,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         // Sequencial to ensure organizations are loaded before setting initialized
         await fetchProfileRef.current(session.user.id);
-        await checkMultiOrgRef.current(session.user.id);
+        if (userRef.current) {
+          await checkMultiOrgRef.current(session.user.id);
+        }
       } catch (err) {
         console.error('[AuthContext] Error during initial auth data fetch:', err);
       } finally {
