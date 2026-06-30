@@ -20,10 +20,10 @@ jobs:
     name: Build and push images
     runs-on: ubuntu-latest
     env:
-      WEB_NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL || secrets.NEXT_PUBLIC_SUPABASE_URL }}
-      WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY || secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-      WEB_NEXT_PUBLIC_VIMOB_API_URL: ${{ vars.NEXT_PUBLIC_VIMOB_API_URL || secrets.NEXT_PUBLIC_VIMOB_API_URL }}
-      WEB_NEXT_PUBLIC_SITE_URL: ${{ vars.NEXT_PUBLIC_SITE_URL || secrets.NEXT_PUBLIC_SITE_URL || 'https://vimobcrm.com.br' }}
+      WEB_NEXT_PUBLIC_SUPABASE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_URL || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_URL || 'https://iemalzlfnbouobyjwlwi.supabase.co' }}
+      WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_AnQ_6OJi0LuPUyxFh7rVwA_biv5WTyf' }}
+      WEB_NEXT_PUBLIC_VIMOB_API_URL: ${{ vars.VIMOB_NEXT_PUBLIC_API_URL || secrets.VIMOB_NEXT_PUBLIC_API_URL || 'https://api.vimobcrm.com.br' }}
+      WEB_NEXT_PUBLIC_SITE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SITE_URL || secrets.VIMOB_NEXT_PUBLIC_SITE_URL || 'https://app.vimobcrm.com.br' }}
 
     steps:
       - name: Checkout
