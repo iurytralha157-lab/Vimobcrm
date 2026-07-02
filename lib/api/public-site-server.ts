@@ -1,0 +1,342 @@
+import "server-only";
+
+import { headers } from "next/headers";
+
+const DEFAULT_API_URL = "http://localhost:8081";
+const PUBLIC_SITE_REVALIDATE_SECONDS = 60;
+
+type PublicSiteQuery = Record<string, string | number | boolean | null | undefined>;
+
+export interface PublicSiteConfig {
+  id: string;
+  organization_id: string;
+  organization_name?: string | null;
+  is_active: boolean;
+  subdomain: string | null;
+  custom_domain: string | null;
+  domain_verified?: boolean | null;
+  site_title: string | null;
+  site_description: string | null;
+  logo_url: string | null;
+  favicon_url: string | null;
+  primary_color: string | null;
+  secondary_color: string | null;
+  accent_color: string | null;
+  whatsapp: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  instagram: string | null;
+  facebook: string | null;
+  youtube: string | null;
+  linkedin: string | null;
+  about_title: string | null;
+  about_text: string | null;
+  about_image_url: string | null;
+  seo_title: string | null;
+  seo_description: string | null;
+  seo_keywords: string | null;
+  google_analytics_id?: string | null;
+  hero_image_url: string | null;
+  hero_title: string | null;
+  hero_subtitle: string | null;
+  page_banner_url: string | null;
+  logo_width: number | null;
+  logo_height: number | null;
+  watermark_enabled: boolean | null;
+  watermark_opacity: number | null;
+  watermark_logo_url: string | null;
+  watermark_size: number | null;
+  watermark_position: string | null;
+  site_theme: string | null;
+  background_color: string | null;
+  text_color: string | null;
+  card_color: string | null;
+  show_about_on_home: boolean | null;
+  about_subtitle: string | null;
+  about_stats: PublicSiteStat[] | null;
+  about_checkmarks: string[] | null;
+  about_features: PublicSiteFeature[] | null;
+  gtm_id?: string | null;
+  meta_pixel_id?: string | null;
+  google_ads_id?: string | null;
+  head_scripts?: string | null;
+  body_scripts?: string | null;
+}
+
+export interface PublicSiteStat {
+  value: string;
+  label: string;
+}
+
+export interface PublicSiteFeature {
+  title: string;
+  description: string;
+  icon: string;
+}
+
+export interface PublicProperty {
+  id: string;
+  codigo: string;
+  titulo: string | null;
+  descricao: string | null;
+  tipo_imovel: string | null;
+  valor_venda: number | null;
+  valor_aluguel: number | null;
+  quartos: number | null;
+  suites: number | null;
+  banheiros: number | null;
+  vagas: number | null;
+  area_total: number | null;
+  area_construida: number | null;
+  endereco: string | null;
+  public_address_visibility?: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  estado: string | null;
+  cep: string | null;
+  imagem_principal: string | null;
+  fotos: string[] | null;
+  destaque: boolean | null;
+  status: string | null;
+}
+
+export interface SiteMenuItem {
+  id: string;
+  organization_id: string;
+  label: string;
+  link_type: string;
+  href: string;
+  position: number;
+  open_in_new_tab: boolean;
+  is_active: boolean;
+}
+
+export interface SiteSearchFilter {
+  id?: string;
+  organization_id?: string;
+  filter_key: string;
+  label: string;
+  position: number;
+  is_active?: boolean;
+}
+
+export interface PublicHomeData {
+  featured: PublicProperty[];
+  exclusive: PublicProperty[];
+  latest: PublicProperty[];
+  types: string[];
+  cities: string[];
+}
+
+export interface PublicPropertiesData {
+  properties: PublicProperty[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export type PublicSiteResolution =
+  | { status: "found"; site: PublicSiteConfig }
+  | { status: "not-found" }
+  | { status: "unavailable" };
+
+type ResolveResponse = {
+  found?: boolean;
+  site_config?: PublicSiteConfig;
+};
+
+type Envelope<T> = {
+  data?: T;
+};
+
+const emptyHomeData: PublicHomeData = {
+  featured: [],
+  exclusive: [],
+  latest: [],
+  types: [],
+  cities: [],
+};
+
+export function getAPIBaseURL() {
+  return (process.env.VIMOB_API_URL || process.env.NEXT_PUBLIC_VIMOB_API_URL || DEFAULT_API_URL).replace(/\/+$/, "");
+}
+
+export async function getRequestPublicDomain() {
+  const headerStore = await headers();
+  const forwardedHost = headerStore.get("x-forwarded-host") || headerStore.get("host") || "";
+  return normalizePublicDomain(forwardedHost);
+}
+
+export async function resolvePublicSiteFromRequest() {
+  return resolvePublicSite(await getRequestPublicDomain());
+}
+
+export async function resolvePublicSite(domain: string): Promise<PublicSiteResolution> {
+  const normalized = normalizePublicDomain(domain);
+  if (!normalized) return { status: "not-found" };
+
+  const candidates = normalized.startsWith("www.")
+    ? [normalized, normalized.slice(4)]
+    : [normalized, `www.${normalized}`];
+
+  try {
+    for (const candidate of Array.from(new Set(candidates))) {
+      const response = await requestPublicAPI<ResolveResponse>("/v1/public/site/resolve", {
+        query: { domain: candidate },
+        tags: [`public-site-domain:${candidate}`],
+      });
+
+      if (response.found && response.site_config?.organization_id) {
+        return { status: "found", site: normalizeSiteConfig(response.site_config) };
+      }
+    }
+
+    return { status: "not-found" };
+  } catch {
+    return { status: "unavailable" };
+  }
+}
+
+export async function getPublicHomeData(organizationId: string) {
+  return safePublicData<PublicHomeData>(
+    organizationId,
+    "home",
+    {},
+    emptyHomeData,
+  );
+}
+
+export async function getPublicProperties(
+  organizationId: string,
+  query: PublicSiteQuery,
+): Promise<PublicPropertiesData> {
+  return safePublicData<PublicPropertiesData>(
+    organizationId,
+    "properties",
+    query,
+    {
+      properties: [],
+      total: 0,
+      page: Number(query.page) || 1,
+      limit: Number(query.limit) || 12,
+      totalPages: 0,
+    },
+  );
+}
+
+export async function getPublicProperty(organizationId: string, propertyCode: string) {
+  const data = await safePublicData<{ property: PublicProperty | null }>(
+    organizationId,
+    "property",
+    { property_code: propertyCode },
+    { property: null },
+  );
+  return data.property;
+}
+
+export async function getPublicMenuItems(organizationId: string) {
+  try {
+    const response = await requestPublicAPI<Envelope<SiteMenuItem[]>>("/v1/public/site/menu-items", {
+      query: { organization_id: organizationId },
+      tags: [`public-site:${organizationId}:menu`],
+    });
+    return response.data || [];
+  } catch {
+    return [];
+  }
+}
+
+export async function getPublicSearchFilters(organizationId: string) {
+  try {
+    const response = await requestPublicAPI<Envelope<SiteSearchFilter[]>>("/v1/public/site/search-filters", {
+      query: { organization_id: organizationId },
+      tags: [`public-site:${organizationId}:filters`],
+    });
+    return response.data || [];
+  } catch {
+    return [];
+  }
+}
+
+async function safePublicData<T>(
+  organizationId: string,
+  endpoint: string,
+  query: PublicSiteQuery,
+  fallback: T,
+) {
+  try {
+    return await requestPublicAPI<T>("/v1/public/site/data", {
+      query: {
+        organization_id: organizationId,
+        endpoint,
+        ...query,
+      },
+      tags: [`public-site:${organizationId}`, `public-site:${organizationId}:${endpoint}`],
+    });
+  } catch {
+    return fallback;
+  }
+}
+
+async function requestPublicAPI<T>(
+  path: string,
+  options: {
+    query?: PublicSiteQuery;
+    tags?: string[];
+  } = {},
+) {
+  const response = await fetch(buildAPIURL(path, options.query), {
+    headers: {
+      Accept: "application/json",
+    },
+    next: {
+      revalidate: PUBLIC_SITE_REVALIDATE_SECONDS,
+      tags: options.tags,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Vimob public API failed with ${response.status}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+function buildAPIURL(path: string, query?: PublicSiteQuery) {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const url = new URL(`${getAPIBaseURL()}${normalizedPath}`);
+
+  Object.entries(query || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  });
+
+  return url.toString();
+}
+
+function normalizeSiteConfig(site: PublicSiteConfig): PublicSiteConfig {
+  return {
+    ...site,
+    site_title: site.site_title || site.organization_name || "Site imobiliario",
+    primary_color: site.primary_color || "#d97706",
+    secondary_color: site.secondary_color || "#111827",
+    accent_color: site.accent_color || site.primary_color || "#0f766e",
+    site_theme: site.site_theme || "light",
+    background_color: site.background_color || "#f8fafc",
+    text_color: site.text_color || "#111827",
+    card_color: site.card_color || "#ffffff",
+  };
+}
+
+export function normalizePublicDomain(value: string) {
+  let cleaned = value.trim().toLowerCase();
+  cleaned = cleaned.replace(/^https?:\/\//, "");
+  cleaned = cleaned.split("/")[0] || "";
+  cleaned = cleaned.split(":")[0] || "";
+  return cleaned.replace(/^\.+|\.+$/g, "");
+}

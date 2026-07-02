@@ -170,7 +170,14 @@ type HistoryAccessResponse struct {
 }
 
 type Envelope[T any] struct {
-	Data T `json:"data"`
+	Data T   `json:"data"`
+	Meta any `json:"meta,omitempty"`
+}
+
+type SessionQuota struct {
+	MaxSessions     *int `json:"maxSessions,omitempty"`
+	CurrentSessions int  `json:"currentSessions"`
+	CanCreate       bool `json:"canCreate"`
 }
 
 type ConversationListFilter struct {
@@ -251,6 +258,10 @@ type ConnectionStatusResponse struct {
 }
 
 type ToggleNotificationRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+type ToggleAutoReplyRequest struct {
 	Enabled bool `json:"enabled"`
 }
 

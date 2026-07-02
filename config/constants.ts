@@ -16,7 +16,7 @@ export const ROUTES = {
   RESET_PASSWORD: '/reset-password',
 } as const
 
-const DEFAULT_PUBLIC_APP_ORIGIN = 'https://vimobcrm.com.br'
+const DEFAULT_PUBLIC_APP_ORIGIN = 'https://app.vimobcrm.com.br'
 
 export function getPublicAppUrl(path: string) {
   const configuredOrigin = process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/+$/, '')
@@ -56,6 +56,17 @@ export const ORG_SEGMENTS = {
   TELECOM: 'telecom',
   SERVICOS: 'servicos',
 } as const
+
+export const LOSS_REASON_OTHER_VALUE = 'outros'
+
+export const DEFAULT_LOSS_REASON_OPTIONS = [
+  { value: 'nao_respondeu', label: 'Nao respondeu' },
+  { value: 'outra_regiao', label: 'Lead de outra regiao' },
+  { value: 'contato_invalido', label: 'Contato invalido / sem telefone' },
+  { value: 'sem_interesse', label: 'Sem interesse no momento' },
+  { value: 'sem_orcamento', label: 'Sem orcamento' },
+  { value: 'concorrente', label: 'Comprou com concorrente' },
+] as const
 
 // System module keys used to enable product areas per organization.
 export const SYSTEM_MODULES = [

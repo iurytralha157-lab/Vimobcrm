@@ -37,6 +37,8 @@ export interface EnhancedDashboardStats {
   wonAverageConversionDays: number | null;
   wonConversionBuckets: WonConversionBucket[];
   wonDeals: WonDealDetail[];
+  lostReasonBuckets: LostReasonBucket[];
+  lostDeals: LostDealDetail[];
   avgResponseTime: string;
   totalSalesValue: number;
   pendingCommissions: number;
@@ -70,6 +72,26 @@ export interface WonDealDetail {
   createdAt: string | null;
   wonAt: string | null;
   conversionDays: number | null;
+  assignedUserName: string;
+}
+
+export interface LostReasonBucket {
+  key: string;
+  label: string;
+  count: number;
+  percentage: number;
+  color: string;
+}
+
+export interface LostDealDetail {
+  id: string;
+  name: string;
+  phone: string | null;
+  source: string | null;
+  lostReason: string;
+  lostReasonGroup: string;
+  createdAt: string | null;
+  lostAt: string | null;
   assignedUserName: string;
 }
 

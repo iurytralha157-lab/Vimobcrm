@@ -2406,6 +2406,7 @@ components:
           default: open
         lostReason:
           type: string
+          description: Required when dealStatus is lost.
           maxLength: 300
         isOwnResource:
           type: boolean
@@ -2720,6 +2721,8 @@ components:
         - closedLeads
         - wonConversionBuckets
         - wonDeals
+        - lostReasonBuckets
+        - lostDeals
         - avgResponseTime
         - totalSalesValue
         - leadsTrend
@@ -2761,6 +2764,14 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/WonDealDetail"
+        lostReasonBuckets:
+          type: array
+          items:
+            $ref: "#/components/schemas/LostReasonBucket"
+        lostDeals:
+          type: array
+          items:
+            $ref: "#/components/schemas/LostDealDetail"
         avgResponseTime:
           type: string
         totalSalesValue:
@@ -2827,6 +2838,46 @@ components:
           format: date-time
         conversionDays:
           type: [integer, "null"]
+        assignedUserName:
+          type: string
+    LostReasonBucket:
+      type: object
+      required: [key, label, count, percentage, color]
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        count:
+          type: integer
+          format: int64
+        percentage:
+          type: number
+        color:
+          type: string
+    LostDealDetail:
+      type: object
+      required: [id, name, lostReason, lostReasonGroup, assignedUserName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        phone:
+          type: [string, "null"]
+        source:
+          type: [string, "null"]
+        lostReason:
+          type: string
+        lostReasonGroup:
+          type: string
+        createdAt:
+          type: [string, "null"]
+          format: date-time
+        lostAt:
+          type: [string, "null"]
+          format: date-time
         assignedUserName:
           type: string
     DashboardFunnelResponse:

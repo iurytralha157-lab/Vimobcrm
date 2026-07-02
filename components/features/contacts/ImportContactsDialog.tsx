@@ -361,6 +361,9 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
         let dealStatus = 'open';
         if (contact.status?.toLowerCase().includes('ganho')) dealStatus = 'won';
         else if (contact.status?.toLowerCase().includes('perdido')) dealStatus = 'lost';
+        const lostReason = dealStatus === 'lost'
+          ? contact.motivo_perda?.trim() || 'Outros: Importado sem motivo informado'
+          : undefined;
 
         // 6. Distribution logic (if applicable)
         let finalAssigneeId = contactAssigneeId;
@@ -386,7 +389,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
           assigned_user_id: finalAssigneeId,
           tag_ids: tagIds,
           deal_status: dealStatus,
-          lost_reason: contact.motivo_perda,
+          lost_reason: lostReason,
         });
         success++;
       } catch (error) {

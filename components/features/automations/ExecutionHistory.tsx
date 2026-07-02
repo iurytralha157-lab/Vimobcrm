@@ -1,14 +1,14 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, CheckCircle2, XCircle, Clock, Play, AlertTriangle, ChevronDown, ChevronUp, StopCircle, Filter } from 'lucide-react';
 import { useAutomationExecutions, useCancelExecution, useAutomations, AutomationExecution } from '@/hooks/use-automations';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { cn } from '@/lib/utils';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,19 +28,48 @@ interface ExecutionHistoryProps {
 const getStatusConfig = (status: string) => {
   switch (status) {
     case 'completed':
-      return { label: 'Concluído', icon: CheckCircle2, variant: 'default' as const, dotColor: 'bg-orange-500', badgeClass: 'bg-orange-500 text-white border-0 hover:bg-orange-500' };
     case 'replied':
-      return { label: 'Concluído', icon: CheckCircle2, variant: 'default' as const, dotColor: 'bg-green-500', badgeClass: 'bg-green-500 text-white border-0 hover:bg-green-500' };
+      return {
+        label: 'Concluído',
+        icon: CheckCircle2,
+        dotColor: 'bg-emerald-500',
+        badgeClass: 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 hover:bg-emerald-500/10',
+      };
     case 'running':
-      return { label: 'Executando', icon: Play, variant: 'default' as const, dotColor: 'bg-accent', badgeClass: 'bg-primary text-primary-foreground border-0' };
+      return {
+        label: 'Executando',
+        icon: Play,
+        dotColor: 'bg-sky-500',
+        badgeClass: 'bg-sky-500/10 text-sky-500 border border-sky-500/20 hover:bg-sky-500/10',
+      };
     case 'waiting':
-      return { label: 'Aguardando', icon: Clock, variant: 'secondary' as const, dotColor: 'bg-white/[0.07]', badgeClass: '' };
+      return {
+        label: 'Aguardando',
+        icon: Clock,
+        dotColor: 'bg-amber-500',
+        badgeClass: 'bg-amber-500/10 text-amber-500 border border-amber-500/20 hover:bg-amber-500/10',
+      };
     case 'failed':
-      return { label: 'Falhou', icon: XCircle, variant: 'destructive' as const, dotColor: 'bg-destructive', badgeClass: '' };
+      return {
+        label: 'Falhou',
+        icon: XCircle,
+        dotColor: 'bg-red-500',
+        badgeClass: 'bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500/10',
+      };
     case 'cancelled':
-      return { label: 'Cancelado', icon: StopCircle, variant: 'default' as const, dotColor: 'bg-red-500', badgeClass: 'bg-red-500 text-white border-0 hover:bg-red-500' };
+      return {
+        label: 'Cancelado',
+        icon: StopCircle,
+        dotColor: 'bg-neutral-500',
+        badgeClass: 'bg-neutral-500/10 text-neutral-500 border border-neutral-500/20 hover:bg-neutral-500/10',
+      };
     default:
-      return { label: status, icon: AlertTriangle, variant: 'outline' as const, dotColor: 'bg-white/[0.07]', badgeClass: '' };
+      return {
+        label: status,
+        icon: AlertTriangle,
+        dotColor: 'bg-neutral-500',
+        badgeClass: 'bg-neutral-500/10 text-neutral-500 border border-neutral-500/20 hover:bg-neutral-500/10',
+      };
   }
 };
 
@@ -67,9 +96,26 @@ function translateError(error: string): string {
 
 export function ExecutionHistory({ automationId: initialAutomationId }: ExecutionHistoryProps) {
   const [selectedAutomationId, setSelectedAutomationId] = useState<string | undefined>(initialAutomationId);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'completed' | 'failed'>('all');
   const effectiveId = selectedAutomationId || initialAutomationId;
   const { data: executions, isLoading } = useAutomationExecutions(effectiveId);
   const { data: automations } = useAutomations();
+
+  const filteredExecutions = useMemo(() => {
+    if (!executions) return [];
+    return executions.filter((e) => {
+      if (statusFilter === 'running') {
+        return e.status === 'running' || e.status === 'waiting';
+      }
+      if (statusFilter === 'completed') {
+        return e.status === 'completed' || e.status === 'replied';
+      }
+      if (statusFilter === 'failed') {
+        return e.status === 'failed' || e.status === 'cancelled';
+      }
+      return true;
+    });
+  }, [executions, statusFilter]);
 
   if (isLoading) {
     return (
@@ -108,7 +154,7 @@ export function ExecutionHistory({ automationId: initialAutomationId }: Executio
 
   if (!executions || executions.length === 0) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-4 animate-in">
         {filterSelect}
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <div className="mb-4 rounded-xl bg-white/[0.055] p-4">
@@ -128,24 +174,53 @@ export function ExecutionHistory({ automationId: initialAutomationId }: Executio
   const failedExecutions = executions.filter(e => e.status === 'failed' || e.status === 'cancelled');
 
   return (
-    <div className="space-y-6">
-      {filterSelect}
+    <div className="space-y-6 animate-in">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        {filterSelect}
+
+        {/* Segmented status filters */}
+        <div className="flex items-center gap-1 rounded-[8px] bg-[var(--app-surface-soft)] p-1 self-start sm:self-auto">
+          {([
+            ['all', 'Todas'],
+            ['running', 'Em execução'],
+            ['completed', 'Concluídas'],
+            ['failed', 'Com erro'],
+          ] as const).map(([key, label]) => {
+            const isActive = statusFilter === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setStatusFilter(key)}
+                className={cn(
+                  "h-8 rounded-[6px] px-3 text-xs font-medium transition-all",
+                  isActive
+                    ? "bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       {/* Stats */}
       <div className="grid gap-3 grid-cols-3">
-        <Card className="app-card">
+        <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-[0_14px_32px_rgb(0_0_0/0.08)]">
           <CardContent className="p-4 text-center">
             <p className="text-2xl font-bold text-foreground">{runningExecutions.length}</p>
             <p className="text-xs text-muted-foreground">Em andamento</p>
           </CardContent>
         </Card>
-        <Card className="app-card">
+        <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-[0_14px_32px_rgb(0_0_0/0.08)]">
           <CardContent className="p-4 text-center">
             <p className="text-2xl font-bold text-primary">{completedExecutions.length}</p>
             <p className="text-xs text-muted-foreground">Concluídas</p>
           </CardContent>
         </Card>
-        <Card className="app-card">
+        <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-[0_14px_32px_rgb(0_0_0/0.08)]">
           <CardContent className="p-4 text-center">
             <p className="text-2xl font-bold text-destructive">{failedExecutions.length}</p>
             <p className="text-xs text-muted-foreground">Com erro</p>
@@ -154,7 +229,7 @@ export function ExecutionHistory({ automationId: initialAutomationId }: Executio
       </div>
 
       {/* Timeline */}
-      <Card className="app-card">
+      <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-[0_14px_32px_rgb(0_0_0/0.08)]">
         <CardHeader>
           <CardTitle className="text-base">Histórico de Execuções</CardTitle>
           <CardDescription>Últimas 100 execuções • Atualiza automaticamente</CardDescription>
@@ -163,11 +238,17 @@ export function ExecutionHistory({ automationId: initialAutomationId }: Executio
           <ScrollArea className="h-[400px]">
             <div className="relative px-6 pb-4">
               {/* Vertical timeline line */}
-              <div className="absolute left-[30px] top-0 bottom-0 w-px bg-white/[0.045]" />
+              <div className="absolute left-[30px] top-0 bottom-0 w-px bg-[var(--app-border)]" />
 
-              {executions.map((execution) => (
-                <ExecutionTimelineItem key={execution.id} execution={execution} />
-              ))}
+              {filteredExecutions.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <p className="text-sm text-muted-foreground">Nenhuma execução correspondente ao filtro selecionado.</p>
+                </div>
+              ) : (
+                filteredExecutions.map((execution) => (
+                  <ExecutionTimelineItem key={execution.id} execution={execution} />
+                ))
+              )}
             </div>
           </ScrollArea>
         </CardContent>
@@ -191,7 +272,11 @@ function ExecutionTimelineItem({ execution }: { execution: AutomationExecution }
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
       <div className="relative flex gap-4 py-3">
         {/* Timeline dot */}
-        <div className={`relative z-10 w-3 h-3 rounded-full mt-1.5 shrink-0 ${statusConfig.dotColor} ${execution.status === 'running' ? 'animate-pulse' : ''}`} />
+        <div className={cn(
+          "relative z-10 w-3 h-3 rounded-full mt-1.5 shrink-0",
+          statusConfig.dotColor,
+          execution.status === 'running' && "animate-pulse"
+        )} />
 
         {/* Content */}
         <div className="flex-1 min-w-0">
@@ -199,9 +284,9 @@ function ExecutionTimelineItem({ execution }: { execution: AutomationExecution }
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm font-medium truncate">{leadName}</span>
-                <Badge variant={statusConfig.variant} className={`text-[10px] px-1.5 py-0 ${statusConfig.badgeClass || ''}`}>
+                <span className={`inline-flex items-center gap-1 rounded-[4px] px-2 py-0.5 text-[10px] font-medium leading-none ${statusConfig.badgeClass}`}>
                   {statusConfig.label}
-                </Badge>
+                </span>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5 truncate">{automationName}</p>
               <p className="text-[10px] text-muted-foreground mt-0.5">
@@ -221,13 +306,13 @@ function ExecutionTimelineItem({ execution }: { execution: AutomationExecution }
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                      className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10 animate-pulse"
                       disabled={cancelExecution.isPending}
                     >
                       <StopCircle className="h-3.5 w-3.5" />
                     </Button>
                   </AlertDialogTrigger>
-                  <AlertDialogContent>
+                  <AlertDialogContent className="vimob-dialog-content">
                     <AlertDialogHeader>
                       <AlertDialogTitle>Interromper automação?</AlertDialogTitle>
                       <AlertDialogDescription>
@@ -259,15 +344,15 @@ function ExecutionTimelineItem({ execution }: { execution: AutomationExecution }
 
           {hasError && (
             <CollapsibleContent>
-              <div className="mt-2 bg-destructive/10 border border-destructive/20 rounded-xl p-3">
+              <div className="mt-2 bg-red-500/10 border border-red-500/20 rounded-[8px] p-3 text-left">
                 <div className="flex items-start gap-2">
-                  <AlertTriangle className="h-3.5 w-3.5 text-destructive shrink-0 mt-0.5" />
+                  <AlertTriangle className="h-3.5 w-3.5 text-red-500 shrink-0 mt-0.5" />
                   <div className="space-y-1 min-w-0">
-                    <p className="text-xs font-medium text-destructive">{translatedError}</p>
+                    <p className="text-xs font-medium text-red-600 dark:text-red-400">{translatedError}</p>
                     {execution.error_message !== translatedError && (
-                      <details className="text-[10px] text-muted-foreground">
-                        <summary className="cursor-pointer hover:text-foreground">Detalhes técnicos</summary>
-                        <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-all rounded bg-white/[0.055] p-2 text-[10px]">
+                      <details className="text-[10px] text-muted-foreground mt-1">
+                        <summary className="cursor-pointer hover:text-foreground outline-none">Detalhes técnicos</summary>
+                        <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap break-all rounded-[6px] bg-[var(--app-surface-soft)] p-2 text-[10px] text-muted-foreground border border-[var(--app-border)]">
                           {execution.error_message}
                         </pre>
                       </details>

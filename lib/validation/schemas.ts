@@ -98,6 +98,27 @@ export const adminSubscriptionPlanSchema = z.object({
 
 export type AdminSubscriptionPlanInput = z.infer<typeof adminSubscriptionPlanSchema>
 
+export const lostReasonSchema = z
+  .string()
+  .trim()
+  .min(2, 'Informe o motivo da perda')
+  .max(300, 'Motivo da perda deve ter no maximo 300 caracteres')
+
+export type LostReasonInput = z.infer<typeof lostReasonSchema>
+
+export const publicSiteContactSchema = z.object({
+  organization_id: z.string().uuid(),
+  name: z.string().trim().min(2, 'Informe seu nome').max(120, 'Nome muito longo'),
+  email: z.string().trim().email('E-mail invalido').optional().or(z.literal('')),
+  phone: z.string().trim().min(8, 'Informe um telefone valido').max(30, 'Telefone muito longo'),
+  message: z.string().trim().max(1000, 'Mensagem muito longa').optional().or(z.literal('')),
+  property_id: z.string().uuid().optional(),
+  property_code: z.string().trim().max(80).optional(),
+  session_id: z.string().trim().optional().nullable(),
+})
+
+export type PublicSiteContactInput = z.infer<typeof publicSiteContactSchema>
+
 // Meta Schemas
 export const metaLeadgenValueSchema = z.object({
   page_id: z.string().min(1),

@@ -6,6 +6,11 @@ import { leadAttachmentsAPI, type LeadAttachment } from '@/lib/api/lead-attachme
 
 export type { LeadAttachment } from '@/lib/api/lead-attachments';
 
+function upsertAttachment(current: LeadAttachment[] | undefined, attachment: LeadAttachment) {
+  const attachments = Array.isArray(current) ? current : [];
+  return [attachment, ...attachments.filter((item) => item.id !== attachment.id)];
+}
+
 export function useLeadAttachments(leadId: string | null) {
   return useQuery({
     queryKey: ['lead-attachments', leadId],
@@ -38,12 +43,18 @@ export function useCreateLeadAttachment() {
       return leadAttachmentsAPI.create(attachment);
     },
     onSuccess: (data: LeadAttachment, variables) => {
+      queryClient.setQueryData<LeadAttachment[]>(['lead-attachments', variables.lead_id], (current) =>
+        upsertAttachment(current, data)
+      );
       queryClient.invalidateQueries({ queryKey: ['lead-attachments', variables.lead_id] });
       queryClient.invalidateQueries({ queryKey: ['activities', variables.lead_id] });
       queryClient.invalidateQueries({ queryKey: ['activities'] });
       queryClient.invalidateQueries({ queryKey: ['recent-activities'] });
       queryClient.invalidateQueries({ queryKey: ['lead-history-v2', variables.lead_id] });
       if (data?.lead_id && data.lead_id !== variables.lead_id) {
+        queryClient.setQueryData<LeadAttachment[]>(['lead-attachments', data.lead_id], (current) =>
+          upsertAttachment(current, data)
+        );
         queryClient.invalidateQueries({ queryKey: ['lead-attachments', data.lead_id] });
       }
       toast.success('Documento anexado com sucesso!');
@@ -70,12 +81,18 @@ export function useUploadLeadAttachment() {
       return leadAttachmentsAPI.upload(leadId, file);
     },
     onSuccess: (data: LeadAttachment, variables) => {
+      queryClient.setQueryData<LeadAttachment[]>(['lead-attachments', variables.leadId], (current) =>
+        upsertAttachment(current, data)
+      );
       queryClient.invalidateQueries({ queryKey: ['lead-attachments', variables.leadId] });
       queryClient.invalidateQueries({ queryKey: ['activities', variables.leadId] });
       queryClient.invalidateQueries({ queryKey: ['activities'] });
       queryClient.invalidateQueries({ queryKey: ['recent-activities'] });
       queryClient.invalidateQueries({ queryKey: ['lead-history-v2', variables.leadId] });
       if (data?.lead_id && data.lead_id !== variables.leadId) {
+        queryClient.setQueryData<LeadAttachment[]>(['lead-attachments', data.lead_id], (current) =>
+          upsertAttachment(current, data)
+        );
         queryClient.invalidateQueries({ queryKey: ['lead-attachments', data.lead_id] });
       }
     },

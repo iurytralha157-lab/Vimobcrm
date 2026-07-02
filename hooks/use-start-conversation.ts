@@ -7,7 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 
 interface StartConversationParams {
   phone: string;
-  sessionId: string;
+  sessionId?: string;
   leadId?: string;
   leadName?: string;
 }

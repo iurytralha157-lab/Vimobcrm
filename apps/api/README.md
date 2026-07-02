@@ -32,6 +32,7 @@ Backend principal do Vimob CRM.
 - `POST /v1/leads/{id}/redistribute` - atribui lead via round-robin ativo, registrando `assignments_log` e `round_robin_logs`.
 - `POST /v1/leads/{id}/tags` - adiciona tag ao lead com validacao de escopo e atividade.
 - `DELETE /v1/leads/{id}/tags/{tagId}` - remove tag do lead com validacao de escopo e atividade.
+- `GET|POST /v1/public/integrations/meta/webhook` - recebe webhooks da Meta, valida `X-Hub-Signature-256`, registra o evento e cria/reentra leads no banco.
 - `GET /v1/lead-enrichments?ids=...` - busca tags, tarefas, meta ads, usuario e imovel resumidos para cards visiveis.
 - `GET /v1/pipeline-board` - carrega colunas, leads visiveis, filtros e contagens do funil pelo backend.
 - `GET /v1/pipeline-stage-leads` - pagina leads de uma coluna do funil.
@@ -70,6 +71,17 @@ Backend principal do Vimob CRM.
 - `SUPABASE_PROJECT_URL`
 - `SUPABASE_SERVICE_ROLE_KEY` ou `SUPABASE_SECRET_KEY` para uploads no Storage
 - `DATABASE_URL`
+
+## Meta Lead Ads
+
+O webhook backend da Meta usa:
+
+- `META_APP_SECRET` para validar `X-Hub-Signature-256`.
+- `META_WEBHOOK_VERIFY_TOKEN` para o challenge de verificacao da Meta.
+- `META_GRAPH_VERSION` opcional, padrao `v25.0`.
+- `META_GRAPH_BASE_URL` opcional, padrao `https://graph.facebook.com`.
+
+URL publica esperada no deploy: `https://api.vimobcrm.com.br/v1/public/integrations/meta/webhook`.
 
 ## Desenvolvimento
 

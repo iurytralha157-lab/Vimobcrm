@@ -19,8 +19,14 @@ import {
 } from '@/hooks/use-property-locations';
 import { toast } from 'sonner';
 
-export default function PropertyLocations() {
-  const [tab, setTab] = useState('cities');
+type PropertyLocationsProps = {
+  initialTab?: 'cities' | 'neighborhoods' | 'condominiums';
+};
+
+type PropertyLocationsTab = NonNullable<PropertyLocationsProps['initialTab']>;
+
+export default function PropertyLocations({ initialTab = 'cities' }: PropertyLocationsProps) {
+  const [tab, setTab] = useState<PropertyLocationsTab>(initialTab);
   const [search, setSearch] = useState('');
   const [selectedCityId, setSelectedCityId] = useState<string>('');
   const [selectedNeighborhoodId, setSelectedNeighborhoodId] = useState<string>('');
@@ -155,7 +161,7 @@ export default function PropertyLocations() {
         </div>
 
         {/* Tabs */}
-        <Tabs value={tab} onValueChange={setTab}>
+        <Tabs value={tab} onValueChange={(value) => setTab(value as PropertyLocationsTab)}>
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="cities">Cidades</TabsTrigger>
             <TabsTrigger value="neighborhoods">Bairros</TabsTrigger>

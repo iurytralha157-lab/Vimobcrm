@@ -68,11 +68,33 @@ const OUTCOME_CONFIG: Record<string, { label: string; variant: 'success' | 'warn
 };
 
 const outcomeVariantClasses: Record<string, string> = {
-  success: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  success: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
   warning: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
   error:   'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
   default: 'bg-muted text-muted-foreground',
 };
+
+function historyText(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+  if (value === null || value === undefined || value === false) return null;
+  return String(value);
+}
+
+function getHistoryLostReason(event: UnifiedHistoryEvent) {
+  const metadata = event.metadata || {};
+  const reason =
+    historyText(metadata.lost_reason) ||
+    historyText(metadata.lostReason) ||
+    historyText(metadata.loss_reason) ||
+    historyText(metadata.reason);
+  if (reason) return reason;
+
+  const match = `${event.content || ''} ${event.label || ''}`.match(/motivo:\s*(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
 
 // ─── Icon registry ────────────────────────────────────────────────────────────
 function getEventIcon(event: UnifiedHistoryEvent): React.ComponentType<{ className?: string }> {
@@ -125,6 +147,15 @@ function getEventIcon(event: UnifiedHistoryEvent): React.ComponentType<{ classNa
 // ─── Color registry ───────────────────────────────────────────────────────────
 function getEventColors(event: UnifiedHistoryEvent): { text: string; bg: string } {
   const meta = event.metadata || {};
+  const toStatus = String(meta.to_status || '').toLowerCase();
+
+  if (event.type === 'status_change' && toStatus === 'lost') {
+    return { text: 'text-red-700 dark:text-red-300', bg: 'bg-red-100 dark:bg-red-500/20' };
+  }
+
+  if (event.type === 'status_change' && toStatus === 'won') {
+    return { text: 'text-emerald-700 dark:text-emerald-300', bg: 'bg-emerald-50 dark:bg-emerald-500/15' };
+  }
 
   if (event.type === 'lead_created') {
     const src = meta.source || meta.source_label || '';
@@ -156,7 +187,7 @@ function getEventColors(event: UnifiedHistoryEvent): { text: string; bg: string 
     automation_message:        { text: 'text-violet-600 dark:text-violet-400', bg: 'bg-violet-500/15' },
     automation_stage_move:     { text: 'text-violet-600 dark:text-violet-400', bg: 'bg-violet-500/15' },
     automation_tag_added:      { text: 'text-violet-600 dark:text-violet-400', bg: 'bg-violet-500/15' },
-    task_completed:            { text: 'text-green-600 dark:text-green-400', bg: 'bg-green-500/15' },
+    task_completed:            { text: 'text-muted-foreground', bg: 'bg-muted' },
     contact_updated:           { text: 'text-blue-600 dark:text-blue-400',   bg: 'bg-blue-500/15' },
     commission_created:        { text: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-500/15' },
     commission_updated:        { text: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-500/15' },
@@ -233,6 +264,9 @@ export function LeadHistory({ leadId, onEventClick }: LeadHistoryProps) {
           const outcome = metadata?.outcome as string | undefined;
           const outcomeNotes = metadata?.outcome_notes as string | undefined;
           const outcomeConfig = outcome ? OUTCOME_CONFIG[outcome] : null;
+          const lostReason = event.type === 'status_change' && String(metadata.to_status || '').toLowerCase() === 'lost'
+            ? getHistoryLostReason(event)
+            : null;
 
           return (
             <React.Fragment key={event.id}>
@@ -347,6 +381,12 @@ export function LeadHistory({ leadId, onEventClick }: LeadHistoryProps) {
                             return part;
                           });
                         })()}
+                      </p>
+                    )}
+
+                    {lostReason && (
+                      <p className="mt-0.5 text-xs font-medium text-red-700 dark:text-red-300">
+                        Motivo: {lostReason}
                       </p>
                     )}
 

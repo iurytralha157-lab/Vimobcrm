@@ -3,6 +3,7 @@ import { vimobAPIRequest } from './vimob-client'
 
 type Envelope<T> = {
   data: T
+  meta?: unknown
 }
 
 export type WhatsAppProvider = 'evolution' | 'evolution_go'
@@ -30,6 +31,16 @@ export interface WhatsAppSession {
     name: string
     email: string
   }
+}
+
+export interface WhatsAppSessionQuota {
+  maxSessions?: number | null
+  currentSessions: number
+  canCreate: boolean
+}
+
+export type WhatsAppSessionsResponse = Envelope<WhatsAppSession[]> & {
+  meta?: WhatsAppSessionQuota
 }
 
 export type WhatsAppAccessMode = 'assigned_leads_only' | 'team_leads' | 'all_leads' | 'full_inbox'
@@ -201,10 +212,10 @@ export interface WhatsAppGroup {
 
 export const whatsappAPI = {
   async getSessions(organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<WhatsAppSession[]>>('/v1/whatsapp/sessions', {
+    const response = await vimobAPIRequest<WhatsAppSessionsResponse>('/v1/whatsapp/sessions', {
       organizationId,
     })
-    return response.data
+    return response
   },
 
   async createSession(input: { displayName: string; provider?: WhatsAppProvider }, organizationId?: string | null) {
@@ -212,6 +223,7 @@ export const whatsappAPI = {
       method: 'POST',
       organizationId,
       body: input,
+      timeoutMs: 30_000,
     })
   },
 
@@ -226,6 +238,8 @@ export const whatsappAPI = {
     await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/sessions/${sessionId}`, {
       method: 'DELETE',
       organizationId,
+      skipTelemetry: true,
+      timeoutMs: 15_000,
     })
   },
 
@@ -233,6 +247,8 @@ export const whatsappAPI = {
     return vimobAPIRequest<WhatsAppQRCode>(`/v1/whatsapp/sessions/${sessionId}/qr`, {
       method: 'POST',
       organizationId,
+      skipTelemetry: true,
+      timeoutMs: 20_000,
     })
   },
 
@@ -240,13 +256,15 @@ export const whatsappAPI = {
     return vimobAPIRequest<WhatsAppConnectionStatus>(`/v1/whatsapp/sessions/${sessionId}/status`, {
       method: 'POST',
       organizationId,
+      skipTelemetry: true,
+      timeoutMs: 8_000,
     })
   },
 
   async recreateSession(sessionId: string, organizationId?: string | null) {
     return vimobAPIRequest<{ session: WhatsAppSession; evolutionData?: unknown }>(
       `/v1/whatsapp/sessions/${sessionId}/recreate`,
-      { method: 'POST', organizationId },
+      { method: 'POST', organizationId, skipTelemetry: true, timeoutMs: 30_000 },
     )
   },
 
@@ -254,11 +272,21 @@ export const whatsappAPI = {
     return vimobAPIRequest<{ ok: boolean; data?: unknown }>(`/v1/whatsapp/sessions/${sessionId}/logout`, {
       method: 'POST',
       organizationId,
+      skipTelemetry: true,
+      timeoutMs: 15_000,
     })
   },
 
   async toggleNotificationSession(sessionId: string, enabled: boolean, organizationId?: string | null) {
     await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/sessions/${sessionId}/notification-session`, {
+      method: 'POST',
+      organizationId,
+      body: { enabled },
+    })
+  },
+
+  async toggleAIAutoReplySession(sessionId: string, enabled: boolean, organizationId?: string | null) {
+    await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/sessions/${sessionId}/ai-auto-reply`, {
       method: 'POST',
       organizationId,
       body: { enabled },
@@ -317,7 +345,7 @@ export const whatsappAPI = {
 
   async startConversation(input: {
     phone: string
-    sessionId: string
+    sessionId?: string
     leadId?: string
     leadName?: string
   }, organizationId?: string | null) {
@@ -405,6 +433,7 @@ export const whatsappAPI = {
       method: 'POST',
       organizationId,
       body: input,
+      timeoutMs: 30_000,
     })
   },
 

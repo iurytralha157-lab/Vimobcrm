@@ -3,7 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import { useState, useEffect, useCallback } from "react";
 import type { Json } from "@/integrations/supabase/types";
-import { whatsappAPI } from "@/lib/api/whatsapp";
+import { whatsappAPI, type WhatsAppSessionQuota } from "@/lib/api/whatsapp";
 
 export const EVOLUTION_GO_CREATION_ENABLED = true;
 export const WHATSAPP_LEGACY_EVOLUTION_ENABLED = false;
@@ -34,6 +34,10 @@ export interface WhatsAppSession {
     email: string;
   };
 }
+
+export type WhatsAppSessionList = WhatsAppSession[] & {
+  meta?: WhatsAppSessionQuota;
+};
 
 export interface WhatsAppSessionAccess {
   id: string;
@@ -67,15 +71,22 @@ function normalizeSession(session: WhatsAppSession): WhatsAppSession {
   };
 }
 
+function removeSessionFromCache(old: WhatsAppSession[] | undefined, sessionId: string) {
+  if (!Array.isArray(old)) return old;
+  return old.filter((session) => session.id !== sessionId);
+}
+
 export function useWhatsAppSessions() {
   const { profile } = useAuth();
 
   return useQuery({
     queryKey: ["whatsapp-sessions", profile?.organization_id, profile?.id],
     queryFn: async () => {
-      if (!profile?.id || !profile?.organization_id) return [] as WhatsAppSession[];
-      const data = await whatsappAPI.getSessions(profile.organization_id);
-      return (data || []).map((session) => normalizeSession(session as WhatsAppSession));
+      if (!profile?.id || !profile?.organization_id) return [] as WhatsAppSessionList;
+      const response = await whatsappAPI.getSessions(profile.organization_id);
+      const sessions = (response.data || []).map((session) => normalizeSession(session as WhatsAppSession)) as WhatsAppSessionList;
+      sessions.meta = response.meta;
+      return sessions;
     },
     enabled: !!profile?.organization_id && !!profile?.id,
     refetchInterval: 30_000,
@@ -145,16 +156,10 @@ export function useCreateWhatsAppSession() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] });
       toast({
         title: "Sessao criada",
         description: "Escaneie o QR Code para conectar",
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Erro ao criar sessao",
-        description: error.message,
-        variant: "destructive",
       });
     },
   });
@@ -168,19 +173,58 @@ export function useDeleteWhatsAppSession() {
     mutationFn: async (session: WhatsAppSession) => {
       await whatsappAPI.deleteSession(session.id, profile?.organization_id);
     },
-    onSuccess: () => {
+    onMutate: async (session) => {
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: ["whatsapp-sessions"] }),
+        queryClient.cancelQueries({ queryKey: ["accessible-sessions"] }),
+      ]);
+
+      const previousSessions = queryClient.getQueriesData<WhatsAppSession[]>({ queryKey: ["whatsapp-sessions"] });
+      const previousAccessibleSessions = queryClient.getQueriesData<WhatsAppSession[]>({ queryKey: ["accessible-sessions"] });
+
+      queryClient.setQueriesData<WhatsAppSession[]>(
+        { queryKey: ["whatsapp-sessions"] },
+        (old) => removeSessionFromCache(old, session.id),
+      );
+      queryClient.setQueriesData<WhatsAppSession[]>(
+        { queryKey: ["accessible-sessions"] },
+        (old) => removeSessionFromCache(old, session.id),
+      );
+
+      return { previousSessions, previousAccessibleSessions };
+    },
+    onSuccess: (_data, session) => {
+      queryClient.setQueriesData<WhatsAppSession[]>(
+        { queryKey: ["whatsapp-sessions"] },
+        (old) => removeSessionFromCache(old, session.id),
+      );
+      queryClient.setQueriesData<WhatsAppSession[]>(
+        { queryKey: ["accessible-sessions"] },
+        (old) => removeSessionFromCache(old, session.id),
+      );
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] });
       toast({
         title: "Sessao excluida",
         description: "A conexao WhatsApp foi removida",
       });
     },
-    onError: (error: Error) => {
+    onError: (error: Error, _session, context) => {
+      context?.previousSessions?.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
+      context?.previousAccessibleSessions?.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
       toast({
         title: "Erro ao excluir sessao",
         description: error.message,
         variant: "destructive",
       });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] });
     },
   });
 }
@@ -331,7 +375,7 @@ export function useLogoutSession() {
           },
         });
       } catch (err) {
-        console.error("Disconnection notification failed:", err);
+        console.warn("Disconnection notification failed:", err);
       }
 
       return result;
@@ -341,6 +385,13 @@ export function useLogoutSession() {
       toast({
         title: "Desconectado",
         description: "A sessao foi desconectada",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Erro ao desconectar sessao",
+        description: error.message,
+        variant: "destructive",
       });
     },
   });
@@ -401,7 +452,7 @@ export function useQRCodePolling(session: WhatsAppSession | null) {
 
         return false;
       } catch (error) {
-        console.error("Polling error:", error);
+        console.warn("WhatsApp QR polling failed:", error);
         return false;
       }
     };
@@ -463,6 +514,34 @@ export function useToggleNotificationSession() {
     onError: (error: Error) => {
       toast({
         title: "Erro",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+}
+
+export function useToggleAIAutoReplySession() {
+  const queryClient = useQueryClient();
+  const { profile } = useAuth();
+
+  return useMutation({
+    mutationFn: async ({ sessionId, enabled }: { sessionId: string; enabled: boolean }) => {
+      await whatsappAPI.toggleAIAutoReplySession(sessionId, enabled, profile?.organization_id);
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] });
+      toast({
+        title: "IA atualizada",
+        description: variables.enabled
+          ? "A IA vai atender esta conexao WhatsApp."
+          : "A IA foi desligada nesta conexao WhatsApp.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Erro ao atualizar IA",
         description: error.message,
         variant: "destructive",
       });

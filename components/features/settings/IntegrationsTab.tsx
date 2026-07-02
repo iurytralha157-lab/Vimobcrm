@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Key, Lock, MessageCircle, Search, Settings2, Webhook } from "lucide-react";
 import NextImage from "next/image";
 import { Button } from "@/components/ui/button";
@@ -252,7 +252,10 @@ export function IntegrationsTab({
                       <CardDescription className="text-xs">{item.detail}</CardDescription>
                     </div>
                   </div>
-                  <Badge variant={isAccessLocked || !item.connected ? "outline" : "default"}>
+                  <Badge
+                    variant={isAccessLocked || !item.connected ? "outline" : "default"}
+                    className={isAccessLocked || !item.connected ? "border-transparent bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-soft)]" : ""}
+                  >
                     {isAccessLocked ? "Sem acesso" : isTemporarilyDisabled ? "Em breve" : item.connected ? "Integrado" : "Não integrado"}
                   </Badge>
                 </div>

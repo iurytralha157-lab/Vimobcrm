@@ -9,8 +9,8 @@ export function useHasWhatsAppAccess() {
     queryKey: ["whatsapp-access-check", profile?.id, profile?.organization_id, profile?.role],
     queryFn: async () => {
       if (!profile?.id || !profile?.organization_id) return false;
-      const sessions = await whatsappAPI.getSessions(profile.organization_id);
-      return sessions.length > 0;
+      const response = await whatsappAPI.getSessions(profile.organization_id);
+      return response.data.length > 0;
     },
     enabled: !!profile?.id && !!profile?.organization_id,
     staleTime: 1000 * 60 * 2,

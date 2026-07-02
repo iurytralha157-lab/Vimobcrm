@@ -366,6 +366,9 @@ func (request CreateRequest) Validate() (createInput, error) {
 	if !validEnum(input.DealStatus, "open", "won", "lost") {
 		return createInput{}, fmt.Errorf("%w: dealStatus is invalid", ErrInvalidInput)
 	}
+	if input.DealStatus == "lost" && input.LostReason == nil {
+		return createInput{}, fmt.Errorf("%w: lostReason is required when dealStatus is lost", ErrInvalidInput)
+	}
 
 	if input.Email != nil {
 		if _, err := mail.ParseAddress(*input.Email); err != nil {

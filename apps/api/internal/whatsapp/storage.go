@@ -16,8 +16,15 @@ import (
 var ErrStorageNotConfigured = errors.New("whatsapp storage is not configured")
 
 type StorageConfig struct {
-	ProjectURL string
+	ProjectURL  string
+	APIKey      string
+	EvolutionGo EvolutionGoConfig
+}
+
+type EvolutionGoConfig struct {
+	APIURL     string
 	APIKey     string
+	WebhookURL string
 }
 
 type storageClient struct {

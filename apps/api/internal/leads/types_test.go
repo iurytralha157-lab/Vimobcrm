@@ -2,6 +2,7 @@ package leads
 
 import (
 	"encoding/json"
+	"errors"
 	"net/url"
 	"testing"
 
@@ -83,6 +84,7 @@ func TestCreateRequestRejectsInvalidValues(t *testing.T) {
 		{Name: "Ana", PipelineID: "not-a-uuid"},
 		{Name: "Ana", InterestValue: &invalidInterestValue},
 		{Name: "Ana", DealStatus: "archived"},
+		{Name: "Ana", DealStatus: "lost"},
 		{Name: "Ana", TagIDs: []string{"not-a-uuid"}},
 	}
 
@@ -145,6 +147,70 @@ func TestUpdateRequestRejectsInvalidValues(t *testing.T) {
 		if _, err := request.Validate(); err == nil {
 			t.Fatalf("Validate(%s) expected error", payload)
 		}
+	}
+}
+
+func TestValidateLostReasonContractAllowsExistingLostLeadUpdatesWithoutReason(t *testing.T) {
+	status := "lost"
+	stageID := "11111111-1111-1111-1111-111111111111"
+	input := updateInput{
+		DealStatus: patchString{Set: true, Value: &status},
+		LostReason: patchString{Set: true, Value: nil},
+		StageID:    patchString{Set: true, Value: &stageID},
+	}
+	current := leadSnapshot{
+		DealStatus: "lost",
+		LostReason: "",
+	}
+
+	if err := validateLostReasonContract(current, input); err != nil {
+		t.Fatalf("validateLostReasonContract() returned error: %v", err)
+	}
+}
+
+func TestValidateLostReasonContractRequiresReasonWhenMovingToLost(t *testing.T) {
+	status := "lost"
+	input := updateInput{
+		DealStatus: patchString{Set: true, Value: &status},
+	}
+	current := leadSnapshot{
+		DealStatus: "open",
+	}
+
+	if err := validateLostReasonContract(current, input); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("validateLostReasonContract() error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestValidateLostReasonContractRejectsClearingLostReason(t *testing.T) {
+	reason := " "
+	input := updateInput{
+		LostReason: patchString{Set: true, Value: &reason},
+	}
+	current := leadSnapshot{
+		DealStatus: "lost",
+		LostReason: "Nao respondeu",
+	}
+
+	if err := validateLostReasonContract(current, input); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("validateLostReasonContract() error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestStoragePathFromPublicURL(t *testing.T) {
+	publicURL := "https://example.supabase.co/storage/v1/object/public/whatsapp-media/orgs/org-1/leads/lead-1/docs/70.png"
+	if got := storagePathFromPublicURL(publicURL, "70.png"); got != "orgs/org-1/leads/lead-1/docs/70.png" {
+		t.Fatalf("storagePathFromPublicURL(public) = %q", got)
+	}
+
+	signedURL := "https://example.supabase.co/storage/v1/object/sign/whatsapp-media/orgs/org-1/leads/lead-1/docs/70.png?token=abc"
+	if got := storagePathFromPublicURL(signedURL, "70.png"); got != "orgs/org-1/leads/lead-1/docs/70.png" {
+		t.Fatalf("storagePathFromPublicURL(signed) = %q", got)
+	}
+
+	externalURL := "https://cdn.example.com/files/70.png"
+	if got := storagePathFromPublicURL(externalURL, "70.png"); got != "" {
+		t.Fatalf("storagePathFromPublicURL(external) = %q, want empty", got)
 	}
 }
 

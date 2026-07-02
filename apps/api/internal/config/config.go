@@ -24,6 +24,8 @@ type Config struct {
 	Storage     StorageConfig
 	Email       EmailConfig
 	AI          AIConfig
+	EvolutionGo EvolutionGoConfig
+	Meta        MetaConfig
 }
 
 type HTTPConfig struct {
@@ -39,6 +41,19 @@ type HTTPConfig struct {
 type StorageConfig struct {
 	ProjectURL string
 	APIKey     string
+}
+
+type EvolutionGoConfig struct {
+	APIURL     string
+	APIKey     string
+	WebhookURL string
+}
+
+type MetaConfig struct {
+	AppSecret          string
+	WebhookVerifyToken string
+	GraphVersion       string
+	GraphBaseURL       string
 }
 
 type EmailConfig struct {
@@ -112,6 +127,17 @@ func Load() (Config, error) {
 			RealtimeModel:  getEnv("OPENAI_REALTIME_MODEL", "gpt-realtime-2"),
 			RealtimeVoice:  getEnv("OPENAI_REALTIME_VOICE", "cedar"),
 			AutoReplyToken: getEnv("AI_AUTOREPLY_TOKEN", os.Getenv("INTERNAL_WEBHOOK_TOKEN")),
+		},
+		EvolutionGo: EvolutionGoConfig{
+			APIURL:     strings.TrimRight(getEnv("EVOLUTION_GO_API_URL", ""), "/"),
+			APIKey:     os.Getenv("EVOLUTION_GO_API_KEY"),
+			WebhookURL: strings.TrimRight(getEnv("EVOLUTION_GO_WEBHOOK_URL", ""), "/"),
+		},
+		Meta: MetaConfig{
+			AppSecret:          os.Getenv("META_APP_SECRET"),
+			WebhookVerifyToken: os.Getenv("META_WEBHOOK_VERIFY_TOKEN"),
+			GraphVersion:       getEnv("META_GRAPH_VERSION", "v25.0"),
+			GraphBaseURL:       strings.TrimRight(getEnv("META_GRAPH_BASE_URL", "https://graph.facebook.com"), "/"),
 		},
 	}
 
@@ -208,6 +234,22 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.Storage.APIKey == "" {
 		validationErrors = append(validationErrors, errors.New("SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY is required for storage uploads"))
+	}
+
+	if cfg.EvolutionGo.APIURL != "" {
+		if _, err := url.ParseRequestURI(cfg.EvolutionGo.APIURL); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("EVOLUTION_GO_API_URL is invalid: %w", err))
+		}
+	}
+	if cfg.EvolutionGo.WebhookURL != "" {
+		if _, err := url.ParseRequestURI(cfg.EvolutionGo.WebhookURL); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("EVOLUTION_GO_WEBHOOK_URL is invalid: %w", err))
+		}
+	}
+	if cfg.Meta.GraphBaseURL != "" {
+		if _, err := url.ParseRequestURI(cfg.Meta.GraphBaseURL); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("META_GRAPH_BASE_URL is invalid: %w", err))
+		}
 	}
 
 	if cfg.Environment == "production" {

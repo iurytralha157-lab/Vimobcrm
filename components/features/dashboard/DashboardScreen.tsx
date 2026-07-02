@@ -16,7 +16,9 @@ import {
   CircleDot,
   XCircle,
   Trophy,
+  PieChart as PieChartIcon,
 } from "lucide-react";
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
 
 import { performanceTracker } from "@/lib/performance";
 import { cn } from "@/lib/utils";
@@ -80,6 +82,7 @@ export default function Dashboard() {
   const isMobile = useIsMobile();
   const router = useRouter();
   const [mobileChartTab, setMobileChartTab] = useState("funnel");
+  const [lostDialogOpen, setLostDialogOpen] = useState(false);
   const [wonDialogOpen, setWonDialogOpen] = useState(false);
   const { organization } = useAuth();
 
@@ -172,6 +175,8 @@ export default function Dashboard() {
     wonAverageConversionDays: null,
     wonConversionBuckets: [],
     wonDeals: [],
+    lostReasonBuckets: [],
+    lostDeals: [],
     avgResponseTime: "--",
     totalSalesValue: 0,
     pendingCommissions: 0,
@@ -246,6 +251,7 @@ export default function Dashboard() {
                 siteVisits={siteVisits}
                 scheduledVisits={scheduledVisitsCount}
                 layout="top"
+                onLostClick={() => setLostDialogOpen(true)}
                 onWonClick={() => setWonDialogOpen(true)}
               />
             </div>
@@ -277,6 +283,7 @@ export default function Dashboard() {
             scheduledVisits={scheduledVisitsCount}
             propertyCount={propertyCount}
             siteVisits={siteVisits}
+            onLostClick={() => setLostDialogOpen(true)}
             onWonClick={() => setWonDialogOpen(true)}
           />
 
@@ -317,6 +324,17 @@ export default function Dashboard() {
           </Tabs>
         </div>
       </div>
+
+      <LostDealsDialog
+        open={lostDialogOpen}
+        onOpenChange={setLostDialogOpen}
+        data={kpiData}
+        periodLabel={periodLabel}
+        onViewLead={(leadId) => {
+          setLostDialogOpen(false);
+          router.push(`/crm/pipelines?lead=${leadId}`);
+        }}
+      />
 
       <WonDealsDialog
         open={wonDialogOpen}
@@ -360,6 +378,7 @@ interface KPICardsGridProps {
   siteVisits?: number;
   scheduledVisits?: number;
   layout?: "top" | "side";
+  onLostClick?: () => void;
   onWonClick?: () => void;
 }
 
@@ -371,6 +390,7 @@ function KPICardsGrid({
   siteVisits,
   scheduledVisits,
   layout = "top",
+  onLostClick,
   onWonClick,
 }: KPICardsGridProps) {
   if (isLoading) {
@@ -445,6 +465,8 @@ function KPICardsGrid({
       tooltip: `Percentual de leads perdidos dentro do total do período - ${periodLabel}`,
       format: "number",
       color: "destructive",
+      onClick: onLostClick,
+      interactive: Boolean(onLostClick),
       tourTarget: "dashboard-kpi-lost",
     },
     {
@@ -651,6 +673,234 @@ function formatConversionDays(days: number | null): string {
   if (days < 30) return `${days} dias`;
   const months = Math.round(days / 30);
   return months === 1 ? "1 mês" : `${months} meses`;
+}
+
+type LostReasonChartPoint = {
+  key: string;
+  label: string;
+  count: number;
+  percentage: number;
+  color: string;
+};
+
+type LostReasonTooltipEntry = {
+  value?: string | number;
+  color?: string;
+  fill?: string;
+  payload?: Partial<LostReasonChartPoint>;
+};
+
+function LostReasonTooltip({ active, payload }: { active?: boolean; payload?: LostReasonTooltipEntry[] }) {
+  if (!active || !payload?.length) return null;
+
+  const entry = payload[0];
+  const point = entry.payload;
+  const count = Number(entry.value || point?.count || 0);
+  const leadLabel = count === 1 ? "lead" : "leads";
+
+  return (
+    <div className="min-w-[160px] rounded-xl border-0 bg-[var(--app-surface-solid)] px-3 py-2.5 text-[var(--app-text-primary)] shadow-[0_8px_20px_rgba(0,0,0,0.22)]">
+      <div className="mb-1 flex items-center gap-2">
+        <span
+          className="h-2.5 w-2.5 rounded-full ring-2 ring-[var(--app-surface-solid)]"
+          style={{ backgroundColor: point?.color || entry.color || entry.fill }}
+        />
+        <span className="truncate text-xs font-semibold text-foreground">{point?.label || "Motivo"}</span>
+      </div>
+      <div className="flex items-end justify-between gap-4">
+        <span className="text-[11px] text-muted-foreground">
+          {count} {leadLabel}
+        </span>
+        <span className="rounded-full bg-white/[0.055] px-2 py-0.5 text-[11px] font-bold tabular-nums text-foreground">
+          {formatKPIValue(point?.percentage || 0, "percent")}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function LostDealsDialog({
+  open,
+  onOpenChange,
+  data,
+  periodLabel,
+  onViewLead,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  data: EnhancedDashboardStats;
+  periodLabel: string;
+  onViewLead: (leadId: string) => void;
+}) {
+  const lostDeals = data.lostDeals || [];
+  const reasonBuckets = (data.lostReasonBuckets || []).filter((bucket) => bucket.count > 0);
+  const totalLost = data.lostLeads || lostDeals.length;
+  const topReason = reasonBuckets[0];
+  const otherBucket = reasonBuckets.find((bucket) => bucket.key === "outros");
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="app-card max-h-[80vh] w-[92vw] max-w-[80vw] overflow-hidden p-0 shadow-2xl backdrop-blur-xl sm:rounded-xl">
+        <DialogHeader className="px-5 pb-3 pt-5">
+          <DialogTitle className="flex items-center gap-2 text-base font-semibold">
+            <XCircle className="h-5 w-5 text-destructive" />
+            Perdidos - Motivos de Perda
+          </DialogTitle>
+          <DialogDescription>
+            {totalLost} perdidos em {periodLabel.toLowerCase()}
+            {topReason ? ` | principal motivo: ${topReason.label}` : ""}
+          </DialogDescription>
+        </DialogHeader>
+
+        <ScrollArea className="max-h-[calc(80vh-92px)]">
+          <div className="space-y-5 px-5 pb-5">
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="app-card-soft p-3">
+                <p className="text-xs text-muted-foreground">Perdidos</p>
+                <p className="mt-1 text-2xl font-bold text-destructive">{totalLost}</p>
+              </div>
+              <div className="app-card-soft p-3">
+                <p className="text-xs text-muted-foreground">Motivos</p>
+                <p className="mt-1 text-2xl font-bold">{reasonBuckets.length}</p>
+              </div>
+              <div className="app-card-soft p-3">
+                <p className="text-xs text-muted-foreground">Principal motivo</p>
+                <p className="mt-1 truncate text-xl font-bold">{topReason?.label || "--"}</p>
+              </div>
+              <div className="app-card-soft p-3">
+                <p className="text-xs text-muted-foreground">Outros</p>
+                <p className="mt-1 text-2xl font-bold">{otherBucket?.count || 0}</p>
+              </div>
+            </div>
+
+            <div className="app-card-soft p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold">Distribuição dos motivos</h3>
+                  <p className="text-xs text-muted-foreground">Maiores causas de perda no período filtrado.</p>
+                </div>
+                <PieChartIcon className="h-4 w-4 text-destructive" />
+              </div>
+
+              {reasonBuckets.length === 0 ? (
+                <div className="rounded-lg bg-white/[0.035] p-4 text-center text-sm text-muted-foreground">
+                  Nenhuma perda registrada nesse período.
+                </div>
+              ) : (
+                <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
+                  <div className="dashboard-recharts-focusless relative mx-auto h-[240px] w-full max-w-[280px]">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+                      <PieChart>
+                        <Pie
+                          data={reasonBuckets}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius="58%"
+                          outerRadius="92%"
+                          paddingAngle={3}
+                          dataKey="count"
+                          nameKey="label"
+                          stroke="transparent"
+                          strokeWidth={0}
+                        >
+                          {reasonBuckets.map((entry) => (
+                            <Cell key={entry.key} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <RechartsTooltip
+                          content={<LostReasonTooltip />}
+                          cursor={false}
+                          wrapperStyle={{ zIndex: 30, pointerEvents: "none" }}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                      <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground/70">Perdas</span>
+                      <span className="text-4xl font-black leading-tight text-foreground">{totalLost}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    {reasonBuckets.map((bucket) => (
+                      <div key={bucket.key} className="grid grid-cols-[1fr_58px_64px] items-center gap-3 text-xs">
+                        <div className="min-w-0">
+                          <div className="mb-1 flex items-center gap-2">
+                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: bucket.color }} />
+                            <span className="truncate font-semibold">{bucket.label}</span>
+                          </div>
+                          <div className="h-2 overflow-hidden rounded-full bg-white/[0.045]">
+                            <div
+                              className="h-full rounded-full transition-all"
+                              style={{ width: `${Math.max(4, Math.min(100, bucket.percentage || 0))}%`, backgroundColor: bucket.color }}
+                            />
+                          </div>
+                        </div>
+                        <span className="text-right font-semibold">{bucket.count}</span>
+                        <span className="text-right font-semibold" style={{ color: bucket.color }}>
+                          {formatKPIValue(bucket.percentage || 0, "percent")}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="app-card-soft p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-sm font-semibold">Perdidos do período</h3>
+                <span className="text-xs text-muted-foreground">{lostDeals.length} registros</span>
+              </div>
+
+              {lostDeals.length === 0 ? (
+                <div className="rounded-lg bg-white/[0.035] p-4 text-center text-sm text-muted-foreground">
+                  Nenhum lead perdido nesse período.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {lostDeals.map((deal) => (
+                    <div
+                      key={deal.id}
+                      className="grid gap-2 rounded-lg bg-white/[0.035] p-3 text-sm transition-colors hover:bg-white/[0.055] md:grid-cols-[1.1fr_1fr_0.8fr_0.7fr_auto] md:items-center"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold">{deal.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {sourceLabels[deal.source || ""] || deal.source || "Origem não informada"}
+                        </p>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs text-muted-foreground">Motivo</p>
+                        <p className="truncate font-medium text-destructive">{deal.lostReasonGroup}</p>
+                        <p className="truncate text-xs text-muted-foreground">{deal.lostReason}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Responsável</p>
+                        <p className="truncate font-medium">{deal.assignedUserName}</p>
+                      </div>
+                      <div className="md:text-right">
+                        <p className="text-xs text-muted-foreground">Entrada / perda</p>
+                        <p className="font-medium">{formatDateTime(deal.createdAt)}</p>
+                        <p className="text-xs text-destructive">{formatDateTime(deal.lostAt)}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onViewLead(deal.id)}
+                        className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        Visualizar
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function WonDealsDialog({

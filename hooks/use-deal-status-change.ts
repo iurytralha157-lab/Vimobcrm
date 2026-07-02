@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { leadsAPI } from '@/lib/api/leads';
 import { useCreateCommissionOnWon, useCreateReceivableOnWon } from './use-create-commission';
 import { notifyLeadWon } from './use-lead-notifications';
+import { lostReasonSchema } from '@/lib/validation';
 
 interface ChangeDealStatusParams {
   leadId: string;
@@ -26,10 +27,13 @@ export function useDealStatusChange() {
   return useMutation({
     mutationFn: async (params: ChangeDealStatusParams) => {
       const { leadId, newStatus, lostReason } = params;
+      const validatedLostReason = newStatus === 'lost'
+        ? lostReasonSchema.parse(lostReason || '')
+        : null;
 
       const updateData: TablesUpdate<'leads'> = {
         deal_status: newStatus,
-        lost_reason: newStatus === 'lost' ? lostReason || '' : null,
+        lost_reason: validatedLostReason,
       };
 
       const { data: lead, error } = await leadsAPI.updateLead(leadId, updateData, params.organizationId);
@@ -106,7 +110,7 @@ export function useDealStatusChange() {
     },
     onError: (error) => {
       console.error('Error changing deal status:', error);
-      toast.error('Erro ao alterar status do negocio');
+      toast.error(error instanceof Error ? error.message : 'Erro ao alterar status do negocio');
     },
   });
 }

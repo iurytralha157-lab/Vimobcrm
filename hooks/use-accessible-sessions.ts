@@ -13,14 +13,17 @@ export function useAccessibleSessions() {
         return [];
       }
 
-      const sessions = (await whatsappAPI.getSessions(profile.organization_id)) as WhatsAppSession[];
+      const response = await whatsappAPI.getSessions(profile.organization_id);
+      const sessions = response.data as WhatsAppSession[];
       return sessions.sort((a, b) =>
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
       );
     },
     enabled: !!profile?.id && !!profile?.organization_id,
-    staleTime: 1000 * 60 * 2,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+    staleTime: 5_000,
     retry: false,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
   });
 }

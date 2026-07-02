@@ -24,16 +24,16 @@ interface MessageBoxProps {
   compact?: boolean;
 }
 
-const FileUploadIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 337 337" className="w-full h-full">
+const FileUploadIcon = ({ className }: { className?: string }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 337 337" className={cn("h-5 w-5", className)}>
     <circle strokeWidth="20" stroke="currentColor" fill="none" r="158.5" cy="168.5" cx="168.5" />
     <path strokeLinecap="round" strokeWidth="25" stroke="currentColor" d="M167.759 79V259" />
     <path strokeLinecap="round" strokeWidth="25" stroke="currentColor" d="M79 167.138H259" />
   </svg>
 );
 
-const SendIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 664 663" className="w-full h-full">
+const SendIcon = ({ className }: { className?: string }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 664 663" className={cn("h-5 w-5", className)}>
     <path
       strokeLinejoin="round"
       strokeLinecap="round"
@@ -80,9 +80,18 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
     const showSendButton = value.trim() || !showRightActionsWhenEmpty || !rightActions;
 
     return (
-      <div ref={ref} className={cn("message-box", compact && "message-box--compact", className)}>
+      <div
+        ref={ref}
+        className={cn(
+          "flex min-h-[48px] w-full items-end gap-2 rounded-[8px] bg-[rgb(15_23_42/0.065)] px-2 py-2 text-sm shadow-none transition-colors focus-within:bg-[rgb(15_23_42/0.085)]",
+          "dark:bg-[#242424] dark:focus-within:bg-[#292929]",
+          compact && "min-h-[40px] px-1.5 py-1.5",
+          disabled && "opacity-70",
+          className
+        )}
+      >
         {leftActions && (
-          <div className="message-box__left-actions">
+          <div className="flex h-9 shrink-0 items-center gap-1 [&_button]:inline-flex [&_button]:h-9 [&_button]:w-9 [&_button]:items-center [&_button]:justify-center [&_button]:rounded-[6px] [&_button]:text-muted-foreground [&_button]:transition-colors [&_button]:hover:bg-white/5 [&_button]:disabled:pointer-events-none [&_button]:disabled:opacity-40">
             {leftActions}
           </div>
         )}
@@ -90,7 +99,6 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
         {multiline ? (
           <textarea
             ref={inputRef as React.Ref<HTMLTextAreaElement>}
-            required
             placeholder={placeholder}
             value={value}
             onChange={(e) => {
@@ -100,40 +108,48 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
             }}
             onKeyDown={handleKeyDown}
             disabled={disabled}
-            className="message-box__input message-box__textarea"
+            className={cn(
+              "min-h-8 max-h-40 flex-1 resize-none bg-transparent px-1 py-1.5 text-sm font-light leading-5 text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed",
+              compact && "py-1 text-xs"
+            )}
             rows={1}
             autoComplete="off"
           />
         ) : (
           <input
             ref={inputRef as React.Ref<HTMLInputElement>}
-            required
             placeholder={placeholder}
             type="text"
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={disabled}
-            className="message-box__input"
+            className={cn(
+              "h-8 flex-1 bg-transparent px-1 text-sm font-light text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed",
+              compact && "text-xs"
+            )}
             autoComplete="off"
           />
         )}
 
         {showSendButton ? (
           <button
-            className="message-box__send"
+            className={cn(
+              "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[7px] bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-45",
+              compact && "h-8 w-8"
+            )}
             onClick={onSend}
             disabled={!value.trim() || disabled || isSending}
             type="button"
           >
             {isSending ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <SendIcon />
+              <SendIcon className="h-4 w-4" />
             )}
           </button>
         ) : (
-          <div className="message-box__right-actions">
+          <div className="flex h-9 shrink-0 items-center gap-1 [&_button]:inline-flex [&_button]:h-9 [&_button]:w-9 [&_button]:items-center [&_button]:justify-center [&_button]:rounded-[6px] [&_button]:text-muted-foreground [&_button]:transition-colors [&_button]:hover:bg-white/5 [&_button]:disabled:pointer-events-none [&_button]:disabled:opacity-40">
             {rightActions}
           </div>
         )}

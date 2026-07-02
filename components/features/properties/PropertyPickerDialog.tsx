@@ -98,8 +98,8 @@ export function PropertyPickerDialog({ properties, selectedPropertyId, onSelect,
         <div onClick={handleOpen}>{trigger}</div>
       ) : (
         <Button
-          variant="outline"
-          className="w-full h-10 text-xs justify-between px-3 rounded-xl"
+          variant="ghost"
+          className="h-10 w-full justify-between rounded-[8px] border-0 bg-zinc-100 px-3 text-xs text-zinc-700 shadow-none hover:bg-zinc-200 dark:bg-white/[0.06] dark:text-zinc-200 dark:hover:bg-white/[0.09]"
           onClick={handleOpen}
         >
           <div className="flex items-center gap-2 min-w-0">

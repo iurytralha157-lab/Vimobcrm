@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
@@ -36,8 +37,13 @@ func (handler Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		writeWhatsAppError(w, r, err)
 		return
 	}
+	quota, err := handler.repo.GetSessionQuota(r.Context(), tenantContext.OrganizationID)
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
 
-	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]Session]{Data: sessions})
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]Session]{Data: sessions, Meta: quota})
 }
 
 func (handler Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
@@ -186,6 +192,30 @@ func (handler Handler) ToggleNotificationSession(w http.ResponseWriter, r *http.
 	handler.publishWhatsAppEvent(tenantContext, "whatsapp.session.updated", "", nil, map[string]any{
 		"sessionId":             r.PathValue("id"),
 		"notificationSessionOn": request.Enabled,
+	})
+	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (handler Handler) ToggleAutoReplySession(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := requireTenant(w, r)
+	if !ok {
+		return
+	}
+
+	var request ToggleAutoReplyRequest
+	if !decodeWhatsAppJSON(w, r, &request, 1<<16) {
+		return
+	}
+
+	if err := handler.repo.ToggleAutoReplySession(r.Context(), tenantContext, r.PathValue("id"), request.Enabled); err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+
+	handler.publishWhatsAppEvent(tenantContext, "whatsapp.session.updated", "", nil, map[string]any{
+		"sessionId":     r.PathValue("id"),
+		"autoReplyOn":   request.Enabled,
+		"autoReplyType": "ai",
 	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -859,6 +889,11 @@ func writeWhatsAppError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	default:
+		slog.Error("whatsapp operation failed",
+			"error", err,
+			"request_id", httpserver.RequestIDFromContext(r.Context()),
+			"path", r.URL.Path,
+		)
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "whatsapp_operation_failed", "Unable to complete WhatsApp operation.")
 	}
 }

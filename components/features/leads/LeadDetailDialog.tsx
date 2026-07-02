@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, type ReactNode } from 'react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { ExternalLink } from 'lucide-react';
 import { PropertyPickerDialog } from '@/components/features/properties/PropertyPickerDialog';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AnimatedTabNav } from '@/components/ui/animated-tab-nav';
@@ -25,7 +25,7 @@ import {
   Briefcase, MapPin, DollarSign, Clock, ChevronRight, Calendar, Target,
   Lightbulb, FileEdit, Zap, Bot, Check, Activity, ListTodo, Contact,
   Handshake, History, ChevronDown, Trophy, XCircle, CircleDot, UserCheck,
-  RotateCcw, FileText, Download, Paperclip, BarChart3
+  RotateCcw, FileText, Download, Paperclip, BarChart3, Info, Eye, ExternalLink
 } from 'lucide-react';
 import {
   Command,
@@ -50,8 +50,8 @@ import type { User as AppUser } from '@/hooks/use-users';
 import type { PipelineLead } from '@/hooks/use-stages';
 import { useProperties } from '@/hooks/use-properties';
 import { useScheduleEvents, ScheduleEvent, EventType } from '@/hooks/use-schedule-events';
-import { useLeadMeta } from '@/hooks/use-lead-meta';
-import { useLeadAttachments, useUploadLeadAttachment } from '@/hooks/use-lead-attachments';
+import { useLeadMeta, type LeadMeta } from '@/hooks/use-lead-meta';
+import { useLeadAttachments, useUploadLeadAttachment, type LeadAttachment } from '@/hooks/use-lead-attachments';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useFloatingChat } from '@/contexts/FloatingChatContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -63,6 +63,7 @@ import { LeadMessagesTab } from '@/components/features/leads/LeadMessagesTab';
 import { LeadUnifiedThread } from '@/components/features/leads/LeadUnifiedThread';
 import { ReentryBadge } from '@/components/features/leads/ReentryBadge';
 import { LostReasonDialog } from '@/components/features/leads/LostReasonDialog';
+import { LeadAttachmentViewer } from '@/components/features/leads/LeadAttachmentViewer';
 import { SdrDistributionButton } from '@/components/features/leads/SdrDistributionButton';
 
 import { TaskOutcomeDialog, TaskOutcome } from '@/components/features/leads/TaskOutcomeDialog';
@@ -83,14 +84,18 @@ import { leadsAPI } from '@/lib/api/leads';
 import { teamsAPI } from '@/lib/api/teams';
 const sourceLabels: Record<string, string> = {
   meta: 'Meta Ads',
+  meta_ads: 'Meta Ads',
   site: 'Site',
+  website: 'Site',
   manual: 'Manual',
   facebook: 'Facebook',
   instagram: 'Instagram',
   import: 'Importação',
   google: 'Google Ads',
+  google_ads: 'Google Ads',
   indicacao: 'Indicação',
   whatsapp: 'WhatsApp',
+  webhook: 'Webhook',
   outros: 'Outros'
 };
 const sourceIcons: Record<string, typeof MessageCircle> = {
@@ -155,6 +160,11 @@ type LeadDetailLead = Omit<PipelineLead, 'stage' | 'assignee' | 'tags'> & Omit<P
   tags?: LeadDetailTag[];
 };
 
+type CampaignTrackingDetails = Omit<Partial<LeadMeta>, 'lead_id' | 'created_at'> & {
+  lead_id?: string | null;
+  created_at?: string | null;
+};
+
 type PipelineCacheStage = LeadDetailStage & {
   leads?: LeadDetailLead[];
   total_lead_count?: number | null;
@@ -204,16 +214,245 @@ function InfoLine({ label, value, icon }: { label: string; value: ReactNode; ico
   );
 }
 
+function metaText(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function firstTrackingText(...values: unknown[]) {
+  for (const value of values) {
+    const text = metaText(value);
+    if (text) return text;
+  }
+
+  return null;
+}
+
+function normalizeTrackingKey(value: unknown) {
+  return metaText(value)?.toLowerCase().replace(/[\s-]+/g, '_') || '';
+}
+
+function isTrackedLeadSource(value: unknown) {
+  return ['meta', 'meta_ads', 'facebook', 'instagram', 'google', 'google_ads'].includes(
+    normalizeTrackingKey(value),
+  );
+}
+
+function trackingSourceLabel(value: unknown) {
+  const key = normalizeTrackingKey(value);
+  return sourceLabels[key] || metaText(value);
+}
+
+function buildCampaignTrackingDetails(
+  leadMeta: LeadMeta | null | undefined,
+  lead: LeadDetailLead | null | undefined,
+): CampaignTrackingDetails | null {
+  if (!lead && !leadMeta) return null;
+
+  const boardMeta = Array.isArray(lead?.lead_meta)
+    ? lead.lead_meta.find((meta) => (
+      metaText(meta?.campaign_name) ||
+      metaText(meta?.campaign_id) ||
+      metaText(meta?.adset_name) ||
+      metaText(meta?.adset_id) ||
+      metaText(meta?.ad_name) ||
+      metaText(meta?.ad_id) ||
+      metaText(meta?.platform)
+    ))
+    : null;
+
+  const source = metaText(lead?.source);
+  const inferredPlatform = isTrackedLeadSource(source) ? normalizeTrackingKey(source) : null;
+
+  const details: CampaignTrackingDetails = {
+    lead_id: firstTrackingText(leadMeta?.lead_id, lead?.id),
+    campaign_name: firstTrackingText(leadMeta?.campaign_name, boardMeta?.campaign_name),
+    campaign_id: firstTrackingText(leadMeta?.campaign_id, boardMeta?.campaign_id, lead?.meta_campaign_id),
+    adset_name: firstTrackingText(leadMeta?.adset_name, boardMeta?.adset_name),
+    adset_id: firstTrackingText(leadMeta?.adset_id, boardMeta?.adset_id, lead?.meta_adset_id),
+    ad_name: firstTrackingText(leadMeta?.ad_name, boardMeta?.ad_name),
+    ad_id: firstTrackingText(leadMeta?.ad_id, boardMeta?.ad_id, lead?.meta_ad_id),
+    form_name: firstTrackingText(leadMeta?.form_name),
+    form_id: firstTrackingText(leadMeta?.form_id, lead?.meta_form_id),
+    page_id: firstTrackingText(leadMeta?.page_id),
+    platform: firstTrackingText(leadMeta?.platform, boardMeta?.platform, inferredPlatform),
+    source_type: firstTrackingText(leadMeta?.source_type, source),
+    created_at: firstTrackingText(leadMeta?.created_at, lead?.created_at),
+    utm_source: firstTrackingText(leadMeta?.utm_source, lead?.utm_source),
+    utm_medium: firstTrackingText(leadMeta?.utm_medium, lead?.utm_medium),
+    utm_campaign: firstTrackingText(leadMeta?.utm_campaign, lead?.utm_campaign),
+    utm_content: firstTrackingText(leadMeta?.utm_content, lead?.utm_content),
+    utm_term: firstTrackingText(leadMeta?.utm_term, lead?.utm_term),
+    contact_notes: firstTrackingText(leadMeta?.contact_notes),
+    creative_url: firstTrackingText(leadMeta?.creative_url),
+    creative_video_url: firstTrackingText(leadMeta?.creative_video_url),
+    creative_instagram_url: firstTrackingText(leadMeta?.creative_instagram_url),
+  };
+
+  return hasLeadTrackingData(details) ? details : null;
+}
+
+function hasLeadTrackingData(leadMeta: CampaignTrackingDetails | null | undefined) {
+  if (!leadMeta) return false;
+
+  return [
+    leadMeta.campaign_name,
+    leadMeta.campaign_id,
+    leadMeta.adset_name,
+    leadMeta.adset_id,
+    leadMeta.ad_name,
+    leadMeta.ad_id,
+    leadMeta.form_name,
+    leadMeta.form_id,
+    leadMeta.page_id,
+    leadMeta.utm_source,
+    leadMeta.utm_medium,
+    leadMeta.utm_campaign,
+    leadMeta.utm_content,
+    leadMeta.utm_term,
+    leadMeta.creative_url,
+    leadMeta.creative_video_url,
+    leadMeta.creative_instagram_url,
+    leadMeta.contact_notes,
+  ].some((value) => Boolean(metaText(value))) || isTrackedLeadSource(leadMeta.platform) || isTrackedLeadSource(leadMeta.source_type);
+}
+
+function CampaignTrackingHover({ leadMeta }: { leadMeta: CampaignTrackingDetails | null | undefined }) {
+  if (!hasLeadTrackingData(leadMeta)) return null;
+
+  const sourceLabel = trackingSourceLabel(leadMeta?.platform) || trackingSourceLabel(leadMeta?.source_type);
+  const displayName =
+    metaText(leadMeta?.campaign_name) ||
+    metaText(leadMeta?.utm_campaign) ||
+    metaText(leadMeta?.ad_name) ||
+    metaText(leadMeta?.form_name) ||
+    sourceLabel ||
+    'Campanha registrada';
+
+  const mainRows = [
+    ['Campanha', metaText(leadMeta?.campaign_name) || metaText(leadMeta?.utm_campaign)],
+    ['Conjunto', leadMeta?.adset_name],
+    ['Anuncio', leadMeta?.ad_name],
+    ['Formulario', leadMeta?.form_name],
+    ['Plataforma', trackingSourceLabel(leadMeta?.platform) || leadMeta?.platform],
+    ['Origem', trackingSourceLabel(leadMeta?.source_type) || leadMeta?.utm_source],
+    ['Capturado em', leadMeta?.created_at ? format(new Date(leadMeta.created_at), "dd/MM/yyyy 'as' HH:mm", { locale: ptBR }) : null],
+  ] as const;
+
+  const utmRows = [
+    ['utm_source', leadMeta?.utm_source],
+    ['utm_medium', leadMeta?.utm_medium],
+    ['utm_campaign', leadMeta?.utm_campaign],
+    ['utm_content', leadMeta?.utm_content],
+    ['utm_term', leadMeta?.utm_term],
+  ] as const;
+
+  const links = [
+    ['Criativo', leadMeta?.creative_url],
+    ['Video', leadMeta?.creative_video_url],
+    ['Instagram', leadMeta?.creative_instagram_url],
+  ] as const;
+
+  const DetailRow = ({ label, value }: { label: string; value: unknown }) => {
+    const text = metaText(value);
+    if (!text) return null;
+
+    return (
+      <div className="grid grid-cols-[100px_minmax(0,1fr)] gap-2 text-[11px] leading-snug text-left">
+        <span className="text-[var(--app-text-tertiary)]">{label}</span>
+        <span className="break-words font-medium text-[var(--app-text-primary)] text-left">{text}</span>
+      </div>
+    );
+  };
+
+  const hasUtms = utmRows.some(([, value]) => Boolean(metaText(value)));
+  const hasLinks = links.some(([, value]) => Boolean(metaText(value)));
+
+  return (
+    <HoverCard openDelay={100} closeDelay={120}>
+      <HoverCardTrigger asChild>
+        <button
+          type="button"
+          className="group inline-flex min-w-0 max-w-full items-center justify-end gap-1 text-right font-medium text-[var(--app-text-primary)] outline-none transition-colors hover:text-primary focus-visible:text-primary"
+        >
+          <span className="truncate underline decoration-dotted decoration-[var(--app-text-tertiary)] underline-offset-4 group-hover:decoration-primary group-focus-visible:decoration-primary">
+            {displayName}
+          </span>
+          <Info className="h-3 w-3 shrink-0 text-[var(--app-text-tertiary)] transition-colors group-hover:text-primary group-focus-visible:text-primary" />
+        </button>
+      </HoverCardTrigger>
+      <HoverCardContent
+        side="left"
+        align="end"
+        sideOffset={8}
+        className="vimob-popover-content z-[100] w-[min(420px,calc(100vw-2rem))] rounded-[8px] border-0 p-0 text-[var(--app-text-primary)] shadow-2xl text-left"
+      >
+        <div className="border-b border-[var(--app-border)] px-3 py-2 text-left">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-primary">Rastreamento de Campanha</p>
+        </div>
+
+        <div className="max-h-[420px] space-y-3 overflow-y-auto p-3 text-left">
+          <div className="space-y-1.5">
+            {mainRows.map(([label, value]) => (
+              <DetailRow key={label} label={label} value={value} />
+            ))}
+          </div>
+
+          {hasUtms && (
+            <div className="space-y-1.5 border-t border-[var(--app-border)] pt-3 text-left">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--app-text-tertiary)]">UTMs</p>
+              {utmRows.map(([label, value]) => (
+                <DetailRow key={label} label={label} value={value} />
+              ))}
+            </div>
+          )}
+
+          {leadMeta?.contact_notes && (
+            <div className="border-t border-[var(--app-border)] pt-3 text-left">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--app-text-tertiary)]">Observações</p>
+              <p className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-snug text-[var(--app-text-secondary)]">
+                {leadMeta.contact_notes}
+              </p>
+            </div>
+          )}
+
+          {hasLinks && (
+            <div className="flex flex-wrap gap-2 border-t border-[var(--app-border)] pt-3 text-left">
+              {links.map(([label, value]) => {
+                const href = metaText(value);
+                if (!href) return null;
+                return (
+                  <a
+                    key={label}
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1 text-[11px] font-medium text-[var(--app-text-secondary)] transition-colors hover:text-primary"
+                  >
+                    <span>{label}</span>
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </HoverCardContent>
+    </HoverCard>
+  );
+}
+
 function getDealStatusTriggerClass(status?: string | null) {
   if (status === 'won') {
-    return 'bg-[var(--lead-status-won-bg)] text-[var(--lead-status-won-fg)]';
+    return '!border-0 !bg-emerald-600 !text-white !shadow-none !ring-0 !ring-offset-0 transition-colors hover:!bg-emerald-700 data-[state=open]:!bg-emerald-700 focus:!ring-0 focus-visible:!ring-1 focus-visible:!ring-emerald-500/40 focus-visible:!ring-offset-0';
   }
 
   if (status === 'lost') {
-    return 'bg-[var(--lead-status-lost-bg)] text-[var(--lead-status-lost-fg)]';
+    return '!border-0 !bg-red-600 !text-white !shadow-none !ring-0 !ring-offset-0 transition-colors hover:!bg-red-700 data-[state=open]:!bg-red-700 focus:!ring-0 focus-visible:!ring-1 focus-visible:!ring-red-500/40 focus-visible:!ring-offset-0';
   }
 
-  return 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]';
+  return '!border-0 !bg-[var(--app-surface-soft)] !text-[var(--app-text-primary)] !shadow-none !ring-0 !ring-offset-0 transition-colors hover:!bg-[var(--app-surface-hover)] data-[state=open]:!bg-[var(--app-surface-hover)] focus:!ring-0 focus-visible:!ring-1 focus-visible:!ring-[var(--app-border-strong)] focus-visible:!ring-offset-0';
 }
 
 export function LeadDetailDialog({
@@ -253,6 +492,7 @@ export function LeadDetailDialog({
   const [quickActionOutcomeType, setQuickActionOutcomeType] = useState<'call' | 'email'>('call');
   const [selectedHistoryEvent, setSelectedHistoryEvent] = useState<UnifiedHistoryEvent | null>(null);
   const [historyEventDialogOpen, setHistoryEventDialogOpen] = useState(false);
+  const [selectedAttachment, setSelectedAttachment] = useState<LeadAttachment | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const v2LeadInfoScrollRef = useRef<HTMLDivElement>(null);
@@ -435,8 +675,18 @@ export function LeadDetailDialog({
   const { data: teams = [] } = useTeams({ includeInactive: true });
   const createCallMutation = useCreateCall();
   const createActivityMutation = useCreateActivity();
-  const { data: attachments = [] } = useLeadAttachments(leadId);
+  const { data: attachments = [], refetch: refetchAttachments } = useLeadAttachments(leadId);
   const uploadAttachment = useUploadLeadAttachment();
+
+  const handleOpenAttachment = async (attachment: LeadAttachment) => {
+    try {
+      const refreshed = await refetchAttachments();
+      const freshAttachment = refreshed.data?.find((item) => item.id === attachment.id);
+      setSelectedAttachment(freshAttachment || attachment);
+    } catch {
+      setSelectedAttachment(attachment);
+    }
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1023,7 +1273,7 @@ export function LeadDetailDialog({
     try {
       const isProposal = stage?.name?.toLowerCase().includes('proposta');
 
-      await updateLead.mutateAsync({
+      const updatedLead = await updateLead.mutateAsync({
         id: lead.id,
         stage_id: stageId
       });
@@ -1039,6 +1289,11 @@ export function LeadDetailDialog({
 
       refetchStages();
       toast.success('Lead movido!');
+
+      // Se a automação da coluna mudou para perdido, abrir diálogo para salvar o motivo
+      if (updatedLead && updatedLead.deal_status === 'lost') {
+        setLostReasonDialogOpen(true);
+      }
     } catch {
       setLocalLead(previousLead);
     }
@@ -1046,7 +1301,7 @@ export function LeadDetailDialog({
 
   // Centralized handler for deal status changes
   const handleDealStatusChange = async (newStatus: string) => {
-    const previousStatus = lead.deal_status;
+    const previousStatus = localLead?.deal_status || 'open';
     if (newStatus === previousStatus) return;
 
     // Intercept "lost" -> ask for reason via dialog
@@ -1057,7 +1312,7 @@ export function LeadDetailDialog({
 
     // Validation when marking as "won"
     if (newStatus === 'won') {
-      const valorInteresse = lead.valor_interesse || 0;
+      const valorInteresse = localLead?.valor_interesse || 0;
 
       if (!lead.is_own_resource) {
         toast.warning('Confirme se o cliente possui recurso próprio', {
@@ -1074,44 +1329,78 @@ export function LeadDetailDialog({
       }
     }
 
+    if (localLead) {
+      setLocalLead({
+        ...localLead,
+        deal_status: newStatus as 'open' | 'won' | 'lost',
+      });
+    }
 
-    await dealStatusChange.mutateAsync({
-      leadId: lead.id,
-      newStatus: newStatus as 'open' | 'won' | 'lost',
-      organizationId: profile?.organization_id || organization?.id || '',
-      organizationName: organization?.name || null,
-      userId: lead.assigned_user_id ?? null,
-      propertyId: lead.property_id ?? null,
-      valorInteresse: lead.valor_interesse ?? null,
-      commissionPercentage: lead.commission_percentage ?? null,
-      leadName: lead.name || 'Lead',
-    });
-
-    refetchStages();
+    try {
+      await dealStatusChange.mutateAsync({
+        leadId: lead.id,
+        newStatus: newStatus as 'open' | 'won' | 'lost',
+        organizationId: profile?.organization_id || organization?.id || '',
+        organizationName: organization?.name || null,
+        userId: lead.assigned_user_id ?? null,
+        propertyId: lead.property_id ?? null,
+        valorInteresse: lead.valor_interesse ?? null,
+        commissionPercentage: lead.commission_percentage ?? null,
+        leadName: lead.name || 'Lead',
+      });
+      refetchStages();
+    } catch {
+      if (localLead) {
+        setLocalLead({
+          ...localLead,
+          deal_status: previousStatus,
+        });
+      }
+    }
   };
 
   // Confirm lost with reason from dialog
   const handleConfirmLostReason = async (reason: string) => {
-    await dealStatusChange.mutateAsync({
-      leadId: lead.id,
-      newStatus: 'lost',
-      organizationId: profile?.organization_id || organization?.id || '',
-      organizationName: organization?.name || null,
-      userId: lead.assigned_user_id ?? null,
-      propertyId: lead.property_id ?? null,
-      valorInteresse: lead.valor_interesse ?? null,
-      commissionPercentage: lead.commission_percentage ?? null,
-      leadName: lead.name || 'Lead',
-      lostReason: reason,
-    });
-    setLostReasonLocal(reason);
-    setLostReasonDialogOpen(false);
-    refetchStages();
+    const previousStatus = localLead?.deal_status || 'open';
+    if (localLead) {
+      setLocalLead({
+        ...localLead,
+        deal_status: 'lost',
+        lost_reason: reason,
+      });
+    }
+
+    try {
+      await dealStatusChange.mutateAsync({
+        leadId: lead.id,
+        newStatus: 'lost',
+        organizationId: profile?.organization_id || organization?.id || '',
+        organizationName: organization?.name || null,
+        userId: lead.assigned_user_id ?? null,
+        propertyId: lead.property_id ?? null,
+        valorInteresse: lead.valor_interesse ?? null,
+        commissionPercentage: lead.commission_percentage ?? null,
+        leadName: lead.name || 'Lead',
+        lostReason: reason,
+      });
+      setLostReasonLocal(reason);
+      setLostReasonDialogOpen(false);
+      refetchStages();
+    } catch {
+      if (localLead) {
+        setLocalLead({
+          ...localLead,
+          deal_status: previousStatus,
+          lost_reason: localLead.lost_reason,
+        });
+      }
+    }
   };
 
   const leadSource = lead.source ?? 'outros';
   const SourceIcon = sourceIcons[leadSource] || Target;
   const leadName = lead.name || 'Lead';
+  const campaignTrackingDetails = buildCampaignTrackingDetails(leadMeta ?? null, lead);
   // State for roteiro dialog is now at top of component
 
   // Tabs configuration
@@ -1264,11 +1553,11 @@ export function LeadDetailDialog({
           </Popover>
 
           {/* Deal Status pill */}
-          <Select value={lead.deal_status || 'open'} onValueChange={handleDealStatusChange}>
+          <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange}>
               <SelectTrigger
                 className={cn(
-                  "h-auto w-auto shrink-0 gap-1.5 rounded-[6px] border-0 px-3 py-1.5 text-xs font-medium",
-                  getDealStatusTriggerClass(lead.deal_status)
+                  "h-auto w-auto shrink-0 gap-1.5 rounded-[6px] px-3 py-1.5 text-xs font-medium",
+                  getDealStatusTriggerClass(localLead.deal_status)
                 )}
               >
               <SelectValue placeholder="Status" />
@@ -1297,7 +1586,7 @@ export function LeadDetailDialog({
         </div>
 
         {/* Lost reason input (when status = lost) */}
-        {lead.deal_status === 'lost' && (
+        {localLead.deal_status === 'lost' && (
           <Input
             value={lostReasonLocal}
             onChange={(e) => setLostReasonLocal(e.target.value)}
@@ -1853,10 +2142,10 @@ export function LeadDetailDialog({
                 <div>
                   <Label className="text-xs text-muted-foreground mb-2 block">Status do Negócio</Label>
                   <Select
-                    value={lead.deal_status || 'open'}
+                    value={localLead.deal_status || 'open'}
                     onValueChange={handleDealStatusChange}
                   >
-                    <SelectTrigger className="rounded-xl">
+                    <SelectTrigger className={cn('rounded-xl', getDealStatusTriggerClass(localLead.deal_status))}>
                       <SelectValue placeholder="Selecionar status" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1883,7 +2172,7 @@ export function LeadDetailDialog({
                 </div>
 
                 {/* Lost Reason - show only when status is lost */}
-                {lead.deal_status === 'lost' && (
+                {localLead.deal_status === 'lost' && (
                   <div>
                     <Label className="text-xs text-muted-foreground mb-2 block">Motivo da Perda</Label>
                     <Input
@@ -1946,11 +2235,11 @@ export function LeadDetailDialog({
               </div>
 
               {/* Deal Status Summary Card */}
-              {lead.deal_status === 'won' && interestValue > 0 && (
+              {localLead.deal_status === 'won' && interestValue > 0 && (
                 <div className="rounded-xl bg-gradient-to-br from-emerald-50 to-emerald-100 dark:from-emerald-950/30 dark:to-emerald-900/30 border border-emerald-200 dark:border-emerald-800 p-4">
                   <div className="flex items-center gap-3">
                     <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center">
-                      <Trophy className="h-6 w-6 text-white" />
+                       <Trophy className="h-6 w-6 text-white" />
                     </div>
                     <div>
                       <p className="text-xl font-bold text-emerald-700 dark:text-emerald-300">
@@ -1962,7 +2251,7 @@ export function LeadDetailDialog({
                 </div>
               )}
 
-              {lead.deal_status !== 'won' && interestValue > 0 && (
+              {localLead.deal_status !== 'won' && interestValue > 0 && (
                 <div className="rounded-xl bg-gradient-to-br from-primary/5 to-primary/10 border border-primary/20 p-4">
                   <div className="flex items-center gap-3">
                     <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center">
@@ -2014,27 +2303,22 @@ export function LeadDetailDialog({
 
   const MobileContentV2 = () => {
     const leadAvatarUrl = lead.whatsapp_picture || lead.whatsapp_avatar_url || lead.contact_picture || null;
-    const dealStatusLabel = lead.deal_status === 'won' ? 'Ganho' : lead.deal_status === 'lost' ? 'Perdido' : 'Aberto';
+    const dealStatusLabel = localLead.deal_status === 'won' ? 'Ganho' : localLead.deal_status === 'lost' ? 'Perdido' : 'Aberto';
     const mobileActiveTab = ['summary', 'actions', 'history'].includes(activeTab) ? activeTab : 'summary';
-    const contactRows: Array<{ label: string; value: string }> = [
+    const contactRows: Array<{ label: string; value: ReactNode }> = [
       { label: 'Nome', value: lead.name },
       { label: 'Telefone', value: formatPhoneForDisplay(lead.phone || '') },
       { label: 'E-mail', value: lead.email },
       { label: 'Cargo', value: lead.cargo },
       { label: 'Empresa', value: lead.empresa },
       { label: 'Origem', value: sourceLabels[leadSource] || leadSource },
+      {
+        label: 'Campanha',
+        value: campaignTrackingDetails ? <CampaignTrackingHover leadMeta={campaignTrackingDetails} /> : null
+      },
       { label: 'Criado em', value: lead.created_at ? format(new Date(lead.created_at), 'dd/MM/yy HH:mm', { locale: dateLocale }) : null },
     ]
-      .filter((row) => Boolean(row.value))
-      .map((row) => ({ ...row, value: row.value || '' }));
-    const trackingRows = [
-      { label: 'Campanha', value: leadMeta?.campaign_name || leadMeta?.utm_campaign },
-      { label: 'Conjunto', value: leadMeta?.adset_name },
-      { label: 'Anuncio', value: leadMeta?.ad_name },
-      { label: 'Formulario', value: leadMeta?.form_name },
-      { label: 'UTM source', value: leadMeta?.utm_source },
-      { label: 'UTM medium', value: leadMeta?.utm_medium },
-    ].filter((row): row is { label: string; value: string } => Boolean(row.value));
+      .filter((row) => Boolean(row.value));
 
     const mobileTabs = [
       { id: 'summary', label: 'Resumo', icon: Contact },
@@ -2166,8 +2450,8 @@ export function LeadDetailDialog({
               </PopoverContent>
             </Popover>
 
-            <Select value={lead.deal_status || 'open'} onValueChange={handleDealStatusChange}>
-              <SelectTrigger className={cn('h-8 w-[92px] gap-1 rounded-[6px] border-0 px-2 text-xs font-medium', getDealStatusTriggerClass(lead.deal_status))}>
+            <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange}>
+              <SelectTrigger className={cn('h-8 w-[92px] gap-1 rounded-[6px] px-2 text-xs font-medium', getDealStatusTriggerClass(localLead.deal_status))}>
                 <SelectValue>{dealStatusLabel}</SelectValue>
               </SelectTrigger>
               <SelectContent>
@@ -2242,16 +2526,7 @@ export function LeadDetailDialog({
                     ))}
                   </div>
 
-                  {trackingRows.length > 0 && (
-                    <div className="mt-3 border-t border-[var(--app-border)] pt-3">
-                  <p className="mb-2 text-[10px] font-medium uppercase text-[var(--app-text-tertiary)]">Rastreamento</p>
-                      <div className="space-y-2">
-                        {trackingRows.slice(0, 4).map((row) => (
-                          <InfoLine key={row.label} label={row.label} value={row.value} />
-                        ))}
-                      </div>
-                    </div>
-                  )}
+
 
                   {isEditingContact && (
                     <div className="mt-3 space-y-2">
@@ -2269,6 +2544,30 @@ export function LeadDetailDialog({
                     </div>
                   )}
                 </section>
+
+                <PropertyPickerDialog
+                  properties={properties}
+                  selectedPropertyId={lead.interest_property_id || editForm.property_id || null}
+                  onSelect={(property) => {
+                    const nextPropertyPrice = property.preco || null;
+                    const nextPropertyCommission =
+                      'commission_percentage' in property && typeof property.commission_percentage === 'number'
+                        ? property.commission_percentage
+                        : null;
+                    setEditForm({
+                      ...editForm,
+                      property_id: property.id,
+                      valor_interesse: nextPropertyPrice ? nextPropertyPrice.toString() : editForm.valor_interesse,
+                      commission_percentage: nextPropertyCommission ? nextPropertyCommission.toString() : editForm.commission_percentage,
+                    });
+                    updateLead.mutateAsync({
+                      id: lead.id,
+                      interest_property_id: property.id,
+                      valor_interesse: nextPropertyPrice || lead.valor_interesse,
+                      commission_percentage: nextPropertyCommission || lead.commission_percentage,
+                    }).then(() => refetchStages());
+                  }}
+                />
 
                 <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-3 flex items-center justify-between">
@@ -2291,8 +2590,8 @@ export function LeadDetailDialog({
                         <button
                           key={doc.id}
                           type="button"
-                          className="flex w-full items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2 py-2 text-left text-xs"
-                          onClick={() => window.open(doc.file_url, '_blank')}
+                          className="flex w-full items-center gap-2 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2 py-2 text-left text-xs outline-none ring-0 focus:outline-none focus-visible:outline-none focus-visible:ring-0"
+                          onClick={() => void handleOpenAttachment(doc)}
                         >
                           <FileText className="h-3.5 w-3.5 text-primary" />
                           <span className="truncate">{doc.file_name}</span>
@@ -2308,33 +2607,7 @@ export function LeadDetailDialog({
           {mobileActiveTab === 'actions' && (
             <div className="lead-detail-v2-scroll h-full overflow-y-auto p-3">
               <div className="space-y-3 pb-4">
-                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
-                  <div className="flex justify-center">
-                    <PropertyPickerDialog
-                      properties={properties}
-                      selectedPropertyId={lead.interest_property_id || editForm.property_id || null}
-                      onSelect={(property) => {
-                        const nextPropertyPrice = property.preco || null;
-                        const nextPropertyCommission =
-                          'commission_percentage' in property && typeof property.commission_percentage === 'number'
-                            ? property.commission_percentage
-                            : null;
-                        setEditForm({
-                          ...editForm,
-                          property_id: property.id,
-                          valor_interesse: nextPropertyPrice ? nextPropertyPrice.toString() : editForm.valor_interesse,
-                          commission_percentage: nextPropertyCommission ? nextPropertyCommission.toString() : editForm.commission_percentage,
-                        });
-                        updateLead.mutateAsync({
-                          id: lead.id,
-                          interest_property_id: property.id,
-                          valor_interesse: nextPropertyPrice || lead.valor_interesse,
-                          commission_percentage: nextPropertyCommission || lead.commission_percentage,
-                        }).then(() => refetchStages());
-                      }}
-                    />
-                  </div>
-                </section>
+
 
                 <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="flex items-center justify-between">
@@ -2378,8 +2651,8 @@ export function LeadDetailDialog({
                       Nenhuma cadência configurada para esta etapa
                     </p>
                   ) : (
-                    <div className="space-y-1.5">
-                      {templateTasks.slice(0, 5).map((task) => {
+                    <div className="max-h-[320px] space-y-1.5 overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                      {templateTasks.map((task) => {
                         const taskType = getCadenceTaskType(task.type);
                         const existingTask = leadTasksMap.get(`${task.title}-${task.day_offset}-${task.type}`);
                         const isDone = existingTask?.is_done || false;
@@ -2443,6 +2716,7 @@ export function LeadDetailDialog({
                 leadAvatarUrl={leadAvatarUrl}
                 leadPhone={lead.phone || null}
                 whatsappVerified={lead.whatsapp_verified ?? null}
+                leadCreatedAt={lead.created_at || null}
               />
             </div>
           )}
@@ -2453,29 +2727,24 @@ export function LeadDetailDialog({
 
   const DesktopContentV2 = () => {
     const leadAvatarUrl = lead.whatsapp_picture || lead.whatsapp_avatar_url || lead.contact_picture || null;
-    const dealStatusLabel = lead.deal_status === 'won' ? 'Ganho' : lead.deal_status === 'lost' ? 'Perdido' : 'Aberto';
-    const contactRows: Array<{ label: string; value: string; icon?: ReactNode }> = [
+    const dealStatusLabel = localLead.deal_status === 'won' ? 'Ganho' : localLead.deal_status === 'lost' ? 'Perdido' : 'Aberto';
+    const contactRows: Array<{ label: string; value: ReactNode; icon?: ReactNode }> = [
       { label: 'Nome', value: lead.name },
       { label: 'Telefone', value: formatPhoneForDisplay(lead.phone || '') },
       { label: 'E-mail', value: lead.email },
       { label: 'Cargo', value: lead.cargo },
       { label: 'Empresa', value: lead.empresa },
       { label: 'Origem', value: sourceLabels[leadSource] || leadSource },
+      {
+        label: 'Campanha',
+        value: campaignTrackingDetails ? <CampaignTrackingHover leadMeta={campaignTrackingDetails} /> : null
+      },
       { label: 'Criado em', value: lead.created_at ? format(new Date(lead.created_at), 'dd/MM/yy HH:mm', { locale: dateLocale }) : null },
     ]
-      .filter((row) => Boolean(row.value))
-      .map((row) => ({ ...row, value: row.value || '' }));
-    const trackingRows = [
-      { label: 'Campanha', value: leadMeta?.campaign_name || leadMeta?.utm_campaign },
-      { label: 'Conjunto', value: leadMeta?.adset_name },
-      { label: 'Anuncio', value: leadMeta?.ad_name },
-      { label: 'Formulario', value: leadMeta?.form_name },
-      { label: 'UTM source', value: leadMeta?.utm_source },
-      { label: 'UTM medium', value: leadMeta?.utm_medium },
-    ].filter((row): row is { label: string; value: string } => Boolean(row.value));
+      .filter((row) => Boolean(row.value));
 
     return (
-      <div className="lead-detail-dialog lead-detail-v2 flex h-full max-h-[84vh] flex-col bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]">
+      <div className="lead-detail-dialog lead-detail-v2 flex h-full max-h-full flex-col bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]">
         <div className="border-b border-transparent bg-[var(--app-surface-solid)] px-4 pt-4">
           <DialogHeader className="sr-only">
             <DialogTitle>{leadName}</DialogTitle>
@@ -2518,7 +2787,7 @@ export function LeadDetailDialog({
           </ScrollArea>
         </div>
 
-        <div className="grid min-h-0 flex-1 grid-cols-[330px_minmax(360px,1fr)_390px] grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden">
+        <div className="grid min-h-0 flex-1 grid-cols-[280px_1fr_340px] xl:grid-cols-[330px_1fr_390px] grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden">
           <aside className="lead-detail-v2-column border-r border-[var(--app-border)]">
             <div ref={v2LeadInfoScrollRef} className="lead-detail-v2-scroll h-full overflow-y-auto p-4">
               <section className="space-y-3">
@@ -2606,11 +2875,11 @@ export function LeadDetailDialog({
                   </Popover>
 
                   <div onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
-                    <Select value={lead.deal_status || 'open'} onValueChange={handleDealStatusChange}>
+                    <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange}>
                       <SelectTrigger
                         className={cn(
-                          'h-8 w-[92px] gap-1 rounded-[6px] border-0 px-2 text-xs font-medium',
-                          getDealStatusTriggerClass(lead.deal_status),
+                          'h-8 w-[92px] gap-1 rounded-[6px] px-2 text-xs font-medium',
+                          getDealStatusTriggerClass(localLead.deal_status),
                         )}
                       >
                         <SelectValue>{dealStatusLabel}</SelectValue>
@@ -2658,17 +2927,6 @@ export function LeadDetailDialog({
                     ))}
                   </div>
 
-                  {trackingRows.length > 0 && (
-                    <div className="mt-3 border-t border-[var(--app-border)] pt-3">
-                      <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-[var(--app-text-tertiary)]">Rastreamento</p>
-                      <div className="space-y-2">
-                        {trackingRows.slice(0, 4).map((row) => (
-                          <InfoLine key={row.label} label={row.label} value={row.value} />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
                   {isEditingContact && (
                     <div className="mt-3 space-y-2">
                       <Input value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} className="h-8 rounded-[6px]" placeholder="Nome" />
@@ -2686,6 +2944,30 @@ export function LeadDetailDialog({
                   )}
                 </div>
 
+                <PropertyPickerDialog
+                  properties={properties}
+                  selectedPropertyId={lead.interest_property_id || editForm.property_id || null}
+                  onSelect={(property) => {
+                    const nextPropertyPrice = property.preco || null;
+                    const nextPropertyCommission =
+                      'commission_percentage' in property && typeof property.commission_percentage === 'number'
+                        ? property.commission_percentage
+                        : null;
+                    setEditForm({
+                      ...editForm,
+                      property_id: property.id,
+                      valor_interesse: nextPropertyPrice ? nextPropertyPrice.toString() : editForm.valor_interesse,
+                      commission_percentage: nextPropertyCommission ? nextPropertyCommission.toString() : editForm.commission_percentage,
+                    });
+                    updateLead.mutateAsync({
+                      id: lead.id,
+                      interest_property_id: property.id,
+                      valor_interesse: nextPropertyPrice || lead.valor_interesse,
+                      commission_percentage: nextPropertyCommission || lead.commission_percentage,
+                    }).then(() => refetchStages());
+                  }}
+                />
+
                 <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-xs font-semibold">Documentacao</h3>
@@ -2699,16 +2981,16 @@ export function LeadDetailDialog({
                       </>
                     )}
                   </div>
-                  <div className="space-y-2">
+                  <div className="max-h-44 space-y-2 overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                     {attachments.length === 0 ? (
                       <p className="text-xs text-[var(--app-text-tertiary)]">Nenhum documento anexado</p>
                     ) : (
-                      attachments.slice(0, 4).map((doc) => (
+                      attachments.map((doc) => (
                         <button
                           key={doc.id}
                           type="button"
-                          className="flex w-full items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2 py-2 text-left text-xs"
-                          onClick={() => window.open(doc.file_url, '_blank')}
+                          className="flex w-full items-center gap-2 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2 py-2 text-left text-xs outline-none ring-0 focus:outline-none focus-visible:outline-none focus-visible:ring-0"
+                          onClick={() => void handleOpenAttachment(doc)}
                         >
                           <FileText className="h-3.5 w-3.5 text-primary" />
                           <span className="truncate">{doc.file_name}</span>
@@ -2725,33 +3007,7 @@ export function LeadDetailDialog({
           <main className="lead-detail-v2-column">
             <div ref={v2LeadWorkScrollRef} className="lead-detail-v2-scroll h-full overflow-y-auto p-4">
               <div className="space-y-4">
-                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
-                  <div className="flex justify-center">
-                    <PropertyPickerDialog
-                      properties={properties}
-                      selectedPropertyId={lead.interest_property_id || editForm.property_id || null}
-                      onSelect={(property) => {
-                        const nextPropertyPrice = property.preco || null;
-                        const nextPropertyCommission =
-                          'commission_percentage' in property && typeof property.commission_percentage === 'number'
-                            ? property.commission_percentage
-                            : null;
-                        setEditForm({
-                          ...editForm,
-                          property_id: property.id,
-                          valor_interesse: nextPropertyPrice ? nextPropertyPrice.toString() : editForm.valor_interesse,
-                          commission_percentage: nextPropertyCommission ? nextPropertyCommission.toString() : editForm.commission_percentage,
-                        });
-                        updateLead.mutateAsync({
-                          id: lead.id,
-                          interest_property_id: property.id,
-                          valor_interesse: nextPropertyPrice || lead.valor_interesse,
-                          commission_percentage: nextPropertyCommission || lead.commission_percentage,
-                        }).then(() => refetchStages());
-                      }}
-                    />
-                  </div>
-                </section>
+
 
                 <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="flex items-center justify-between">
@@ -2795,8 +3051,8 @@ export function LeadDetailDialog({
                       Nenhuma cadencia configurada para esta etapa
                     </p>
                   ) : (
-                    <div className="space-y-1.5">
-                      {templateTasks.slice(0, 3).map((task) => {
+                    <div className="max-h-[320px] space-y-1.5 overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                      {templateTasks.map((task) => {
                         const taskType = getCadenceTaskType(task.type);
                         const existingTask = leadTasksMap.get(`${task.title}-${task.day_offset}-${task.type}`);
                         const isDone = existingTask?.is_done || false;
@@ -2826,9 +3082,6 @@ export function LeadDetailDialog({
                           </button>
                         );
                       })}
-                      {templateTasks.length > 3 && (
-                        <p className="px-1 text-[10px] text-[var(--app-text-tertiary)]">+{templateTasks.length - 3} tarefa(s) na cadencia</p>
-                      )}
                     </div>
                   )}
                 </section>
@@ -2866,6 +3119,7 @@ export function LeadDetailDialog({
               leadAvatarUrl={leadAvatarUrl}
               leadPhone={lead.phone || null}
               whatsappVerified={lead.whatsapp_verified ?? null}
+              leadCreatedAt={lead.created_at || null}
             />
           </aside>
         </div>
@@ -2892,20 +3146,20 @@ export function LeadDetailDialog({
             <span className="text-muted-foreground/50">•</span>
             {/* Deal Status Badge */}
             <Select
-              value={lead.deal_status || 'open'}
+              value={localLead.deal_status || 'open'}
               onValueChange={handleDealStatusChange}
             >
               <SelectTrigger
                 className={cn(
-                  "h-7 w-auto gap-1.5 rounded-[6px] border-0 px-3 text-xs font-medium",
-                  getDealStatusTriggerClass(lead.deal_status)
+                  "h-7 w-auto gap-1.5 rounded-[6px] px-3 text-xs font-medium",
+                  getDealStatusTriggerClass(localLead.deal_status)
                 )}
               >
-                {lead.deal_status === 'won' && <Trophy className="h-3 w-3" />}
-                {lead.deal_status === 'lost' && <XCircle className="h-3 w-3" />}
-                {(!lead.deal_status || lead.deal_status === 'open') && <CircleDot className="h-3 w-3" />}
+                {localLead.deal_status === 'won' && <Trophy className="h-3 w-3" />}
+                {localLead.deal_status === 'lost' && <XCircle className="h-3 w-3" />}
+                {(!localLead.deal_status || localLead.deal_status === 'open') && <CircleDot className="h-3 w-3" />}
                 <span>
-                  {lead.deal_status === 'won' ? 'Ganho' : lead.deal_status === 'lost' ? 'Perdido' : 'Aberto'}
+                  {localLead.deal_status === 'won' ? 'Ganho' : localLead.deal_status === 'lost' ? 'Perdido' : 'Aberto'}
                 </span>
               </SelectTrigger>
               <SelectContent>
@@ -3591,10 +3845,10 @@ export function LeadDetailDialog({
                                       variant="ghost"
                                       size="icon"
                                       className="h-7 w-7"
-                                      onClick={() => window.open(doc.file_url, '_blank')}
+                                      onClick={() => void handleOpenAttachment(doc)}
                                       title="Visualizar"
                                     >
-                                      <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
+                                      <Eye className="h-3.5 w-3.5 text-muted-foreground" />
                                     </Button>
                                     <Button
                                       variant="ghost"
@@ -3648,10 +3902,10 @@ export function LeadDetailDialog({
                 <div>
                   <Label className="text-xs text-muted-foreground mb-2 block">Status do Negócio</Label>
                   <Select
-                    value={lead.deal_status || 'open'}
+                    value={localLead.deal_status || 'open'}
                     onValueChange={handleDealStatusChange}
                   >
-                    <SelectTrigger className="rounded-xl">
+                    <SelectTrigger className={cn('rounded-xl', getDealStatusTriggerClass(localLead.deal_status))}>
                       <SelectValue placeholder="Selecionar status" />
                     </SelectTrigger>
                     <SelectContent>
@@ -3678,7 +3932,7 @@ export function LeadDetailDialog({
                 </div>
 
                 {/* Lost Reason - show only when status is lost */}
-                {lead.deal_status === 'lost' && (
+                {localLead.deal_status === 'lost' && (
                   <div>
                     <Label className="text-xs text-muted-foreground mb-2 block">Motivo da Perda</Label>
                     <Input
@@ -3807,11 +4061,11 @@ export function LeadDetailDialog({
               </div>
 
               {/* Deal Status Summary Card */}
-              {lead.deal_status === 'won' && interestValue > 0 && (
+              {localLead.deal_status === 'won' && interestValue > 0 && (
                 <div className="rounded-xl bg-gradient-to-br from-emerald-50 to-emerald-100 dark:from-emerald-950/30 dark:to-emerald-900/30 border border-emerald-200 dark:border-emerald-800 p-4">
                   <div className="flex items-center gap-3">
                     <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center">
-                      <Trophy className="h-6 w-6 text-white" />
+                       <Trophy className="h-6 w-6 text-white" />
                     </div>
                     <div>
                       <p className="text-xl font-bold text-emerald-700 dark:text-emerald-300">
@@ -3823,7 +4077,7 @@ export function LeadDetailDialog({
                 </div>
               )}
 
-              {lead.deal_status !== 'won' && interestValue > 0 && (
+              {localLead.deal_status !== 'won' && interestValue > 0 && (
                 <div className="rounded-xl bg-gradient-to-br from-primary/5 to-primary/10 border border-primary/20 p-4">
                   <div className="flex items-center gap-3">
                     <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center">
@@ -3935,7 +4189,21 @@ export function LeadDetailDialog({
     return (
       <>
         <Drawer open={!!lead} onOpenChange={() => onClose()} dismissible={!isEditingContact}>
-          <DrawerContent className="lead-mobile-drawer mx-auto w-full overflow-hidden rounded-t-[10px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-[0_18px_42px_rgba(0,0,0,0.28)]" showHandle={false}>
+          <DrawerContent
+            className="lead-mobile-drawer mx-auto w-full overflow-hidden rounded-t-[10px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-[0_18px_42px_rgba(0,0,0,0.28)]"
+            showHandle={false}
+            onOpenAutoFocus={(event) => event.preventDefault()}
+            onInteractOutside={(event) => {
+              const target = event.target as HTMLElement | null;
+              const isInsideAnotherDialog = target?.closest('.vimob-dialog-content');
+              if (
+                target?.closest('[data-radix-popper-content-wrapper], [role="listbox"]') ||
+                isInsideAnotherDialog
+              ) {
+                event.preventDefault();
+              }
+            }}
+          >
             <DrawerTitle className="sr-only">
               {leadName ? `Detalhes do lead ${leadName}` : 'Detalhes do lead'}
             </DrawerTitle>
@@ -3951,6 +4219,14 @@ export function LeadDetailDialog({
           leadName={leadName}
           loading={dealStatusChange.isPending}
         />
+        <LeadAttachmentViewer
+          key={selectedAttachment ? `${selectedAttachment.id}:${selectedAttachment.file_url}` : 'no-attachment'}
+          attachment={selectedAttachment}
+          open={Boolean(selectedAttachment)}
+          onOpenChange={(open) => {
+            if (!open) setSelectedAttachment(null);
+          }}
+        />
       </>
     );
   }
@@ -3960,10 +4236,17 @@ export function LeadDetailDialog({
     <>
       <Dialog open={!!lead} onOpenChange={() => onClose()}>
         <DialogContent
-          className="h-[min(720px,84vh)] w-[min(1180px,92vw)] max-w-[1180px] max-h-[84vh] overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none animate-scale-in"
+          className="lead-detail-dialog-content h-[92vh] lg:h-[min(720px,84vh)] w-[96vw] lg:w-[92vw] xl:w-[min(1180px,92vw)] max-w-[1180px] max-h-[92vh] lg:max-h-[84vh] overflow-hidden rounded-[8px] border-none bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none animate-scale-in flex flex-col gap-0"
+          style={{ border: 'none', outline: 'none' }}
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          onEscapeKeyDown={(event) => event.preventDefault()}
           onInteractOutside={(event) => {
             const target = event.target as HTMLElement | null;
-            if (target?.closest('[data-radix-popper-content-wrapper], [role="listbox"]')) {
+            const isInsideAnotherDialog = target?.closest('.vimob-dialog-content') && !target?.closest('.lead-detail-dialog-content');
+            if (
+              target?.closest('[data-radix-popper-content-wrapper], [role="listbox"]') ||
+              isInsideAnotherDialog
+            ) {
               event.preventDefault();
             }
           }}
@@ -3980,6 +4263,14 @@ export function LeadDetailDialog({
         onConfirm={handleConfirmLostReason}
         leadName={leadName}
         loading={dealStatusChange.isPending}
+      />
+      <LeadAttachmentViewer
+        key={selectedAttachment ? `${selectedAttachment.id}:${selectedAttachment.file_url}` : 'no-attachment'}
+        attachment={selectedAttachment}
+        open={Boolean(selectedAttachment)}
+        onOpenChange={(open) => {
+          if (!open) setSelectedAttachment(null);
+        }}
       />
       <Dialog open={historyEventDialogOpen} onOpenChange={setHistoryEventDialogOpen}>
         <DialogContent className="max-w-lg rounded-xl">

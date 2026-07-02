@@ -10,19 +10,29 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
 type functionsClient struct {
-	projectURL string
-	apiKey     string
-	httpClient *http.Client
+	projectURL          string
+	apiKey              string
+	evolutionGoAPIURL   string
+	evolutionGoAPIKey   string
+	evolutionWebhookURL string
+	db                  *dbpkg.Postgres
+	httpClient          *http.Client
 }
 
-func newFunctionsClient(config StorageConfig) functionsClient {
+func newFunctionsClient(config StorageConfig, db *dbpkg.Postgres) functionsClient {
 	return functionsClient{
-		projectURL: strings.TrimRight(strings.TrimSpace(config.ProjectURL), "/"),
-		apiKey:     strings.TrimSpace(config.APIKey),
-		httpClient: &http.Client{Timeout: 45 * time.Second},
+		projectURL:          strings.TrimRight(strings.TrimSpace(config.ProjectURL), "/"),
+		apiKey:              strings.TrimSpace(config.APIKey),
+		evolutionGoAPIURL:   strings.TrimRight(strings.TrimSpace(config.EvolutionGo.APIURL), "/"),
+		evolutionGoAPIKey:   strings.TrimSpace(config.EvolutionGo.APIKey),
+		evolutionWebhookURL: strings.TrimRight(strings.TrimSpace(config.EvolutionGo.WebhookURL), "/"),
+		db:                  db,
+		httpClient:          &http.Client{Timeout: 45 * time.Second},
 	}
 }
 
@@ -32,6 +42,28 @@ func (client functionsClient) webhookURL(functionName string) string {
 	}
 
 	return fmt.Sprintf("%s/functions/v1/%s", client.projectURL, url.PathEscape(functionName))
+}
+
+func (client functionsClient) configuredEvolutionWebhookURL(sessionID string, instanceID string, webhookToken string) string {
+	baseURL := client.evolutionWebhookURL
+	if baseURL == "" {
+		baseURL = client.webhookURL("evolution-go-webhook")
+	}
+	if baseURL == "" {
+		return ""
+	}
+
+	endpoint, err := url.Parse(baseURL)
+	if err != nil {
+		return ""
+	}
+	query := endpoint.Query()
+	query.Set("session_id", sessionID)
+	query.Set("instance_id", instanceID)
+	query.Set("webhook_token", webhookToken)
+	endpoint.RawQuery = query.Encode()
+
+	return endpoint.String()
 }
 
 func (client functionsClient) invoke(ctx context.Context, functionName string, body map[string]any) (map[string]any, error) {
@@ -84,6 +116,20 @@ func (client functionsClient) invoke(ctx context.Context, functionName string, b
 }
 
 func (client functionsClient) invokeEvolution(ctx context.Context, action string, payload map[string]any) (map[string]any, error) {
+	if client.evolutionGoAPIURL != "" && client.evolutionGoAPIKey != "" {
+		result, err := client.invokeEvolutionDirect(ctx, action, payload)
+		if err != nil {
+			return nil, err
+		}
+		if !providerResultOK(result) {
+			if evolutionAllowsProviderFailure(action) {
+				return result, nil
+			}
+			return result, fmt.Errorf("%w: %s", ErrProviderFailed, providerErrorMessage(result, "Falha na Evolution Go."))
+		}
+		return result, nil
+	}
+
 	body := map[string]any{"action": action}
 	for key, value := range payload {
 		body[key] = value
@@ -94,6 +140,9 @@ func (client functionsClient) invokeEvolution(ctx context.Context, action string
 		return nil, err
 	}
 	if !providerResultOK(result) {
+		if evolutionAllowsProviderFailure(action) {
+			return result, nil
+		}
 		return result, fmt.Errorf("%w: %s", ErrProviderFailed, providerErrorMessage(result, "Falha na Evolution Go."))
 	}
 

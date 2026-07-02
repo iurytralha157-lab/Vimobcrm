@@ -173,11 +173,17 @@ func providerErrorMessage(result map[string]any, fallback string) string {
 func evolutionInstanceID(result map[string]any) string {
 	return firstString(result,
 		"data.data.id",
+		"data.data.instanceId",
+		"data.data.instanceID",
 		"data.instance.id",
 		"data.id",
+		"data.instanceId",
+		"data.instanceID",
 		"data.instance.uuid",
 		"data.uuid",
 		"instance.id",
+		"instanceId",
+		"instanceID",
 		"id",
 	)
 }

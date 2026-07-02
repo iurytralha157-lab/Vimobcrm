@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -22,8 +24,11 @@ var (
 	ErrTenantResolutionUnhealthy = errors.New("tenant resolution failed")
 )
 
+const resolveCacheTTL = 60 * time.Second
+
 type Repository struct {
-	db *dbpkg.Postgres
+	db    *dbpkg.Postgres
+	cache *resolveCache
 }
 
 type userProfile struct {
@@ -33,8 +38,17 @@ type userProfile struct {
 	IsActive       bool
 }
 
+type resolveCache struct {
+	values sync.Map
+}
+
+type resolveCacheEntry struct {
+	context   Context
+	expiresAt time.Time
+}
+
 func NewRepository(db *dbpkg.Postgres) Repository {
-	return Repository{db: db}
+	return Repository{db: db, cache: &resolveCache{}}
 }
 
 func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrganizationID string) (Context, error) {
@@ -50,6 +64,11 @@ func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrga
 			return Context{}, ErrInvalidOrganizationID
 		}
 		requestedOrganizationID = normalizedOrganizationID
+	}
+
+	cacheKey := userID + "|" + requestedOrganizationID
+	if cached, ok := repo.getCachedContext(cacheKey); ok {
+		return cached, nil
 	}
 
 	profile, err := repo.getUserProfile(ctx, userID)
@@ -68,7 +87,11 @@ func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrga
 	}
 
 	if isSuperAdmin {
-		return repo.resolveSuperAdmin(ctx, profile, organizationID)
+		resolved, err := repo.resolveSuperAdmin(ctx, profile, organizationID)
+		if err == nil {
+			repo.storeCachedContext(cacheKey, resolved)
+		}
+		return resolved, err
 	}
 
 	if organizationID == "" {
@@ -86,7 +109,46 @@ func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrga
 		return Context{}, fmt.Errorf("%w: %v", ErrTenantResolutionUnhealthy, err)
 	}
 
+	repo.storeCachedContext(cacheKey, resolved)
 	return resolved, nil
+}
+
+func (repo Repository) getCachedContext(key string) (Context, bool) {
+	if repo.cache == nil || key == "" {
+		return Context{}, false
+	}
+
+	value, ok := repo.cache.values.Load(key)
+	if !ok {
+		return Context{}, false
+	}
+
+	entry, ok := value.(resolveCacheEntry)
+	if !ok || time.Now().After(entry.expiresAt) {
+		repo.cache.values.Delete(key)
+		return Context{}, false
+	}
+
+	return cloneContext(entry.context), true
+}
+
+func (repo Repository) storeCachedContext(key string, tenantContext Context) {
+	if repo.cache == nil || key == "" {
+		return
+	}
+
+	repo.cache.values.Store(key, resolveCacheEntry{
+		context:   cloneContext(tenantContext),
+		expiresAt: time.Now().Add(resolveCacheTTL),
+	})
+}
+
+func cloneContext(source Context) Context {
+	clone := source
+	if source.Permissions != nil {
+		clone.Permissions = append([]string(nil), source.Permissions...)
+	}
+	return clone
 }
 
 func (repo Repository) getUserProfile(ctx context.Context, userID string) (userProfile, error) {

@@ -3,7 +3,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { useAccessibleSessions } from "./use-accessible-sessions";
-import { notificationService } from "@/services/NotificationService";
 import { whatsappAPI } from "@/lib/api/whatsapp";
 
 const POLL_INTERVAL = 30000;
@@ -44,32 +43,25 @@ export function useWhatsAppHealthMonitor() {
       return status?.status === "connected" || status?.connected === true || status?.state === "open";
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      const normalized = msg.toLowerCase();
       const isTransient = msg.includes("non-2xx") || msg.includes("503") || msg.includes("temporarily unavailable");
+      const isDisconnected =
+        normalized.includes("client disconnected") ||
+        normalized.includes("provider operation failed") ||
+        normalized.includes("unable to complete whatsapp operation") ||
+        normalized.includes("not connected");
       if (isTransient) {
         console.warn(`Health check transient error for ${displayName} (will retry)`);
         return true;
       }
-      console.error(`Health check error for ${displayName}:`, err);
+      if (isDisconnected) {
+        console.warn(`Health check detected disconnected WhatsApp for ${displayName}`);
+        return false;
+      }
+      console.warn(`Health check error for ${displayName}:`, msg);
       return false;
     }
   }, [organizationId]);
-
-  const createDisconnectionNotification = useCallback(async (
-    sessionName: string,
-    ownerId: string,
-    organizationId: string,
-  ) => {
-    try {
-      await notificationService.send({
-        eventKey: "whatsapp_disconnected",
-        organizationId,
-        userId: ownerId,
-        variables: { session_name: sessionName },
-      });
-    } catch (err) {
-      console.error("Failed to create disconnection notification:", err);
-    }
-  }, []);
 
   const pollSessions = useCallback(async () => {
     if (!profile?.id || !sessions || sessions.length === 0 || isPollingRef.current) return;
@@ -99,26 +91,20 @@ export function useWhatsAppHealthMonitor() {
         );
 
         if (isConnected) {
+          const shouldRefreshSessions = state.lastKnownStatus !== "connected" && session.status !== "connected";
           state.consecutiveFailures = 0;
           state.notificationSent = false;
           state.lastKnownStatus = "connected";
-          queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
-          queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] });
+          if (shouldRefreshSessions) {
+            queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
+            queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] });
+          }
         } else {
           state.consecutiveFailures++;
 
           if (state.consecutiveFailures >= ERROR_THRESHOLD && !state.notificationSent) {
-            toast.warning("Possivel desconexao do WhatsApp", {
-              description: `A sessao "${state.displayName}" pode estar com problemas. Aguarde a verificacao automatica.`,
-              duration: 10000,
-            });
-
-            await createDisconnectionNotification(
-              state.displayName,
-              session.owner_user_id,
-              session.organization_id,
-            );
-
+            queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
+            queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] });
             state.notificationSent = true;
           }
         }
@@ -130,7 +116,7 @@ export function useWhatsAppHealthMonitor() {
       isPollingRef.current = false;
       setIsPolling(false);
     }
-  }, [profile?.id, sessions, checkSessionHealth, createDisconnectionNotification, queryClient]);
+  }, [profile?.id, sessions, checkSessionHealth, queryClient]);
 
   const checkNow = useCallback(async () => {
     if (!sessions || sessions.length === 0) {

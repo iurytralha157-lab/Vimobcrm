@@ -13,6 +13,7 @@ import (
 
 type dashboardLeadWhereOptions struct {
 	DateColumn      string
+	DateExpression  string
 	ForceDealStatus string
 }
 
@@ -38,6 +39,13 @@ type conversionBucketDefinition struct {
 	Color string
 }
 
+type lossReasonDefinition struct {
+	Key     string
+	Label   string
+	Color   string
+	Aliases []string
+}
+
 var dashboardConversionBuckets = []conversionBucketDefinition{
 	{Key: "up_to_7", Label: "Ate 7 dias", Min: 0, Max: 7, Color: "#10b981"},
 	{Key: "7_to_14", Label: "De 7 a 14 dias", Min: 8, Max: 14, Color: "#22c55e"},
@@ -47,6 +55,17 @@ var dashboardConversionBuckets = []conversionBucketDefinition{
 	{Key: "4_to_6_months", Label: "De 4 a 6 meses", Min: 121, Max: 180, Color: "#fb6f24"},
 	{Key: "over_6_months", Label: "Acima de 6 meses", Min: 181, Max: math.MaxInt, Color: "#ef4444"},
 }
+
+var dashboardLossReasonDefinitions = []lossReasonDefinition{
+	{Key: "nao_respondeu", Label: "Nao respondeu", Color: "#ef4444", Aliases: []string{"nao respondeu", "não respondeu", "sem resposta"}},
+	{Key: "outra_regiao", Label: "Lead de outra regiao", Color: "#f97316", Aliases: []string{"lead de outra regiao", "lead de outra região", "outra regiao", "outra região", "ddd de fora"}},
+	{Key: "contato_invalido", Label: "Contato invalido / sem telefone", Color: "#eab308", Aliases: []string{"contato invalido", "contato inválido", "telefone invalido", "telefone inválido", "sem telefone"}},
+	{Key: "sem_interesse", Label: "Sem interesse no momento", Color: "#8b5cf6", Aliases: []string{"sem interesse", "sem interesse no momento"}},
+	{Key: "sem_orcamento", Label: "Sem orcamento", Color: "#06b6d4", Aliases: []string{"sem orcamento", "sem orçamento", "fora do orcamento", "fora do orçamento"}},
+	{Key: "concorrente", Label: "Comprou com concorrente", Color: "#10b981", Aliases: []string{"comprou com concorrente", "concorrente", "escolheu concorrente"}},
+}
+
+const dashboardLossReasonOtherColor = "#64748b"
 
 func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (DashboardStats, error) {
 	currentFrom, currentTo := dashboardDateRange(filter)
@@ -73,7 +92,15 @@ func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tena
 	if err != nil {
 		return DashboardStats{}, err
 	}
+	lostDeals, err := repo.dashboardLostDeals(ctx, tenantContext, currentFilter)
+	if err != nil {
+		return DashboardStats{}, err
+	}
 	previousWonCount, err := repo.dashboardWonCount(ctx, tenantContext, previousFilter)
+	if err != nil {
+		return DashboardStats{}, err
+	}
+	previousLostCount, err := repo.dashboardLostCount(ctx, tenantContext, previousFilter)
 	if err != nil {
 		return DashboardStats{}, err
 	}
@@ -88,6 +115,7 @@ func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tena
 	}
 
 	closedLeads := int64(len(wonDeals))
+	lostLeads := int64(len(lostDeals))
 	conversionRate := 0.0
 	if currentAggregate.Total > 0 {
 		conversionRate = (float64(closedLeads) / float64(currentAggregate.Total)) * 100
@@ -107,20 +135,22 @@ func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tena
 		TotalLeads:               currentAggregate.Total,
 		LeadsInProgress:          currentAggregate.Open,
 		LeadsClosed:              closedLeads,
-		LeadsLost:                currentAggregate.Lost,
+		LeadsLost:                lostLeads,
 		OpenLeads:                currentAggregate.Open,
-		LostLeads:                currentAggregate.Lost,
+		LostLeads:                lostLeads,
 		ConversionRate:           conversionRate,
 		ClosedLeads:              closedLeads,
 		WonAverageConversionDays: averageConversionDays,
 		WonConversionBuckets:     buildWonConversionBuckets(wonDeals, closedLeads),
 		WonDeals:                 wonDeals,
+		LostReasonBuckets:        buildLostReasonBuckets(lostDeals, lostLeads),
+		LostDeals:                lostDeals,
 		AverageResponseTime:      formatAverageResponseTime(currentAggregate.AverageResponseSecs),
 		TotalSalesValue:          totalSalesValue,
 		PendingCommissions:       0,
 		LeadsTrend:               calculateTrend(currentAggregate.Total, previousAggregate.Total),
 		OpenTrend:                calculateTrend(currentAggregate.Open, previousAggregate.Open),
-		LostTrend:                calculateTrend(currentAggregate.Lost, previousAggregate.Lost),
+		LostTrend:                calculateTrend(lostLeads, previousLostCount),
 		ConversionTrend:          0,
 		ClosedTrend:              calculateTrend(closedLeads, previousWonCount),
 		TotalReceivables:         0,
@@ -669,6 +699,26 @@ func (repo Repository) dashboardWonCount(ctx context.Context, tenantContext tena
 	return count, err
 }
 
+func (repo Repository) dashboardLostCount(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (int64, error) {
+	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
+		DateExpression:  "coalesce(l.lost_at, l.created_at)",
+		ForceDealStatus: "lost",
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	var count int64
+	err = repo.db.Pool().QueryRow(ctx, `
+		select count(*)::bigint
+		from public.leads l
+		where `+strings.Join(where, " and "),
+		args...,
+	).Scan(&count)
+
+	return count, err
+}
+
 func (repo Repository) dashboardWonDeals(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) ([]WonDealDetail, error) {
 	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
 		DateColumn:      "won_at",
@@ -729,6 +779,66 @@ func (repo Repository) dashboardWonDeals(ctx context.Context, tenantContext tena
 				days = 0
 			}
 			deal.ConversionDays = &days
+		}
+		deal.AssignedUserName = textValueWithDefault(userName, "Sem responsavel")
+		deals = append(deals, deal)
+	}
+
+	return deals, rows.Err()
+}
+
+func (repo Repository) dashboardLostDeals(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) ([]LostDealDetail, error) {
+	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
+		DateExpression:  "coalesce(l.lost_at, l.created_at)",
+		ForceDealStatus: "lost",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := repo.db.Pool().Query(ctx, `
+		select
+			l.id::text,
+			l.name,
+			l.phone,
+			l.source,
+			l.lost_reason,
+			l.created_at,
+			l.lost_at,
+			u.name
+		from public.leads l
+		left join public.users u on u.id = l.assigned_user_id
+		where `+strings.Join(where, " and ")+`
+		order by coalesce(l.lost_at, l.created_at) desc, l.created_at desc
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	deals := []LostDealDetail{}
+	for rows.Next() {
+		var deal LostDealDetail
+		var phone, source, lostReason, userName pgtype.Text
+		var createdAt, lostAt pgtype.Timestamptz
+		if err := rows.Scan(&deal.ID, &deal.Name, &phone, &source, &lostReason, &createdAt, &lostAt, &userName); err != nil {
+			return nil, err
+		}
+		if deal.Name == "" {
+			deal.Name = "Lead sem nome"
+		}
+		deal.Phone = pipelineTextPtr(phone)
+		deal.Source = pipelineTextPtr(source)
+		deal.LostReason = textValueWithDefault(lostReason, "Outros")
+		_, groupLabel, _ := classifyLostReason(deal.LostReason)
+		deal.LostReasonGroup = groupLabel
+		if createdAt.Valid {
+			value := createdAt.Time.Format(time.RFC3339)
+			deal.CreatedAt = &value
+		}
+		if lostAt.Valid {
+			value := lostAt.Time.Format(time.RFC3339)
+			deal.LostAt = &value
 		}
 		deal.AssignedUserName = textValueWithDefault(userName, "Sem responsavel")
 		deals = append(deals, deal)
@@ -819,12 +929,16 @@ func (repo Repository) buildDashboardLeadWhere(tenantContext tenant.Context, fil
 		where = append(where, fmt.Sprintf(clause, len(args)))
 	}
 
-	if options.DateColumn != "" {
+	dateExpression := options.DateExpression
+	if dateExpression == "" && options.DateColumn != "" {
+		dateExpression = "l." + options.DateColumn
+	}
+	if dateExpression != "" {
 		if filter.DateFrom != nil {
-			add("l."+options.DateColumn+" >= $%d", *filter.DateFrom)
+			add(dateExpression+" >= $%d", *filter.DateFrom)
 		}
 		if filter.DateTo != nil {
-			add("l."+options.DateColumn+" <= $%d", *filter.DateTo)
+			add(dateExpression+" <= $%d", *filter.DateTo)
 		}
 	}
 	if filter.UserID != "" && filter.UserID != "all" {
@@ -1098,6 +1212,96 @@ func buildWonConversionBuckets(deals []WonDealDetail, closedLeads int64) []WonCo
 	}
 
 	return buckets
+}
+
+func buildLostReasonBuckets(deals []LostDealDetail, lostLeads int64) []LostReasonBucket {
+	counts := map[string]int64{}
+	labels := map[string]string{}
+	colors := map[string]string{}
+
+	for _, deal := range deals {
+		key, label, color := classifyLostReason(deal.LostReason)
+		counts[key]++
+		labels[key] = label
+		colors[key] = color
+	}
+
+	buckets := make([]LostReasonBucket, 0, len(counts))
+	for _, definition := range dashboardLossReasonDefinitions {
+		count := counts[definition.Key]
+		if count == 0 {
+			continue
+		}
+		buckets = append(buckets, LostReasonBucket{
+			Key:        definition.Key,
+			Label:      definition.Label,
+			Count:      count,
+			Percentage: lostReasonPercentage(count, lostLeads),
+			Color:      definition.Color,
+		})
+		delete(counts, definition.Key)
+	}
+
+	if count := counts["outros"]; count > 0 {
+		buckets = append(buckets, LostReasonBucket{
+			Key:        "outros",
+			Label:      "Outros",
+			Count:      count,
+			Percentage: lostReasonPercentage(count, lostLeads),
+			Color:      dashboardLossReasonOtherColor,
+		})
+		delete(counts, "outros")
+	}
+
+	for key, count := range counts {
+		buckets = append(buckets, LostReasonBucket{
+			Key:        key,
+			Label:      labels[key],
+			Count:      count,
+			Percentage: lostReasonPercentage(count, lostLeads),
+			Color:      colors[key],
+		})
+	}
+
+	return buckets
+}
+
+func lostReasonPercentage(count int64, total int64) float64 {
+	if total <= 0 {
+		return 0
+	}
+
+	return (float64(count) / float64(total)) * 100
+}
+
+func classifyLostReason(reason string) (string, string, string) {
+	normalized := normalizeLostReason(reason)
+	if normalized == "" || strings.HasPrefix(normalized, "outros") || strings.HasPrefix(normalized, "outro") {
+		return "outros", "Outros", dashboardLossReasonOtherColor
+	}
+
+	for _, definition := range dashboardLossReasonDefinitions {
+		for _, alias := range definition.Aliases {
+			if strings.HasPrefix(normalized, normalizeLostReason(alias)) {
+				return definition.Key, definition.Label, definition.Color
+			}
+		}
+	}
+
+	return "outros", "Outros", dashboardLossReasonOtherColor
+}
+
+func normalizeLostReason(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	replacer := strings.NewReplacer(
+		"á", "a", "à", "a", "â", "a", "ã", "a",
+		"é", "e", "ê", "e",
+		"í", "i",
+		"ó", "o", "ô", "o", "õ", "o",
+		"ú", "u",
+		"ç", "c",
+	)
+	return replacer.Replace(value)
 }
 
 func groupByCommission(fallback bool) string {

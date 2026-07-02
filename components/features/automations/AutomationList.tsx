@@ -184,14 +184,13 @@ export function AutomationList({
         return (
           <div
             key={automation.id}
-            className={`group relative flex min-h-[184px] overflow-hidden rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[0_14px_32px_rgb(0_0_0/0.08)] transition-all duration-200 ${
-              isClickable ? 'cursor-pointer hover:border-primary/60 hover:bg-[var(--app-surface-hover)]' : ''
+            className={`group relative flex min-h-[184px] overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-[0_14px_32px_rgb(0_0_0/0.08)] transition-all duration-200 ${
+              isClickable ? 'cursor-pointer hover:bg-[var(--app-surface-hover)]' : ''
             } ${
               !automation.is_active ? 'opacity-50' : ''
             }`}
             onClick={() => handleOpenCard(automation.id)}
           >
-            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-primary via-orange-400 to-transparent opacity-80" />
 
             <div className="relative z-10 flex w-full flex-col justify-between p-4">
               <div className="flex items-start justify-between gap-3">

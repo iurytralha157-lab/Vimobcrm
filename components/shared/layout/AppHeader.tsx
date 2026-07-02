@@ -143,13 +143,13 @@ export const AppHeader = React.memo(function AppHeader({
                 {isSwitching ? (
                   <Loader2 className="h-4 w-4 animate-spin text-primary" />
                 ) : organization?.logo_url ? (
-                  <div className="relative h-5 w-5 rounded-full overflow-hidden border border-border/20 flex items-center justify-center bg-white/5">
+                  <div className="relative flex h-5 w-5 items-center justify-center overflow-hidden rounded-full bg-black/80">
                     <Image
                       src={organization.logo_url}
                       alt=""
                       fill
                       sizes="20px"
-                      className="object-contain p-0.5"
+                      className="object-cover"
                       unoptimized
                     />
                   </div>
@@ -174,13 +174,13 @@ export const AppHeader = React.memo(function AppHeader({
                   onClick={() => handleSwitchOrg(org.organization_id)}
                   className="cursor-pointer rounded-xl m-1 px-3 py-2.5 gap-3"
                 >
-                  <Avatar className="h-8 w-8 rounded-lg border border-border/40">
+                  <Avatar className="h-8 w-8 rounded-full border border-border/40">
                     {org.organization_logo ? (
-                      <AvatarImage src={org.organization_logo} className="object-contain" />
+                      <AvatarImage src={org.organization_logo} className="object-cover" />
                     ) : (
                       <AvatarImage src={undefined} />
                     )}
-                    <AvatarFallback className="rounded-lg bg-primary/10 text-primary text-xs font-bold">
+                    <AvatarFallback className="rounded-full bg-primary/10 text-primary text-xs font-bold">
                       {org.organization_name?.charAt(0)?.toUpperCase() || 'O'}
                     </AvatarFallback>
                   </Avatar>

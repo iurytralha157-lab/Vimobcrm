@@ -16,7 +16,7 @@ import type { KeyboardEvent } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
-import type { WonConversionBucket, WonDealDetail } from '@/hooks/use-dashboard-stats';
+import type { LostDealDetail, LostReasonBucket, WonConversionBucket, WonDealDetail } from '@/hooks/use-dashboard-stats';
 import {
   Tooltip,
   TooltipContent,
@@ -33,6 +33,8 @@ interface KPIData {
   wonAverageConversionDays?: number | null;
   wonConversionBuckets?: WonConversionBucket[];
   wonDeals?: WonDealDetail[];
+  lostReasonBuckets?: LostReasonBucket[];
+  lostDeals?: LostDealDetail[];
   avgResponseTime: string;
   totalSalesValue: number;
   pendingCommissions: number;
@@ -59,6 +61,7 @@ interface KPICardsProps {
   scheduledVisits?: number;
   propertyCount?: number;
   siteVisits?: number;
+  onLostClick?: () => void;
   onWonClick?: () => void;
 }
 
@@ -236,7 +239,7 @@ function KPICardSkeleton() {
   );
 }
 
-export function KPICards({ data, isLoading, periodLabel = 'Últimos 30 dias', scheduledVisits, propertyCount, siteVisits, onWonClick }: KPICardsProps) {
+export function KPICards({ data, isLoading, periodLabel = 'Últimos 30 dias', scheduledVisits, propertyCount, siteVisits, onLostClick, onWonClick }: KPICardsProps) {
   if (isLoading) {
     return (
       <div className="space-y-3">
@@ -287,6 +290,8 @@ export function KPICards({ data, isLoading, periodLabel = 'Últimos 30 dias', sc
       tooltip: `Percentual de leads perdidos dentro do total do período - ${periodLabel}`,
       format: 'number',
       accentColor: 'destructive',
+      onClick: onLostClick,
+      interactive: Boolean(onLostClick),
       tourTarget: 'dashboard-kpi-lost',
     },
     {

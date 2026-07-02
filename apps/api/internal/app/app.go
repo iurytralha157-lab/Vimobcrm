@@ -19,6 +19,7 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/integrations"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/leads"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/me"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/meta"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pipelines"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/properties"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
@@ -131,8 +132,19 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	whatsappHandler := whatsapp.NewHandler(whatsapp.NewRepository(postgres, whatsapp.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
+		EvolutionGo: whatsapp.EvolutionGoConfig{
+			APIURL:     cfg.EvolutionGo.APIURL,
+			APIKey:     cfg.EvolutionGo.APIKey,
+			WebhookURL: cfg.EvolutionGo.WebhookURL,
+		},
 	}), realtimeHub).WithAutoReply(aiService, cfg.AI.AutoReplyToken)
 	webhooksHandler := webhooks.NewHandler(webhooks.NewRepository(postgres), realtimeHub)
+	metaHandler := meta.NewHandler(meta.NewRepository(postgres, meta.Config{
+		AppSecret:          cfg.Meta.AppSecret,
+		WebhookVerifyToken: cfg.Meta.WebhookVerifyToken,
+		GraphVersion:       cfg.Meta.GraphVersion,
+		GraphBaseURL:       cfg.Meta.GraphBaseURL,
+	}), realtimeHub)
 	integrationsHandler := integrations.NewHandler(integrations.NewRepository(postgres, integrations.ExternalConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
@@ -177,6 +189,15 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("GET /v1/admin/error-events", withAuthTenant(http.HandlerFunc(telemetryHandler.ListErrorEvents)))
 	mux.Handle("POST /v1/admin/error-events/{id}/resolve", withAuthTenant(http.HandlerFunc(telemetryHandler.ResolveErrorEvent)))
 	mux.Handle("GET /v1/gamification/overview", withOrganization(http.HandlerFunc(gamificationHandler.Overview)))
+	mux.Handle("GET /v1/gamification/admin", withOrganization(http.HandlerFunc(gamificationHandler.AdminSnapshot)))
+	mux.Handle("PUT /v1/gamification/rules/{actionType}", withOrganization(http.HandlerFunc(gamificationHandler.UpsertRule)))
+	mux.Handle("PATCH /v1/gamification/participants/{userId}", withOrganization(http.HandlerFunc(gamificationHandler.SetParticipant)))
+	mux.Handle("POST /v1/gamification/missions", withOrganization(http.HandlerFunc(gamificationHandler.CreateMission)))
+	mux.Handle("PATCH /v1/gamification/missions/{id}", withOrganization(http.HandlerFunc(gamificationHandler.UpdateMission)))
+	mux.Handle("DELETE /v1/gamification/missions/{id}", withOrganization(http.HandlerFunc(gamificationHandler.DeleteMission)))
+	mux.Handle("POST /v1/gamification/manual-entries", withOrganization(http.HandlerFunc(gamificationHandler.CreateManualEntry)))
+	mux.Handle("PATCH /v1/gamification/manual-entries/{id}", withOrganization(http.HandlerFunc(gamificationHandler.DecideManualEntry)))
+	mux.Handle("POST /v1/gamification/seasons", withOrganization(http.HandlerFunc(gamificationHandler.ResetSeason)))
 	mux.Handle("GET /v1/cadence-templates", withOrganization(http.HandlerFunc(cadencesHandler.ListTemplates)))
 	mux.Handle("POST /v1/cadence-tasks", withOrganization(http.HandlerFunc(cadencesHandler.CreateTask)))
 	mux.Handle("PATCH /v1/cadence-tasks/{id}", withOrganization(http.HandlerFunc(cadencesHandler.UpdateTask)))
@@ -300,6 +321,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("POST /v1/automation-media", withOrganization(http.HandlerFunc(automationsHandler.UploadMedia)))
 	mux.Handle("DELETE /v1/automation-media", withOrganization(http.HandlerFunc(automationsHandler.DeleteMedia)))
 	mux.Handle("POST /v1/public/webhooks/generic", http.HandlerFunc(webhooksHandler.ReceiveLead))
+	mux.HandleFunc("GET /v1/public/integrations/meta/webhook", metaHandler.Webhook)
+	mux.HandleFunc("POST /v1/public/integrations/meta/webhook", metaHandler.Webhook)
 	mux.HandleFunc("POST /v1/public/onboarding/signup", adminHandler.PublicOnboardingSignup)
 	mux.HandleFunc("POST /v1/public/onboarding/checkout-plan", adminHandler.PublicCheckoutPlan)
 	mux.HandleFunc("GET /v1/public/system-settings", settingsHandler.PublicSystemSettings)
@@ -389,6 +412,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("POST /v1/whatsapp/sessions/{id}/recreate", withOrganization(http.HandlerFunc(whatsappHandler.RecreateSession)))
 	mux.Handle("POST /v1/whatsapp/sessions/{id}/logout", withOrganization(http.HandlerFunc(whatsappHandler.LogoutSession)))
 	mux.Handle("POST /v1/whatsapp/sessions/{id}/notification-session", withOrganization(http.HandlerFunc(whatsappHandler.ToggleNotificationSession)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/ai-auto-reply", withOrganization(http.HandlerFunc(whatsappHandler.ToggleAutoReplySession)))
 	mux.Handle("GET /v1/whatsapp/sessions/{id}/access", withOrganization(http.HandlerFunc(whatsappHandler.ListSessionAccess)))
 	mux.Handle("POST /v1/whatsapp/sessions/{id}/access", withOrganization(http.HandlerFunc(whatsappHandler.GrantSessionAccess)))
 	mux.Handle("DELETE /v1/whatsapp/sessions/{id}/access/{userId}", withOrganization(http.HandlerFunc(whatsappHandler.RevokeSessionAccess)))

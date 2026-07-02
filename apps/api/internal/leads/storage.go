@@ -1,7 +1,9 @@
 package leads
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -80,6 +82,57 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 	return nil
 }
 
+func (client storageClient) signedURL(ctx context.Context, bucket string, objectPath string, expiresIn int) (string, error) {
+	if client.projectURL == "" || client.apiKey == "" || strings.TrimSpace(objectPath) == "" {
+		return "", nil
+	}
+
+	body, _ := json.Marshal(map[string]any{"expiresIn": expiresIn})
+	endpoint := fmt.Sprintf(
+		"%s/storage/v1/object/sign/%s/%s",
+		client.projectURL,
+		url.PathEscape(bucket),
+		escapeStorageObjectPath(objectPath),
+	)
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("apikey", client.apiKey)
+	request.Header.Set("Authorization", "Bearer "+client.apiKey)
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+
+	payload, err := io.ReadAll(io.LimitReader(response.Body, 8192))
+	if err != nil {
+		return "", err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return "", fmt.Errorf("%w: signed url failed: %s", ErrStorageOperation, strings.TrimSpace(string(payload)))
+	}
+
+	var parsed struct {
+		SignedURL string `json:"signedURL"`
+		SignedUrl string `json:"signedUrl"`
+	}
+	if err := json.Unmarshal(payload, &parsed); err != nil {
+		return "", err
+	}
+
+	signed := parsed.SignedURL
+	if signed == "" {
+		signed = parsed.SignedUrl
+	}
+
+	return client.resolveSignedURL(signed), nil
+}
+
 func (client storageClient) publicURL(bucket string, objectPath string) string {
 	if client.projectURL == "" {
 		return ""
@@ -104,4 +157,30 @@ func escapeStorageObjectPath(value string) string {
 	}
 
 	return strings.Join(parts, "/")
+}
+
+func (client storageClient) resolveSignedURL(value string) string {
+	signed := strings.TrimSpace(value)
+	if signed == "" {
+		return ""
+	}
+	if strings.HasPrefix(signed, "http://") || strings.HasPrefix(signed, "https://") {
+		return signed
+	}
+	if client.projectURL == "" {
+		return signed
+	}
+
+	switch {
+	case strings.HasPrefix(signed, "/storage/v1/"):
+		return client.projectURL + signed
+	case strings.HasPrefix(signed, "/object/"):
+		return client.projectURL + "/storage/v1" + signed
+	case strings.HasPrefix(signed, "object/"):
+		return client.projectURL + "/storage/v1/" + signed
+	case strings.HasPrefix(signed, "/"):
+		return client.projectURL + signed
+	default:
+		return signed
+	}
 }

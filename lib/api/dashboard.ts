@@ -42,6 +42,24 @@ export type DashboardStatsResponse = {
     conversionDays: number | null
     assignedUserName: string
   }>
+  lostReasonBuckets: Array<{
+    key: string
+    label: string
+    count: number
+    percentage: number
+    color: string
+  }>
+  lostDeals: Array<{
+    id: string
+    name: string
+    phone: string | null
+    source: string | null
+    lostReason: string
+    lostReasonGroup: string
+    createdAt: string | null
+    lostAt: string | null
+    assignedUserName: string
+  }>
   avgResponseTime: string
   totalSalesValue: number
   pendingCommissions: number

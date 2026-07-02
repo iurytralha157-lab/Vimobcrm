@@ -172,15 +172,17 @@ type LeadMeta struct {
 }
 
 type LeadAttachment struct {
-	ID        string    `json:"id"`
-	LeadID    string    `json:"lead_id"`
-	FileName  string    `json:"file_name"`
-	FileURL   string    `json:"file_url"`
-	FileType  *string   `json:"file_type"`
-	FileSize  *int64    `json:"file_size"`
-	CreatedAt time.Time `json:"created_at"`
-	CreatedBy *string   `json:"created_by"`
-	MessageID *string   `json:"message_id"`
+	ID            string    `json:"id"`
+	LeadID        string    `json:"lead_id"`
+	FileName      string    `json:"file_name"`
+	FileURL       string    `json:"file_url"`
+	FileType      *string   `json:"file_type"`
+	FileSize      *int64    `json:"file_size"`
+	CreatedAt     time.Time `json:"created_at"`
+	CreatedBy     *string   `json:"created_by"`
+	MessageID     *string   `json:"message_id"`
+	StorageBucket string    `json:"-"`
+	StoragePath   string    `json:"-"`
 }
 
 type LeadAttachmentCreateRequest struct {
@@ -191,6 +193,8 @@ type LeadAttachmentCreateRequest struct {
 	FileSize  *int64  `json:"file_size"`
 	MessageID *string `json:"message_id"`
 }
+
+const leadAttachmentSignedURLTTLSeconds = 60 * 60
 
 type leadAttachmentCreateInput struct {
 	LeadID    string
@@ -252,11 +256,11 @@ type CompleteCadenceTaskRequest struct {
 }
 
 type Notification struct {
-	ID             string    `json:"id"`
-	UserID         string    `json:"user_id"`
-	OrganizationID string    `json:"organization_id"`
-	Title          string    `json:"title"`
-	Content        *string   `json:"content"`
+	ID             string         `json:"id"`
+	UserID         string         `json:"user_id"`
+	OrganizationID string         `json:"organization_id"`
+	Title          string         `json:"title"`
+	Content        *string        `json:"content"`
 	Type           string         `json:"type"`
 	IsRead         bool           `json:"is_read"`
 	LeadID         *string        `json:"lead_id"`
@@ -265,9 +269,9 @@ type Notification struct {
 }
 
 type CreateNotificationRequest struct {
-	UserID         string  `json:"user_id"`
-	OrganizationID string  `json:"organization_id"`
-	Title          string  `json:"title"`
+	UserID         string         `json:"user_id"`
+	OrganizationID string         `json:"organization_id"`
+	Title          string         `json:"title"`
 	Content        *string        `json:"content"`
 	Type           string         `json:"type"`
 	LeadID         *string        `json:"lead_id"`
@@ -812,6 +816,7 @@ func (repo Repository) ListLeadAttachments(ctx context.Context, tenantContext te
 		if err != nil {
 			return nil, err
 		}
+		repo.signLeadAttachmentURL(ctx, &attachment)
 		attachments = append(attachments, attachment)
 	}
 	return attachments, rows.Err()
@@ -845,6 +850,7 @@ func (repo Repository) CreateLeadAttachment(ctx context.Context, tenantContext t
 			limit 1
 		`, existingArgs...))
 		if err == nil {
+			repo.signLeadAttachmentURL(ctx, &existing)
 			return existing, nil
 		}
 		if err != pgx.ErrNoRows {
@@ -923,6 +929,7 @@ func (repo Repository) CreateLeadAttachment(ctx context.Context, tenantContext t
 	if err != nil {
 		return LeadAttachment{}, err
 	}
+	repo.signLeadAttachmentURL(ctx, &attachment)
 
 	_, err = repo.db.Pool().Exec(ctx, `
 		insert into public.activities (
@@ -944,6 +951,7 @@ func (repo Repository) CreateLeadAttachment(ctx context.Context, tenantContext t
 		return LeadAttachment{}, err
 	}
 
+	repo.signLeadAttachmentURL(ctx, &attachment)
 	return attachment, nil
 }
 
@@ -1581,6 +1589,16 @@ func leadAttachmentSelectFields(columns leadAttachmentColumns) string {
 		messageIDExpression = "la.metadata->>'message_id'"
 	}
 
+	storageBucketExpression := "null::text"
+	if columns.StorageBucket {
+		storageBucketExpression = "la.storage_bucket"
+	}
+
+	storagePathExpression := "null::text"
+	if columns.StoragePath {
+		storagePathExpression = "la.storage_path"
+	}
+
 	return `
 		la.id::text,
 		la.lead_id::text,
@@ -1590,12 +1608,14 @@ func leadAttachmentSelectFields(columns leadAttachmentColumns) string {
 		` + fileSizeExpression + `,
 		` + createdByExpression + `,
 		` + messageIDExpression + `,
+		` + storageBucketExpression + `,
+		` + storagePathExpression + `,
 		la.created_at`
 }
 
 func scanLeadAttachment(row scanner) (LeadAttachment, error) {
 	var attachment LeadAttachment
-	var fileType, createdBy, messageID pgtype.Text
+	var fileType, createdBy, messageID, storageBucket, storagePath pgtype.Text
 	var fileSize pgtype.Int8
 
 	if err := row.Scan(
@@ -1607,6 +1627,8 @@ func scanLeadAttachment(row scanner) (LeadAttachment, error) {
 		&fileSize,
 		&createdBy,
 		&messageID,
+		&storageBucket,
+		&storagePath,
 		&attachment.CreatedAt,
 	); err != nil {
 		if err == pgx.ErrNoRows {
@@ -1618,6 +1640,8 @@ func scanLeadAttachment(row scanner) (LeadAttachment, error) {
 	attachment.FileType = textPtr(fileType)
 	attachment.CreatedBy = textPtr(createdBy)
 	attachment.MessageID = textPtr(messageID)
+	attachment.StorageBucket = textValue(storageBucket)
+	attachment.StoragePath = textValue(storagePath)
 	if fileSize.Valid {
 		attachment.FileSize = &fileSize.Int64
 	}
@@ -1833,22 +1857,74 @@ func (repo Repository) insertTaskCompletedActivity(
 	return err
 }
 
-func storagePathFromPublicURL(fileURL string, fallback string) string {
-	const marker = "/storage/v1/object/public/whatsapp-media/"
-	if index := strings.Index(fileURL, marker); index >= 0 {
-		path := fileURL[index+len(marker):]
-		path = strings.Split(path, "?")[0]
-		if path = strings.Trim(path, "/"); path != "" {
-			return path
+func storagePathFromPublicURL(fileURL string, _ string) string {
+	if path := storagePathFromPublicStorageURL(fileURL); path != "" {
+		return path
+	}
+
+	return ""
+}
+
+func storagePathFromPublicStorageURL(fileURL string) string {
+	rawURL := strings.TrimSpace(fileURL)
+	if rawURL == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+
+	for _, prefix := range []string{"/storage/v1/object/public/", "/storage/v1/object/sign/"} {
+		path := parsed.Path
+		index := strings.Index(path, prefix)
+		if index < 0 {
+			continue
+		}
+
+		remainder := strings.Trim(path[index+len(prefix):], "/")
+		bucket, objectPath, ok := strings.Cut(remainder, "/")
+		if !ok || bucket != leadAttachmentBucket {
+			continue
+		}
+
+		objectPath, err = url.PathUnescape(strings.Trim(objectPath, "/"))
+		if err != nil {
+			return ""
+		}
+		return objectPath
+	}
+
+	return ""
+}
+
+func (repo Repository) signLeadAttachmentURL(ctx context.Context, attachment *LeadAttachment) {
+	if attachment == nil {
+		return
+	}
+
+	fileURLPath := storagePathFromPublicStorageURL(attachment.FileURL)
+	path := fileURLPath
+	if path == "" {
+		storedPath := strings.TrimSpace(attachment.StoragePath)
+		if storedPath != "" && !strings.HasPrefix(storedPath, "lead-attachments/") {
+			path = storedPath
 		}
 	}
-
-	fallback = strings.TrimSpace(fallback)
-	if fallback == "" {
-		return "lead-attachments/unknown"
+	if path == "" {
+		return
 	}
 
-	return "lead-attachments/" + fallback
+	bucket := strings.TrimSpace(attachment.StorageBucket)
+	if bucket == "" {
+		bucket = leadAttachmentBucket
+	}
+
+	signedURL, err := repo.storage.signedURL(ctx, bucket, path, leadAttachmentSignedURLTTLSeconds)
+	if err == nil && signedURL != "" {
+		attachment.FileURL = signedURL
+	}
 }
 
 func optionalStringFromPointer(value *string, maxLength int) *string {

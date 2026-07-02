@@ -1,5 +1,14 @@
-import { redirect } from "next/navigation";
+import { generatePublicSiteMetadata, renderPublicSiteRoute } from "@/components/features/public-site";
 
-export default function HomePage() {
-  redirect("/login");
+export async function generateMetadata() {
+  return await generatePublicSiteMetadata({
+    route: { kind: "home" },
+  });
+}
+
+export default async function HomePage() {
+  return await renderPublicSiteRoute({
+    missing: "redirect-login",
+    route: { kind: "home" },
+  });
 }

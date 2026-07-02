@@ -360,6 +360,13 @@ export function EventSheet({
         side="right"
         overlayClassName="bg-black/35"
         className="!h-auto !w-[calc(100vw-24px)] !max-w-[560px] flex max-h-[78vh] flex-col overflow-hidden rounded-[24px] border-0 bg-[#090909]/78 p-0 text-white shadow-[0_24px_80px_rgba(0,0,0,0.62)] backdrop-blur-2xl [&>button.absolute.right-4.top-4]:hidden sm:inset-y-auto sm:right-auto sm:left-1/2 sm:top-1/2 sm:!w-[min(560px,calc(100vw-40px))] sm:!-translate-x-1/2 sm:!-translate-y-1/2 sm:!max-w-[560px]"
+        onEscapeKeyDown={(event) => event.preventDefault()}
+        onInteractOutside={(event) => {
+          const target = event.target as HTMLElement | null;
+          if (target?.closest('[data-radix-popper-content-wrapper], [role="listbox"]')) {
+            event.preventDefault();
+          }
+        }}
       >
         <SheetHeader className="sr-only">
           <SheetTitle>{isExisting ? "Detalhes da atividade" : "Nova atividade"}</SheetTitle>

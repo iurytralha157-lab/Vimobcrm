@@ -907,7 +907,10 @@ async function triggerAutoReply(
   storedMessage: JsonRecord | null,
   message: ReturnType<typeof normalizeMessage>,
 ) {
-  if (!VIMOB_API_URL || !AI_AUTOREPLY_TOKEN) return;
+  if (!VIMOB_API_URL || !AI_AUTOREPLY_TOKEN) {
+    console.warn("AI auto-reply skipped: missing VIMOB_API_URL or AI_AUTOREPLY_TOKEN");
+    return;
+  }
   if (!message || message.fromMe || message.isGroup || !storedMessage?.id) return;
   if (!message.content || !String(message.content).trim()) return;
 
@@ -934,6 +937,11 @@ async function triggerAutoReply(
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       console.warn("AI auto-reply request failed", response.status, body.slice(0, 500));
+    } else {
+      const body = await response.json().catch(() => null);
+      if (body?.skipped) {
+        console.warn("AI auto-reply skipped", body.reason || "unknown_reason");
+      }
     }
   } catch (error) {
     console.warn("AI auto-reply request failed", error);

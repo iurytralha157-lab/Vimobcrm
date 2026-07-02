@@ -11,15 +11,16 @@ export function FloatingChatButton() {
   const { state, toggleChat } = useFloatingChat();
   const { data: sessions, isLoading: loadingSessions } = useAccessibleSessions();
   const accessibleSessionIds = sessions?.map((s) => s.id) || [];
+  const pathname = usePathname();
+  const isOnConversationsPage = pathname === "/crm/conversas";
   const { data: conversations } = useWhatsAppConversations(
     undefined,
     { hideGroups: true },
-    loadingSessions ? undefined : accessibleSessionIds,
+    isOnConversationsPage ? [] : (loadingSessions ? undefined : accessibleSessionIds),
   );
-  const pathname = usePathname();
   const { data: hasWhatsAppAccess, isLoading: loadingWhatsAppAccess } = useHasWhatsAppAccess();
 
-  useWhatsAppRealtimeConversations();
+  useWhatsAppRealtimeConversations(!isOnConversationsPage);
 
   const [side, setSide] = useState<'right' | 'left'>('right');
   const [offsetX, setOffsetX] = useState(0);
@@ -27,7 +28,7 @@ export function FloatingChatButton() {
   const btnRef = useRef<HTMLButtonElement>(null);
   const dragState = useRef({ startX: 0, startY: 0, moved: false, pointerId: -1 });
 
-  const hasConnectedSession = sessions?.some((s) => s.status === "connected" || s.status === "connecting");
+  const hasConnectedSession = sessions?.some((s) => s.status === "connected");
 
   const leadUnreadCount = conversations?.reduce((acc, c) => {
     if (c.lead_id) {
@@ -35,8 +36,6 @@ export function FloatingChatButton() {
     }
     return acc;
   }, 0) || 0;
-
-  const isOnConversationsPage = pathname === "/crm/conversas";
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);

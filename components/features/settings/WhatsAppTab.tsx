@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import NextImage from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,7 +24,8 @@ import {
   CheckCircle,
   XCircle,
   Loader2,
-  Bell } from
+  Bell,
+  Bot } from
 "lucide-react";
 import {
   useWhatsAppSessions,
@@ -38,10 +39,10 @@ import {
   useRevokeSessionAccess,
   useRecreateWhatsAppInstance,
   useToggleNotificationSession,
+  useToggleAIAutoReplySession,
   type WhatsAppAccessMode,
   type WhatsAppSession,
-  type WhatsAppSessionAccess,
-  WHATSAPP_LEGACY_EVOLUTION_ENABLED } from
+  type WhatsAppSessionAccess } from
   "@/hooks/use-whatsapp-sessions";
 import { type User, useOrganizationUsers } from "@/hooks/use-users";
 import { useAuth } from "@/contexts/AuthContext";
@@ -72,6 +73,14 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function isAIAutoReplyEnabled(session: WhatsAppSession) {
+  return isRecord(session.advanced_settings) && session.advanced_settings.ai_auto_reply_enabled === true;
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
   const { profile } = useAuth();
   const queryClient = useQueryClient();
@@ -84,6 +93,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
   const logoutSession = useLogoutSession();
   const recreateSession = useRecreateWhatsAppInstance();
   const toggleNotification = useToggleNotificationSession();
+  const toggleAIAutoReply = useToggleAIAutoReplySession();
   const isAdmin = profile?.role === 'admin' || profile?.role === 'super_admin';
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
@@ -94,6 +104,15 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isRefreshingQr, setIsRefreshingQr] = useState(false);
   const [verifyingSessionId, setVerifyingSessionId] = useState<string | null>(null);
+  const sessionQuota = sessions?.meta;
+  const activeSessionCount = sessions?.length ?? 0;
+  const maxSessions = sessionQuota?.maxSessions ?? null;
+  const canCreateSession = sessionQuota?.canCreate ?? false;
+  const sessionLimitLabel = maxSessions
+    ? `${canCreateSession ? "" : "Limite atingido: "}${sessionQuota?.currentSessions ?? activeSessionCount}/${maxSessions} conexoes`
+    : sessionQuota ? null : "Verificando limite";
+  const newSessionDisabled = !canCreateSession || isLoading;
+  const newSessionTitle = !canCreateSession ? "Limite do plano atingido" : undefined;
 
   // Refs para evitar stale closures no polling
   const selectedSessionRef = useRef(selectedSession);
@@ -117,13 +136,12 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
         sessionId: session.id,
         instanceId: session.instance_id,
       });
-      queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
 
       return status?.connected === true || status?.state === "open" || status?.status === "connected";
     } catch {
       return null;
     }
-  }, [getConnectionStatus, queryClient]);
+  }, [getConnectionStatus]);
 
 
   // Polling para verificar conexao automaticamente quando o QR dialog esta aberto
@@ -172,6 +190,27 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
   }, [sessions, qrDialogOpen, selectedSession]);
 
 
+  const handleCreateDialogOpenChange = (open: boolean) => {
+    setCreateDialogOpen(open);
+    if (!open && !createSession.isPending) {
+      setInstanceName("");
+    }
+  };
+
+  const handleOpenCreateDialog = () => {
+    if (!canCreateSession) {
+      toast({
+        title: "Limite do plano atingido",
+        description: sessionQuota?.maxSessions
+          ? `Esta organizacao ja usa ${sessionQuota.currentSessions} de ${sessionQuota.maxSessions} conexoes WhatsApp. Apague uma conexao ou aumente o limite do plano.`
+          : "Esta organizacao nao pode criar novas conexoes WhatsApp no plano atual.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setCreateDialogOpen(true);
+  };
 
   const handleCreateSession = async () => {
     if (!instanceName.trim()) return;
@@ -190,7 +229,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
       await refreshQRCode(result.session);
     } catch (error) {
       const message = getErrorMessage(error, "Nao foi possivel criar a conexao WhatsApp.");
-      console.error("Error creating session:", message, error);
+      console.warn("WhatsApp session create failed:", message);
       toast({
         title: "Erro ao criar conexao",
         description: message,
@@ -208,23 +247,27 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
       }
 
       let lastQr: string | null = null;
+      let lastError: unknown = null;
       let attempt = 0;
 
-      // Retry loop for QR code
       while (attempt < retries && !lastQr) {
-        if (attempt > 0 || isGo) {
-          await new Promise(r => setTimeout(r, 3000));
+        if (attempt > 0) {
+          await wait(1500);
         }
 
+        try {
+          const data = await getQRCode.mutateAsync({
+            provider: "evolution_go",
+            instanceName: session.instance_name,
+            sessionId: session.id,
+            instanceId: session.instance_id,
+          });
 
-        const data = await getQRCode.mutateAsync({
-          provider: "evolution_go",
-          instanceName: session.instance_name,
-          sessionId: session.id,
-          instanceId: session.instance_id,
-        });
-
-        lastQr = getQrCodeValue(data);
+          lastQr = getQrCodeValue(data);
+        } catch (error) {
+          lastError = error;
+          console.warn("WhatsApp QR attempt failed:", getErrorMessage(error, "QR Code ainda nao esta pronto."));
+        }
         attempt++;
       }
 
@@ -233,17 +276,21 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
         queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
         return "ready";
       } else {
+        const description = lastError
+          ? getErrorMessage(lastError, "A conexao foi criada, mas o QR Code ainda nao ficou pronto. Tente atualizar em alguns instantes.")
+          : "A conexao foi criada, mas o QR Code ainda nao ficou pronto. Tente atualizar em alguns instantes.";
+
         toast({
-          title: "Atenção",
-          description: "O QR Code ainda não está pronto. Clique em Atualizar em alguns instantes.",
+          title: "QR Code ainda nao pronto",
+          description,
           variant: "default"
         });
         return "empty";
       }
 
     } catch (error) {
-      console.error("Error getting QR code:", error);
-      toast({ title: "Erro", description: "Falha ao obter QR Code", variant: "destructive" });
+      console.warn("WhatsApp QR code request failed:", getErrorMessage(error, "Falha ao obter QR Code"));
+      toast({ title: "Erro", description: getErrorMessage(error, "Falha ao obter QR Code"), variant: "destructive" });
       return "error";
     } finally {
       setIsRefreshingQr(false);
@@ -268,7 +315,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
         setQrCode(null);
       }
     } catch (error) {
-      console.error("Error checking status:", error);
+      console.warn("WhatsApp status check failed:", getErrorMessage(error, "Nao foi possivel verificar a conexao."));
     }
   };
 
@@ -286,10 +333,10 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
         const result = await recreateSession.mutateAsync(session);
         const nextSession = result.session || session;
         setSelectedSession(nextSession);
-        await new Promise(r => setTimeout(r, 3000));
+        await wait(1500);
         await refreshQRCode(nextSession);
       } catch (e) {
-        console.error("Failed to recreate instance:", e);
+        console.warn("WhatsApp instance recreate failed:", getErrorMessage(e, "Nao foi possivel reconectar."));
         toast({ title: "Erro", description: "Não foi possível reconectar. Tente excluir e criar uma nova conexão.", variant: "destructive" });
       }
     }
@@ -312,7 +359,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
       }
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
     } catch (error) {
-      console.error("Error verifying WhatsApp connection:", error);
+      console.warn("WhatsApp verification failed:", getErrorMessage(error, "Nao foi possivel verificar a conexao."));
       toast({ title: "Erro", description: "Não foi possível verificar a conexão.", variant: "destructive" });
     } finally {
       setVerifyingSessionId(null);
@@ -326,13 +373,21 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
 
   const handleDeleteSession = async () => {
     if (!selectedSession) return;
-    await deleteSession.mutateAsync(selectedSession);
-    setDeleteDialogOpen(false);
-    setSelectedSession(null);
+    try {
+      await deleteSession.mutateAsync(selectedSession);
+      setDeleteDialogOpen(false);
+      setSelectedSession(null);
+    } catch {
+      // The mutation already shows the toast; avoid bubbling into the Next.js overlay.
+    }
   };
 
   const handleLogout = async (session: WhatsAppSession) => {
-    await logoutSession.mutateAsync(session);
+    try {
+      await logoutSession.mutateAsync(session);
+    } catch {
+      // The mutation already shows the toast; avoid bubbling into the Next.js overlay.
+    }
   };
 
 
@@ -358,11 +413,13 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
       <Button
         data-tour="whatsapp-new-session"
         size="sm"
-        onClick={() => setCreateDialogOpen(true)}
+        onClick={handleOpenCreateDialog}
+        disabled={newSessionDisabled}
         className="absolute right-14 top-4 z-10 shrink-0"
+        title={newSessionTitle}
       >
           <Plus className="w-4 h-4 mr-1.5" />
-          Nova
+          {canCreateSession ? "Nova" : "Limite atingido"}
         </Button>
       }
       {!embedded &&
@@ -378,7 +435,19 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
             </CardDescription>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <Button data-tour="whatsapp-new-session" size="sm" onClick={() => setCreateDialogOpen(true)} className="shrink-0">
+            {sessionLimitLabel && (
+              <span className="hidden text-xs text-muted-foreground sm:inline">
+                {sessionLimitLabel}
+              </span>
+            )}
+            <Button
+              data-tour="whatsapp-new-session"
+              size="sm"
+              onClick={handleOpenCreateDialog}
+              disabled={newSessionDisabled}
+              className="shrink-0"
+              title={newSessionTitle}
+            >
               <Plus className="w-4 h-4 mr-1.5" />
               Nova
             </Button>
@@ -398,7 +467,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
             <p className="text-muted-foreground text-center mb-4">
               Conecte seu primeiro WhatsApp para começar a receber mensagens
             </p>
-            <Button data-tour="whatsapp-new-session" onClick={() => setCreateDialogOpen(true)}>
+            <Button data-tour="whatsapp-new-session" onClick={handleOpenCreateDialog} disabled={!canCreateSession || isLoading}>
               <Plus className="w-4 h-4 mr-2" />
               Conectar WhatsApp
             </Button>
@@ -436,12 +505,35 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                           Notif.
                         </Badge>
                   }
+                      {isAIAutoReplyEnabled(session) &&
+                  <Badge className="border-0 bg-orange-500/15 text-orange-500 text-[10px] px-1.5 py-0 shrink-0">
+                          <Bot className="w-2.5 h-2.5 mr-0.5" />
+                          IA
+                        </Badge>
+                  }
                       <span className="text-xs text-muted-foreground truncate">
                         {session.owner?.name || "-"}
                       </span>
                     </div>
                     {isAdmin &&
                 <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <Bot className="w-3.5 h-3.5 text-muted-foreground" />
+                              <Switch
+                          checked={isAIAutoReplyEnabled(session)}
+                          onCheckedChange={(checked) =>
+                          toggleAIAutoReply.mutate({ sessionId: session.id, enabled: checked })
+                          }
+                          disabled={toggleAIAutoReply.isPending} />
+
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>IA atende automaticamente esta conexao</p>
+                          </TooltipContent>
+                        </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <div className="flex items-center gap-1.5 shrink-0">
@@ -495,10 +587,21 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                         </Button>
                       </>
                     ) : (
-                      <Button variant="destructive" size="sm" className="h-8 gap-1.5 px-3 text-xs" onClick={() => handleLogout(session)}>
-                        <LogOut className="w-3.5 h-3.5" />
-                        Desconectar
-                      </Button>
+                      <>
+                        <Button variant="destructive" size="sm" className="h-8 gap-1.5 px-3 text-xs" onClick={() => handleLogout(session)}>
+                          <LogOut className="w-3.5 h-3.5" />
+                          Desconectar
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="h-8 w-8 p-0"
+                          onClick={() => handleOpenDeleteDialog(session)}
+                          aria-label="Apagar conexão"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </>
                     )}
                   </div></CardContent>
               </Card>
@@ -506,38 +609,23 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
           </div>
         }
 
-        {/* Create Session Sheet */}
-        <Sheet open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-          <SheetContent side="right" className="w-[90%] sm:w-[650px] sm:max-w-[650px] p-6 flex flex-col">
-            <SheetHeader>
-              <SheetTitle>Nova Conexão WhatsApp</SheetTitle>
-              <SheetDescription>
-                Dê um nome para identificar esta conexão
-              </SheetDescription>
-            </SheetHeader>
-            <div className="space-y-4 py-4">
+        {/* Create Session Dialog */}
+        <Dialog open={createDialogOpen} onOpenChange={handleCreateDialogOpenChange}>
+          <DialogContent className="w-[calc(100vw-2rem)] max-w-md rounded-[8px] p-5">
+            <DialogHeader>
+              <DialogTitle>Nova conexão WhatsApp</DialogTitle>
+            </DialogHeader>
+            <div className="py-2">
               <div className="space-y-2">
-                  <Label>Provedor</Label>
-                  <div className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
-                    <Badge variant="secondary">Evolution Go</Badge>
-                    <span className="text-muted-foreground">Novas conexoes usam apenas Evo Go.</span>
-                  </div>
-                  {!WHATSAPP_LEGACY_EVOLUTION_ENABLED && (
-                    <p className="text-xs text-muted-foreground">
-                      Evolution legada esta desativada para novas conexoes.
-                    </p>
-                  )}
-              </div>
-              <div className="space-y-2">
-                <Label>Nome da Instância</Label>
+                <Label>Nome da conexão</Label>
                 <Input
                   value={instanceName}
                   onChange={(e) => setInstanceName(e.target.value)}
-                  placeholder="Ex: Vendas, Suporte, Marketing..." />
+                  placeholder="Ex: Vendas" />
               </div>
             </div>
-            <SheetFooter>
-              <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
+            <DialogFooter className="gap-2 sm:space-x-0">
+              <Button variant="outline" onClick={() => handleCreateDialogOpenChange(false)}>
                 Cancelar
               </Button>
               <Button
@@ -546,9 +634,9 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                 {createSession.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Criar e Conectar
               </Button>
-            </SheetFooter>
-          </SheetContent>
-        </Sheet>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* QR Code Dialog */}
         <Dialog open={qrDialogOpen} onOpenChange={setQrDialogOpen}>

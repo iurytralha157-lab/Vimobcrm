@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,6 +16,14 @@ import (
 )
 
 const whatsappMediaSignedURLTTLSeconds = 24 * 60 * 60
+const whatsappMediaSignedURLCacheSkew = time.Minute
+
+type cachedWhatsAppMediaSignedURL struct {
+	url       string
+	expiresAt time.Time
+}
+
+var whatsappMediaSignedURLCache sync.Map
 
 type Repository struct {
 	db        *dbpkg.Postgres
@@ -30,7 +39,7 @@ func NewRepository(db *dbpkg.Postgres, storageConfig StorageConfig) Repository {
 	return Repository{
 		db:        db,
 		storage:   newStorageClient(storageConfig),
-		functions: newFunctionsClient(storageConfig),
+		functions: newFunctionsClient(storageConfig, db),
 	}
 }
 
@@ -41,8 +50,20 @@ func (repo Repository) ListSessions(ctx context.Context, tenantContext tenant.Co
 		from public.whatsapp_sessions ws
 		left join public.users owner on owner.id = ws.owner_user_id
 		where ws.organization_id = $1::uuid
-		  and ws.is_active is not false
-		  and ($3::boolean or ws.owner_user_id = $2::uuid)
+		  and coalesce(ws.is_active, true) = true
+		  and coalesce(ws.status, '') <> 'deleted'
+		  and (
+		    $3::boolean
+		    or ws.owner_user_id = $2::uuid
+		    or exists (
+		      select 1
+		      from public.whatsapp_session_access access
+		      where access.session_id = ws.id
+		        and access.organization_id = ws.organization_id
+		        and access.user_id = $2::uuid
+		        and coalesce(access.can_view, access.can_read, true) = true
+		    )
+		  )
 		order by ws.created_at desc, ws.id desc
 	`, args...)
 	if err != nil {
@@ -77,7 +98,8 @@ func (repo Repository) GetSession(ctx context.Context, tenantContext tenant.Cont
 		left join public.users owner on owner.id = ws.owner_user_id
 		where ws.organization_id = $1::uuid
 		  and ws.id = $2::uuid
-		  and ws.is_active is not false
+		  and coalesce(ws.is_active, true) = true
+		  and coalesce(ws.status, '') <> 'deleted'
 		  and ($4::boolean or ws.owner_user_id = $3::uuid or exists (
 		    select 1
 		    from public.whatsapp_session_access access
@@ -451,17 +473,72 @@ func (repo Repository) LinkConversationToLead(ctx context.Context, tenantContext
 }
 
 func (repo Repository) hydrateMessageMediaURLs(ctx context.Context, messages []Message) error {
+	type pendingMediaURL struct {
+		index int
+		path  string
+	}
+
+	pending := make([]pendingMediaURL, 0)
+	now := time.Now()
+
 	for index := range messages {
 		if messages[index].MediaStoragePath == nil || *messages[index].MediaStoragePath == "" {
 			continue
 		}
-		signedURL, err := repo.storage.signedURL(ctx, "whatsapp-media", *messages[index].MediaStoragePath, whatsappMediaSignedURLTTLSeconds)
-		if err != nil || signedURL == "" {
+		if messages[index].MessageType == "text" || messages[index].MessageType == "reaction" {
 			continue
 		}
-		messages[index].MediaURL = &signedURL
+
+		objectPath := *messages[index].MediaStoragePath
+		if cached, ok := whatsappMediaSignedURLCache.Load(objectPath); ok {
+			entry, ok := cached.(cachedWhatsAppMediaSignedURL)
+			if ok && entry.url != "" && entry.expiresAt.After(now) {
+				url := entry.url
+				messages[index].MediaURL = &url
+				continue
+			}
+			whatsappMediaSignedURLCache.Delete(objectPath)
+		}
+
+		pending = append(pending, pendingMediaURL{index: index, path: objectPath})
 	}
 
+	if len(pending) == 0 {
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	limit := make(chan struct{}, 6)
+	cacheTTL := time.Duration(whatsappMediaSignedURLTTLSeconds)*time.Second - whatsappMediaSignedURLCacheSkew
+	if cacheTTL <= 0 {
+		cacheTTL = time.Duration(whatsappMediaSignedURLTTLSeconds) * time.Second
+	}
+
+	for _, item := range pending {
+		item := item
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case limit <- struct{}{}:
+				defer func() { <-limit }()
+			case <-ctx.Done():
+				return
+			}
+
+			signedURL, err := repo.storage.signedURL(ctx, "whatsapp-media", item.path, whatsappMediaSignedURLTTLSeconds)
+			if err != nil || signedURL == "" {
+				return
+			}
+			messages[item.index].MediaURL = &signedURL
+			whatsappMediaSignedURLCache.Store(item.path, cachedWhatsAppMediaSignedURL{
+				url:       signedURL,
+				expiresAt: time.Now().Add(cacheTTL),
+			})
+		}()
+	}
+
+	wg.Wait()
 	return nil
 }
 
@@ -473,7 +550,8 @@ func (repo Repository) ensureCanManageSession(ctx context.Context, tenantContext
 			from public.whatsapp_sessions ws
 			where ws.organization_id = $1::uuid
 			  and ws.id = $2::uuid
-			  and ws.is_active is not false
+			  and coalesce(ws.is_active, true) = true
+			  and coalesce(ws.status, '') <> 'deleted'
 			  and ($4::boolean or ws.owner_user_id = $3::uuid)
 		)
 	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, canManageWhatsApp(tenantContext)).Scan(&ok)

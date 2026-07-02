@@ -8,6 +8,7 @@ import { TelemetryProvider } from './telemetry-provider'
 import { Toaster } from 'sonner'
 import { LanguageProvider } from '@/contexts/LanguageContext'
 import { SidebarProvider } from '@/contexts/SidebarContext'
+import { UserThemeSync } from './user-theme-sync'
 
 export function RootProvider({ children }: { children: ReactNode }) {
   return (
@@ -15,6 +16,7 @@ export function RootProvider({ children }: { children: ReactNode }) {
       <AuthProviderWrapper>
         <QueryProvider>
           <TelemetryProvider />
+          <UserThemeSync />
           <LanguageProvider>
             <SidebarProvider>{children}</SidebarProvider>
           </LanguageProvider>

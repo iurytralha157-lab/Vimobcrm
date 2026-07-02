@@ -31,7 +31,7 @@ Em `Settings > Secrets and variables > Actions > Variables`:
 NEXT_PUBLIC_SUPABASE_URL=https://seu-projeto.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=sua-chave-publica
 NEXT_PUBLIC_VIMOB_API_URL=https://api.vimobcrm.com.br
-NEXT_PUBLIC_SITE_URL=https://vimobcrm.com.br
+NEXT_PUBLIC_SITE_URL=https://app.vimobcrm.com.br
 ```
 
 Essas variaveis entram no build do Next.js. Se trocar a URL da API ou o dominio publico depois, gere uma nova imagem web.
@@ -49,17 +49,17 @@ API_PUBLIC_PORT=18081
 TRAEFIK_NETWORK=public
 TRAEFIK_HTTPS_ENTRYPOINT=websecure
 TRAEFIK_CERT_RESOLVER=letsencrypt
-VIMOB_WEB_DOMAIN=vimobcrm.com.br
+VIMOB_WEB_DOMAIN=app.vimobcrm.com.br
 VIMOB_API_DOMAIN=api.vimobcrm.com.br
 
 NEXT_PUBLIC_SUPABASE_URL=https://seu-projeto.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=sua-chave-publica
 NEXT_PUBLIC_VIMOB_API_URL=https://api.vimobcrm.com.br
-NEXT_PUBLIC_SITE_URL=https://vimobcrm.com.br
-APP_PUBLIC_URL=https://vimobcrm.com.br
+NEXT_PUBLIC_SITE_URL=https://app.vimobcrm.com.br
+APP_PUBLIC_URL=https://app.vimobcrm.com.br
 VIMOB_INTERNAL_API_URL=http://api:8081
 
-API_CORS_ALLOWED_ORIGINS=https://vimobcrm.com.br
+API_CORS_ALLOWED_ORIGINS=https://app.vimobcrm.com.br
 SUPABASE_PROJECT_URL=https://seu-projeto.supabase.co
 SUPABASE_JWKS_URL=https://seu-projeto.supabase.co/auth/v1/.well-known/jwks.json
 SUPABASE_JWT_ISSUER=https://seu-projeto.supabase.co/auth/v1
@@ -77,7 +77,18 @@ SUPPORT_EMAIL=contato@vimobcrm.com.br
 
 ASAAS_API_KEY=
 ASAAS_BASE_URL=https://api.asaas.com/v3
+
+EVOLUTION_GO_API_URL=https://seu-evolution-go
+EVOLUTION_GO_API_KEY=sua-chave-evolution-go
+EVOLUTION_GO_WEBHOOK_URL=https://seu-webhook-publico/evolution-go-webhook
+
+META_APP_SECRET=segredo-do-app-meta
+META_WEBHOOK_VERIFY_TOKEN=token-igual-ao-configurado-no-meta-webhooks
+META_GRAPH_VERSION=v25.0
+META_GRAPH_BASE_URL=https://graph.facebook.com
 ```
+
+`EVOLUTION_GO_API_URL` e `EVOLUTION_GO_API_KEY` fazem a API Go criar instancias, consultar QR Code, status e enviar mensagens diretamente no Evo Go. `EVOLUTION_GO_WEBHOOK_URL` e opcional; enquanto o webhook de entrada nao for portado para Go, ele pode apontar para a Function `evolution-go-webhook` existente.
 
 No Portainer:
 
@@ -95,14 +106,14 @@ No Portainer:
 
 No DNS/proxy:
 
-- `vimobcrm.com.br` -> Traefik -> servico `web`, porta interna `3000`.
+- `app.vimobcrm.com.br` -> Traefik -> servico `web`, porta interna `3000`.
 - `api.vimobcrm.com.br` -> Traefik -> servico `api`, porta interna `8081`.
-- `www.vimobcrm.com.br` pode apontar para o mesmo servico web ou para o site institucional, conforme decisao de DNS.
+- `vimobcrm.com.br` e `www.vimobcrm.com.br` podem apontar para o app ou para o site institucional, conforme decisao de DNS.
 
 No Supabase Auth:
 
-- Site URL: `https://vimobcrm.com.br`
-- Redirect URLs: `https://vimobcrm.com.br/**`
+- Site URL: `https://app.vimobcrm.com.br`
+- Redirect URLs: `https://app.vimobcrm.com.br/**`
 
 ## Usar Supabase antigo como producao oficial
 
@@ -133,6 +144,7 @@ Depois testar:
 - Pipeline.
 - Criar/mover lead.
 - Agenda.
+- WhatsApp: criar conexao, gerar QR Code e conferir `/readyz` da API.
 - WhatsApp/conversas.
 - Configuracoes.
 - Logs de erro no Super Admin.

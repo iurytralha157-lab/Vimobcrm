@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
-import { ArrowRight, Building2, LogOut, Shield, User } from 'lucide-react';
+import { AlertCircle, ArrowRight, Building2, LogOut, Shield, User } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSystemSettings } from '@/hooks/use-system-settings';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -95,10 +95,9 @@ export default function SelectOrganization() {
 
   const logoUrl = useMemo(() => {
     if (!systemSettings) return null;
-    return resolvedTheme === 'dark'
-      ? systemSettings.logo_url_dark || systemSettings.logo_url_light
-      : systemSettings.logo_url_light || systemSettings.logo_url_dark;
-  }, [systemSettings, resolvedTheme]);
+    // Esta tela é sempre escura, portanto sempre exibimos o logotipo para modo escuro (logo branca)
+    return systemSettings.logo_url_dark || systemSettings.logo_url_light;
+  }, [systemSettings]);
 
   useEffect(() => {
     if (!loading && authInitialized && !user) {
@@ -169,6 +168,13 @@ export default function SelectOrganization() {
         <p className="mt-2 max-w-xs text-sm font-extralight leading-6 tracking-wide text-white/48">
           Você não possui acesso a nenhuma organização ativa no momento.
         </p>
+
+        <div className="mt-5 flex max-w-sm items-start gap-2 rounded-[6px] bg-[#FF4529]/10 px-4 py-3 text-left text-sm font-extralight leading-5 tracking-wide text-[#ff7a66]">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.5} />
+          <span>
+            Erro: este usuario nao esta vinculado a uma organizacao ativa. Peca ao administrador para revisar o convite ou liberar o acesso.
+          </span>
+        </div>
 
         <div className="mt-8 flex flex-col gap-2">
           <button

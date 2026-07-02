@@ -10,13 +10,14 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent } from "@/components/ui/dropdown-menu";
-import { Search, MessageSquare, MessageCircle, User, Loader2, MoreVertical, Archive, Trash2, Users, Paperclip, Tag, UserPlus, ArrowLeft, ExternalLink, Zap, Plus } from "lucide-react";
+import { Search, MessageSquare, MessageCircle, User, Loader2, MoreVertical, Archive, Trash2, Users, Paperclip, Tag, UserPlus, ArrowLeft, ExternalLink, Zap, Plus, SlidersHorizontal } from "lucide-react";
 import { StartAutomationDialog } from "@/components/features/whatsapp/StartAutomationDialog";
 import { MessageBubble } from "@/components/features/whatsapp/MessageBubble";
 import { MessageErrorBoundary } from "@/components/features/whatsapp/MessageErrorBoundary";
 import { DateSeparator, shouldShowDateSeparator } from "@/components/features/whatsapp/DateSeparator";
-import { CreateLeadDialog } from "@/components/features/conversations/CreateLeadDialog";
+import { CreateLeadDialog } from "@/components/features/leads/CreateLeadDialog";
 import { ConversationHeader } from "@/components/features/whatsapp/ConversationHeader";
 import { ConversationLeadPanel } from "@/components/features/whatsapp/ConversationLeadPanel";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,7 @@ import { useMetaConversations, useMetaMessages, useSendMetaMessage, type MetaCon
 import { useMetaIntegrations } from "@/hooks/use-meta-integration";
 import { useMentionNames } from "@/hooks/use-mention-names";
 import { whatsappAPI } from "@/lib/api/whatsapp";
+import { getWhatsAppMessageInputState } from "@/lib/whatsapp-message-input";
 
 const MAX_IMAGE_DIMENSION = 1600;
 const IMAGE_QUALITY = 0.82;
@@ -172,6 +174,8 @@ export default function Conversations() {
     if (typeof window === "undefined") return false;
     return localStorage.getItem("whatsapp-show-archived") === "true";
   });
+  const [onlyLeads, setOnlyLeads] = useState(false);
+  const [pendingReplyOnly, setPendingReplyOnly] = useState(false);
   const [showAutomationDialog, setShowAutomationDialog] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -293,6 +297,17 @@ export default function Conversations() {
     ? (selectedPageId === 'all' ? 'meta-all' : `meta-${selectedPageId}`)
     : (selectedSessionId === 'all' ? 'whatsapp-all' : `whatsapp-${selectedSessionId}`);
 
+  const activeConversationFilterCount = useMemo(() => {
+    if (activePlatform !== 'whatsapp') return 0;
+    return [
+      selectedSessionId !== "all",
+      hideGroups,
+      showArchived,
+      onlyLeads,
+      pendingReplyOnly,
+    ].filter(Boolean).length;
+  }, [activePlatform, selectedSessionId, hideGroups, showArchived, onlyLeads, pendingReplyOnly]);
+
   // Save hide groups preference
   useEffect(() => {
     localStorage.setItem("whatsapp-hide-groups", String(hideGroups));
@@ -354,6 +369,12 @@ export default function Conversations() {
     let source: ScreenConversation[] = [];
     if (activePlatform === 'whatsapp') {
       source = (conversations || []) as ScreenConversation[];
+      if (onlyLeads) {
+        source = source.filter(conv => Boolean(conv.lead_id || conv.lead?.id));
+      }
+      if (pendingReplyOnly) {
+        source = source.filter(conv => (conv.unread_count ?? 0) > 0);
+      }
     } else {
       source = (metaConversations || [])
         .filter((conv) => activePlatform === 'instagram' ? conv.platform === 'instagram' : conv.platform === 'messenger')
@@ -367,9 +388,31 @@ export default function Conversations() {
       conv.contact_phone?.includes(search) ||
       conv.lead?.name?.toLowerCase().includes(search)
     );
-  }, [conversations, metaConversations, activePlatform, searchTerm]);
+  }, [conversations, metaConversations, activePlatform, searchTerm, onlyLeads, pendingReplyOnly]);
+
+  const whatsappMessageInputState = useMemo(
+    () => getWhatsAppMessageInputState(selectedConversation, selectedSessionId, sessions),
+    [selectedConversation, selectedSessionId, sessions],
+  );
+  const messageInputDisabled = activePlatform === "whatsapp"
+    ? whatsappMessageInputState.disabled
+    : sendMetaMessage.isPending;
+  const messageInputPlaceholder = activePlatform === "whatsapp"
+    ? whatsappMessageInputState.placeholder
+    : "Digite sua mensagem...";
+
   const handleSendMessage = async () => {
     if (!messageText.trim() || !selectedConversation) return;
+    if (activePlatform === "whatsapp" && sendMessage.isPending) return;
+    if (activePlatform === "whatsapp" && whatsappMessageInputState.disabled) {
+      toast({
+        title: "Mensagem nao enviada",
+        description: whatsappMessageInputState.placeholder,
+        variant: "destructive",
+      });
+      return;
+    }
+
     const textToSend = messageText.trim();
     setMessageText("");
 
@@ -377,7 +420,7 @@ export default function Conversations() {
       await sendMessage.mutateAsync({
         conversation: selectedConversation,
         text: textToSend,
-        sendSessionId: selectedSessionId === "all" ? undefined : selectedSessionId,
+        sendSessionId: whatsappMessageInputState.sendSessionId,
       });
     } else {
       await sendMetaMessage.mutateAsync({
@@ -397,6 +440,14 @@ export default function Conversations() {
 
   const handleSendAudio = async (base64: string, mimetype: string) => {
     if (!selectedConversation) return;
+    if (whatsappMessageInputState.disabled) {
+      toast({
+        title: "Audio nao enviado",
+        description: whatsappMessageInputState.placeholder,
+        variant: "destructive",
+      });
+      return;
+    }
 
     await sendMessage.mutateAsync({
       conversation: selectedConversation,
@@ -406,7 +457,7 @@ export default function Conversations() {
       mimetype,
       filename: `audio.${mimeExtension(mimetype, "webm")}`,
       previewMediaUrl: `data:${mimetype || "audio/webm"};base64,${base64}`,
-      sendSessionId: selectedSessionId === "all" ? undefined : selectedSessionId,
+      sendSessionId: whatsappMessageInputState.sendSessionId,
     });
 
     toast({
@@ -418,6 +469,17 @@ export default function Conversations() {
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !selectedConversation) return;
+    if (whatsappMessageInputState.disabled) {
+      toast({
+        title: "Arquivo nao enviado",
+        description: whatsappMessageInputState.placeholder,
+        variant: "destructive",
+      });
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      return;
+    }
     try {
       const processedFile = await compressImageFile(file);
       const base64Content = await fileToBase64(processedFile);
@@ -435,7 +497,7 @@ export default function Conversations() {
         mimetype: processedFile.type || file.type || "application/octet-stream",
         filename: processedFile.name,
         previewMediaUrl: `data:${processedFile.type || file.type || "application/octet-stream"};base64,${base64Content}`,
-        sendSessionId: selectedSessionId === "all" ? undefined : selectedSessionId,
+        sendSessionId: whatsappMessageInputState.sendSessionId,
       });
       toast({
         title: "Arquivo enviado",
@@ -498,8 +560,8 @@ export default function Conversations() {
 
   // Mobile: Show either conversation list OR chat (not both)
   if (isMobile) {
-    return <AppLayout title="Conversas">
-        <div className="flex h-[calc(100vh-8rem)] -mb-20 flex-col overflow-hidden bg-transparent">
+    return <AppLayout title="Conversas" disableMainScroll>
+        <div className="flex h-full min-h-0 -mb-20 flex-col overflow-hidden bg-transparent">
           {selectedConversation ?
         // Mobile Chat View
         <div className="flex flex-col h-full overflow-hidden">
@@ -614,12 +676,13 @@ export default function Conversations() {
                   onChange={setMessageText}
                   onSend={handleSendMessage}
                   onKeyDown={handleKeyPress}
-                  placeholder="Digite sua mensagem..."
+                  placeholder={messageInputPlaceholder}
+                  disabled={messageInputDisabled}
                   isSending={sendMessage.isPending}
                   multiline
                   leftActions={
                     <>
-                      <button type="button" onClick={() => fileInputRef.current?.click()}>
+                      <button type="button" onClick={() => fileInputRef.current?.click()} disabled={messageInputDisabled}>
                         <Paperclip className="w-5 h-5" />
                       </button>
                       {selectedLeadId && (
@@ -635,55 +698,103 @@ export default function Conversations() {
         // Mobile Conversation List
         <div className="flex flex-col h-full">
               {/* Mobile Header with Filters */}
-              <div className="shrink-0 space-y-2 border-b border-white/[0.045] bg-[var(--app-surface)] p-3">
-                <div className="flex flex-col gap-2">
-                  <div data-tour="conversations-channel" className="flex gap-1 bg-white/[0.045] p-1 rounded-lg">
+              <div className="shrink-0 space-y-2 border-b border-white/[0.045] bg-[var(--app-surface)] p-2.5">
+                <div className="flex items-center gap-2">
+                  <div data-tour="conversations-channel" className="flex min-w-0 flex-1 gap-1 rounded-[7px] bg-[var(--app-surface-soft)] p-0.5">
                     <Button
                       variant={activePlatform === 'whatsapp' ? 'secondary' : 'ghost'}
                       size="sm"
-                      className={cn("h-8 flex-1 gap-1.5", activePlatform === 'whatsapp' && "bg-white/[0.07] shadow-sm")}
+                      className={cn("h-7 flex-1 gap-1.5 rounded-[6px] border-0 text-[11px] shadow-none", activePlatform === 'whatsapp' && "bg-[var(--app-surface-hover)] text-primary")}
                       onClick={() => setActivePlatform('whatsapp')}
                     >
                       <MessageCircle className="h-3.5 w-3.5" />
-                      <span className="text-[10px] font-medium">WhatsApp</span>
+                      <span className="text-[11px] font-medium">WhatsApp</span>
                     </Button>
                   </div>
 
-                  {activePlatform === 'whatsapp' && sessions && sessions.length > 1 && (
-                    <Select value={currentChannelValue} onValueChange={handleChannelChange}>
-                      <SelectTrigger className="h-8 border-0 bg-white/[0.045] text-xs focus:ring-0">
-                        <SelectValue placeholder="Selecione a conta WhatsApp" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-popover z-50">
-                        <SelectGroup>
-                          <SelectItem value="whatsapp-all">Todas as contas WhatsApp</SelectItem>
-                          {sessions.map(session => (
-                            <SelectItem key={session.id} value={`whatsapp-${session.id}`}>
-                              {session.display_name || session.instance_name || session.phone_number}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  )}
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className={cn(
+                          "h-8 shrink-0 gap-1.5 rounded-[7px] border-0 bg-[var(--app-surface-soft)] px-2 text-[11px] font-semibold uppercase tracking-normal text-foreground shadow-none hover:bg-[var(--app-surface-hover)]",
+                          activeConversationFilterCount > 0 && "bg-[var(--app-surface-hover)] text-primary"
+                        )}
+                      >
+                        <SlidersHorizontal className="h-3.5 w-3.5" />
+                        <span>Filtros</span>
+                        {activeConversationFilterCount > 0 && (
+                          <span className="flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[9px] leading-none text-primary-foreground">
+                            {activeConversationFilterCount}
+                          </span>
+                        )}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" side="bottom" sideOffset={8} className="w-[min(90vw,300px)] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-2.5 text-[var(--app-text-primary)] shadow-none">
+                      <div className="space-y-2">
+                        {activePlatform === 'whatsapp' && sessions && sessions.length > 1 && (
+                          <div className="space-y-1.5">
+                            <span className="text-[10px] font-medium text-muted-foreground">Conta</span>
+                            <Select value={currentChannelValue} onValueChange={handleChannelChange}>
+                              <SelectTrigger className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[11px] shadow-none focus:ring-0">
+                                <SelectValue placeholder="Selecione a conta WhatsApp" />
+                              </SelectTrigger>
+                              <SelectContent className="z-[70] bg-popover">
+                                <SelectGroup>
+                                  <SelectItem value="whatsapp-all">Todas as contas</SelectItem>
+                                  {sessions.map(session => (
+                                    <SelectItem key={session.id} value={`whatsapp-${session.id}`}>
+                                      {session.display_name || session.instance_name || session.phone_number}
+                                    </SelectItem>
+                                  ))}
+                                </SelectGroup>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
 
-                  {activePlatform !== 'whatsapp' && metaIntegrations && metaIntegrations.length > 1 && (
-                    <Select value={currentChannelValue} onValueChange={handleChannelChange}>
-                      <SelectTrigger className="h-8 border-0 bg-white/[0.045] text-xs focus:ring-0">
-                        <SelectValue placeholder="Selecione a página" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-popover z-50">
-                        <SelectGroup>
-                          <SelectItem value="meta-all">Todas as páginas</SelectItem>
-                          {metaIntegrations.map(integration => (
-                            <SelectItem key={integration.id} value={`meta-${integration.page_id}`}>
-                              {integration.page_name || integration.page_id}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  )}
+                        {activePlatform === 'whatsapp' && (
+                          <div className="grid gap-2">
+                            <label data-tour="conversations-hide-groups" className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
+                              <span>Ocultar grupos</span>
+                              <Checkbox className="h-3.5 w-3.5 rounded-[4px] border-primary/70 [&_svg]:h-3 [&_svg]:w-3" checked={hideGroups} onCheckedChange={checked => setHideGroups(checked === true)} />
+                            </label>
+                            <label data-tour="conversations-archived" className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
+                              <span>Arquivadas</span>
+                              <Checkbox className="h-3.5 w-3.5 rounded-[4px] border-primary/70 [&_svg]:h-3 [&_svg]:w-3" checked={showArchived} onCheckedChange={checked => setShowArchived(checked === true)} />
+                            </label>
+                            <label className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
+                              <span>Somente leads</span>
+                              <Checkbox className="h-3.5 w-3.5 rounded-[4px] border-primary/70 [&_svg]:h-3 [&_svg]:w-3" checked={onlyLeads} onCheckedChange={checked => setOnlyLeads(checked === true)} />
+                            </label>
+                            <label className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
+                              <span>Sem resposta</span>
+                              <Checkbox className="h-3.5 w-3.5 rounded-[4px] border-primary/70 [&_svg]:h-3 [&_svg]:w-3" checked={pendingReplyOnly} onCheckedChange={checked => setPendingReplyOnly(checked === true)} />
+                            </label>
+                          </div>
+                        )}
+
+                        {activeConversationFilterCount > 0 && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-full rounded-[6px] border-0 bg-primary/10 px-2 text-[11px] font-medium text-primary shadow-none hover:bg-primary/15 hover:text-primary"
+                            onClick={() => {
+                              setSelectedSessionId("all");
+                              setHideGroups(false);
+                              setShowArchived(false);
+                              setOnlyLeads(false);
+                              setPendingReplyOnly(false);
+                            }}
+                          >
+                            Limpar filtros
+                          </Button>
+                        )}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
                 </div>
 
                 <div data-tour="conversations-search" className="relative">
@@ -696,23 +807,11 @@ export default function Conversations() {
                   />
                 </div>
 
-                {activePlatform === 'whatsapp' && (
-                  <div className="flex items-center justify-between gap-2">
-                    <label data-tour="conversations-hide-groups" className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
-                      <Checkbox checked={hideGroups} onCheckedChange={checked => setHideGroups(checked === true)} />
-                      <span>Ocultar grupos</span>
-                    </label>
-                    <label data-tour="conversations-archived" className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
-                      <Checkbox checked={showArchived} onCheckedChange={checked => setShowArchived(checked === true)} />
-                      <span>Arquivadas</span>
-                    </label>
-                  </div>
-                )}
               </div>
 
               {/* Mobile Conversation List */}
               <ScrollArea data-tour="conversations-list" className="flex-1">
-                <div className="divide-y">
+                <div className="divide-y divide-white/[0.045]">
                   {loadingConversations ? (
                     <div className="flex items-center justify-center py-12">
                       <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
@@ -782,26 +881,110 @@ export default function Conversations() {
   }
 
   // Desktop Layout
-  return <AppLayout title="Conversas">
-      <div className="flex h-[calc(100vh-7rem)] gap-3 overflow-hidden">
+  return <AppLayout title="Conversas" disableMainScroll>
+      <div className="flex h-full min-h-0 gap-3 overflow-hidden">
         {/* Sidebar */}
         <aside data-tour="conversations-overview" className="app-card flex w-[350px] min-w-[350px] max-w-[350px] flex-col overflow-hidden">
           {/* Header com filtros */}
-          <div className="space-y-2 border-b border-white/[0.045] bg-[var(--app-surface)] p-3">
-            <div className="flex flex-col gap-2">
-              <div data-tour="conversations-channel" className="flex gap-1 rounded-lg bg-white/[0.045] p-1">
+          <div className="space-y-2 border-b border-white/[0.045] bg-[var(--app-surface)] p-2.5">
+            <div className="flex items-center gap-2">
+              <div data-tour="conversations-channel" className="flex min-w-0 flex-1 gap-1 rounded-[7px] bg-[var(--app-surface-soft)] p-0.5">
                 <Button
                   variant={activePlatform === 'whatsapp' ? 'secondary' : 'ghost'}
                   size="sm"
-                  className={cn("h-8 flex-1 gap-1.5", activePlatform === 'whatsapp' && "bg-white/[0.07] shadow-sm")}
+                  className={cn("h-7 flex-1 gap-1.5 rounded-[6px] border-0 text-[11px] shadow-none", activePlatform === 'whatsapp' && "bg-[var(--app-surface-hover)] text-primary")}
                   onClick={() => setActivePlatform('whatsapp')}
                 >
                   <MessageCircle className="h-3.5 w-3.5" />
-                  <span className="text-[10px] font-medium">WhatsApp</span>
+                  <span className="text-[11px] font-medium">WhatsApp</span>
                 </Button>
               </div>
 
-              {activePlatform === 'whatsapp' && sessions && sessions.length > 1 && (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className={cn(
+                      "h-8 shrink-0 gap-1.5 rounded-[7px] border-0 bg-[var(--app-surface-soft)] px-2 text-[11px] font-semibold uppercase tracking-normal text-foreground shadow-none hover:bg-[var(--app-surface-hover)]",
+                      activeConversationFilterCount > 0 && "bg-[var(--app-surface-hover)] text-primary"
+                    )}
+                  >
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                    <span>Filtros</span>
+                    {activeConversationFilterCount > 0 && (
+                      <span className="flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[9px] leading-none text-primary-foreground">
+                        {activeConversationFilterCount}
+                      </span>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" side="right" sideOffset={10} className="w-[260px] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-2.5 text-[var(--app-text-primary)] shadow-none">
+                  <div className="space-y-2">
+                    {activePlatform === 'whatsapp' && sessions && sessions.length > 1 && (
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-medium text-muted-foreground">Conta</span>
+                        <Select value={currentChannelValue} onValueChange={handleChannelChange}>
+                          <SelectTrigger className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[11px] shadow-none focus:ring-0">
+                            <SelectValue placeholder="Selecione a conta WhatsApp" />
+                          </SelectTrigger>
+                          <SelectContent className="z-[70] bg-popover">
+                            <SelectGroup>
+                              <SelectItem value="whatsapp-all">Todas as contas</SelectItem>
+                              {sessions.map(session => (
+                                <SelectItem key={session.id} value={`whatsapp-${session.id}`}>
+                                  {session.display_name || session.instance_name || session.phone_number}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+
+                    {activePlatform === 'whatsapp' && (
+                      <div className="grid gap-2">
+                        <label data-tour="conversations-hide-groups" className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
+                          <span>Ocultar grupos</span>
+                          <Checkbox className="h-3.5 w-3.5 rounded-[4px] border-primary/70 [&_svg]:h-3 [&_svg]:w-3" checked={hideGroups} onCheckedChange={checked => setHideGroups(checked === true)} />
+                        </label>
+                        <label data-tour="conversations-archived" className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
+                          <span>Arquivadas</span>
+                          <Checkbox className="h-3.5 w-3.5 rounded-[4px] border-primary/70 [&_svg]:h-3 [&_svg]:w-3" checked={showArchived} onCheckedChange={checked => setShowArchived(checked === true)} />
+                        </label>
+                        <label className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
+                          <span>Somente leads</span>
+                          <Checkbox className="h-3.5 w-3.5 rounded-[4px] border-primary/70 [&_svg]:h-3 [&_svg]:w-3" checked={onlyLeads} onCheckedChange={checked => setOnlyLeads(checked === true)} />
+                        </label>
+                        <label className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
+                          <span>Sem resposta</span>
+                          <Checkbox className="h-3.5 w-3.5 rounded-[4px] border-primary/70 [&_svg]:h-3 [&_svg]:w-3" checked={pendingReplyOnly} onCheckedChange={checked => setPendingReplyOnly(checked === true)} />
+                        </label>
+                      </div>
+                    )}
+
+                    {activeConversationFilterCount > 0 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-full rounded-[6px] border-0 bg-primary/10 px-2 text-[11px] font-medium text-primary shadow-none hover:bg-primary/15 hover:text-primary"
+                        onClick={() => {
+                          setSelectedSessionId("all");
+                          setHideGroups(false);
+                          setShowArchived(false);
+                          setOnlyLeads(false);
+                          setPendingReplyOnly(false);
+                        }}
+                      >
+                        Limpar filtros
+                      </Button>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
+
+              {false && activePlatform === 'whatsapp' && (sessions?.length ?? 0) > 1 && (
                 <Select value={currentChannelValue} onValueChange={handleChannelChange}>
                   <SelectTrigger className="h-8 border-0 bg-white/[0.045] text-xs focus:ring-0">
                     <SelectValue placeholder="Selecione a conta WhatsApp" />
@@ -809,7 +992,7 @@ export default function Conversations() {
                   <SelectContent className="bg-popover z-50">
                     <SelectGroup>
                       <SelectItem value="whatsapp-all">Todas as contas WhatsApp</SelectItem>
-                      {sessions.map(session => (
+                      {(sessions ?? []).map(session => (
                         <SelectItem key={session.id} value={`whatsapp-${session.id}`}>
                           {session.display_name || session.instance_name || session.phone_number}
                         </SelectItem>
@@ -819,7 +1002,7 @@ export default function Conversations() {
                 </Select>
               )}
 
-              {activePlatform !== 'whatsapp' && metaIntegrations && metaIntegrations.length > 1 && (
+              {false && activePlatform !== 'whatsapp' && (metaIntegrations?.length ?? 0) > 1 && (
                 <Select value={currentChannelValue} onValueChange={handleChannelChange}>
                   <SelectTrigger className="h-8 border-0 bg-white/[0.045] text-xs focus:ring-0">
                     <SelectValue placeholder="Selecione a página" />
@@ -827,7 +1010,7 @@ export default function Conversations() {
                   <SelectContent className="bg-popover z-50">
                     <SelectGroup>
                       <SelectItem value="meta-all">Todas as páginas</SelectItem>
-                      {metaIntegrations.map(integration => (
+                      {(metaIntegrations ?? []).map(integration => (
                         <SelectItem key={integration.id} value={`meta-${integration.page_id}`}>
                           {integration.page_name || integration.page_id}
                         </SelectItem>
@@ -848,7 +1031,7 @@ export default function Conversations() {
               />
             </div>
 
-            {activePlatform === 'whatsapp' && (
+            {false && activePlatform === 'whatsapp' && (
               <div className="flex items-center justify-between gap-2">
                 <label data-tour="conversations-hide-groups" className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
                   <Checkbox checked={hideGroups} onCheckedChange={checked => setHideGroups(checked === true)} />
@@ -1031,13 +1214,14 @@ export default function Conversations() {
                   onChange={setMessageText}
                   onSend={handleSendMessage}
                   onKeyDown={handleKeyPress}
-                  placeholder="Digite sua mensagem..."
+                  placeholder={messageInputPlaceholder}
+                  disabled={messageInputDisabled}
                   isSending={sendMessage.isPending}
                   multiline
                   showRightActionsWhenEmpty
                   leftActions={
                     <>
-                      <button type="button" onClick={() => fileInputRef.current?.click()}>
+                      <button type="button" onClick={() => fileInputRef.current?.click()} disabled={messageInputDisabled}>
                         <Paperclip className="w-5 h-5" />
                       </button>
                       {selectedLeadId && (
@@ -1050,7 +1234,7 @@ export default function Conversations() {
                   rightActions={
                     <AudioRecorderButton
                       onSend={handleSendAudio}
-                      disabled={sendMessage.isPending}
+                      disabled={messageInputDisabled}
                     />
                   }
                 />
@@ -1181,7 +1365,7 @@ function ConversationItem({
               <span className="truncate font-sans font-semibold text-xs text-foreground">
                 {displayName}
               </span>
-              {conversation.is_group && <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">
+              {conversation.is_group && <Badge className="h-4 shrink-0 border-0 bg-orange-500/15 px-1.5 text-[9px] font-medium text-orange-700 shadow-none dark:bg-orange-500/15 dark:text-orange-300">
                   Grupo
                 </Badge>}
               {leadTags.slice(0, 2).map(lt => (

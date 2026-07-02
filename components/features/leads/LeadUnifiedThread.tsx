@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { format, isSameDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Bot, Loader2, MessageCircle, Mic, Paperclip, Plus, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
 import { useLeadHistory, type UnifiedHistoryEvent } from '@/hooks/use-lead-history';
@@ -15,6 +14,7 @@ import {
   type WhatsAppMessage,
 } from '@/hooks/use-whatsapp-conversations';
 import { useWhatsAppSessions } from '@/hooks/use-whatsapp-sessions';
+import { useStartConversation } from '@/hooks/use-start-conversation';
 
 type LeadUnifiedThreadProps = {
   leadId: string;
@@ -22,6 +22,7 @@ type LeadUnifiedThreadProps = {
   leadAvatarUrl?: string | null;
   leadPhone?: string | null;
   whatsappVerified?: boolean | null;
+  leadCreatedAt?: string | null;
 };
 
 type ThreadItem =
@@ -106,16 +107,48 @@ function getOutcomeActionLabel(event: UnifiedHistoryEvent) {
   return outcomeLabel;
 }
 
+function getLostReason(event: UnifiedHistoryEvent) {
+  const metadata = event.metadata || {};
+  const metadataReason =
+    metadataText(metadata.lost_reason) ||
+    metadataText(metadata.lostReason) ||
+    metadataText(metadata.loss_reason) ||
+    metadataText(metadata.reason);
+  if (metadataReason) return metadataReason;
+
+  const text = `${event.content || ''} ${event.label || ''}`;
+  const match = text.match(/motivo:\s*(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
 function getEventDetail(event: UnifiedHistoryEvent) {
   const metadata = event.metadata || {};
-  const detail =
+  const toStatus = String(metadata.to_status || '').toLowerCase();
+  const isLostStatusEvent =
+    (event.type === 'status_change' && toStatus === 'lost') ||
+    /marcado como perdido/i.test(`${event.label || ''} ${event.content || ''}`);
+  if (isLostStatusEvent) {
+    const lostReason = getLostReason(event);
+    return lostReason ? `Motivo: ${lostReason}` : null;
+  }
+
+  const notes =
     metadataText(metadata.notes) ||
     metadataText(metadata.outcome_notes) ||
     metadataText(metadata.outcomeNotes) ||
     metadataText(metadata.feedback) ||
     metadataText(metadata.comment);
 
-  if (detail) return detail;
+  const outcomeLabel = getOutcomeLabel(event);
+  const channel = String(event.metadata?.channel || event.channel || '').toLowerCase();
+  const isTaskOrCommunication = ['call', 'email', 'message', 'task_completed'].includes(event.type) || ['call', 'phone', 'email', 'message', 'whatsapp'].includes(channel);
+
+  if (outcomeLabel && isTaskOrCommunication) {
+    const outcomeText = `Desfecho: ${outcomeLabel}`;
+    return notes ? `${outcomeText}\nObservações: ${notes}` : outcomeText;
+  }
+
+  if (notes) return notes;
 
   const hasOutcome = Boolean(getOutcomeActionLabel(event));
   const content = event.content?.trim();
@@ -159,6 +192,28 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
     return content || label || 'Primeiro contato';
   }
 
+  const outcomeLabel = getOutcomeLabel(event);
+  const channel = String(event.metadata?.channel || event.channel || '').toLowerCase();
+  const isTaskOrCommunication = ['call', 'email', 'message', 'task_completed'].includes(event.type) || ['call', 'phone', 'email', 'message', 'whatsapp'].includes(channel);
+
+  if (outcomeLabel && isTaskOrCommunication) {
+    let typePrefix = 'Tarefa';
+    if (event.type === 'call' || channel === 'call' || channel === 'phone') typePrefix = 'Ligação';
+    else if (event.type === 'email' || channel === 'email') typePrefix = 'E-mail';
+    else if (event.type === 'message' || channel === 'message' || channel === 'whatsapp') typePrefix = 'Mensagem';
+
+    let taskName = '';
+    if (content) {
+      taskName = content.replace(/^Cadencia concluida:\s+/i, '').trim();
+    }
+
+    if (!taskName && label && !/tarefa concluida|ligacao realizada|email enviado|mensagem enviada/i.test(label)) {
+      taskName = label;
+    }
+
+    return taskName ? `${typePrefix}: ${taskName}` : `${typePrefix}: ${outcomeLabel}`;
+  }
+
   const outcomeActionLabel = getOutcomeActionLabel(event);
   if (outcomeActionLabel) return outcomeActionLabel;
 
@@ -184,6 +239,15 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
 
   if (event.type === 'lead_reentry') return 'Lead reentrou';
   if (/movido/i.test(label) || event.type === 'stage_changed' || event.type === 'stage_change') {
+    const from = String(metadata.old_stage_name || metadata.from_stage || '').trim();
+    const to = String(metadata.new_stage_name || metadata.to_stage || '').trim();
+    const isInitial = !from || from.toLowerCase() === 'desconhecido' || from.toLowerCase() === 'unknown';
+    if (!isInitial && from && to) {
+      return `Etapa: ${from} ➔ ${to}`;
+    }
+    if (to) {
+      return `Iniciado no estágio ${to}`;
+    }
     return 'Etapa alterada';
   }
   if (/marcado como ganho|venda conclu/i.test(searchable)) return 'Lead marcado como ganho';
@@ -236,33 +300,42 @@ function isFeedbackEvent(event: UnifiedHistoryEvent) {
 
 function getEventTone(event: UnifiedHistoryEvent) {
   const text = `${event.type} ${event.label} ${event.content || ''}`.toLowerCase();
+  const toStatus = String(event.metadata?.to_status || '').toLowerCase();
+
+  if (event.type === 'lead_created' || text.includes('foi criado')) {
+    return 'bg-green-600 !text-white ring-1 ring-green-700';
+  }
 
   if (event.type === 'first_response') {
-    return 'bg-sky-500/14 text-sky-300 ring-1 ring-sky-500/18';
+    return 'bg-sky-500/10 !text-sky-700 ring-1 ring-sky-500/20 dark:bg-sky-500/15 dark:!text-sky-300 dark:ring-sky-500/25';
+  }
+
+  if (event.type === 'task_completed') {
+    return 'bg-[var(--app-surface-soft)] !text-[var(--app-text-secondary)] ring-1 ring-[var(--app-border)]';
+  }
+
+  if (toStatus === 'lost' || text.includes('perdido') || text.includes('perda')) {
+    return 'bg-red-600 !text-white ring-1 ring-red-700';
+  }
+
+  if (toStatus === 'won' || text.includes('ganho') || text.includes('venda conclu')) {
+    return 'bg-emerald-600 !text-white ring-1 ring-emerald-700';
   }
 
   const outcomeVariant = getOutcomeVariant(event);
-  if (outcomeVariant === 'success') return 'bg-emerald-500/14 text-emerald-300 ring-1 ring-emerald-500/18';
-  if (outcomeVariant === 'warning') return 'bg-amber-500/14 text-amber-300 ring-1 ring-amber-500/18';
-  if (outcomeVariant === 'error') return 'bg-red-500/14 text-red-300 ring-1 ring-red-500/18';
+  if (outcomeVariant === 'success') return 'bg-emerald-600 !text-white ring-1 ring-emerald-700';
+  if (outcomeVariant === 'warning') return 'bg-amber-600 !text-white ring-1 ring-amber-700';
+  if (outcomeVariant === 'error') return 'bg-red-600 !text-white ring-1 ring-red-700';
 
   if (event.type === 'stage_changed' || event.type === 'stage_change') {
-    return 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]';
-  }
-
-  if (text.includes('ganho') || text.includes('venda conclu')) {
-    return 'bg-emerald-500/14 text-emerald-300 ring-1 ring-emerald-500/18';
-  }
-
-  if (text.includes('perdido') || text.includes('perda')) {
-    return 'bg-red-500/14 text-red-300 ring-1 ring-red-500/18';
+    return 'bg-[var(--app-surface-soft)] !text-[var(--app-text-secondary)]';
   }
 
   if (event.type.includes('tag')) {
-    return 'bg-primary/12 text-primary ring-1 ring-primary/16';
+    return 'bg-primary/12 !text-primary ring-1 ring-primary/16';
   }
 
-  return 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]';
+  return 'bg-[var(--app-surface-soft)] !text-[var(--app-text-secondary)]';
 }
 
 function messagePreview(message: WhatsAppMessage) {
@@ -303,24 +376,27 @@ function getEventAlignment(event: UnifiedHistoryEvent) {
 function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
   const alignment = getEventAlignment(event);
   const detail = getEventDetail(event);
+  const toneClass = getEventTone(event);
+  const isSolidTone = toneClass.includes('!text-white');
+
   const bubble = (
     <div
       className={cn(
         'rounded-[6px] px-3 py-1.5 text-[10px]',
         alignment === 'center' ? 'text-center' : 'text-right',
-        getEventTone(event),
+        toneClass,
       )}
       title={alignment !== 'center' && event.actor ? `${event.actor.name} fez esta acao` : undefined}
     >
       <div className="uppercase tracking-wide">
         <span>{normalizeEventLabel(event)}</span>
-        <span className="ml-2 text-[var(--app-text-tertiary)]">
+        <span className={cn('ml-2', isSolidTone ? 'text-white/70' : 'text-[var(--app-text-tertiary)]')}>
           {format(new Date(event.timestamp), 'HH:mm', { locale: ptBR })}
         </span>
         {event.isAutomation && <Bot className="ml-1 inline h-3 w-3 align-[-2px]" />}
       </div>
       {detail && (
-        <div className={cn('mt-1 max-w-[15rem] whitespace-pre-wrap break-words text-[11px] normal-case leading-snug text-[var(--app-text-secondary)]', alignment === 'center' ? 'text-center' : 'text-right')}>
+        <div className={cn('mt-1 max-w-[15rem] whitespace-pre-wrap break-words text-[11px] normal-case leading-snug', isSolidTone ? 'text-white/90' : 'opacity-80', alignment === 'center' ? 'text-center' : 'text-right')}>
           {detail}
         </div>
       )}
@@ -417,8 +493,28 @@ function MessageBubble({
   );
 }
 
-export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, whatsappVerified }: LeadUnifiedThreadProps) {
+export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, whatsappVerified, leadCreatedAt }: LeadUnifiedThreadProps) {
   const [text, setText] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const adjustTextareaHeight = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = '18px';
+    const scrollHeight = textarea.scrollHeight;
+    textarea.style.height = `${Math.min(120, Math.max(18, scrollHeight))}px`;
+  }, []);
+
+  useEffect(() => {
+    if (text === '') {
+      if (textareaRef.current) {
+        textareaRef.current.style.height = '18px';
+      }
+    } else {
+      adjustTextareaHeight();
+    }
+  }, [text, adjustTextareaHeight]);
+
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const { data: history = [], isLoading: loadingHistory } = useLeadHistory(leadId);
   const { data: conversations = [] } = useWhatsAppConversations(undefined, { hideGroups: true });
@@ -430,6 +526,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
 
   const { data: messages = [], isLoading: loadingMessages } = useWhatsAppMessages(conversation?.id ?? null, leadId, 80);
   const sendMessage = useSendWhatsAppMessage();
+  const startConversation = useStartConversation();
 
   const hasLeadPhone = Boolean(leadPhone?.replace(/\D/g, ''));
   const leadHasNoWhatsApp = whatsappVerified === false;
@@ -440,7 +537,14 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   const conversationSessionConnected = conversation
     ? conversationSessionStatus === 'connected' || conversationSessionStatus === 'connecting' || (!conversationSessionStatus && hasConnectedSession)
     : false;
-  const canSendMessage = Boolean(hasLeadPhone && !leadHasNoWhatsApp && conversation && conversationSessionConnected);
+  const canStartConversation = Boolean(hasLeadPhone && !leadHasNoWhatsApp && hasConnectedSession && !conversation);
+  const canSendMessage = Boolean(
+    hasLeadPhone &&
+      !leadHasNoWhatsApp &&
+      hasConnectedSession &&
+      (!conversation || conversationSessionConnected),
+  );
+  const isSendingMessage = sendMessage.isPending || startConversation.isPending;
   const inputPlaceholder = !hasLeadPhone
     ? 'Lead sem telefone cadastrado'
     : leadHasNoWhatsApp
@@ -448,20 +552,40 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       : !hasConnectedSession
         ? 'Conecte uma conta de WhatsApp para enviar'
         : !conversation
-          ? 'Inicie ou vincule a conversa deste lead'
+          ? 'Digite para iniciar a conversa com este lead'
           : !conversationSessionConnected
             ? 'A conexao deste WhatsApp esta desconectada'
             : 'Digite sua mensagem...';
 
   const items = useMemo<ThreadItem[]>(() => {
     const visibleEvents = removeRedundantEvents(history.filter(shouldShowEvent));
-    const eventItems: ThreadItem[] = visibleEvents
-      .map((event) => ({
-        id: `event-${event.id}`,
+    const hasLeadCreated = visibleEvents.some(
+      (e) => e.type === 'lead_created' || /foi criado/i.test(e.label || '')
+    );
+
+    const finalEventItems: ThreadItem[] = visibleEvents.map((event) => ({
+      id: `event-${event.id}`,
+      kind: 'event',
+      timestamp: event.timestamp,
+      event,
+    }));
+
+    if (!hasLeadCreated && leadCreatedAt) {
+      finalEventItems.push({
+        id: 'event-synthetic-created',
         kind: 'event',
-        timestamp: event.timestamp,
-        event,
-      }));
+        timestamp: leadCreatedAt,
+        event: {
+          id: 'synthetic-created',
+          type: 'lead_created',
+          label: 'Lead criado',
+          timestamp: leadCreatedAt,
+          metadata: {},
+          actor: null,
+          source: 'activity',
+        },
+      });
+    }
 
     const messageItems: ThreadItem[] = messages.map((message) => ({
       id: `message-${message.id}`,
@@ -470,10 +594,23 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       message,
     }));
 
-    return [...eventItems, ...messageItems]
+    const sorted = [...finalEventItems, ...messageItems]
       .filter((item) => item.timestamp)
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-  }, [history, messages]);
+
+    const createdIndex = sorted.findIndex(
+      (item) =>
+        item.kind === 'event' &&
+        (item.event.type === 'lead_created' || /foi criado/i.test(item.event.label || ''))
+    );
+
+    if (createdIndex > 0) {
+      const [createdItem] = sorted.splice(createdIndex, 1);
+      sorted.unshift(createdItem);
+    }
+
+    return sorted;
+  }, [history, messages, leadCreatedAt]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -481,11 +618,19 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
 
   const handleSend = async () => {
     const content = text.trim();
-    if (!content || !conversation || !canSendMessage || sendMessage.isPending) return;
+    if (!content || !canSendMessage || isSendingMessage) return;
 
     setText('');
     try {
-      await sendMessage.mutateAsync({ conversation, text: content });
+      const targetConversation =
+        conversation ||
+        (await startConversation.mutateAsync({
+          phone: leadPhone || '',
+          leadId,
+          leadName,
+        }));
+
+      await sendMessage.mutateAsync({ conversation: targetConversation, text: content });
     } catch {
       setText(content);
     }
@@ -494,7 +639,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   const isLoading = loadingHistory || loadingMessages;
 
   return (
-    <section className="lead-thread-panel flex h-full min-h-0 flex-col bg-[var(--app-surface)] p-3">
+    <section className="lead-thread-panel flex h-full min-h-0 flex-col bg-transparent p-3">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-soft)]">
         <div className="lead-thread-scroll flex-1 space-y-3 overflow-y-auto px-1 pb-3 pt-3">
           {isLoading && (
@@ -533,36 +678,48 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
         </div>
 
         <div className="p-3 pt-2">
-          <div className="flex items-center gap-1.5 rounded-[8px] bg-[var(--app-surface)] px-2 py-2.5">
-            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 rounded-[6px] text-[var(--app-text-tertiary)]" disabled>
-              <Plus className="h-4 w-4" />
-            </Button>
-            <Input
+          <div className="flex min-h-[42px] items-end gap-1 rounded-[8px] bg-[rgb(15_23_42/0.065)] px-2 py-2 text-xs shadow-none transition-colors focus-within:bg-[rgb(15_23_42/0.085)] dark:bg-[#242424] dark:focus-within:bg-[#292929]">
+            {canSendMessage && (
+              <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 rounded-[6px] text-[var(--app-text-tertiary)] mb-[1px]" disabled>
+                <Plus className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            <textarea
+              ref={textareaRef}
+              rows={1}
               value={text}
-              onChange={(event) => setText(event.target.value)}
+              onChange={(event) => {
+                setText(event.target.value);
+                adjustTextareaHeight();
+              }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
                   event.preventDefault();
                   handleSend();
                 }
               }}
-              disabled={!canSendMessage || sendMessage.isPending}
+              disabled={!canSendMessage || isSendingMessage}
               placeholder={inputPlaceholder}
-              className="h-9 min-w-0 flex-1 border-0 bg-transparent px-1 text-xs shadow-none focus-visible:ring-0"
+              className="h-[18px] min-w-0 flex-1 resize-none border-0 bg-transparent px-1 py-0.5 text-xs leading-relaxed text-[var(--app-text-primary)] shadow-none outline-none ring-0 placeholder:text-[var(--app-text-tertiary)] focus:outline-none focus:ring-0 focus-visible:ring-0 disabled:cursor-not-allowed [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             />
-            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 rounded-[6px] text-[var(--app-text-tertiary)]" disabled>
-              <Paperclip className="h-4 w-4" />
-            </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 rounded-[6px] text-[var(--app-text-tertiary)]" disabled>
-              <Mic className="h-4 w-4" />
-            </Button>
+            {canSendMessage && (
+              <>
+                <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 rounded-[6px] text-[var(--app-text-tertiary)] mb-[1px]" disabled>
+                  <Paperclip className="h-3.5 w-3.5" />
+                </Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 rounded-[6px] text-[var(--app-text-tertiary)] mb-[1px]" disabled>
+                  <Mic className="h-3.5 w-3.5" />
+                </Button>
+              </>
+            )}
             <Button
               size="icon"
-              className="h-8 w-8 shrink-0 rounded-[6px]"
-              disabled={!canSendMessage || !text.trim() || sendMessage.isPending}
+              className="h-7 w-7 shrink-0 rounded-[6px] mb-[1px]"
+              disabled={!canSendMessage || !text.trim() || isSendingMessage}
               onClick={handleSend}
+              title={canStartConversation ? 'Iniciar conversa' : 'Enviar mensagem'}
             >
-              {sendMessage.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {isSendingMessage ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
             </Button>
           </div>
         </div>

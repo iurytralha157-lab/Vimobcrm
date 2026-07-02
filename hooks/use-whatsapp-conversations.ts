@@ -1,8 +1,10 @@
+import { useEffect } from "react";
 import { useQuery, useMutation, useQueryClient, type Query } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import { whatsappAPI } from "@/lib/api/whatsapp";
 import { createClientId } from "@/lib/client-id";
+import { supabase } from "@/integrations/supabase/client";
 
 const WHATSAPP_SEND_COOLDOWN_MS = 1000;
 const lastWhatsAppSendByUser = new Map<string, number>();
@@ -126,9 +128,9 @@ export function useWhatsAppConversations(
       }) as Promise<WhatsAppConversation[]>;
     },
     enabled: !!profile?.organization_id,
-    refetchInterval: 120_000,
+    refetchInterval: 12_000,
     refetchIntervalInBackground: false,
-    staleTime: 60_000,
+    staleTime: 5_000,
     gcTime: 1000 * 60 * 10,
   });
 }
@@ -176,8 +178,9 @@ export function useWhatsAppMessages(
       return page.messages as WhatsAppMessage[];
     },
     enabled: (!!conversationId && !!profile?.organization_id) || (!!leadId && !!profile?.organization_id),
+    refetchInterval: conversationId || leadId ? 10_000 : false,
     refetchIntervalInBackground: false,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 8_000,
     gcTime: 1000 * 60 * 15,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
@@ -342,12 +345,17 @@ export function useSendWhatsAppMessage() {
       }
 
       queryClient.invalidateQueries({ queryKey: ["whatsapp-conversations"] });
-      queryClient.invalidateQueries({
+      const refreshMessages = () => queryClient.invalidateQueries({
         predicate: (q) =>
           Array.isArray(q.queryKey) &&
           q.queryKey[0] === "whatsapp-messages" &&
           messageKeys.has(q.queryKey[1] as string),
       });
+      if (typeof window === "undefined") {
+        refreshMessages();
+      } else {
+        window.setTimeout(refreshMessages, 4_000);
+      }
     },
     onError: (error: Error, variables, context) => {
       const errorMessage = error.message || "";
@@ -514,6 +522,118 @@ export function useLinkConversationToLead() {
   });
 }
 
-export function useWhatsAppRealtimeConversations() {
-  // Realtime is centralized elsewhere; this stays as a compatibility no-op.
+export function useWhatsAppRealtimeConversations(enabled: boolean = true) {
+  const queryClient = useQueryClient();
+  const { profile } = useAuth();
+
+  useEffect(() => {
+    if (!enabled || !profile?.organization_id) return;
+
+    const organizationId = profile.organization_id;
+    const invalidateConversations = () => {
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-conversations"] });
+    };
+    const invalidateMessages = (conversationId?: unknown) => {
+      if (typeof conversationId !== "string" || !conversationId) {
+        queryClient.invalidateQueries({ queryKey: ["whatsapp-messages"] });
+        return;
+      }
+
+      queryClient.invalidateQueries({
+        predicate: (q) =>
+          Array.isArray(q.queryKey) &&
+          q.queryKey[0] === "whatsapp-messages" &&
+          q.queryKey[1] === conversationId,
+      });
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-messages-paginated", conversationId] });
+    };
+    const messageRefreshTimers = new Map<string, number>();
+    const scheduleInvalidateMessages = (conversationId?: unknown) => {
+      if (typeof conversationId !== "string" || !conversationId) {
+        invalidateMessages(conversationId);
+        return;
+      }
+
+      const existingTimer = messageRefreshTimers.get(conversationId);
+      if (existingTimer) window.clearTimeout(existingTimer);
+      const timer = window.setTimeout(() => {
+        messageRefreshTimers.delete(conversationId);
+        invalidateMessages(conversationId);
+      }, 900);
+      messageRefreshTimers.set(conversationId, timer);
+    };
+    const upsertRealtimeMessage = (row: Record<string, unknown> | null) => {
+      if (!row || typeof row.conversation_id !== "string") return;
+      const conversationId = row.conversation_id;
+      const message = row as unknown as WhatsAppMessage;
+      queryClient.setQueriesData<WhatsAppMessage[]>(
+        {
+          predicate: (q) =>
+            Array.isArray(q.queryKey) &&
+            q.queryKey[0] === "whatsapp-messages" &&
+            q.queryKey[1] === conversationId,
+        },
+        (old) => {
+          if (!old) return old;
+          const messageKey = message.id || message.message_id || message.client_message_id;
+          const next = [...old];
+          const existingIndex = next.findIndex((item) =>
+            item.id === message.id ||
+            item.message_id === message.message_id ||
+            (message.client_message_id && item.client_message_id === message.client_message_id) ||
+            (messageKey && (item.id === messageKey || item.message_id === messageKey)),
+          );
+          if (existingIndex >= 0) {
+            next[existingIndex] = { ...next[existingIndex], ...message };
+          } else {
+            next.push(message);
+          }
+          return next.sort((a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime());
+        },
+      );
+    };
+
+    const channelName = `whatsapp-live:${organizationId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "whatsapp_conversations",
+          filter: `organization_id=eq.${organizationId}`,
+        },
+        () => {
+          invalidateConversations();
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "whatsapp_messages",
+          filter: `organization_id=eq.${organizationId}`,
+        },
+        (payload) => {
+          const row = (payload.new || payload.old) as Record<string, unknown> | null;
+          invalidateConversations();
+          if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
+            upsertRealtimeMessage(row);
+          }
+          scheduleInvalidateMessages(row?.conversation_id);
+          if (payload.eventType === "INSERT" && typeof window !== "undefined" && row) {
+            window.dispatchEvent(new CustomEvent("vimob:whatsapp-message-insert", { detail: row }));
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      messageRefreshTimers.forEach((timer) => window.clearTimeout(timer));
+      messageRefreshTimers.clear();
+      void supabase.removeChannel(channel);
+    };
+  }, [enabled, profile?.organization_id, queryClient]);
 }

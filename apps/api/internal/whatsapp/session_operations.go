@@ -19,33 +19,32 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 	token := createSecretToken()
 	webhookToken := createSecretToken()
 	instanceName := createInstanceName(input.DisplayName, tenantContext.OrganizationID)
-	settings := map[string]any{"token": token, "webhook_token": webhookToken}
+	settings := map[string]any{
+		"token":                              token,
+		"webhook_token":                      webhookToken,
+		"evolution_go_resolved_instance_key": instanceName,
+		"ai_auto_reply_enabled":              false,
+	}
 
 	session, err := scanSession(repo.db.Pool().QueryRow(ctx, `
 		with inserted as (
 			insert into public.whatsapp_sessions (
 				organization_id,
 				owner_user_id,
-				created_by,
-				name,
 				instance_name,
 				display_name,
 				status,
 				provider,
 				advanced_settings,
-				metadata,
 				is_active
 			)
 			values (
 				$1::uuid,
 				$2::uuid,
-				$2::uuid,
 				$3,
 				$4,
-				$3,
 				'disconnected',
 				'evolution_go',
-				$5::jsonb,
 				$5::jsonb,
 				true
 			)
@@ -54,7 +53,7 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 		select `+sessionSelectFields()+`
 		from inserted ws
 		left join public.users owner on owner.id = ws.owner_user_id
-	`, tenantContext.OrganizationID, tenantContext.UserID, input.DisplayName, instanceName, jsonb(settings)))
+	`, tenantContext.OrganizationID, tenantContext.UserID, instanceName, input.DisplayName, jsonb(settings)))
 	if err != nil {
 		return SessionOperationResponse{}, err
 	}
@@ -74,6 +73,7 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 	evoID := evolutionInstanceID(createResult)
 	if evoID != "" {
 		settings["token"] = token
+		settings["evolution_go_resolved_instance_key"] = evoID
 		if providerNotificationSafeApplied(createResult) {
 			settings["notification_safe_settings_applied_at"] = time.Now().UTC().Format(time.RFC3339)
 		}
@@ -83,13 +83,11 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 		}
 	}
 
-	configuredWebhookURL := fmt.Sprintf(
-		"%s?session_id=%s&instance_id=%s&webhook_token=%s",
-		repo.functions.webhookURL("evolution-go-webhook"),
-		session.ID,
-		evoID,
-		webhookToken,
-	)
+	webhookInstanceID := evoID
+	if webhookInstanceID == "" {
+		webhookInstanceID = instanceName
+	}
+	configuredWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, webhookInstanceID, webhookToken)
 	connectResult, err := repo.functions.invokeEvolution(ctx, "instance.connect", map[string]any{
 		"session_id":  session.ID,
 		"instance_id": evoID,
@@ -107,6 +105,7 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 
 	settings["token"] = token
 	settings["webhook_token"] = webhookToken
+	settings["evolution_go_resolved_instance_key"] = firstPresentAny(evoID, instanceName)
 	settings["webhook_url"] = configuredWebhookURL
 	settings["webhook_last_configured_at"] = time.Now().UTC().Format(time.RFC3339)
 	if providerNotificationSafeApplied(connectResult) {
@@ -156,7 +155,20 @@ func (repo Repository) GetQRCode(ctx context.Context, tenantContext tenant.Conte
 		"instance_id": stringPtrValue(session.InstanceID),
 	})
 	if err != nil {
+		if errors.Is(err, ErrProviderFailed) {
+			if isProviderDisconnectedError(err) || isProviderMissingInstanceError(err) {
+				_ = repo.markSessionDisconnected(ctx, tenantContext.OrganizationID, session.ID)
+			}
+			return QRCodeResponse{}, nil
+		}
 		return QRCodeResponse{}, err
+	}
+	if !providerResultOK(result) {
+		message := providerErrorMessage(result, "QR Code ainda nao disponivel.")
+		if firstString(result, "status", "data.status") == "404" || isProviderDisconnectedMessage(message) {
+			_ = repo.markSessionDisconnected(ctx, tenantContext.OrganizationID, session.ID)
+		}
+		return QRCodeResponse{}, nil
 	}
 
 	qr := firstString(result, "data.data.qrcode", "data.qrcode", "data.Qrcode", "qrcode", "Qrcode")
@@ -183,21 +195,35 @@ func (repo Repository) GetConnectionStatus(ctx context.Context, tenantContext te
 		return ConnectionStatusResponse{}, fmt.Errorf("%w: legacy Evolution provider is disabled", ErrInvalidInput)
 	}
 
-	result, err := repo.functions.invoke(ctx, "evolution-go-proxy", map[string]any{
-		"action":      "instance.status",
+	result, err := repo.functions.invokeEvolution(ctx, "instance.status", map[string]any{
 		"session_id":  session.ID,
 		"instance_id": stringPtrValue(session.InstanceID),
 	})
 	if err != nil {
+		if errors.Is(err, ErrProviderFailed) {
+			_ = repo.markSessionDisconnected(ctx, tenantContext.OrganizationID, session.ID)
+			return ConnectionStatusResponse{
+				Connected:        false,
+				Status:           "disconnected",
+				State:            "close",
+				InstanceNotFound: isProviderMissingInstanceError(err),
+			}, nil
+		}
 		return ConnectionStatusResponse{}, err
 	}
 
 	if !providerResultOK(result) {
 		statusText := firstString(result, "status", "data.status")
-		if statusText == "404" {
-			return ConnectionStatusResponse{Connected: false, Status: "disconnected", State: "close", InstanceNotFound: true}, nil
-		}
-		return ConnectionStatusResponse{}, fmt.Errorf("%w: %s", ErrProviderFailed, providerErrorMessage(result, "Failed to get status"))
+		message := providerErrorMessage(result, "Failed to get status")
+		_ = repo.markSessionDisconnected(ctx, tenantContext.OrganizationID, session.ID)
+		return ConnectionStatusResponse{
+			Connected:        false,
+			Status:           "disconnected",
+			State:            "close",
+			InstanceNotFound: statusText == "404" || isProviderMissingInstanceMessage(message),
+			RawResponse:      result["rawResponse"],
+			RawStatus:        result["status"],
+		}, nil
 	}
 
 	normalizedStatus := firstString(result, "normalizedStatus")
@@ -212,8 +238,8 @@ func (repo Repository) GetConnectionStatus(ctx context.Context, tenantContext te
 		state = "qr"
 	}
 
-	rawData := firstMap(result, "data.data", "data")
-	wuid := firstString(rawData, "jid", "Name")
+	rawData := firstMap(result, "data.data", "data.instance", "data.session", "data", "instance", "session")
+	wuid := firstString(rawData, "jid", "Jid", "wuid", "ownerJid", "phone", "number", "Name", "name")
 	if connected {
 		phone := strings.Split(wuid, "@")[0]
 		_, _ = repo.db.Pool().Exec(ctx, `
@@ -243,7 +269,7 @@ func (repo Repository) GetConnectionStatus(ctx context.Context, tenantContext te
 			"wuid": wuid,
 		},
 		RawResponse: result["rawResponse"],
-		RawStatus:   result["rawStatus"],
+		RawStatus:   result["status"],
 	}, nil
 }
 
@@ -256,7 +282,7 @@ func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant
 		return SessionOperationResponse{}, fmt.Errorf("%w: legacy Evolution provider is disabled", ErrInvalidInput)
 	}
 
-	settings := session.AdvancedSettings
+	settings := ensureAutoReplyDefaults(session.AdvancedSettings)
 	token := stringFromMap(settings, "token")
 	if token == "" {
 		token = createSecretToken()
@@ -278,13 +304,11 @@ func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant
 	}
 
 	evoID := evolutionInstanceID(createResult)
-	configuredWebhookURL := fmt.Sprintf(
-		"%s?session_id=%s&instance_id=%s&webhook_token=%s",
-		repo.functions.webhookURL("evolution-go-webhook"),
-		session.ID,
-		evoID,
-		webhookToken,
-	)
+	webhookInstanceID := evoID
+	if webhookInstanceID == "" {
+		webhookInstanceID = session.InstanceName
+	}
+	configuredWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, webhookInstanceID, webhookToken)
 	connectResult, err := repo.functions.invokeEvolution(ctx, "instance.connect", map[string]any{
 		"session_id":  session.ID,
 		"instance_id": evoID,
@@ -301,6 +325,7 @@ func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant
 
 	settings["token"] = token
 	settings["webhook_token"] = webhookToken
+	settings["evolution_go_resolved_instance_key"] = firstPresentAny(evoID, session.InstanceName)
 	settings["webhook_url"] = configuredWebhookURL
 	settings["webhook_last_configured_at"] = time.Now().UTC().Format(time.RFC3339)
 	if providerNotificationSafeApplied(createResult) || providerNotificationSafeApplied(connectResult) {
@@ -342,21 +367,32 @@ func (repo Repository) LogoutSession(ctx context.Context, tenantContext tenant.C
 		"instance_id": stringPtrValue(session.InstanceID),
 	})
 	if err != nil {
+		if !isProviderDisconnectedError(err) {
+			return nil, err
+		}
+		result = map[string]any{
+			"ok":               true,
+			"status":           "disconnected",
+			"provider_warning": err.Error(),
+		}
+	}
+
+	if err := repo.markSessionDisconnected(ctx, tenantContext.OrganizationID, session.ID); err != nil {
 		return nil, err
 	}
 
-	_, err = repo.db.Pool().Exec(ctx, `
+	return result, nil
+}
+
+func (repo Repository) markSessionDisconnected(ctx context.Context, organizationID string, sessionID string) error {
+	_, err := repo.db.Pool().Exec(ctx, `
 		update public.whatsapp_sessions
 		set status = 'disconnected',
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
-	`, tenantContext.OrganizationID, session.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	return result, nil
+	`, organizationID, sessionID)
+	return err
 }
 
 func (repo Repository) ToggleNotificationSession(ctx context.Context, tenantContext tenant.Context, sessionID string, enabled bool) error {
@@ -378,6 +414,25 @@ func (repo Repository) ToggleNotificationSession(ctx context.Context, tenantCont
 	return err
 }
 
+func (repo Repository) ToggleAutoReplySession(ctx context.Context, tenantContext tenant.Context, sessionID string, enabled bool) error {
+	sessionID, ok := normalizeUUID(sessionID)
+	if !ok {
+		return ErrSessionNotFound
+	}
+	if err := repo.ensureCanManageSession(ctx, tenantContext, sessionID); err != nil {
+		return err
+	}
+
+	_, err := repo.db.Pool().Exec(ctx, `
+		update public.whatsapp_sessions
+		set advanced_settings = coalesce(advanced_settings, '{}'::jsonb) || jsonb_build_object('ai_auto_reply_enabled', $3::boolean),
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+	`, tenantContext.OrganizationID, sessionID, enabled)
+	return err
+}
+
 func (repo Repository) GetManageableSession(ctx context.Context, tenantContext tenant.Context, sessionID string) (Session, error) {
 	sessionID, ok := normalizeUUID(sessionID)
 	if !ok {
@@ -390,7 +445,8 @@ func (repo Repository) GetManageableSession(ctx context.Context, tenantContext t
 		left join public.users owner on owner.id = ws.owner_user_id
 		where ws.organization_id = $1::uuid
 		  and ws.id = $2::uuid
-		  and ws.is_active is not false
+		  and coalesce(ws.is_active, true) = true
+		  and coalesce(ws.status, '') <> 'deleted'
 		  and ($4::boolean or ws.owner_user_id = $3::uuid)
 		limit 1
 	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, canManageWhatsApp(tenantContext)))
@@ -409,21 +465,30 @@ func (repo Repository) ensureCanCreateSession(ctx context.Context, tenantContext
 		return tenant.ErrOrganizationAccessDenied
 	}
 
+	quota, err := repo.GetSessionQuota(ctx, tenantContext.OrganizationID)
+	if err != nil {
+		return err
+	}
+	if quota.MaxSessions == nil || *quota.MaxSessions <= 0 || quota.CurrentSessions < *quota.MaxSessions {
+		return nil
+	}
+
+	return fmt.Errorf("%w: Limite do plano atingido: maximo de %d WhatsApp%s.", ErrInvalidInput, *quota.MaxSessions, pluralSuffix(*quota.MaxSessions))
+}
+
+func (repo Repository) GetSessionQuota(ctx context.Context, organizationID string) (SessionQuota, error) {
 	var maxSessions *int
 	err := repo.db.Pool().QueryRow(ctx, `
 		select coalesce(org.max_whatsapp_sessions_override, plan.max_whatsapp_sessions)::integer
 		from public.organizations org
 		left join public.admin_subscription_plans plan on plan.id = org.plan_id
 		where org.id = $1::uuid
-	`, tenantContext.OrganizationID).Scan(&maxSessions)
+	`, organizationID).Scan(&maxSessions)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return tenant.ErrOrganizationAccessDenied
+		return SessionQuota{}, tenant.ErrOrganizationAccessDenied
 	}
 	if err != nil {
-		return err
-	}
-	if maxSessions == nil || *maxSessions <= 0 {
-		return nil
+		return SessionQuota{}, err
 	}
 
 	var count int
@@ -431,15 +496,14 @@ func (repo Repository) ensureCanCreateSession(ctx context.Context, tenantContext
 		select count(*)::integer
 		from public.whatsapp_sessions
 		where organization_id = $1::uuid
-		  and is_active is not false
-	`, tenantContext.OrganizationID).Scan(&count); err != nil {
-		return err
-	}
-	if count >= *maxSessions {
-		return fmt.Errorf("%w: Limite do plano atingido: maximo de %d WhatsApp%s.", ErrInvalidInput, *maxSessions, pluralSuffix(*maxSessions))
+		  and coalesce(is_active, true) = true
+		  and coalesce(status, '') <> 'deleted'
+	`, organizationID).Scan(&count); err != nil {
+		return SessionQuota{}, err
 	}
 
-	return nil
+	canCreate := maxSessions == nil || *maxSessions <= 0 || count < *maxSessions
+	return SessionQuota{MaxSessions: maxSessions, CurrentSessions: count, CanCreate: canCreate}, nil
 }
 
 func (repo Repository) updateSessionInstance(ctx context.Context, organizationID string, sessionID string, instanceID string, settings map[string]any) error {
@@ -456,7 +520,10 @@ func (repo Repository) updateSessionInstance(ctx context.Context, organizationID
 
 func (repo Repository) deleteSessionRow(ctx context.Context, organizationID string, sessionID string) error {
 	_, err := repo.db.Pool().Exec(ctx, `
-		delete from public.whatsapp_sessions
+		update public.whatsapp_sessions
+		set is_active = false,
+		    status = 'deleted',
+		    updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 	`, organizationID, sessionID)
@@ -486,4 +553,47 @@ func pluralSuffix(value int) string {
 	}
 
 	return "s"
+}
+
+func ensureAutoReplyDefaults(settings map[string]any) map[string]any {
+	if settings == nil {
+		settings = map[string]any{}
+	}
+	if _, exists := settings["ai_auto_reply_enabled"]; !exists {
+		settings["ai_auto_reply_enabled"] = false
+	}
+	return settings
+}
+
+func isProviderDisconnectedError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	return isProviderDisconnectedMessage(err.Error())
+}
+
+func isProviderDisconnectedMessage(message string) bool {
+	normalized := strings.ToLower(message)
+	return strings.Contains(normalized, "client disconnected") ||
+		strings.Contains(normalized, "not connected") ||
+		strings.Contains(normalized, "disconnected") ||
+		strings.Contains(normalized, "already closed") ||
+		strings.Contains(normalized, "logged out") ||
+		isProviderMissingInstanceMessage(normalized)
+}
+
+func isProviderMissingInstanceError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	return isProviderMissingInstanceMessage(err.Error())
+}
+
+func isProviderMissingInstanceMessage(message string) bool {
+	normalized := strings.ToLower(message)
+	return strings.Contains(normalized, "not found") ||
+		strings.Contains(normalized, "instance not found") ||
+		strings.Contains(normalized, "404")
 }

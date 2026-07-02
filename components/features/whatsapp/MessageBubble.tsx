@@ -697,7 +697,7 @@ export function MessageBubble({
           return (
             <>
               <div
-                className="rounded-md overflow-hidden cursor-pointer relative w-full max-w-[280px] sm:max-w-[300px] border-[0.5px] border-black/5"
+                className="rounded-md overflow-hidden cursor-pointer relative w-full max-w-[280px] sm:max-w-[300px]"
                 onClick={() => setViewerOpen(true)}
               >
                 {imageLoading && (
@@ -752,7 +752,7 @@ export function MessageBubble({
           return (
             <>
               <div
-                className="rounded-md overflow-hidden cursor-pointer relative w-full max-w-[280px] sm:max-w-[300px] border-[0.5px] border-black/5"
+                className="rounded-md overflow-hidden cursor-pointer relative w-full max-w-[280px] sm:max-w-[300px]"
                 onClick={() => setViewerOpen(true)}
               >
                 <video
@@ -924,10 +924,10 @@ export function MessageBubble({
         fromMe ? "items-end" : "items-start"
       )}>
         <div className={cn(
-          "rounded-2xl relative overflow-visible transition-all duration-200 shadow-sm",
+          "rounded-2xl relative overflow-visible transition-all duration-200 shadow-none border-0",
           fromMe
             ? "bg-primary text-primary-foreground rounded-tr-none"
-            : "bg-[#242424] text-white border border-white/5 rounded-tl-none",
+            : "bg-[#242424] text-white rounded-tl-none",
           (messageType === "image" || messageType === "video") && !content ? "p-[3px]" : "px-3 py-2"
         )}>
           {/* Sender name for groups or sent messages with sender info */}

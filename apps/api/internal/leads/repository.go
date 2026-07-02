@@ -234,6 +234,10 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return Lead{}, tenant.ErrOrganizationAccessDenied
 	}
 
+	if err := validateLostReasonContract(current, input); err != nil {
+		return Lead{}, err
+	}
+
 	assignments := []string{}
 	args := []any{tenantContext.OrganizationID, leadID}
 
@@ -2088,6 +2092,33 @@ func jsonb(value any) string {
 	}
 
 	return string(payload)
+}
+
+func validateLostReasonContract(current leadSnapshot, input updateInput) error {
+	nextStatus := current.DealStatus
+	if input.DealStatus.Set {
+		if input.DealStatus.Value == nil {
+			return fmt.Errorf("%w: dealStatus is required", ErrInvalidInput)
+		}
+		nextStatus = *input.DealStatus.Value
+	}
+
+	nextLostReason := current.LostReason
+	if input.LostReason.Set {
+		nextLostReason = ""
+		if input.LostReason.Value != nil {
+			nextLostReason = strings.TrimSpace(*input.LostReason.Value)
+		}
+	}
+
+	lostReasonIsBlank := strings.TrimSpace(nextLostReason) == ""
+	isMovingToLost := nextStatus == "lost" && current.DealStatus != "lost"
+	isClearingLostReason := nextStatus == "lost" && strings.TrimSpace(current.LostReason) != "" && input.LostReason.Set && lostReasonIsBlank
+	if (isMovingToLost || isClearingLostReason) && lostReasonIsBlank {
+		return fmt.Errorf("%w: lostReason is required when dealStatus is lost", ErrInvalidInput)
+	}
+
+	return nil
 }
 
 func normalizePhone(value string) string {

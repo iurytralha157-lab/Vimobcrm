@@ -81,50 +81,45 @@ export function FollowUpTemplates({ onSelectTemplate, canCreate = true }: Follow
 
   return (
     <div className="space-y-8">
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-        {/* Create from scratch */}
-        <div
-          data-tour="automations-new"
-          className="cursor-pointer rounded-2xl aspect-[4/3] flex items-center justify-center transition-all duration-200 group relative overflow-hidden border-0 bg-orange-500 hover:bg-orange-600"
-          onClick={() => onSelectTemplate(null)}
-        >
-          <div className="flex flex-col items-center justify-center p-4 text-center relative z-10">
-            <div className="p-2.5 rounded-xl bg-white/20 mb-2 transition-all duration-200 group-hover:scale-110">
-              <Plus className="h-6 w-6 text-white" />
-            </div>
-            <h3 className="font-semibold text-white text-xs">
-              Criar uma automação
-            </h3>
-          </div>
-        </div>
-
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
         {/* Template cards */}
         {FOLLOW_UP_TEMPLATES.map((template) => (
           <div
             key={template.id}
-            className="cursor-pointer rounded-2xl aspect-[4/3] flex items-center justify-center relative transition-all duration-200 group overflow-hidden border border-white/[0.055] bg-white/[0.045] hover:bg-orange-500 hover:border-orange-500"
+            className="group relative flex min-h-[184px] flex-col justify-between overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] p-4 shadow-[0_14px_32px_rgb(0_0_0/0.08)] transition-all duration-200 cursor-pointer hover:bg-[var(--app-surface-hover)]"
             onClick={() => onSelectTemplate(template)}
           >
-            <div className="flex flex-col items-center justify-center p-4 text-center relative z-10">
-              <div className="p-2.5 rounded-xl bg-primary/10 group-hover:bg-white/20 transition-all duration-200 mb-2 group-hover:scale-110">
-                <Zap className="h-6 w-6 text-primary group-hover:text-white" />
-              </div>
-              <h3 className="font-semibold text-xs mb-0.5 text-foreground group-hover:text-white">{template.name}</h3>
-              <div className="flex items-center gap-2 text-[10px] text-muted-foreground group-hover:text-white/70">
-                <span className="flex items-center gap-0.5">
-                  <Calendar className="h-2.5 w-2.5" />
-                  {template.days}d
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <Badge className="mb-3 border-0 px-2 py-0.5 text-[10px] font-medium bg-primary/10 text-primary">
+                  {template.industry === 'real_estate' ? 'Imobiliário' : 'Geral'}
+                </Badge>
+                <h3 className="truncate text-sm font-semibold text-foreground">{template.name}</h3>
+                <span className="mt-1 block text-xs text-muted-foreground line-clamp-2">
+                  {template.description}
                 </span>
-                <span className="flex items-center gap-0.5">
-                  <Clock className="h-2.5 w-2.5" />
+              </div>
+
+              <div className="rounded-[8px] bg-primary/12 p-2.5 text-primary shrink-0">
+                <Zap className="h-5 w-5" />
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--app-border)] pt-3">
+              <div className="flex items-center gap-2.5 text-[11px] text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <Calendar className="h-3 w-3" />
+                  {template.days} dias
+                </span>
+                <span className="flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
                   {template.messages.length} msgs
                 </span>
               </div>
+              <span className="text-[11px] font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100">
+                Usar modelo
+              </span>
             </div>
-            <Badge className="absolute top-1.5 right-1.5 text-[9px] px-1.5 py-0 bg-white/[0.06] text-muted-foreground border-0 group-hover:bg-white/20 group-hover:text-white">
-              <Building2 className="h-2.5 w-2.5 mr-0.5" />
-              Imob.
-            </Badge>
           </div>
         ))}
       </div>

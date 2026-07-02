@@ -106,7 +106,7 @@ export default function Automations() {
     <AppLayout title="Automações">
       <div className="space-y-6 animate-in">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="hidden items-center rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface)] p-1 sm:flex">
+          <div className="hidden items-center rounded-[8px] bg-[var(--app-surface)] p-1 sm:flex">
             {([
               ["automations", "Automações"],
               ["templates", "Modelos"],

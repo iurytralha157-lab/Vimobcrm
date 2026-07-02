@@ -1,0 +1,771 @@
+import Link from "next/link";
+import { Award, Bath, BedDouble, Building2, Car, CheckCircle2, Home, Mail, MapPin, Maximize2, Phone, Search, ShieldCheck, Users } from "lucide-react";
+
+import type {
+  PublicHomeData,
+  PublicPropertiesData,
+  PublicProperty,
+  PublicSiteConfig,
+  SiteSearchFilter,
+} from "@/lib/api/public-site-server";
+import { PublicContactForm } from "./PublicContactForm";
+import { PublicPropertyCard } from "./PublicPropertyCard";
+import {
+  DEFAULT_HERO_IMAGE,
+  buildSiteHref,
+  formatPrice,
+  getPropertyCode,
+  getPropertyLocation,
+  getPropertyPrice,
+  getPropertyTitle,
+  getSiteDescription,
+  getSiteTitle,
+  getThemeTokens,
+  getWhatsAppHref,
+} from "./public-site-utils";
+
+const defaultStats = [
+  { value: "500+", label: "Imoveis negociados" },
+  { value: "98%", label: "Clientes satisfeitos" },
+  { value: "15+", label: "Anos de experiencia" },
+  { value: "50+", label: "Parceiros" },
+];
+
+const defaultCheckmarks = ["Atendimento personalizado", "Imoveis verificados", "Suporte completo"];
+
+const defaultFeatures = [
+  {
+    icon: "building",
+    title: "Curadoria de imoveis",
+    description: "Opcoes selecionadas para quem quer comprar, vender ou alugar com tranquilidade.",
+  },
+  {
+    icon: "users",
+    title: "Atendimento consultivo",
+    description: "Equipe preparada para entender o seu momento e indicar o caminho mais seguro.",
+  },
+  {
+    icon: "award",
+    title: "Experiencia de mercado",
+    description: "Processo claro desde o primeiro contato ate a conclusao da negociacao.",
+  },
+  {
+    icon: "shield",
+    title: "Seguranca no processo",
+    description: "Informacoes organizadas e acompanhamento proximo em cada etapa.",
+  },
+];
+
+const iconMap = {
+  award: Award,
+  building: Building2,
+  heart: Home,
+  shield: ShieldCheck,
+  users: Users,
+};
+
+export function PublicHomeScreen({
+  basePath,
+  data,
+  searchFilters,
+  site,
+}: Readonly<{
+  basePath: string;
+  data: PublicHomeData;
+  searchFilters: SiteSearchFilter[];
+  site: PublicSiteConfig;
+}>) {
+  const tokens = getThemeTokens(site);
+  const heroImage = site.hero_image_url || data.featured[0]?.imagem_principal || DEFAULT_HERO_IMAGE;
+  const title = site.hero_title || getSiteTitle(site);
+  const subtitle = site.hero_subtitle || getSiteDescription(site);
+  const activeFilters = searchFilters.length > 0
+    ? searchFilters
+    : [
+        { filter_key: "search", label: "Buscar", position: 0 },
+        { filter_key: "tipo", label: "Tipo de imovel", position: 1 },
+        { filter_key: "finalidade", label: "Finalidade", position: 2 },
+      ];
+
+  return (
+    <>
+      <section className="relative min-h-[calc(100vh-80px)] overflow-hidden">
+        <img src={heroImage} alt="" className="absolute inset-0 h-full w-full object-cover" loading="eager" />
+        <div className="absolute inset-0 bg-black/56" />
+        <div className="relative z-10 mx-auto flex min-h-[calc(100vh-80px)] w-full max-w-7xl flex-col justify-center px-4 py-20 text-white sm:px-6 lg:px-8">
+          <p className="mb-4 text-sm font-semibold uppercase tracking-[0.22em] text-white/70">
+            {site.organization_name || "Portal imobiliario"}
+          </p>
+          <h1 className="max-w-4xl text-4xl font-semibold leading-tight sm:text-5xl lg:text-6xl">{title}</h1>
+          <p className="mt-5 max-w-2xl text-base leading-7 text-white/78 sm:text-lg">{subtitle}</p>
+
+          <form
+            action={buildSiteHref(basePath, "/imoveis")}
+            className="mt-10 grid gap-3 rounded-lg border border-white/14 bg-black/42 p-4 backdrop-blur md:grid-cols-4"
+          >
+            {activeFilters.map((filter) => (
+              <SearchFilterField
+                key={filter.filter_key}
+                filter={filter}
+                propertyTypes={data.types}
+                cities={data.cities}
+              />
+            ))}
+            <button
+              type="submit"
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold text-white"
+              style={{ backgroundColor: tokens.primary }}
+            >
+              <Search className="h-4 w-4" />
+              Buscar
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <PropertySection
+        basePath={basePath}
+        eyebrow="Exclusivos"
+        properties={data.exclusive}
+        site={site}
+        title="Imoveis que merecem atencao especial"
+      />
+      <PropertySection
+        basePath={basePath}
+        eyebrow="Destaques"
+        properties={data.featured}
+        site={site}
+        title="Selecionados pela equipe"
+      />
+      <PropertySection
+        basePath={basePath}
+        eyebrow="Portfolio"
+        properties={data.latest}
+        site={site}
+        title="Todos os imoveis disponiveis"
+      />
+
+      {site.show_about_on_home ? (
+        <AboutContent basePath={basePath} site={site} compact />
+      ) : null}
+
+      <section className="px-4 py-16 sm:px-6 lg:px-8" style={{ backgroundColor: tokens.primary }}>
+        <div className="mx-auto max-w-4xl text-center text-white">
+          <h2 className="text-3xl font-semibold sm:text-4xl">Nao encontrou o que procura?</h2>
+          <p className="mx-auto mt-4 max-w-2xl text-white/82">
+            Fale com a equipe e receba indicacoes alinhadas com seu perfil.
+          </p>
+          <Link
+            href={buildSiteHref(basePath, "/contato")}
+            className="mt-8 inline-flex h-11 items-center justify-center rounded-lg bg-white px-5 text-sm font-semibold"
+            style={{ color: tokens.primary }}
+          >
+            Fale conosco
+          </Link>
+        </div>
+      </section>
+    </>
+  );
+}
+
+export function PublicPropertiesScreen({
+  basePath,
+  data,
+  query,
+  site,
+}: Readonly<{
+  basePath: string;
+  data: PublicPropertiesData;
+  query: Record<string, string | string[] | undefined>;
+  site: PublicSiteConfig;
+}>) {
+  const tokens = getThemeTokens(site);
+  const banner = site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE;
+
+  return (
+    <>
+      <PageHero backgroundImage={banner} eyebrow="Imoveis" title="Imoveis disponiveis" />
+      <section className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+        <form
+          action={buildSiteHref(basePath, "/imoveis")}
+          className="mb-8 grid gap-3 rounded-lg border p-4 md:grid-cols-5"
+          style={{ backgroundColor: tokens.card, borderColor: `${tokens.foreground}18` }}
+        >
+          <input
+            name="search"
+            defaultValue={stringQuery(query.search)}
+            placeholder="Codigo, bairro ou cidade"
+            className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none md:col-span-2"
+          />
+          <input
+            name="tipo"
+            defaultValue={stringQuery(query.tipo)}
+            placeholder="Tipo"
+            className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none"
+          />
+          <select
+            name="finalidade"
+            defaultValue={stringQuery(query.finalidade)}
+            className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none"
+          >
+            <option value="">Finalidade</option>
+            <option value="venda">Venda</option>
+            <option value="aluguel">Aluguel</option>
+          </select>
+          <button
+            type="submit"
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold text-white"
+            style={{ backgroundColor: tokens.primary }}
+          >
+            <Search className="h-4 w-4" />
+            Filtrar
+          </button>
+        </form>
+
+        <div className="mb-5 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
+          <div>
+            <p className="text-sm font-medium opacity-70" style={{ color: tokens.foreground }}>
+              {data.total} imoveis encontrados
+            </p>
+            <h2 className="text-2xl font-semibold" style={{ color: tokens.foreground }}>
+              Resultado da busca
+            </h2>
+          </div>
+          <Link href={buildSiteHref(basePath, "/imoveis")} className="text-sm font-semibold" style={{ color: tokens.primary }}>
+            Limpar filtros
+          </Link>
+        </div>
+
+        {data.properties.length > 0 ? (
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {data.properties.map((property) => (
+              <PublicPropertyCard key={property.id} basePath={basePath} property={property} site={site} />
+            ))}
+          </div>
+        ) : (
+          <EmptyState title="Nenhum imovel encontrado" description="Tente ajustar os filtros ou fale com a equipe." />
+        )}
+
+        {data.totalPages > 1 ? (
+          <Pagination basePath={basePath} currentPage={data.page} query={query} totalPages={data.totalPages} />
+        ) : null}
+      </section>
+    </>
+  );
+}
+
+export function PublicPropertyDetailScreen({
+  basePath,
+  property,
+  site,
+}: Readonly<{
+  basePath: string;
+  property: PublicProperty;
+  site: PublicSiteConfig;
+}>) {
+  const tokens = getThemeTokens(site);
+  const title = getPropertyTitle(property);
+  const images = Array.from(new Set([property.imagem_principal, ...(property.fotos || [])].filter(Boolean))) as string[];
+  const mainImage = images[0] || DEFAULT_HERO_IMAGE;
+  const whatsappHref = getWhatsAppHref(site, `Ola, tenho interesse no imovel ${getPropertyCode(property)}.`);
+
+  return (
+    <article>
+      <section className="bg-black">
+        <div className="mx-auto grid w-full max-w-7xl gap-2 px-4 py-4 sm:px-6 lg:grid-cols-[2fr_1fr] lg:px-8">
+          <img src={mainImage} alt={title} className="h-[360px] w-full rounded-lg object-cover lg:h-[560px]" />
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+            {(images.length > 1 ? images.slice(1, 3) : [mainImage, mainImage]).map((image, index) => (
+              <img key={`${image}-${index}`} src={image} alt="" className="h-44 w-full rounded-lg object-cover lg:h-[274px]" />
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-10 sm:px-6 lg:grid-cols-[1fr_380px] lg:px-8">
+        <div className="space-y-6">
+          <Link href={buildSiteHref(basePath, "/imoveis")} className="text-sm font-semibold" style={{ color: tokens.primary }}>
+            Voltar para imoveis
+          </Link>
+
+          <div className="rounded-lg border p-6" style={{ backgroundColor: tokens.card, borderColor: `${tokens.foreground}18` }}>
+            <p className="text-sm font-semibold uppercase tracking-wide opacity-60" style={{ color: tokens.foreground }}>
+              Ref: {getPropertyCode(property)}
+            </p>
+            <h1 className="mt-2 text-3xl font-semibold leading-tight sm:text-4xl" style={{ color: tokens.foreground }}>
+              {title}
+            </h1>
+            {getPropertyLocation(property) ? (
+              <p className="mt-3 flex items-center gap-2 opacity-70" style={{ color: tokens.foreground }}>
+                <MapPin className="h-5 w-5" />
+                {getPropertyLocation(property)}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <FeatureStat icon={<BedDouble className="h-5 w-5" />} label="Quartos" value={property.quartos} site={site} />
+            <FeatureStat icon={<Bath className="h-5 w-5" />} label="Banheiros" value={property.banheiros} site={site} />
+            <FeatureStat icon={<Car className="h-5 w-5" />} label="Vagas" value={property.vagas} site={site} />
+            <FeatureStat icon={<Maximize2 className="h-5 w-5" />} label="Area" value={property.area_construida || property.area_total} suffix="m2" site={site} />
+          </div>
+
+          <div className="rounded-lg border p-6" style={{ backgroundColor: tokens.card, borderColor: `${tokens.foreground}18` }}>
+            <h2 className="text-xl font-semibold" style={{ color: tokens.foreground }}>
+              Descricao
+            </h2>
+            <p className="mt-4 whitespace-pre-wrap leading-7 opacity-75" style={{ color: tokens.foreground }}>
+              {property.descricao || "Entre em contato para saber mais detalhes sobre este imovel."}
+            </p>
+          </div>
+        </div>
+
+        <aside className="h-fit rounded-lg border p-6 lg:sticky lg:top-28" style={{ backgroundColor: tokens.card, borderColor: `${tokens.foreground}18` }}>
+          <p className="text-sm font-medium opacity-70" style={{ color: tokens.foreground }}>
+            Valor
+          </p>
+          <p className="mt-1 text-3xl font-bold" style={{ color: tokens.primary }}>
+            {formatPrice(getPropertyPrice(property))}
+          </p>
+          <div className="mt-6 space-y-3">
+            {whatsappHref ? (
+              <a
+                href={whatsappHref}
+                target="_blank"
+                rel="noreferrer"
+                className="flex h-11 items-center justify-center rounded-lg bg-[#25D366] text-sm font-semibold text-white"
+              >
+                Chamar no WhatsApp
+              </a>
+            ) : null}
+            <Link
+              href={buildSiteHref(basePath, `/contato?imovel=${getPropertyCode(property)}`)}
+              className="flex h-11 items-center justify-center rounded-lg border text-sm font-semibold"
+              style={{ borderColor: tokens.primary, color: tokens.primary }}
+            >
+              Enviar interesse
+            </Link>
+          </div>
+          <div className="mt-6 border-t pt-5" style={{ borderColor: `${tokens.foreground}18` }}>
+            <PublicContactForm
+              organizationId={site.organization_id}
+              primaryColor={tokens.primary}
+              propertyCode={getPropertyCode(property)}
+              propertyId={property.id}
+            />
+          </div>
+        </aside>
+      </section>
+    </article>
+  );
+}
+
+export function PublicAboutScreen({
+  basePath,
+  site,
+}: Readonly<{
+  basePath: string;
+  site: PublicSiteConfig;
+}>) {
+  return <AboutContent basePath={basePath} site={site} />;
+}
+
+export function PublicContactScreen({
+  site,
+}: Readonly<{
+  site: PublicSiteConfig;
+}>) {
+  const tokens = getThemeTokens(site);
+  const banner = site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE;
+
+  return (
+    <>
+      <PageHero backgroundImage={banner} eyebrow="Contato" title="Fale com a equipe" />
+      <section className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-12 sm:px-6 lg:grid-cols-[0.8fr_1.2fr] lg:px-8">
+        <div className="space-y-4">
+          <h2 className="text-3xl font-semibold" style={{ color: tokens.foreground }}>
+            Vamos encontrar o melhor caminho para voce.
+          </h2>
+          <p className="leading-7 opacity-75" style={{ color: tokens.foreground }}>
+            Envie seus dados e conte o que procura. A equipe recebe o lead no CRM e retorna pelo canal informado.
+          </p>
+          <ContactLine icon={<Phone className="h-5 w-5" />} label="Telefone" value={site.phone} href={site.phone ? `tel:${site.phone}` : undefined} />
+          <ContactLine icon={<Mail className="h-5 w-5" />} label="E-mail" value={site.email} href={site.email ? `mailto:${site.email}` : undefined} />
+          <ContactLine icon={<MapPin className="h-5 w-5" />} label="Endereco" value={[site.address, site.city, site.state].filter(Boolean).join(", ")} />
+        </div>
+
+        <div className="rounded-lg border p-6" style={{ backgroundColor: tokens.card, borderColor: `${tokens.foreground}18`, color: tokens.foreground }}>
+          <PublicContactForm organizationId={site.organization_id} primaryColor={tokens.primary} />
+        </div>
+      </section>
+    </>
+  );
+}
+
+export function PublicFavoritesScreen({
+  basePath,
+  site,
+}: Readonly<{
+  basePath: string;
+  site: PublicSiteConfig;
+}>) {
+  const tokens = getThemeTokens(site);
+
+  return (
+    <>
+      <PageHero backgroundImage={site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE} eyebrow="Favoritos" title="Seus imoveis salvos" />
+      <section className="mx-auto w-full max-w-4xl px-4 py-14 text-center sm:px-6 lg:px-8">
+        <div className="rounded-lg border p-8" style={{ backgroundColor: tokens.card, borderColor: `${tokens.foreground}18` }}>
+          <h2 className="text-2xl font-semibold" style={{ color: tokens.foreground }}>
+            Favoritos ficam salvos neste navegador
+          </h2>
+          <p className="mx-auto mt-3 max-w-2xl leading-7 opacity-75" style={{ color: tokens.foreground }}>
+            Abra os imoveis e toque no coracao para salvar. Esta primeira versao preserva seus favoritos localmente e evita qualquer dependencia direta com o banco no site publico.
+          </p>
+          <Link
+            href={buildSiteHref(basePath, "/imoveis")}
+            className="mt-6 inline-flex h-11 items-center justify-center rounded-lg px-5 text-sm font-semibold text-white"
+            style={{ backgroundColor: tokens.primary }}
+          >
+            Ver imoveis
+          </Link>
+        </div>
+      </section>
+    </>
+  );
+}
+
+function PropertySection({
+  basePath,
+  eyebrow,
+  properties,
+  site,
+  title,
+}: Readonly<{
+  basePath: string;
+  eyebrow: string;
+  properties: PublicProperty[];
+  site: PublicSiteConfig;
+  title: string;
+}>) {
+  const tokens = getThemeTokens(site);
+
+  if (properties.length === 0) return null;
+
+  return (
+    <section className="mx-auto w-full max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
+      <div className="mb-8 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-[0.18em]" style={{ color: tokens.primary }}>
+            {eyebrow}
+          </p>
+          <h2 className="mt-2 text-3xl font-semibold" style={{ color: tokens.foreground }}>
+            {title}
+          </h2>
+        </div>
+        <Link href={buildSiteHref(basePath, "/imoveis")} className="text-sm font-semibold" style={{ color: tokens.primary }}>
+          Ver todos os imoveis
+        </Link>
+      </div>
+      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        {properties.slice(0, 6).map((property) => (
+          <PublicPropertyCard key={property.id} basePath={basePath} property={property} site={site} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SearchFilterField({
+  cities,
+  filter,
+  propertyTypes,
+}: Readonly<{
+  cities: string[];
+  filter: SiteSearchFilter;
+  propertyTypes: string[];
+}>) {
+  const commonClass = "h-11 rounded-lg border border-white/16 bg-white px-3 text-sm text-slate-900 outline-none";
+
+  if (filter.filter_key === "tipo") {
+    return (
+      <select name="tipo" className={commonClass} defaultValue="">
+        <option value="">{filter.label || "Tipo"}</option>
+        {propertyTypes.map((type) => (
+          <option key={type} value={type}>
+            {type}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  if (filter.filter_key === "finalidade") {
+    return (
+      <select name="finalidade" className={commonClass} defaultValue="">
+        <option value="">{filter.label || "Finalidade"}</option>
+        <option value="venda">Venda</option>
+        <option value="aluguel">Aluguel</option>
+      </select>
+    );
+  }
+
+  if (filter.filter_key === "cidade") {
+    return (
+      <select name="cidade" className={commonClass} defaultValue="">
+        <option value="">{filter.label || "Cidade"}</option>
+        {cities.map((city) => (
+          <option key={city} value={city}>
+            {city}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  return (
+    <input
+      name={filter.filter_key === "search" ? "search" : filter.filter_key}
+      placeholder={filter.label || "Buscar"}
+      className={commonClass}
+    />
+  );
+}
+
+function AboutContent({
+  basePath,
+  compact = false,
+  site,
+}: Readonly<{
+  basePath: string;
+  compact?: boolean;
+  site: PublicSiteConfig;
+}>) {
+  const tokens = getThemeTokens(site);
+  const stats = site.about_stats?.length ? site.about_stats : defaultStats;
+  const checkmarks = site.about_checkmarks?.length ? site.about_checkmarks : defaultCheckmarks;
+  const features = site.about_features?.length ? site.about_features : defaultFeatures;
+
+  return (
+    <>
+      {!compact ? (
+        <PageHero
+          backgroundImage={site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE}
+          eyebrow="Sobre"
+          title={site.about_title || `Sobre a ${getSiteTitle(site)}`}
+        />
+      ) : null}
+
+      <section className="border-y px-4 py-10 sm:px-6 lg:px-8" style={{ borderColor: `${tokens.foreground}12`, backgroundColor: tokens.card }}>
+        <div className="mx-auto grid max-w-7xl grid-cols-2 gap-6 md:grid-cols-4">
+          {stats.map((stat) => (
+            <div key={`${stat.value}-${stat.label}`} className="text-center">
+              <p className="text-3xl font-bold sm:text-4xl" style={{ color: tokens.primary }}>
+                {stat.value}
+              </p>
+              <p className="mt-1 text-sm opacity-70" style={{ color: tokens.foreground }}>
+                {stat.label}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="mx-auto grid w-full max-w-7xl gap-10 px-4 py-14 sm:px-6 lg:grid-cols-2 lg:px-8">
+        <div>
+          {site.about_image_url ? (
+            <img src={site.about_image_url} alt="" className="h-full max-h-[520px] w-full rounded-lg object-cover" />
+          ) : (
+            <div className="flex min-h-[360px] items-center justify-center rounded-lg" style={{ backgroundColor: `${tokens.primary}18` }}>
+              <Building2 className="h-20 w-20" style={{ color: tokens.primary }} />
+            </div>
+          )}
+        </div>
+        <div className="flex flex-col justify-center">
+          <p className="text-sm font-semibold uppercase tracking-[0.18em]" style={{ color: tokens.primary }}>
+            Nossa historia
+          </p>
+          <h2 className="mt-3 text-3xl font-semibold leading-tight sm:text-4xl" style={{ color: tokens.foreground }}>
+            {site.about_subtitle || "Transformando planos em bons negocios imobiliarios"}
+          </h2>
+          <p className="mt-5 whitespace-pre-wrap leading-7 opacity-75" style={{ color: tokens.foreground }}>
+            {site.about_text || `${getSiteTitle(site)} nasceu para simplificar a jornada imobiliaria com atendimento proximo, informacao clara e bons imoveis.`}
+          </p>
+          <div className="mt-6 space-y-3">
+            {checkmarks.map((item) => (
+              <p key={item} className="flex items-center gap-3 font-medium" style={{ color: tokens.foreground }}>
+                <CheckCircle2 className="h-5 w-5 shrink-0" style={{ color: tokens.primary }} />
+                {item}
+              </p>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="mx-auto w-full max-w-7xl px-4 pb-14 sm:px-6 lg:px-8">
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          {features.map((feature) => {
+            const Icon = iconMap[feature.icon as keyof typeof iconMap] || Building2;
+            return (
+              <div key={feature.title} className="rounded-lg border p-5" style={{ backgroundColor: tokens.card, borderColor: `${tokens.foreground}18` }}>
+                <div className="mb-4 inline-flex h-11 w-11 items-center justify-center rounded-lg" style={{ backgroundColor: `${tokens.primary}18`, color: tokens.primary }}>
+                  <Icon className="h-5 w-5" />
+                </div>
+                <h3 className="font-semibold" style={{ color: tokens.foreground }}>{feature.title}</h3>
+                <p className="mt-2 text-sm leading-6 opacity-70" style={{ color: tokens.foreground }}>{feature.description}</p>
+              </div>
+            );
+          })}
+        </div>
+        {compact ? (
+          <div className="mt-8 text-center">
+            <Link href={buildSiteHref(basePath, "/sobre")} className="text-sm font-semibold" style={{ color: tokens.primary }}>
+              Conheca nossa historia
+            </Link>
+          </div>
+        ) : null}
+      </section>
+    </>
+  );
+}
+
+function PageHero({
+  backgroundImage,
+  eyebrow,
+  title,
+}: Readonly<{
+  backgroundImage: string;
+  eyebrow: string;
+  title: string;
+}>) {
+  return (
+    <section className="relative overflow-hidden">
+      <img src={backgroundImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
+      <div className="absolute inset-0 bg-black/62" />
+      <div className="relative mx-auto flex min-h-72 w-full max-w-7xl flex-col justify-end px-4 py-12 text-white sm:px-6 lg:px-8">
+        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-white/70">{eyebrow}</p>
+        <h1 className="mt-3 text-4xl font-semibold sm:text-5xl">{title}</h1>
+      </div>
+    </section>
+  );
+}
+
+function EmptyState({
+  description,
+  title,
+}: Readonly<{
+  description: string;
+  title: string;
+}>) {
+  return (
+    <div className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center text-slate-700">
+      <h2 className="text-xl font-semibold text-slate-900">{title}</h2>
+      <p className="mt-2 text-sm">{description}</p>
+    </div>
+  );
+}
+
+function Pagination({
+  basePath,
+  currentPage,
+  query,
+  totalPages,
+}: Readonly<{
+  basePath: string;
+  currentPage: number;
+  query: Record<string, string | string[] | undefined>;
+  totalPages: number;
+}>) {
+  const makeHref = (page: number) => {
+    const params = new URLSearchParams();
+    Object.entries(query).forEach(([key, value]) => {
+      if (Array.isArray(value)) {
+        value.forEach((item) => params.append(key, item));
+      } else if (value) {
+        params.set(key, value);
+      }
+    });
+    if (page > 1) params.set("page", String(page));
+    else params.delete("page");
+    const search = params.toString();
+    return `${buildSiteHref(basePath, "/imoveis")}${search ? `?${search}` : ""}`;
+  };
+
+  return (
+    <nav className="mt-10 flex items-center justify-center gap-3" aria-label="Paginacao">
+      {currentPage > 1 ? (
+        <Link href={makeHref(currentPage - 1)} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium text-slate-700">
+          Anterior
+        </Link>
+      ) : null}
+      <span className="text-sm opacity-70">
+        Pagina {currentPage} de {totalPages}
+      </span>
+      {currentPage < totalPages ? (
+        <Link href={makeHref(currentPage + 1)} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium text-slate-700">
+          Proxima
+        </Link>
+      ) : null}
+    </nav>
+  );
+}
+
+function FeatureStat({
+  icon,
+  label,
+  site,
+  suffix = "",
+  value,
+}: Readonly<{
+  icon: React.ReactNode;
+  label: string;
+  site: PublicSiteConfig;
+  suffix?: string;
+  value?: number | null;
+}>) {
+  const tokens = getThemeTokens(site);
+
+  return (
+    <div className="rounded-lg border p-4" style={{ backgroundColor: tokens.card, borderColor: `${tokens.foreground}18`, color: tokens.foreground }}>
+      <div style={{ color: tokens.primary }}>{icon}</div>
+      <p className="mt-3 text-2xl font-semibold">{value ? `${value}${suffix}` : "-"}</p>
+      <p className="text-sm opacity-65">{label}</p>
+    </div>
+  );
+}
+
+function ContactLine({
+  href,
+  icon,
+  label,
+  value,
+}: Readonly<{
+  href?: string;
+  icon: React.ReactNode;
+  label: string;
+  value?: string | null;
+}>) {
+  if (!value) return null;
+  const content = (
+    <>
+      <span className="text-amber-600">{icon}</span>
+      <span>
+        <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</span>
+        <span className="font-medium text-slate-900">{value}</span>
+      </span>
+    </>
+  );
+
+  return href ? (
+    <a href={href} className="flex items-start gap-3 rounded-lg bg-white p-4 text-left shadow-sm">
+      {content}
+    </a>
+  ) : (
+    <div className="flex items-start gap-3 rounded-lg bg-white p-4 text-left shadow-sm">{content}</div>
+  );
+}
+
+function stringQuery(value: string | string[] | undefined) {
+  if (Array.isArray(value)) return value[0] || "";
+  return value || "";
+}

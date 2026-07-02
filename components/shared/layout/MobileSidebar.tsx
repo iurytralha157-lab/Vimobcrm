@@ -38,8 +38,8 @@ import {
   Zap,
   Globe,
   Trophy,
-  Target,
   Activity,
+  History,
   Tags,
   MapPin,
   Settings,
@@ -53,6 +53,8 @@ const MOBILE_LOGO_WIDTH = 120;
 const SIDEBAR_BACKGROUND = "var(--app-sidebar)";
 const SIDEBAR_ICON_STROKE = 1.32;
 const SIDEBAR_CHEVRON_STROKE = 1.4;
+const SIDEBAR_NAV_RESET =
+  "border-0 shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0";
 
 interface NavItem {
   icon: ElementType;
@@ -140,9 +142,9 @@ const allNavItems: NavItem[] = [
     module: 'gamification',
     children: [
       { icon: Trophy, labelKey: 'arenaOverview', path: '/gamificacao' },
-      { icon: BarChart3, labelKey: 'arenaRanking', path: '/gamificacao#ranking' },
-      { icon: Target, labelKey: 'arenaMissions', path: '/gamificacao#missions' },
-      { icon: Activity, labelKey: 'arenaActivities', path: '/gamificacao#activities' },
+      { icon: BarChart3, labelKey: 'dashboard', path: '/gamificacao#dashboard' },
+      { icon: Zap, labelKey: 'arenaRanking', path: '/gamificacao#rankings' },
+      { icon: History, labelKey: 'history', path: '/gamificacao#history' },
     ],
   },
 ];
@@ -344,6 +346,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                       onClick={() => toggleMenu(item.path)}
                       className={cn(
                         "w-full flex items-center justify-between px-3 py-3 rounded-[6px] text-sm font-extralight tracking-wide transition-colors",
+                        SIDEBAR_NAV_RESET,
                         isActiveParent(item)
                           ? "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal"
                           : "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
@@ -369,6 +372,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                                 onClick={() => handleNavigation(child.path)}
                                 className={cn(
                                   "w-full flex items-center gap-3 px-3 py-2.5 rounded-[6px] text-xs font-extralight tracking-wide transition-colors",
+                                  SIDEBAR_NAV_RESET,
                                   isPathActive(child.path)
                                     ? "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal"
                                     : "text-[var(--app-text-tertiary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
@@ -392,6 +396,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                     onClick={() => handleNavigation(item.path)}
                     className={cn(
                       "w-full flex items-center gap-3 px-3 py-3 rounded-[6px] text-sm font-extralight tracking-wide transition-colors",
+                      SIDEBAR_NAV_RESET,
                       isActiveParent(item)
                         ? "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal"
                         : "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
@@ -420,6 +425,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                       onClick={() => toggleMenu(item.path)}
                       className={cn(
                         "w-full flex items-center justify-between px-3 py-3 rounded-[6px] text-sm font-extralight tracking-wide transition-colors",
+                        SIDEBAR_NAV_RESET,
                         isActiveParent(item)
                           ? "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal"
                           : "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
@@ -446,6 +452,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                                 onClick={() => handleNavigation(child.path)}
                                 className={cn(
                                   "w-full flex items-center gap-3 px-3 py-2.5 rounded-[6px] text-xs font-extralight tracking-wide transition-colors",
+                                  SIDEBAR_NAV_RESET,
                                   isPathActive(child.path)
                                     ? "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal"
                                     : "text-[var(--app-text-tertiary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
@@ -469,6 +476,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                     onClick={() => handleNavigation(item.path)}
                     className={cn(
                       "w-full flex items-center gap-3 px-3 py-3 rounded-[6px] text-sm font-extralight tracking-wide transition-colors",
+                      SIDEBAR_NAV_RESET,
                       pathname === item.path
                         ? "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal"
                         : "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"

@@ -24,7 +24,7 @@ import { AudioRecorderButton } from "@/components/features/whatsapp/AudioRecorde
 import { MessageBubble } from "@/components/features/whatsapp/MessageBubble";
 import { MessageErrorBoundary } from "@/components/features/whatsapp/MessageErrorBoundary";
 import { StartAutomationDialog } from "@/components/features/whatsapp/StartAutomationDialog";
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { formatPhoneForDisplay, isValidWhatsAppPhone } from "@/lib/phone-utils";
 import {
   Tooltip,
@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useAuth } from "@/contexts/AuthContext";
 import { whatsappAPI } from "@/lib/api/whatsapp";
+import { getWhatsAppMessageInputState } from "@/lib/whatsapp-message-input";
 
 const MAX_IMAGE_DIMENSION = 1600;
 const IMAGE_QUALITY = 0.82;
@@ -204,12 +205,15 @@ export function FloatingChat() {
   const previousMessagesLengthRef = useRef<number>(0);
   const isUserScrollingRef = useRef<boolean>(false);
   const navigationNonceRef = useRef(0);
+  const pendingStartKeyRef = useRef<string | null>(null);
   const activeConversationId = activeConversation?.id;
   const activeConversationLead = activeConversation?.lead;
   const activeConversationUnreadCount = activeConversation?.unread_count ?? 0;
   const activeConversationSessionId = activeConversation?.session_id;
   const activeConversationRemoteJid = activeConversation?.remote_jid;
   const activeConversationIsGroup = activeConversation?.is_group;
+  const pathname = usePathname();
+  const shouldSyncFloatingChat = isOpen && pathname !== "/crm/conversas";
   const activeConversationReadTarget = useMemo(() => (
     activeConversationId && activeConversationSessionId && activeConversationRemoteJid
       ? {
@@ -237,13 +241,13 @@ export function FloatingChat() {
   } = useWhatsAppConversations(selectedSessionId || undefined, {
     hideGroups,
     showArchived,
-  }, loadingSessions ? undefined : sessions?.map(s => s.id));
+  }, shouldSyncFloatingChat ? (loadingSessions ? undefined : sessions?.map(s => s.id)) : []);
   const {
     data: messages,
     isLoading: loadingMessages
   } = useWhatsAppMessages(
-    activeConversationId || null,
-    activeConversation?.lead_id || activeConversation?.lead?.id || null
+    shouldSyncFloatingChat ? activeConversationId || null : null,
+    shouldSyncFloatingChat ? activeConversation?.lead_id || activeConversation?.lead?.id || null : null
   );
   const reactionMessages = useMemo(() => {
     return (messages || []).filter((message) => message.message_type === "reaction");
@@ -283,7 +287,7 @@ export function FloatingChat() {
   const { data: hasWhatsAppAccess, isLoading: loadingWhatsAppAccess } = useHasWhatsAppAccess();
   const router = useRouter();
 
-  useWhatsAppRealtimeConversations();
+  useWhatsAppRealtimeConversations(shouldSyncFloatingChat);
 
   const getLeadPipelineUrl = (leadId: string) => {
     navigationNonceRef.current += 1;
@@ -316,7 +320,7 @@ export function FloatingChat() {
 
   useEffect(() => {
     if (!selectedSessionId && sessions?.length) {
-      const connectedSession = sessions.find(s => s.status === "connected" || s.status === "connecting");
+      const connectedSession = sessions.find(s => s.status === "connected");
       const nextSessionId = connectedSession?.id || sessions[0]?.id;
       if (!nextSessionId) return;
 
@@ -331,10 +335,21 @@ export function FloatingChat() {
   }, [sessions, selectedSessionId]);
 
   useEffect(() => {
-    if (!pendingPhone) return;
+    if (!pendingPhone) {
+      pendingStartKeyRef.current = null;
+      return;
+    }
+
+    const connectedSessionKey = (sessions || [])
+      .filter((session) => session.status === "connected")
+      .map((session) => `${session.id}:${session.status}`)
+      .join("|");
+    const pendingStartKey = [pendingPhone, pendingLeadName || "", pendingLeadId || "", connectedSessionKey].join("::");
+    if (pendingStartKeyRef.current === pendingStartKey) return;
+    pendingStartKeyRef.current = pendingStartKey;
 
     const openPendingConversation = async () => {
-      const connected = sessions?.filter(s => s.status === "connected" || s.status === "connecting") || [];
+      const connected = sessions?.filter(s => s.status === "connected") || [];
 
       if (connected.length === 1) {
         setSelectedSessionId(connected[0].id);
@@ -438,7 +453,8 @@ export function FloatingChat() {
       return;
     }
 
-    if (!selectedSessionId && !leadId) {
+    const connectedSession = sessions?.find(session => session.status === "connected");
+    if (!selectedSessionId && !leadId && !connectedSession) {
       toast({
         title: "Nenhuma sessão WhatsApp",
         description: "Configure uma sessão WhatsApp primeiro",
@@ -446,7 +462,7 @@ export function FloatingChat() {
       });
       return;
     }
-    await handleStartConversationWithSession(phone, selectedSessionId || undefined, leadName, leadId);
+    await handleStartConversationWithSession(phone, selectedSessionId || connectedSession?.id, leadName, leadId);
   };
   void handleStartConversation;
 
@@ -561,6 +577,15 @@ export function FloatingChat() {
   const handleSendMessage = async () => {
     const textToSend = messageText.trim();
     if (!textToSend || !activeConversation) return;
+    if (sendMessage.isPending) return;
+    if (whatsappMessageInputState.disabled || isReadOnlyMode) {
+      toast({
+        title: "Mensagem nao enviada",
+        description: isReadOnlyMode ? "Voce tem acesso somente leitura a esta conversa." : whatsappMessageInputState.placeholder,
+        variant: "destructive",
+      });
+      return;
+    }
 
 
     // Limpa o campo IMEDIATAMENTE (UX otimista)
@@ -569,7 +594,7 @@ export function FloatingChat() {
     await sendMessage.mutateAsync({
       conversation: activeConversation,
       text: textToSend,
-      sendSessionId: selectedSessionId || undefined,
+      sendSessionId: whatsappMessageInputState.sendSessionId,
     });
   };
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -581,6 +606,14 @@ export function FloatingChat() {
 
   const handleSendAudio = async (base64: string, mimetype: string) => {
     if (!activeConversation) return;
+    if (whatsappMessageInputState.disabled || isReadOnlyMode) {
+      toast({
+        title: "Audio nao enviado",
+        description: isReadOnlyMode ? "Voce tem acesso somente leitura a esta conversa." : whatsappMessageInputState.placeholder,
+        variant: "destructive",
+      });
+      return;
+    }
 
     await sendMessage.mutateAsync({
       conversation: activeConversation,
@@ -590,7 +623,7 @@ export function FloatingChat() {
       mimetype,
       filename: `audio.${mimeExtension(mimetype, "webm")}`,
       previewMediaUrl: `data:${mimetype || "audio/webm"};base64,${base64}`,
-      sendSessionId: selectedSessionId || undefined,
+      sendSessionId: whatsappMessageInputState.sendSessionId,
     });
 
     toast({
@@ -602,6 +635,17 @@ export function FloatingChat() {
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !activeConversation) return;
+    if (whatsappMessageInputState.disabled || isReadOnlyMode) {
+      toast({
+        title: "Arquivo nao enviado",
+        description: isReadOnlyMode ? "Voce tem acesso somente leitura a esta conversa." : whatsappMessageInputState.placeholder,
+        variant: "destructive",
+      });
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      return;
+    }
     try {
       const processedFile = await compressImageFile(file);
       const base64Content = await fileToBase64(processedFile);
@@ -619,7 +663,7 @@ export function FloatingChat() {
         mimetype: processedFile.type || file.type || "application/octet-stream",
         filename: processedFile.name,
         previewMediaUrl: `data:${processedFile.type || file.type || "application/octet-stream"};base64,${base64Content}`,
-        sendSessionId: selectedSessionId || undefined,
+        sendSessionId: whatsappMessageInputState.sendSessionId,
       });
       toast({
         title: "Arquivo enviado",
@@ -663,7 +707,7 @@ export function FloatingChat() {
     return format(d, "dd/MM");
   };
   const unreadCount = conversations?.reduce((acc, c) => acc + (c.unread_count || 0), 0) || 0;
-  const connectedSessions = sessions?.filter(s => s.status === "connected" || s.status === "connecting") || [];
+  const connectedSessions = sessions?.filter(s => s.status === "connected") || [];
   const hasConnectedSession = loadingSessions || connectedSessions.length > 0;
 
   // Session Selector Dialog Component
@@ -725,6 +769,8 @@ export function FloatingChat() {
   // Modo somente leitura: usuario nao tem sessao propria/acesso, mas pode ver historico
   // de uma conversa ativa (ex.: clicou em "Ver Mensagens" num card de lead).
   const isReadOnlyMode = !loadingWhatsAppAccess && !hasWhatsAppAccess;
+  const whatsappMessageInputState = getWhatsAppMessageInputState(activeConversation, selectedSessionId, sessions);
+  const messageInputDisabled = whatsappMessageInputState.disabled || isReadOnlyMode;
 
   // Shared content components
   const FloatingChatHeader = ({
@@ -1025,14 +1071,15 @@ export function FloatingChat() {
         onChange={setMessageText}
         onSend={handleSendMessage}
         onKeyDown={handleKeyPress}
-        placeholder="Digite sua mensagem..."
+        placeholder={isReadOnlyMode ? "Somente leitura" : whatsappMessageInputState.placeholder}
+        disabled={messageInputDisabled}
         isSending={sendMessage.isPending}
         multiline
         inputRef={messageInputRef}
         showRightActionsWhenEmpty
         leftActions={
           <>
-            <button type="button" onClick={() => fileInputRef.current?.click()}>
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={messageInputDisabled}>
               <Paperclip className="w-5 h-5" />
             </button>
             {activeLeadId && (
@@ -1045,7 +1092,7 @@ export function FloatingChat() {
         rightActions={
           <AudioRecorderButton
             onSend={handleSendAudio}
-            disabled={sendMessage.isPending}
+            disabled={messageInputDisabled}
           />
         }
       />

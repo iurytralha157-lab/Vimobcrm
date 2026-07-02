@@ -84,6 +84,8 @@ import { leadsAPI } from '@/lib/api/leads';
 import { getLeadEnrichments } from '@/lib/api/lead-enrichments';
 import { pipelinesAPI } from '@/lib/api/pipelines';
 import { getPipelineBoard } from '@/lib/api/pipeline-board';
+import { useDealStatusChange } from '@/hooks/use-deal-status-change';
+import { LostReasonDialog } from '@/components/features/leads/LostReasonDialog';
 
 // Helper to format currency compactly (pt-BR locale)
 const formatCompactCurrency = (value: number): string => {
@@ -199,6 +201,8 @@ export default function Pipelines() {
   const newButtonLabel = 'Novo Lead';
 
   const [selectedLead, setSelectedLead] = useState<PipelineLead | null>(null);
+  const [lostReasonLead, setLostReasonLead] = useState<PipelineLead | null>(null);
+  const dealStatusChange = useDealStatusChange();
   const [newLeadDialogOpen, setNewLeadDialogOpen] = useState(false);
   const [newLeadStageId, setNewLeadStageId] = useState<string | null>(null);
   const {
@@ -399,6 +403,7 @@ export default function Pipelines() {
   const currentPipeline = pipelines.find(p => p.id === selectedPipelineId);
   const isLoading = pipelinesLoading || baseStagesLoading;
   const isInitialLeadsLoading = leadsLoading && stagesWithLeads.length === 0;
+  const canShowColumnActions = canEditPipeline && Boolean(selectedPipelineId) && !isMobile && !isLoading;
 
   const handleDragStart = useCallback(() => {
     isDraggingRef.current = true;
@@ -719,6 +724,12 @@ export default function Pipelines() {
         toast.success(`Lead alterado para ${statusLabel}`, {
           description: `Movido para ${newStage?.name || 'nova etapa'}`
         });
+
+        if (newDealStatus === 'lost') {
+          const sourceStage = stages.find(s => s.id === oldStageId);
+          const originalLead = sourceStage?.leads?.find((lead) => lead.id === draggableId);
+          setLostReasonLead(originalLead || { id: draggableId, name: 'Lead' } as PipelineLead);
+        }
       } else if (wasAssigneeChanged) {
         toast.success(`Lead movido para ${newStage?.name || 'nova etapa'}`, {
           description: 'Responsável atualizado pela automação da coluna'
@@ -1076,7 +1087,7 @@ export default function Pipelines() {
                   </DropdownMenuContent>
                 </DropdownMenu>
 
-                {canEditPipeline && selectedPipelineId && !isMobile && (
+                {canShowColumnActions && (
                   <>
                     <div className="h-4 w-px bg-[var(--app-border)]" />
                     <Button
@@ -1367,7 +1378,7 @@ export default function Pipelines() {
                   </div>
               ))}
 
-              {canEditPipeline && selectedPipelineId && !isMobile && (
+              {canShowColumnActions && (
                 <button
                   type="button"
                   onClick={() => setNewStageDialogOpen(true)}
@@ -1411,6 +1422,35 @@ export default function Pipelines() {
           onOpenChange={setNewLeadDialogOpen}
           defaultStageId={newLeadStageId}
           defaultPipelineId={selectedPipelineId}
+        />
+
+        <LostReasonDialog
+          open={!!lostReasonLead}
+          onOpenChange={(open) => {
+            if (!open) setLostReasonLead(null);
+          }}
+          onConfirm={async (reason) => {
+            if (!lostReasonLead) return;
+            try {
+              await dealStatusChange.mutateAsync({
+                leadId: lostReasonLead.id,
+                newStatus: 'lost',
+                organizationId: activeOrganizationId || '',
+                organizationName: organization?.name || null,
+                userId: lostReasonLead.assigned_user_id ?? null,
+                propertyId: lostReasonLead.property_id ?? null,
+                valorInteresse: lostReasonLead.valor_interesse ?? null,
+                commissionPercentage: lostReasonLead.commission_percentage ?? null,
+                leadName: lostReasonLead.name || 'Lead',
+                lostReason: reason,
+              });
+              setLostReasonLead(null);
+              refetch();
+            } catch (err) {
+              console.error(err);
+            }
+          }}
+          leadName={lostReasonLead?.name}
         />
 
         <Dialog open={newPipelineDialogOpen} onOpenChange={setNewPipelineDialogOpen}>

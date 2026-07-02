@@ -41,6 +41,8 @@ type DashboardStats struct {
 	WonAverageConversionDays *int                  `json:"wonAverageConversionDays"`
 	WonConversionBuckets     []WonConversionBucket `json:"wonConversionBuckets"`
 	WonDeals                 []WonDealDetail       `json:"wonDeals"`
+	LostReasonBuckets        []LostReasonBucket    `json:"lostReasonBuckets"`
+	LostDeals                []LostDealDetail      `json:"lostDeals"`
 	AverageResponseTime      string                `json:"avgResponseTime"`
 	TotalSalesValue          float64               `json:"totalSalesValue"`
 	PendingCommissions       float64               `json:"pendingCommissions"`
@@ -74,6 +76,26 @@ type WonDealDetail struct {
 	CreatedAt        *string `json:"createdAt"`
 	WonAt            *string `json:"wonAt"`
 	ConversionDays   *int    `json:"conversionDays"`
+	AssignedUserName string  `json:"assignedUserName"`
+}
+
+type LostReasonBucket struct {
+	Key        string  `json:"key"`
+	Label      string  `json:"label"`
+	Count      int64   `json:"count"`
+	Percentage float64 `json:"percentage"`
+	Color      string  `json:"color"`
+}
+
+type LostDealDetail struct {
+	ID               string  `json:"id"`
+	Name             string  `json:"name"`
+	Phone            *string `json:"phone"`
+	Source           *string `json:"source"`
+	LostReason       string  `json:"lostReason"`
+	LostReasonGroup  string  `json:"lostReasonGroup"`
+	CreatedAt        *string `json:"createdAt"`
+	LostAt           *string `json:"lostAt"`
 	AssignedUserName string  `json:"assignedUserName"`
 }
 

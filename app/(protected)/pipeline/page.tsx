@@ -1,10 +1,5 @@
-import { Suspense } from "react";
-import PipelinesScreen from "@/components/features/pipelines/Pipelines-screen";
+import { redirect } from "next/navigation";
 
 export default function PipelinePage() {
-  return (
-    <Suspense fallback={null}>
-      <PipelinesScreen />
-    </Suspense>
-  );
+  redirect("/crm/pipelines");
 }

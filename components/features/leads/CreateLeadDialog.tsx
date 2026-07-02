@@ -26,6 +26,9 @@ interface CreateLeadDialogProps {
   onOpenChange: (open: boolean) => void;
   defaultStageId?: string | null;
   defaultPipelineId?: string | null;
+  contactPhone?: string | null;
+  contactName?: string | null;
+  conversationId?: string | null;
 }
 
 const dealStatusOptions = [
@@ -38,7 +41,10 @@ export function CreateLeadDialog({
   open,
   onOpenChange,
   defaultStageId,
-  defaultPipelineId
+  defaultPipelineId,
+  contactPhone,
+  contactName,
+  conversationId
 }: CreateLeadDialogProps) {
   const { profile, organization } = useAuth();
   const { hasPermission } = useUserPermissions();
@@ -88,7 +94,7 @@ export function CreateLeadDialog({
     deal_status: 'open',
     is_own_resource: false,
     tag_ids: [] as string[],
-
+    conversation_id: '',
   }), [profile?.id, defaultPipelineId, defaultStageId]);
 
   const [formData, setFormData] = useState(getEmptyFormData);
@@ -168,6 +174,21 @@ export function CreateLeadDialog({
       setDialogPosition({ x: 0, y: 0 });
       dialogPositionRef.current = { x: 0, y: 0 };
 
+      if (contactPhone || contactName || conversationId) {
+        const defaultPipeline = pipelines.find(p => p.is_default) || pipelines[0];
+        setFormData({
+          ...getEmptyFormData(),
+          name: contactName || '',
+          phone: contactPhone || '',
+          conversation_id: conversationId || '',
+          source: 'whatsapp',
+          pipeline_id: defaultPipelineId || defaultPipeline?.id || '',
+          stage_id: defaultStageId || '',
+        });
+        setActiveTab('basic');
+        return;
+      }
+
       if (draftKey) {
         try {
           const saved = localStorage.getItem(draftKey);
@@ -191,7 +212,7 @@ export function CreateLeadDialog({
         stage_id: defaultStageId || '',
       });
     }
-  }, [open, pipelines, defaultStageId, defaultPipelineId, draftKey, getEmptyFormData, isFormEmpty]);
+  }, [open, pipelines, defaultStageId, defaultPipelineId, draftKey, getEmptyFormData, isFormEmpty, contactPhone, contactName, conversationId]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const discardDraft = useCallback(() => {
@@ -337,6 +358,7 @@ export function CreateLeadDialog({
         assigned_user_id: formData.assigned_user_id || undefined,
         tag_ids: formData.tag_ids.length > 0 ? formData.tag_ids : undefined,
         source: formData.source || 'manual',
+        conversation_id: formData.conversation_id || undefined,
         // Profile fields
         cargo: formData.cargo || undefined,
         empresa: formData.empresa || undefined,
@@ -822,6 +844,7 @@ export function CreateLeadDialog({
             </Button>
             {activeTab !== 'management' ? (
               <Button
+                key="btn-avancar"
                 type="button"
                 className="h-10 w-[60%] bg-primary text-white hover:bg-primary/90"
                 onClick={() => {
@@ -835,7 +858,12 @@ export function CreateLeadDialog({
                 Avançar
               </Button>
             ) : (
-              <Button type="submit" className="h-10 w-[60%] bg-primary text-white hover:bg-primary/90" disabled={createLead.isPending || !hasRequiredLeadIdentity || !hasRequiredManagement}>
+              <Button
+                key="btn-submit"
+                type="submit"
+                className="h-10 w-[60%] bg-primary text-white hover:bg-primary/90"
+                disabled={createLead.isPending || !hasRequiredLeadIdentity || !hasRequiredManagement}
+              >
                 {createLead.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Criar Lead
               </Button>

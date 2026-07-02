@@ -15,9 +15,12 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 		return Conversation{}, fmt.Errorf("%w: Telefone invalido para WhatsApp", ErrInvalidInput)
 	}
 
-	session, err := repo.getCanSendSession(ctx, tenantContext, request.SessionID)
+	session, err := repo.resolveStartSession(ctx, tenantContext, request.SessionID)
 	if err != nil {
 		return Conversation{}, err
+	}
+	if session.Provider != "evolution_go" {
+		return Conversation{}, fmt.Errorf("%w: legacy Evolution provider is disabled", ErrInvalidInput)
 	}
 
 	leadID := ""
@@ -125,6 +128,20 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 	}
 
 	return repo.GetConversation(ctx, tenantContext, newID)
+}
+
+func (repo Repository) resolveStartSession(ctx context.Context, tenantContext tenant.Context, preferredSessionID string) (Session, error) {
+	if strings.TrimSpace(preferredSessionID) != "" {
+		session, err := repo.getCanSendSession(ctx, tenantContext, preferredSessionID)
+		if err == nil && session.Status == "connected" {
+			return session, nil
+		}
+		if err != nil && !errors.Is(err, ErrSessionNotFound) {
+			return Session{}, err
+		}
+	}
+
+	return repo.resolveAnyConnectedSendSession(ctx, tenantContext, "iniciar esta conversa")
 }
 
 func (repo Repository) FindConversation(ctx context.Context, tenantContext tenant.Context, filter FindConversationFilter) (*Conversation, error) {

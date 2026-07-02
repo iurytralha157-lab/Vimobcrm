@@ -133,7 +133,7 @@ func (repo Repository) ListRunnableAgents(ctx context.Context, organizationID st
 		from public.ai_agents
 		where status = 'active'
 		  and (organization_id is null or organization_id = $1::uuid)
-		order by organization_id nulls first, created_at asc
+		order by (organization_id is null) asc, created_at asc
 	`, organizationID)
 	if err != nil {
 		return nil, err

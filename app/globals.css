@@ -1151,7 +1151,7 @@ body {
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: var(--lead-detail-column);
+  background: transparent;
 }
 
 .lead-detail-v2-scroll {
@@ -1313,4 +1313,11 @@ body {
 html,
 body {
   min-height: 100%;
+}
+
+.lead-detail-dialog-content {
+  border: 0 !important;
+  border-color: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
 }

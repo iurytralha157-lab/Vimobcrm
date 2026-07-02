@@ -37,7 +37,7 @@ interface OutcomeOption {
 const callOutcomes: OutcomeOption[] = [
   { value: 'answered', label: 'Atendeu - Conversamos', description: 'Consegui falar com o lead' },
   { value: 'not_answered', label: 'Não atendeu / Caixa postal', description: 'Chamou mas não atendeu' },
-  { value: 'invalid_number', label: 'Número inexistente / Errado', description: 'Número não existe ou está errado' },
+  { value: 'invalid_number', label: 'Número inexistente', description: 'Número não existe ou está errado' },
   { value: 'busy', label: 'Linha ocupada', description: 'Linha estava ocupada' },
   { value: 'scheduled', label: 'Agendou retorno', description: 'Combinou de ligar depois' },
 ];
@@ -119,41 +119,54 @@ export function TaskOutcomeDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="w-[92vw] max-w-[92vw] max-h-[80vh] overflow-y-auto rounded-lg sm:max-w-2xl">
+      <DialogContent
+        className="w-[92vw] max-w-[92vw] max-h-[85vh] overflow-y-auto rounded-xl sm:max-w-xl p-5"
+        onEscapeKeyDown={(event) => event.preventDefault()}
+        onInteractOutside={(event) => {
+          const target = event.target as HTMLElement | null;
+          if (target?.closest('[data-radix-popper-content-wrapper], [role="listbox"]')) {
+            event.preventDefault();
+          }
+        }}
+      >
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-              <TypeIcon className="h-4 w-4 text-primary" />
+          <DialogTitle className="flex items-center gap-2 text-base font-extralight">
+            <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center">
+              <TypeIcon className="h-3.5 w-3.5 text-primary" />
             </div>
             <span>Como foi essa {typeLabel}?</span>
           </DialogTitle>
         </DialogHeader>
 
-        <div className="py-2">
-          <p className="text-sm text-muted-foreground mb-4">
-            {taskTitle}
-          </p>
-
+        <div className="py-1">
           <RadioGroup
             value={selectedOutcome}
             onValueChange={(value) => setSelectedOutcome(value as TaskOutcome)}
-            className="grid grid-cols-1 gap-2 md:grid-cols-2"
+            className="grid grid-cols-1 gap-2 sm:grid-cols-2"
           >
             {outcomes.map((option) => (
               <label
                 key={option.value}
                 className={cn(
-                  "flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all",
+                  "flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all",
                   selectedOutcome === option.value
-                    ? "border-primary bg-primary/5"
-                    : "border-white/[0.055] hover:border-primary/50 hover:bg-white/[0.055]"
+                    ? "border-transparent bg-primary/10 dark:bg-primary/20 text-primary"
+                    : "border-[var(--app-border)] bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]"
                 )}
               >
-                <RadioGroupItem value={option.value} className="mt-0.5" />
+                <RadioGroupItem
+                  value={option.value}
+                  className={cn(
+                    "mt-1 shrink-0 transition-colors rounded-[4px]",
+                    selectedOutcome === option.value
+                      ? "border-primary text-primary"
+                      : "border-muted-foreground/40 text-muted-foreground/40"
+                  )}
+                />
                 <div className="flex-1">
-                  <p className="font-medium text-sm">{option.label}</p>
+                  <p className="font-light text-xs leading-tight">{option.label}</p>
                   {option.description && (
-                    <p className="text-xs text-muted-foreground mt-0.5">
+                    <p className="text-[10px] font-extralight text-muted-foreground/75 mt-0.5 leading-normal">
                       {option.description}
                     </p>
                   )}
@@ -162,33 +175,30 @@ export function TaskOutcomeDialog({
             ))}
           </RadioGroup>
 
-          <div className="mt-4">
-            <Label htmlFor="notes" className="text-sm font-medium">
-              Observação (opcional)
-            </Label>
+          <div className="mt-3">
             <Textarea
               id="notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Adicione detalhes sobre essa tentativa..."
-              className="mt-2 resize-none"
-              rows={3}
+              className="resize-none text-xs font-light"
+              rows={2}
             />
           </div>
         </div>
 
-        <div className="flex gap-2 pt-4">
-          <Button variant="outline" className="w-[40%] rounded-xl" onClick={handleClose} disabled={isLoading}>
+        <div className="flex gap-2 pt-0.5">
+          <Button variant="outline" className="w-[40%] rounded-xl text-xs font-light" onClick={handleClose} disabled={isLoading}>
             Cancelar
           </Button>
           <Button
-            className="w-[60%] rounded-xl"
+            className="w-[60%] rounded-xl text-xs font-light"
             onClick={handleConfirm}
             disabled={!selectedOutcome || isLoading}
           >
             {isLoading ? (
               <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                <Loader2 className="h-3 w-3 mr-2 animate-spin" />
                 Salvando...
               </>
             ) : (

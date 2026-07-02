@@ -374,6 +374,10 @@ func (repo Repository) resolveSendSession(ctx context.Context, tenantContext ten
 		}
 	}
 
+	return repo.resolveAnyConnectedSendSession(ctx, tenantContext, "enviar esta mensagem")
+}
+
+func (repo Repository) resolveAnyConnectedSendSession(ctx context.Context, tenantContext tenant.Context, purpose string) (Session, error) {
 	rows, err := repo.db.Pool().Query(ctx, `
 		select `+sessionSelectFields()+`
 		from public.whatsapp_sessions ws
@@ -381,6 +385,7 @@ func (repo Repository) resolveSendSession(ctx context.Context, tenantContext ten
 		where ws.organization_id = $1::uuid
 		  and ws.is_active is not false
 		  and ws.status = 'connected'
+		  and coalesce(ws.provider, 'evolution') = 'evolution_go'
 		  and (
 		    $3::boolean
 		    or ws.owner_user_id = $2::uuid
@@ -416,7 +421,7 @@ func (repo Repository) resolveSendSession(ctx context.Context, tenantContext ten
 		return sessions[0], nil
 	}
 	if len(sessions) > 1 {
-		return Session{}, fmt.Errorf("%w: Selecione qual WhatsApp deseja usar para enviar esta mensagem.", ErrInvalidInput)
+		return Session{}, fmt.Errorf("%w: Selecione qual WhatsApp deseja usar para %s.", ErrInvalidInput, purpose)
 	}
 
 	return Session{}, fmt.Errorf("%w: WhatsApp desconectado. Reconecte ou selecione uma conexao ativa.", ErrInvalidInput)

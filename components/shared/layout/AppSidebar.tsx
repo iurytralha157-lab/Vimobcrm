@@ -8,7 +8,7 @@ import {
   LayoutDashboard, Kanban, Building2, Shuffle,
   ChevronLeft, ChevronRight, Users, MessageSquare, Calendar, DollarSign,
   FileText, Receipt, TrendingUp, BarChart3, Zap, MapPin,
-  Globe, Trophy, CreditCard, Tags, Target, Activity, Megaphone, Settings, Plug
+  Globe, Trophy, CreditCard, Tags, Activity, History, Megaphone, Settings, Plug
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -30,6 +30,8 @@ const DEFAULT_BRAND_ICON = "/favicon.ico";
 const SIDEBAR_BACKGROUND = "var(--app-sidebar)";
 const SIDEBAR_ICON_STROKE = 1.32;
 const SIDEBAR_CHEVRON_STROKE = 1.4;
+const SIDEBAR_NAV_RESET =
+  "border-0 shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0";
 
 interface NavItem {
   icon: React.ElementType;
@@ -199,16 +201,16 @@ const allNavItems: NavItem[] = [
       path: '/gamificacao'
     }, {
       icon: BarChart3,
+      labelKey: 'dashboard',
+      path: '/gamificacao#dashboard'
+    }, {
+      icon: Zap,
       labelKey: 'arenaRanking',
-      path: '/gamificacao#ranking'
+      path: '/gamificacao#rankings'
     }, {
-      icon: Target,
-      labelKey: 'arenaMissions',
-      path: '/gamificacao#missions'
-    }, {
-      icon: Activity,
-      labelKey: 'arenaActivities',
-      path: '/gamificacao#activities'
+      icon: History,
+      labelKey: 'history',
+      path: '/gamificacao#history'
     }]
   }
 ];
@@ -402,6 +404,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
     const Icon = item.icon;
     const isActive = item.children ? isActiveParent(item) : isPathActive(item.path, { parent: true });
     const shouldLiftDropdown = item.path === '/settings';
+    const dropdownAlignOffset = shouldLiftDropdown ? -180 : 0;
 
     if (item.children) {
       return (
@@ -410,6 +413,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
             <button
               className={cn(
                 "flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-sm font-extralight tracking-wide transition-colors",
+                SIDEBAR_NAV_RESET,
                 "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
                 isActive && "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal",
                 collapsed && "justify-center"
@@ -428,7 +432,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
           <DropdownMenuContent
             side="right"
             align="start"
-            alignOffset={shouldLiftDropdown ? -76 : 0}
+            alignOffset={dropdownAlignOffset}
             sideOffset={8}
             className="w-60 rounded-[6px] border-0 bg-[var(--app-sidebar)] p-1.5 text-[var(--app-text-primary)] shadow-[0_8px_18px_rgba(0,0,0,0.045)] backdrop-blur-md dark:shadow-[0_8px_18px_rgba(0,0,0,0.14)]"
           >
@@ -441,14 +445,15 @@ export const AppSidebar = React.memo(function AppSidebar() {
                   key={child.path}
                   asChild
                   className={cn(
-                    "cursor-pointer rounded-[6px] p-0 text-[var(--app-text-secondary)] outline-none focus:bg-[var(--app-surface-hover)] focus:text-[var(--app-text-primary)]",
+                    "cursor-pointer rounded-[6px] p-0 text-[var(--app-text-secondary)] focus:bg-[var(--app-surface-hover)] focus:text-[var(--app-text-primary)]",
+                    SIDEBAR_NAV_RESET,
                     childActive && "bg-[var(--app-surface-soft)] text-[#FF4529]"
                   )}
                 >
                   <Link
                     href={child.path}
                     onPointerDown={() => setPendingPath(child.path)}
-                    className="flex w-full items-center gap-3 px-3 py-2.5"
+                    className={cn("flex w-full items-center gap-3 px-3 py-2.5", SIDEBAR_NAV_RESET)}
                   >
                     <ChildIcon className="h-4 w-4 flex-shrink-0" strokeWidth={SIDEBAR_ICON_STROKE} />
                     <span className="text-sm font-extralight tracking-wide">{getLabel(child.labelKey)}</span>
@@ -467,6 +472,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
         onPointerDown={() => setPendingPath(item.path)}
         className={cn(
           "flex items-center gap-3 rounded-[6px] px-3 py-2.5 text-sm font-extralight tracking-wide transition-colors",
+          SIDEBAR_NAV_RESET,
           "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
           isActive && "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal",
           collapsed && "justify-center"
@@ -524,7 +530,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
         <Button
           variant="outline"
           size="icon"
-          className="absolute -right-3 top-14 z-50 flex h-6 w-6 items-center justify-center rounded-[6px] border border-white/[0.055] bg-[var(--app-sidebar)] text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
+          className="absolute -right-3 top-14 z-50 flex h-6 w-6 items-center justify-center rounded-[6px] border-0 bg-[var(--app-sidebar)] text-[var(--app-text-secondary)] shadow-none outline-none ring-0 hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] focus-visible:ring-0 focus-visible:ring-offset-0"
           onClick={toggleCollapsed}
           aria-label="Expandir menu"
         >

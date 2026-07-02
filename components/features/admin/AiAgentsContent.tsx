@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Loader2, Play, Plus, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -63,14 +63,7 @@ export function AiAgentsContent() {
     queryFn: () => adminAPI.listOrganizations({}),
   });
 
-  const agents = agentsQuery.data || [];
-  const selectedAgent = useMemo(() => agents.find((agent) => agent.id === form.id), [agents, form.id]);
-
-  useEffect(() => {
-    if (!form.id && agents.length > 0) {
-      setForm(agentToForm(agents[0]));
-    }
-  }, [agents, form.id]);
+  const agents = useMemo(() => agentsQuery.data || [], [agentsQuery.data]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
