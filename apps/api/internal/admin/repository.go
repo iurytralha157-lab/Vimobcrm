@@ -1142,6 +1142,7 @@ func isAllowedAdminTable(table string) bool {
 	case "organizations",
 		"users",
 		"organization_members",
+		"admin_subscription_plans",
 		"onboarding_requests",
 		"feature_requests",
 		"announcements",
