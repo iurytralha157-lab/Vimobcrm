@@ -3,6 +3,7 @@ package leads
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
@@ -376,6 +377,12 @@ func writeLeadError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	default:
+		slog.Error("lead operation failed",
+			"error", err,
+			"request_id", httpserver.RequestIDFromContext(r.Context()),
+			"path", r.URL.Path,
+			"method", r.Method,
+		)
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "lead_operation_failed", "Unable to complete lead operation.")
 	}
 }

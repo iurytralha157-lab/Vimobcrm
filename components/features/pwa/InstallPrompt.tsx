@@ -3,7 +3,6 @@ import NextImage from 'next/image';
 import { X, Download, Share, Plus, Smartphone } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useInstallPrompt } from '@/hooks/use-install-prompt';
-import { useSystemSettings } from '@/hooks/use-system-settings';
 import {
   Dialog,
   DialogContent,
@@ -14,7 +13,6 @@ import {
 
 export function InstallPrompt() {
   const { showPrompt, isIOS, isStandalone, install, dismiss, canInstall } = useInstallPrompt();
-  const { data: settings } = useSystemSettings();
   const [showIOSInstructions, setShowIOSInstructions] = useState(false);
 
   // Don't show if already installed or prompt shouldn't be shown
@@ -41,7 +39,7 @@ export function InstallPrompt() {
           <div className="mx-auto flex w-full max-w-lg items-center gap-3 rounded-[14px] border border-white/[0.055] bg-[var(--app-surface-solid)] p-3 shadow-[0_18px_44px_rgba(0,0,0,0.38)] backdrop-blur-xl">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-primary/10 sm:h-12 sm:w-12">
               <NextImage
-                src={settings?.pwa_icon_url || "/apple-touch-icon.png"}
+                src="/icons/favicon-laranja.png"
                 alt="App Icon"
                 width={48}
                 height={48}

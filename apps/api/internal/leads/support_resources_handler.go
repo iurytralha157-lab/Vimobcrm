@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -358,7 +360,42 @@ func (handler Handler) CreateNotification(w http.ResponseWriter, r *http.Request
 		writeLeadError(w, r, err)
 		return
 	}
+	handler.publishNotificationEvent(tenantContext, "notification.created", notification)
 	httpserver.WriteJSON(w, http.StatusCreated, map[string]Notification{"data": notification})
+}
+
+func (handler Handler) DispatchNotification(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+	request, ok := decodeJSON[DispatchNotificationRequest](w, r, 1<<18)
+	if !ok {
+		return
+	}
+	result, err := handler.repo.DispatchNotification(r.Context(), tenantContext, request)
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+	if result.Notification != nil {
+		handler.publishNotificationEvent(tenantContext, "notification.created", *result.Notification)
+	}
+	status := http.StatusOK
+	if result.Notification != nil && result.Notification.CreatedAt.After(time.Now().Add(-5*time.Second)) {
+		status = http.StatusCreated
+	}
+	httpserver.WriteJSON(w, status, result)
+}
+
+func (handler Handler) publishNotificationEvent(tenantContext tenant.Context, eventType string, notification Notification) {
+	handler.publisher.Publish(realtime.NewEvent(eventType, tenantContext.OrganizationID, tenantContext.UserID, map[string]any{
+		"notificationId": notification.ID,
+		"userId":         notification.UserID,
+		"type":           notification.Type,
+		"leadId":         notification.LeadID,
+	}))
 }
 
 func (handler Handler) ShowLeadVisibility(w http.ResponseWriter, r *http.Request) {

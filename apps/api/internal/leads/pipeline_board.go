@@ -477,16 +477,19 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 	if filter.FilterDealStatus != "" && filter.FilterDealStatus != "all" {
 		add("l.deal_status = $%d", filter.FilterDealStatus)
 	}
-	if filter.DateFrom != nil {
-		add("l.created_at >= $%d", *filter.DateFrom)
-	}
-	if filter.DateTo != nil {
-		add("l.created_at <= $%d", *filter.DateTo)
+	hasSearch := strings.TrimSpace(filter.Search) != ""
+	if !hasSearch {
+		if filter.DateFrom != nil {
+			add("l.created_at >= $%d", *filter.DateFrom)
+		}
+		if filter.DateTo != nil {
+			add("l.created_at <= $%d", *filter.DateTo)
+		}
 	}
 	if filter.FilterSource != "" && filter.FilterSource != "all" {
 		add("l.source = $%d", filter.FilterSource)
 	}
-	if strings.TrimSpace(filter.Search) != "" {
+	if hasSearch {
 		value := "%" + strings.TrimSpace(filter.Search) + "%"
 		args = append(args, value)
 		index := len(args)

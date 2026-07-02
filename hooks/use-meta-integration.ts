@@ -40,25 +40,47 @@ export interface MetaPage {
 
 type MetaAuthURLResponse = { auth_url: string };
 type MetaExchangeResponse = { pages: MetaPage[]; user_token: string };
+export type MetaOAuthFlowResult = {
+  id: string;
+  organization_id: string;
+  user_id: string;
+  status: string;
+  payload?: (MetaExchangeResponse & {
+    success?: boolean;
+    userToken?: string;
+    adAccountId?: string;
+    facebook_user_id?: string;
+    facebook_user_name?: string;
+  }) | null;
+  error_message?: string | null;
+  expires_at?: string | null;
+  consumed_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
 
-function invokeMeta<T>(endpoint: "meta-oauth" | "instagram-oauth", body: Record<string, unknown>) {
-  return integrationsAPI.invokeFunction<T>(endpoint, body);
+function invokeMeta<T>(endpoint: "meta-oauth" | "instagram-oauth", body: Record<string, unknown>, organizationId?: string | null) {
+  return integrationsAPI.invokeFunction<T>(endpoint, body, organizationId);
 }
 
 export function useMetaIntegrations() {
-  const { profile } = useAuth();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useQuery({
-    queryKey: ["meta-integrations", profile?.organization_id],
+    queryKey: ["meta-integrations", organizationId],
     queryFn: async () => {
-      if (!profile?.organization_id) return [];
-      return integrationsAPI.listMetaIntegrations(profile.organization_id) as unknown as Promise<MetaIntegration[]>;
+      if (!organizationId) return [];
+      return integrationsAPI.listMetaIntegrations(organizationId) as unknown as Promise<MetaIntegration[]>;
     },
-    enabled: !!profile?.organization_id,
+    enabled: !!organizationId,
   });
 }
 
 export function useMetaGetAuthUrl() {
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
+
   return useMutation({
     mutationFn: async (params: string | { returnUrl: string; includeInstagram?: boolean }) => {
       const returnUrl = typeof params === "string" ? params : params.returnUrl;
@@ -68,24 +90,29 @@ export function useMetaGetAuthUrl() {
       return invokeMeta<MetaAuthURLResponse>(endpoint, {
         action: "get_auth_url",
         return_url: returnUrl,
-      });
+      }, organizationId);
     },
   });
 }
 
 export function useMetaExchangeToken() {
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
+
   return useMutation({
     mutationFn: ({ code, redirectUri }: { code: string; redirectUri: string }) =>
       invokeMeta<MetaExchangeResponse>("meta-oauth", {
         action: "exchange_token",
         code,
         redirect_uri: redirectUri,
-      }),
+      }, organizationId),
   });
 }
 
 export function useMetaConnectPage() {
   const queryClient = useQueryClient();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useMutation({
     mutationFn: ({
@@ -123,7 +150,7 @@ export function useMetaConnectPage() {
         facebook_user_id: facebookUserId,
         facebook_user_name: facebookUserName,
         page_picture_url: pagePictureUrl,
-      }),
+      }, organizationId),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["meta-integrations"] });
       queryClient.invalidateQueries({ queryKey: ["meta-form-configs"] });
@@ -141,6 +168,8 @@ export function useMetaConnectPage() {
 
 export function useMetaUpdatePage() {
   const queryClient = useQueryClient();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useMutation({
     mutationFn: ({
@@ -163,7 +192,7 @@ export function useMetaUpdatePage() {
         stage_id: stageId,
         default_status: defaultStatus,
         selected_ad_accounts: selectedAdAccountIds,
-      }),
+      }, organizationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["meta-integrations"] });
       toast.success("Configuracao atualizada!");
@@ -176,13 +205,15 @@ export function useMetaUpdatePage() {
 
 export function useMetaDisconnectPage() {
   const queryClient = useQueryClient();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useMutation({
     mutationFn: (pageId: string) =>
       invokeMeta("meta-oauth", {
         action: "disconnect_page",
         page_id: pageId,
-      }),
+      }, organizationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["meta-integrations"] });
       toast.success("Pagina desconectada!");
@@ -195,6 +226,8 @@ export function useMetaDisconnectPage() {
 
 export function useMetaTogglePage() {
   const queryClient = useQueryClient();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useMutation({
     mutationFn: ({ pageId, isActive }: { pageId: string; isActive: boolean }) =>
@@ -202,7 +235,7 @@ export function useMetaTogglePage() {
         action: "toggle_page",
         page_id: pageId,
         is_active: isActive,
-      }),
+      }, organizationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["meta-integrations"] });
     },
@@ -214,6 +247,8 @@ export function useMetaTogglePage() {
 
 export function useMetaUpdateAdAccounts() {
   const queryClient = useQueryClient();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useMutation({
     mutationFn: ({ pageId, adAccountIds }: { pageId: string; adAccountIds: string[] }) =>
@@ -221,13 +256,25 @@ export function useMetaUpdateAdAccounts() {
         action: "update_ad_accounts",
         page_id: pageId,
         selected_ad_accounts: adAccountIds,
-      }),
+      }, organizationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["meta-integrations"] });
       toast.success("Contas de anuncio atualizadas!");
     },
     onError: (error: Error) => {
       toast.error(`Erro: ${error.message}`);
+    },
+  });
+}
+
+export function useMetaOAuthFlowResult() {
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
+
+  return useMutation({
+    mutationFn: async (flowId: string) => {
+      if (!organizationId) throw new Error("Organizacao nao encontrada");
+      return integrationsAPI.getMetaOAuthFlow(flowId, organizationId) as unknown as Promise<MetaOAuthFlowResult>;
     },
   });
 }

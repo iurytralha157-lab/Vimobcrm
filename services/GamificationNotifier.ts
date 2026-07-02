@@ -1,4 +1,3 @@
-import { notificationsAPI } from "@/lib/api/notifications";
 import { usersAPI } from "@/lib/api/users";
 
 /**
@@ -45,32 +44,22 @@ export async function handleGamificationNotifications(
 
     if (!title || !message) return;
 
-    await notificationsAPI.create({
-      organization_id: organizationId,
-      user_id: userId,
-      title,
-      content: message,
-      type: 'gamification',
-    });
-
-    if (profile.email) {
-      try {
-        const { notificationService } = await import('@/services/NotificationService');
-        await notificationService.send({
-          eventKey: 'gamification_update',
-          organizationId,
-          userId,
-          recipient: profile.email,
-          variables: {
-            user_name: profile.name,
-            title,
-            message,
-            ...metadata
-          }
-        });
-      } catch (emailErr) {
-        console.error('Failed to send gamification email notification:', emailErr);
-      }
+    try {
+      const { notificationService } = await import('@/services/NotificationService');
+      await notificationService.send({
+        eventKey: 'gamification_update',
+        organizationId,
+        userId,
+        recipient: profile.email,
+        variables: {
+          user_name: profile.name,
+          title,
+          message,
+          ...metadata
+        }
+      });
+    } catch (notificationErr) {
+      console.error('Failed to send gamification notification:', notificationErr);
     }
   } catch (error) {
     console.error('Gamification notification error:', error);

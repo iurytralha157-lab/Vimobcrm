@@ -17,6 +17,34 @@ export interface Notification {
   created_at: string
 }
 
+export interface DispatchNotificationInput {
+  eventKey?: string
+  templateSlug?: string
+  organizationId: string
+  userId?: string
+  recipient?: string
+  title?: string
+  content?: string
+  variables?: Record<string, unknown>
+  leadId?: string
+  dedupeKey?: string
+  isTest?: boolean
+  channels?: Array<'system' | 'whatsapp' | 'email' | 'push'>
+}
+
+export interface DispatchNotificationResult {
+  success: boolean
+  notification?: Notification
+  whatsapp?: {
+    enabled: boolean
+    attempted: boolean
+    ok: boolean
+    status?: number
+    error?: string
+  }
+  error?: string
+}
+
 export const notificationsAPI = {
   async list(params: { userId?: string; limit?: number } = {}) {
     const response = await vimobAPIRequest<Envelope<Notification[]>>('/v1/notifications', {
@@ -60,5 +88,26 @@ export const notificationsAPI = {
       body: notification,
     })
     return response.data
+  },
+
+  async dispatch(input: DispatchNotificationInput) {
+    return vimobAPIRequest<DispatchNotificationResult>('/v1/notifications/dispatch', {
+      method: 'POST',
+      organizationId: input.organizationId,
+      body: {
+        event_key: input.eventKey,
+        template_slug: input.templateSlug,
+        organization_id: input.organizationId,
+        user_id: input.userId,
+        recipient: input.recipient,
+        title: input.title,
+        content: input.content,
+        variables: input.variables || {},
+        lead_id: input.leadId,
+        dedupe_key: input.dedupeKey,
+        is_test: input.isTest,
+        channels: input.channels,
+      },
+    })
   },
 }

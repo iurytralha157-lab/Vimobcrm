@@ -15,8 +15,21 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Vimob",
-  description: "Sistema de gestão imobiliária",
+  title: {
+    default: "Vimob CRM",
+    template: "%s | Vimob CRM",
+  },
+  applicationName: "Vimob CRM",
+  description: "Sistema de gestao imobiliaria",
+  appleWebApp: {
+    capable: true,
+    title: "Vimob CRM",
+    statusBarStyle: "black-translucent",
+  },
+  icons: {
+    icon: "/icons/favicon-laranja.png",
+    apple: "/icons/favicon-laranja.png",
+  },
 };
 
 export default function RootLayout({

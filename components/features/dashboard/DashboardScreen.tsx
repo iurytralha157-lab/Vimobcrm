@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { type KeyboardEvent, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -240,7 +240,7 @@ export default function Dashboard() {
         </div>
 
         {/* ===== DESKTOP LAYOUT ===== */}
-        <div className="hidden lg:grid lg:grid-cols-12 gap-2 md:gap-3 flex-1 min-h-0 overflow-hidden">
+        <div className="hidden lg:grid lg:grid-cols-12 gap-2 md:gap-3 flex-1 min-h-0 overflow-y-auto app-scrollbar">
           <div className="col-span-8 flex flex-col gap-3 min-h-0">
             <div className="flex-shrink-0">
               <KPICardsGrid
@@ -395,43 +395,38 @@ function KPICardsGrid({
 }: KPICardsGridProps) {
   if (isLoading) {
     const isSide = layout === "side";
+    const skeletonTours = [
+      "dashboard-kpi-leads",
+      "dashboard-kpi-open",
+      "dashboard-kpi-lost",
+      "dashboard-kpi-won",
+      "dashboard-kpi-visits",
+      "dashboard-kpi-vgv",
+      "dashboard-kpi-first-contact",
+      "dashboard-kpi-properties",
+      "dashboard-kpi-site-visits",
+    ];
+
     return (
-      <div className="space-y-3">
-        <div className={cn("grid gap-3", isSide ? "grid-cols-2" : "grid-cols-4")}>
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Card key={`skeleton-top-${i}`} data-tour={["dashboard-kpi-leads", "dashboard-kpi-open", "dashboard-kpi-lost", "dashboard-kpi-won"][i]}>
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between">
-                  <div className="space-y-2 flex-1">
-                    <Skeleton className="h-3 w-16" />
-                    <Skeleton className="h-6 w-12" />
-                    <Skeleton className="h-3 w-10" />
-                  </div>
-                  <Skeleton className="h-9 w-9 rounded-lg" />
+      <div className={cn("grid gap-3", isSide ? "grid-cols-2" : "grid-cols-5")}>
+        {Array.from({ length: 9 }).map((_, i) => (
+          <Card
+            key={`skeleton-${i}`}
+            data-tour={skeletonTours[i]}
+            className={cn(i === 5 && !isSide ? "col-span-2" : "")}
+          >
+            <CardContent className="p-4">
+              <div className="flex items-start justify-between">
+                <div className="space-y-2 flex-1">
+                  <Skeleton className="h-3 w-16" />
+                  <Skeleton className="h-6 w-12" />
+                  <Skeleton className="h-3 w-10" />
                 </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-        <div className={cn("grid gap-3", isSide ? "grid-cols-2" : "grid-cols-5")}>
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Card
-              key={`skeleton-bottom-${i}`}
-              data-tour={["dashboard-kpi-visits", "dashboard-kpi-vgv", "dashboard-kpi-first-contact", "dashboard-kpi-properties", "dashboard-kpi-site-visits"][i]}
-            >
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between">
-                  <div className="space-y-2 flex-1">
-                    <Skeleton className="h-3 w-16" />
-                    <Skeleton className="h-6 w-12" />
-                    <Skeleton className="h-3 w-10" />
-                  </div>
-                  <Skeleton className="h-9 w-9 rounded-lg" />
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                <Skeleton className="h-9 w-9 rounded-lg" />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
     );
   }
@@ -539,7 +534,7 @@ function KPICardsGrid({
     },
   ];
 
-  const renderKPI = (kpi: DashboardKPI) => {
+  const renderKPI = (kpi: DashboardKPI, className?: string) => {
     const Icon = kpi.icon;
     const hasTrend = kpi.trend !== undefined && kpi.trend !== 0;
     const isPositive = (kpi.trend ?? 0) >= 0;
@@ -563,7 +558,7 @@ function KPICardsGrid({
     };
 
     return (
-      <div key={kpi.title} data-tour={kpi.tourTarget} className="h-full">
+      <div key={kpi.title} data-tour={kpi.tourTarget} className={cn("h-full", className)}>
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -638,11 +633,11 @@ function KPICardsGrid({
   const isSide = layout === "side";
 
   return (
-    <div className="space-y-3">
-      <div className={cn("grid gap-3", isSide ? "grid-cols-2" : "grid-cols-[repeat(auto-fit,minmax(132px,1fr))]")}>
-        {allKpis.slice(0, 5).map(renderKPI)}
-      </div>
-      <div className={cn("grid gap-3", isSide ? "grid-cols-2" : "grid-cols-[repeat(auto-fit,minmax(150px,1fr))]")}>{allKpis.slice(5).map(renderKPI)}</div>
+    <div className={cn("grid gap-3", isSide ? "grid-cols-2" : "grid-cols-5")}>
+      {allKpis.map((kpi) => {
+        const isVgv = kpi.title === "VGV";
+        return renderKPI(kpi, isVgv && !isSide ? "col-span-2" : undefined);
+      })}
     </div>
   );
 }

@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { useSystemSettings } from './use-system-settings';
 
-const DEFAULT_BRAND_ICON = '/favicon.webp?v=20260605';
-const DEFAULT_BRAND_IMAGE = 'https://vimob.vettercompany.com.br/favicon.webp';
+const DEFAULT_BRAND_ICON = '/icons/favicon-laranja.png';
+const DEFAULT_BRAND_IMAGE = 'https://app.vimobcrm.com.br/icons/favicon-laranja.png';
 const DEFAULT_APP_NAME = 'Vimob CRM';
 const DEFAULT_APP_DESCRIPTION = 'Inteligência imobiliária para transformar leads em vendas.';
 

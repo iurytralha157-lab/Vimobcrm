@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { settingsAPI } from '@/lib/api/settings';
 
-// VAPID public key - must match VAPID_PRIVATE_KEY configured in Supabase Edge Function secrets.
+// VAPID public key - must match the backend Web Push sender configuration.
 const VAPID_PUBLIC_KEY = 'BC7q4HGKxwbHnzRl0uBTyTOm59GcEyxqM8fgSTGiSfNoxwYIIy8-HnbbpzQghQUzpzPmmifvn9t01EoTJaFa3uQ';
 
 
@@ -61,6 +61,14 @@ function arrayBufferToBase64Url(buffer: ArrayBuffer | null | undefined): string 
     .replace(/=+$/, '');
 }
 
+async function getServiceWorkerRegistration() {
+  const existing = await navigator.serviceWorker.getRegistration('/');
+  if (existing) {
+    return existing;
+  }
+  return navigator.serviceWorker.register('/sw.js', { scope: '/' });
+}
+
 interface WebPushState {
   isSupported: boolean;
   isSubscribed: boolean;
@@ -93,6 +101,7 @@ export function useWebPush() {
   // Verifica se já está inscrito
   const checkSubscription = useCallback(async (): Promise<PushSubscription | null> => {
     try {
+      await getServiceWorkerRegistration();
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.getSubscription();
 
@@ -178,6 +187,7 @@ export function useWebPush() {
 
       // Aguarda o Service Worker estar pronto
       console.log('[WebPush] Aguardando Service Worker...');
+      await getServiceWorkerRegistration();
       const registration = await navigator.serviceWorker.ready;
       console.log('[WebPush] Service Worker pronto:', registration.scope);
 

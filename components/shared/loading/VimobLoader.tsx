@@ -36,7 +36,7 @@ export function VimobLoader({
       role="status"
     >
       <Image
-        src="/favicon.ico"
+        src="/icons/favicon-laranja.png"
         alt=""
         aria-hidden
         width={48}

@@ -68,6 +68,13 @@ export const integrationsAPI = {
     return response.data;
   },
 
+  async getMetaOAuthFlow(flowId: string, organizationId?: string | null) {
+    const response = await vimobAPIRequest<Envelope<IntegrationJSON>>(`/v1/integrations/meta/oauth-flows/${flowId}`, {
+      organizationId,
+    });
+    return response.data;
+  },
+
   async listMetaFormConfigs(integrationId?: string, organizationId?: string | null) {
     const response = await vimobAPIRequest<Envelope<IntegrationJSON[]>>('/v1/integrations/meta/form-configs', {
       organizationId,

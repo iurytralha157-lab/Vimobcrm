@@ -1,4 +1,4 @@
-import { supabase } from '@/integrations/supabase/client';
+import { notificationsAPI } from '@/lib/api/notifications';
 
 export type NotificationChannel = 'whatsapp' | 'system' | 'email' | 'push';
 
@@ -47,7 +47,7 @@ function describeNotificationError(error: unknown): string {
 
 class NotificationService {
   /**
-   * Centralized method to send notifications via the Dispatcher Edge Function
+   * Centralized method to send notifications through the Vimob backend dispatcher.
    */
   async send({
     eventKey,
@@ -68,21 +68,19 @@ class NotificationService {
     console.log(`[NotificationService] Dispatching event: ${finalEventKey} for org: ${organizationId}`);
 
     try {
-      const { data, error } = await supabase.functions.invoke('notification-dispatcher', {
-        body: {
-          event_key: finalEventKey,
-          organization_id: organizationId,
-          user_id: userId,
-          recipient,
-          variables,
-          lead_id: leadId,
-          dedupe_key: dedupeKey,
-          is_test: isTest
-        },
+      const data = await notificationsAPI.dispatch({
+        eventKey: finalEventKey,
+        organizationId,
+        userId,
+        recipient,
+        variables,
+        leadId,
+        dedupeKey,
+        isTest,
       });
 
-      if (error) {
-        const message = describeNotificationError(error);
+      if (data.error) {
+        const message = describeNotificationError(data.error);
         console.warn(`[NotificationService] Dispatcher unavailable for ${finalEventKey}: ${message}`);
         return { success: false, error: message };
       }

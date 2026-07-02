@@ -196,6 +196,19 @@ func (handler Handler) ListMetaIntegrations(w http.ResponseWriter, r *http.Reque
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]map[string]any]{Data: items})
 }
 
+func (handler Handler) ShowMetaOAuthFlow(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	item, err := handler.repo.GetMetaOAuthFlow(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writeIntegrationError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[map[string]any]{Data: item})
+}
+
 func (handler Handler) ListMetaFormConfigs(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := organizationContext(w, r)
 	if !ok {

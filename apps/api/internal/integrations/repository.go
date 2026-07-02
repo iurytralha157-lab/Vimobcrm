@@ -170,6 +170,33 @@ func (repo Repository) ListMetaIntegrations(ctx context.Context, tenantContext t
 	`, tenantContext.OrganizationID)
 }
 
+func (repo Repository) GetMetaOAuthFlow(ctx context.Context, tenantContext tenant.Context, flowID string) (map[string]any, error) {
+	flowID = strings.TrimSpace(flowID)
+	if flowID == "" {
+		return nil, ErrInvalidInput
+	}
+
+	return repo.getSingleJSON(ctx, `
+		select jsonb_strip_nulls(jsonb_build_object(
+			'id', mof.id::text,
+			'organization_id', mof.organization_id::text,
+			'user_id', mof.user_id::text,
+			'status', mof.status,
+			'payload', mof.payload,
+			'error_message', mof.error_message,
+			'expires_at', mof.expires_at,
+			'consumed_at', mof.consumed_at,
+			'created_at', mof.created_at,
+			'updated_at', mof.updated_at
+		))
+		from public.meta_oauth_flows mof
+		where mof.id = $2::uuid
+		  and mof.organization_id = $1::uuid
+		  and mof.user_id = $3::uuid
+		limit 1
+	`, tenantContext.OrganizationID, flowID, tenantContext.UserID)
+}
+
 func (repo Repository) ListMetaFormConfigs(ctx context.Context, tenantContext tenant.Context, integrationID string) ([]map[string]any, error) {
 	integrationID = strings.TrimSpace(integrationID)
 	if integrationID == "" {

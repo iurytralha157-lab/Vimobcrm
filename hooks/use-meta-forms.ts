@@ -78,46 +78,52 @@ function normalizeMetaFormConfig(config: MetaFormConfigRecord): MetaFormConfig {
 }
 
 export function useMetaFormConfigs(integrationId: string | undefined) {
-  const { profile } = useAuth();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useQuery({
-    queryKey: ["meta-form-configs", integrationId],
+    queryKey: ["meta-form-configs", integrationId, organizationId],
     queryFn: async () => {
-      if (!profile?.organization_id || !integrationId) return [];
-      const configs = await integrationsAPI.listMetaFormConfigs(integrationId, profile.organization_id);
+      if (!organizationId || !integrationId) return [];
+      const configs = await integrationsAPI.listMetaFormConfigs(integrationId, organizationId);
       return (configs as unknown as MetaFormConfigRecord[]).map(normalizeMetaFormConfig);
     },
-    enabled: !!profile?.organization_id && !!integrationId,
+    enabled: !!organizationId && !!integrationId,
   });
 }
 
 export function useAllMetaFormConfigs() {
-  const { profile } = useAuth();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useQuery({
-    queryKey: ["meta-form-configs", "all", profile?.organization_id],
+    queryKey: ["meta-form-configs", "all", organizationId],
     queryFn: async () => {
-      if (!profile?.organization_id) return [];
-      const configs = await integrationsAPI.listMetaFormConfigs(undefined, profile.organization_id);
+      if (!organizationId) return [];
+      const configs = await integrationsAPI.listMetaFormConfigs(undefined, organizationId);
       return (configs as unknown as MetaFormConfigRecord[]).map(normalizeMetaFormConfig);
     },
-    enabled: !!profile?.organization_id,
+    enabled: !!organizationId,
   });
 }
 
 export function useFetchPageForms() {
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
+
   return useMutation({
     mutationFn: ({ pageId }: { pageId: string }) =>
       integrationsAPI.invokeFunction<{ forms: MetaForm[] }>("meta-oauth", {
         action: "get_page_forms",
         page_id: pageId,
-      }),
+      }, organizationId),
   });
 }
 
 export function useSaveFormConfig() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useMutation({
     mutationFn: async (config: {
@@ -135,7 +141,7 @@ export function useSaveFormConfig() {
       customFieldsConfig?: string[];
       isActive?: boolean;
     }) => {
-      if (!profile?.organization_id) throw new Error("No organization");
+      if (!organizationId) throw new Error("No organization");
 
       return integrationsAPI.saveMetaFormConfig({
         integrationId: config.integrationId,
@@ -151,7 +157,7 @@ export function useSaveFormConfig() {
         fieldMapping: config.fieldMapping || {},
         customFieldsConfig: config.customFieldsConfig || [],
         isActive: config.isActive !== false,
-      }, profile.organization_id);
+      }, organizationId);
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["meta-form-configs", variables.integrationId] });
@@ -167,12 +173,13 @@ export function useSaveFormConfig() {
 
 export function useToggleFormConfig() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useMutation({
     mutationFn: ({ formId, isActive, integrationId }: { formId: string; isActive: boolean; integrationId: string }) => {
-      if (!profile?.organization_id) throw new Error("No organization");
-      return integrationsAPI.toggleMetaFormConfig({ integrationId, formId, isActive }, profile.organization_id);
+      if (!organizationId) throw new Error("No organization");
+      return integrationsAPI.toggleMetaFormConfig({ integrationId, formId, isActive }, organizationId);
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["meta-form-configs", variables.integrationId] });
@@ -186,12 +193,13 @@ export function useToggleFormConfig() {
 
 export function useDeleteFormConfig() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useMutation({
     mutationFn: ({ formId, integrationId }: { formId: string; integrationId: string }) => {
-      if (!profile?.organization_id) throw new Error("No organization");
-      return integrationsAPI.deleteMetaFormConfig({ integrationId, formId }, profile.organization_id);
+      if (!organizationId) throw new Error("No organization");
+      return integrationsAPI.deleteMetaFormConfig({ integrationId, formId }, organizationId);
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["meta-form-configs", variables.integrationId] });

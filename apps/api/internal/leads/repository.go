@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
@@ -206,7 +207,22 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		return repo.registerReentry(ctx, tenantContext, input, resolvedDestination, *existingLead)
 	}
 
-	return repo.createNewLead(ctx, tenantContext, input, resolvedDestination)
+	result, err := repo.createNewLead(ctx, tenantContext, input, resolvedDestination)
+	if err == nil {
+		return result, nil
+	}
+
+	if isLeadPhoneUniqueViolation(err) {
+		existingLead, lookupErr := repo.findExistingLeadByPhone(ctx, tenantContext.OrganizationID, input.Phone)
+		if lookupErr != nil {
+			return CreateResult{}, lookupErr
+		}
+		if existingLead != nil {
+			return repo.registerReentry(ctx, tenantContext, input, resolvedDestination, *existingLead)
+		}
+	}
+
+	return CreateResult{}, err
 }
 
 func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context, leadID string, input updateInput) (Lead, error) {
@@ -406,6 +422,8 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err := tx.Commit(ctx); err != nil {
 		return Lead{}, err
 	}
+
+	repo.dispatchDealWonNotification(ctx, tenantContext, current, input)
 
 	return repo.Get(ctx, tenantContext, updatedID)
 }
@@ -1046,12 +1064,16 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 		    property_id = coalesce($10::uuid, property_id),
 		    interest_property_id = coalesce($10::uuid, interest_property_id),
 		    valor_interesse = coalesce($11::numeric, valor_interesse),
+		    deal_status = $12,
+		    lost_reason = case when $12 = 'lost' then $13 else null end,
+		    lost_at = case when $12 = 'lost' then coalesce(lost_at, now()) else null end,
+		    won_at = case when $12 = 'won' then coalesce(won_at, now()) else null end,
 		    last_entry_at = now(),
 		    reentry_count = coalesce(reentry_count, 0) + 1,
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
-	`, tenantContext.OrganizationID, existingLead.ID, input.Name, nullable(input.Email), nullable(input.Message), input.Source, nullable(input.PropertyCode), nullable(resolvedDestination.PipelineID), nullable(resolvedDestination.StageID), nullable(input.PropertyID), nullable(input.InterestValue))
+	`, tenantContext.OrganizationID, existingLead.ID, input.Name, nullable(input.Email), nullable(input.Message), input.Source, nullable(input.PropertyCode), nullable(resolvedDestination.PipelineID), nullable(resolvedDestination.StageID), nullable(input.PropertyID), nullable(input.InterestValue), input.DealStatus, nullable(input.LostReason))
 	if err != nil {
 		return CreateResult{}, err
 	}
@@ -1064,23 +1086,28 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 			entry_type,
 			property_id,
 			valor_interesse,
-			payload
+			pipeline_id,
+			stage_id,
+			metadata
 		)
 		values (
 			$1::uuid,
 			$2::uuid,
 			$3,
-			'manual_reentry',
+			'reentry',
 			$4::uuid,
 			$5::numeric,
-			$6::jsonb
+			$6::uuid,
+			$7::uuid,
+			$8::jsonb
 		)
-	`, tenantContext.OrganizationID, existingLead.ID, input.Source, nullable(input.PropertyID), nullable(input.InterestValue), jsonb(map[string]any{
+	`, tenantContext.OrganizationID, existingLead.ID, input.Source, nullable(input.PropertyID), nullable(input.InterestValue), nullable(resolvedDestination.PipelineID), nullable(resolvedDestination.StageID), jsonb(map[string]any{
 		"new_data": map[string]any{
 			"name":          input.Name,
 			"email":         nullable(input.Email),
 			"message":       nullable(input.Message),
 			"property_code": nullable(input.PropertyCode),
+			"deal_status":   input.DealStatus,
 		},
 		"origin": "vimob_api",
 	}))
@@ -1105,6 +1132,7 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 		"stage_id":           nullable(resolvedDestination.StageID),
 		"property_id":        nullable(input.PropertyID),
 		"property_code":      nullable(input.PropertyCode),
+		"deal_status":        input.DealStatus,
 	}); err != nil {
 		return CreateResult{}, err
 	}
@@ -1509,12 +1537,13 @@ func (repo Repository) findExistingLeadByPhone(ctx context.Context, organization
 		return nil, nil
 	}
 
-	normalizedPhone := normalizePhone(*phone)
-	if normalizedPhone == "" {
+	if normalizePhone(*phone) == "" {
 		return nil, nil
 	}
 
-	rows, err := repo.db.Pool().Query(ctx, `
+	var match existingLeadMatch
+	var phoneValue, assignedUserID, assignedUserName pgtype.Text
+	err := repo.db.Pool().QueryRow(ctx, `
 		select
 			l.id::text,
 			l.phone,
@@ -1524,36 +1553,22 @@ func (repo Repository) findExistingLeadByPhone(ctx context.Context, organization
 		left join public.users u on u.id = l.assigned_user_id
 		where l.organization_id = $1::uuid
 		  and l.phone is not null
-		  and l.phone ilike $2
+		  and normalize_phone(l.phone) = normalize_phone($2)
 		order by l.created_at asc
-		limit 200
-	`, organizationID, "%"+phoneTail(normalizedPhone)+"%")
+		limit 1
+	`, organizationID, *phone).Scan(&match.ID, &phoneValue, &assignedUserID, &assignedUserName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var match existingLeadMatch
-		var phoneValue, assignedUserID, assignedUserName pgtype.Text
-		if err := rows.Scan(&match.ID, &phoneValue, &assignedUserID, &assignedUserName); err != nil {
-			return nil, err
-		}
+	match.Phone = textValue(phoneValue)
+	match.AssignedUserID = textValue(assignedUserID)
+	match.AssignedUserName = textValue(assignedUserName)
 
-		match.Phone = textValue(phoneValue)
-		match.AssignedUserID = textValue(assignedUserID)
-		match.AssignedUserName = textValue(assignedUserName)
-
-		if normalizePhone(match.Phone) == normalizedPhone {
-			return &match, nil
-		}
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return nil, nil
+	return &match, nil
 }
 
 func (repo Repository) insertLeadTags(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, tagIDs []string) error {
@@ -1659,8 +1674,57 @@ func (repo Repository) insertDealStatusActivities(ctx context.Context, tx pgx.Tx
 	})
 }
 
+func (repo Repository) dispatchDealWonNotification(ctx context.Context, tenantContext tenant.Context, current leadSnapshot, input updateInput) {
+	if !input.DealStatus.Set || input.DealStatus.Value == nil || *input.DealStatus.Value != "won" || current.DealStatus == "won" {
+		return
+	}
+
+	assignedUserID := current.AssignedUserID
+	if input.AssignedUserID.Set {
+		assignedUserID = ""
+		if input.AssignedUserID.Value != nil {
+			assignedUserID = *input.AssignedUserID.Value
+		}
+	}
+	if assignedUserID == "" {
+		return
+	}
+
+	interestValue := current.InterestValue
+	if input.InterestValue.Set {
+		interestValue = ""
+		if input.InterestValue.Value != nil {
+			interestValue = *input.InterestValue.Value
+		}
+	}
+
+	_, _ = repo.DispatchNotification(ctx, tenantContext, DispatchNotificationRequest{
+		EventKey:  "deal_won",
+		UserID:    assignedUserID,
+		LeadID:    &current.ID,
+		DedupeKey: "deal_won:" + current.ID + ":" + assignedUserID,
+		Variables: map[string]any{
+			"lead_name":       current.Name,
+			"valor_interesse": nullableString(interestValue),
+		},
+	})
+}
+
 func (repo Repository) linkWhatsAppConversations(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, phone *string, conversationID *string) error {
 	if conversationID != nil {
+		if _, err := tx.Exec(ctx, `
+			update public.whatsapp_conversations
+			set lead_id = null,
+			    updated_at = now()
+			where organization_id = $1::uuid
+			  and lead_id = $3::uuid
+			  and id <> $2::uuid
+			  and deleted_at is null
+			  and is_group is not true
+		`, organizationID, *conversationID, leadID); err != nil {
+			return err
+		}
+
 		if _, err := tx.Exec(ctx, `
 			update public.whatsapp_conversations
 			set lead_id = $3::uuid,
@@ -1676,49 +1740,47 @@ func (repo Repository) linkWhatsAppConversations(ctx context.Context, tx pgx.Tx,
 		return nil
 	}
 
-	normalizedPhone := normalizePhone(*phone)
-	if normalizedPhone == "" {
+	if normalizePhone(*phone) == "" {
 		return nil
 	}
 
-	rows, err := tx.Query(ctx, `
-		select id::text, contact_phone
-		from public.whatsapp_conversations
-		where organization_id = $1::uuid
-		  and lead_id is null
-		  and contact_phone is not null
-		  and contact_phone ilike $2
-		limit 200
-	`, organizationID, "%"+phoneTail(normalizedPhone)+"%")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var id string
-		var contactPhone pgtype.Text
-		if err := rows.Scan(&id, &contactPhone); err != nil {
-			return err
-		}
-
-		if normalizePhone(textValue(contactPhone)) != normalizedPhone {
-			continue
-		}
-
-		if _, err := tx.Exec(ctx, `
-			update public.whatsapp_conversations
-			set lead_id = $3::uuid,
-			    updated_at = now()
+	_, err := tx.Exec(ctx, `
+		with target as (
+			select id
+			from public.whatsapp_conversations
 			where organization_id = $1::uuid
-			  and id = $2::uuid
 			  and lead_id is null
-		`, organizationID, id, leadID); err != nil {
-			return err
-		}
+			  and contact_phone is not null
+			  and normalize_phone(contact_phone) = normalize_phone($2)
+			  and deleted_at is null
+			  and is_group is not true
+			order by last_message_at desc nulls last, updated_at desc, created_at desc
+			limit 1
+		)
+		update public.whatsapp_conversations
+		set lead_id = $3::uuid,
+		    updated_at = now()
+		from target
+		where whatsapp_conversations.id = target.id
+		  and not exists (
+		    select 1
+		    from public.whatsapp_conversations existing
+		    where existing.organization_id = $1::uuid
+		      and existing.lead_id = $3::uuid
+		      and existing.deleted_at is null
+		      and existing.is_group is not true
+		  )
+	`, organizationID, *phone, leadID)
+	return err
+}
+
+func isLeadPhoneUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
 	}
 
-	return rows.Err()
+	return pgErr.Code == "23505" && pgErr.ConstraintName == "leads_org_phone_unique"
 }
 
 func (repo Repository) insertActivity(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, userID string, activityType string, content string, metadata map[string]any) error {
@@ -2135,14 +2197,6 @@ func normalizePhone(value string) string {
 	}
 
 	return digits
-}
-
-func phoneTail(normalizedPhone string) string {
-	if len(normalizedPhone) < 4 {
-		return normalizedPhone
-	}
-
-	return normalizedPhone[len(normalizedPhone)-4:]
 }
 
 func canViewAllLeads(tenantContext tenant.Context) bool {

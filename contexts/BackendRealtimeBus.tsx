@@ -49,6 +49,7 @@ export function BackendRealtimeBus() {
 
         if (event.type.startsWith("lead.")) {
           handleLeadEvent(event);
+          invalidateNotificationQueries(queryClient);
           return;
         }
 
@@ -69,6 +70,11 @@ export function BackendRealtimeBus() {
 
         if (event.type.startsWith("webhook.")) {
           void queryClient.invalidateQueries({ queryKey: ["webhooks"], refetchType: "active" });
+          return;
+        }
+
+        if (event.type.startsWith("notification.")) {
+          invalidateNotificationQueries(queryClient);
           return;
         }
       },
@@ -198,6 +204,11 @@ function handleWhatsAppEvent(event: BackendRealtimeEvent, queryClient: QueryClie
       });
     }
   }
+}
+
+function invalidateNotificationQueries(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({ queryKey: ["notifications"], refetchType: "active" });
+  void queryClient.invalidateQueries({ queryKey: ["unread-notifications-count"], refetchType: "active" });
 }
 
 function invalidateDashboardRealtimeQueries(queryClient: QueryClient) {

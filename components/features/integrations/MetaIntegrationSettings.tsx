@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -57,6 +57,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   MetaIntegration,
   MetaPage,
@@ -64,6 +65,7 @@ import {
   useMetaDisconnectPage,
   useMetaGetAuthUrl,
   useMetaIntegrations,
+  useMetaOAuthFlowResult,
 } from "@/hooks/use-meta-integration";
 import {
   MetaForm,
@@ -78,6 +80,7 @@ import { MetaFormConfigDialog } from "./MetaFormConfigDialog";
 interface OAuthPayload {
   pages?: MetaPage[];
   user_token?: string;
+  userToken?: string;
   facebook_user_id?: string;
   facebook_user_name?: string;
 }
@@ -113,6 +116,14 @@ const getPagePicture = (page?: MetaPage | null) => page?.picture?.data?.url || "
 const searchableText = (value: unknown) => String(value ?? "").toLowerCase();
 const META_OAUTH_CHANNEL = "vimob-meta-oauth";
 const META_OAUTH_STORAGE_KEY = "vimob:meta-oauth";
+
+const normalizeOAuthPayload = (payload?: OAuthPayload | null): OAuthPayload | null => {
+  if (!payload) return null;
+  return {
+    ...payload,
+    user_token: payload.user_token || payload.userToken,
+  };
+};
 
 const buildConfigForm = (config: MetaFormConfig): MetaForm => ({
   id: config.form_id,
@@ -163,14 +174,63 @@ export function MetaIntegrationSettings({
   const handledOAuthStatusRef = useRef<string | number | null>(null);
   const handledOAuthMessageRef = useRef<string | number | null>(null);
 
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
   const { data: integrations = [], isLoading, refetch: refetchIntegrations } = useMetaIntegrations();
   const { data: configs = [], refetch: refetchConfigs } = useAllMetaFormConfigs();
   const getAuthUrl = useMetaGetAuthUrl();
+  const getOAuthFlow = useMetaOAuthFlowResult();
   const connectPage = useMetaConnectPage();
   const disconnectPage = useMetaDisconnectPage();
   const fetchForms = useFetchPageForms();
   const toggleForm = useToggleFormConfig();
   const deleteForm = useDeleteFormConfig();
+
+  const openOAuthWizard = useCallback((payload: OAuthPayload | null | undefined, message: string) => {
+    const normalized = normalizeOAuthPayload(payload);
+    if (!normalized?.pages?.length) return false;
+
+    setNewOAuth(normalized);
+    setSelectedAccountKey("new-oauth");
+    setAccountSearch("");
+    setWizardOpen(true);
+    setAccountModalOpen(false);
+    toast.success(message);
+    return true;
+  }, []);
+
+  const handleOAuthStatusResult = useCallback(async (status: OAuthStatus) => {
+    if (status.status === "success") {
+      if (status.flowId) {
+        try {
+          const flow = await getOAuthFlow.mutateAsync(status.flowId);
+          if (openOAuthWizard(flow.payload, "Conta do Facebook autorizada. Escolha a pagina para concluir.")) {
+            await refetchConfigs();
+            return;
+          }
+        } catch (error) {
+          console.error("Unable to load Meta OAuth flow result", error);
+        }
+      }
+
+      setNewOAuth(null);
+      setSelectedAccountKey("");
+      setAccountSearch("");
+      setWizardOpen(false);
+      setAccountModalOpen(true);
+      const [integrationsResult] = await Promise.all([refetchIntegrations(), refetchConfigs()]);
+      if ((integrationsResult.data || []).length > 0) {
+        toast.success("Conta do Facebook reconectada com sucesso.");
+      } else {
+        toast.warning("Conta do Facebook autorizada, mas nenhuma pagina foi vinculada ainda. Escolha uma pagina para concluir.");
+      }
+      return;
+    }
+
+    if (status.error) {
+      toast.error(`Erro ao reconectar Facebook: ${status.error}`);
+    }
+  }, [getOAuthFlow, openOAuthWizard, refetchConfigs, refetchIntegrations]);
 
   useEffect(() => {
     if (oauthPayload !== undefined) return;
@@ -190,6 +250,8 @@ export function MetaIntegrationSettings({
       }
 
       queueMicrotask(() => {
+        openOAuthWizard(payload, "Conta do Facebook conectada. Escolha a pagina para continuar.");
+        return;
         setNewOAuth(payload);
         setSelectedAccountKey("new-oauth");
         setWizardOpen(true);
@@ -201,27 +263,33 @@ export function MetaIntegrationSettings({
       params.delete("meta_oauth_data");
       window.history.replaceState({}, "", `${window.location.pathname}${params.toString() ? `?${params}` : ""}`);
     }
-  }, [oauthPayload]);
+  }, [oauthPayload, openOAuthWizard]);
 
   useEffect(() => {
     if (!oauthPayload) return;
     queueMicrotask(() => {
-      setNewOAuth(oauthPayload);
+      openOAuthWizard(oauthPayload, "Conta do Facebook conectada. Escolha a pagina para continuar.");
+      return;
+      setNewOAuth(oauthPayload ?? null);
       setSelectedAccountKey("new-oauth");
       setWizardOpen(true);
       setAccountModalOpen(false);
       toast.success("Conta do Facebook conectada. Escolha a página para continuar.");
     });
-  }, [oauthPayload]);
+  }, [oauthPayload, openOAuthWizard]);
 
   useEffect(() => {
     if (!oauthStatus) return;
+    if (oauthStatus.status === "success" && !organizationId) return;
+    const currentOAuthStatus = oauthStatus;
     const statusKey = oauthStatus.nonce ?? oauthStatus.flowId ?? oauthStatus.status ?? oauthStatus.error ?? "unknown";
     if (handledOAuthStatusRef.current === statusKey) return;
     handledOAuthStatusRef.current = statusKey;
 
     queueMicrotask(async () => {
-      if (oauthStatus.status === "success") {
+      await handleOAuthStatusResult(currentOAuthStatus);
+      return;
+      if (currentOAuthStatus.status === "success") {
         setNewOAuth(null);
         setSelectedAccountKey("");
         setAccountSearch("");
@@ -232,11 +300,11 @@ export function MetaIntegrationSettings({
         return;
       }
 
-      if (oauthStatus.error) {
-        toast.error(`Erro ao reconectar Facebook: ${oauthStatus.error}`);
+      if (currentOAuthStatus.error) {
+        toast.error(`Erro ao reconectar Facebook: ${currentOAuthStatus.error}`);
       }
     });
-  }, [oauthStatus, refetchConfigs, refetchIntegrations]);
+  }, [handleOAuthStatusResult, oauthStatus, organizationId]);
 
   useEffect(() => {
     if (!listenForOAuthMessages || oauthPayload !== undefined) return;
@@ -252,6 +320,13 @@ export function MetaIntegrationSettings({
       handledOAuthMessageRef.current = messageKey;
 
       if (event.data?.type === "META_OAUTH_STATUS") {
+        void handleOAuthStatusResult({
+          status: event.data.status,
+          flowId: event.data.flowId,
+          error: event.data.error,
+          nonce: event.data.nonce,
+        });
+        return;
         setNewOAuth(null);
         setSelectedAccountKey("");
         setAccountSearch("");
@@ -266,6 +341,7 @@ export function MetaIntegrationSettings({
       }
 
       if (!event.data || event.data.type !== "META_OAUTH_SUCCESS") return;
+      if (openOAuthWizard(event.data.data || null, "Conta do Facebook conectada. Escolha a pagina para continuar.")) return;
       setNewOAuth(event.data.data || null);
       setSelectedAccountKey("new-oauth");
       setWizardOpen(true);
@@ -305,7 +381,7 @@ export function MetaIntegrationSettings({
       window.removeEventListener("storage", handleStorage);
       channel?.close();
     };
-  }, [listenForOAuthMessages, oauthPayload, refetchConfigs, refetchIntegrations]);
+  }, [handleOAuthStatusResult, listenForOAuthMessages, oauthPayload, openOAuthWizard]);
 
   const accounts = useMemo<AccountGroup[]>(() => {
     const grouped = new Map<string, AccountGroup>();

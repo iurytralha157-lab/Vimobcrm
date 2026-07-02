@@ -3,7 +3,6 @@ import type { TablesUpdate } from '@/integrations/supabase/types';
 import { toast } from 'sonner';
 import { leadsAPI } from '@/lib/api/leads';
 import { useCreateCommissionOnWon, useCreateReceivableOnWon } from './use-create-commission';
-import { notifyLeadWon } from './use-lead-notifications';
 import { lostReasonSchema } from '@/lib/validation';
 
 interface ChangeDealStatusParams {
@@ -89,19 +88,6 @@ export function useDealStatusChange() {
             : undefined,
         });
 
-        if (variables.userId) {
-          try {
-            await notifyLeadWon({
-              leadId: variables.leadId,
-              leadName: variables.leadName,
-              organizationId: variables.organizationId,
-              organizationName: variables.organizationName || 'Organizacao',
-              assignedUserId: variables.userId,
-            });
-          } catch (err) {
-            console.error('Lead won notification failed:', err);
-          }
-        }
       } else if (newStatus === 'lost') {
         toast.info('Lead marcado como perdido');
       } else {

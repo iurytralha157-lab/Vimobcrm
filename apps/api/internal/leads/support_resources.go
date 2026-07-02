@@ -1,15 +1,18 @@
 package leads
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
@@ -276,6 +279,52 @@ type CreateNotificationRequest struct {
 	Type           string         `json:"type"`
 	LeadID         *string        `json:"lead_id"`
 	Metadata       map[string]any `json:"metadata"`
+}
+
+type DispatchNotificationRequest struct {
+	EventKey       string         `json:"event_key"`
+	TemplateSlug   string         `json:"template_slug"`
+	OrganizationID string         `json:"organization_id"`
+	UserID         string         `json:"user_id"`
+	Recipient      string         `json:"recipient"`
+	Title          string         `json:"title"`
+	Content        string         `json:"content"`
+	Variables      map[string]any `json:"variables"`
+	LeadID         *string        `json:"lead_id"`
+	DedupeKey      string         `json:"dedupe_key"`
+	IsTest         bool           `json:"is_test"`
+	Channels       []string       `json:"channels"`
+}
+
+type DispatchNotificationResult struct {
+	Success      bool                   `json:"success"`
+	Notification *Notification          `json:"notification,omitempty"`
+	WhatsApp     DispatchWhatsAppResult `json:"whatsapp"`
+	Error        string                 `json:"error,omitempty"`
+}
+
+type DispatchWhatsAppResult struct {
+	Enabled   bool   `json:"enabled"`
+	Attempted bool   `json:"attempted"`
+	OK        bool   `json:"ok"`
+	Status    int    `json:"status,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+type notificationRecipient struct {
+	ID       string
+	Name     string
+	Email    string
+	WhatsApp string
+}
+
+type notificationWhatsAppConfig struct {
+	Enabled        bool              `json:"enabled"`
+	WebhookURL     string            `json:"webhook_url"`
+	URL            string            `json:"url"`
+	Method         string            `json:"method"`
+	Headers        map[string]string `json:"headers"`
+	TimeoutSeconds int               `json:"timeout_seconds"`
 }
 
 type LeadVisibility struct {
@@ -1202,6 +1251,393 @@ func (repo Repository) CreateNotification(ctx context.Context, tenantContext ten
 	`, userID, organizationID, title, optionalStringFromPointer(request.Content, 1_000), notificationType, request.LeadID, jsonb(metadata)))
 }
 
+func (repo Repository) DispatchNotification(ctx context.Context, tenantContext tenant.Context, request DispatchNotificationRequest) (DispatchNotificationResult, error) {
+	if request.OrganizationID != "" && request.OrganizationID != tenantContext.OrganizationID {
+		return DispatchNotificationResult{}, tenant.ErrOrganizationAccessDenied
+	}
+
+	eventKey := trimMax(firstNotificationText(request.EventKey, request.TemplateSlug), 80)
+	if eventKey == "" {
+		return DispatchNotificationResult{}, fmt.Errorf("%w: event_key is required", ErrInvalidInput)
+	}
+
+	userID := strings.TrimSpace(request.UserID)
+	if userID == "" {
+		userID = tenantContext.UserID
+	}
+	normalizedUserID, ok := normalizeUUID(userID)
+	if !ok {
+		return DispatchNotificationResult{}, fmt.Errorf("%w: user_id is invalid", ErrInvalidInput)
+	}
+	if normalizedUserID != tenantContext.UserID && !canDispatchNotifications(tenantContext) {
+		return DispatchNotificationResult{}, tenant.ErrOrganizationAccessDenied
+	}
+
+	recipient, err := repo.getNotificationRecipient(ctx, tenantContext.OrganizationID, normalizedUserID)
+	if err != nil {
+		return DispatchNotificationResult{}, err
+	}
+
+	variables := request.Variables
+	if variables == nil {
+		variables = map[string]any{}
+	}
+	request.Variables = variables
+	title, content, notificationType := buildDispatchNotificationContent(eventKey, request, variables)
+	if title == "" {
+		return DispatchNotificationResult{}, fmt.Errorf("%w: notification title is required", ErrInvalidInput)
+	}
+
+	dedupeKey := trimMax(request.DedupeKey, 180)
+	if dedupeKey != "" {
+		if existing, found, err := repo.findRecentNotificationByDedupeKey(ctx, tenantContext.OrganizationID, normalizedUserID, dedupeKey); err != nil {
+			return DispatchNotificationResult{}, err
+		} else if found {
+			whatsAppResult, err := repo.dispatchWhatsAppNotification(ctx, tenantContext, request, recipient, title, content, eventKey, dedupeKey)
+			dispatchError := ""
+			if err != nil {
+				whatsAppResult.Error = err.Error()
+				dispatchError = err.Error()
+			}
+			return DispatchNotificationResult{
+				Success:      dispatchError == "",
+				Notification: &existing,
+				WhatsApp:     whatsAppResult,
+				Error:        dispatchError,
+			}, nil
+		}
+	}
+
+	metadata := map[string]any{
+		"event_key": eventKey,
+		"variables": variables,
+		"is_test":   request.IsTest,
+	}
+	if dedupeKey != "" {
+		metadata["dedupe_key"] = dedupeKey
+	}
+	if request.Recipient != "" {
+		metadata["recipient"] = trimMax(request.Recipient, 180)
+	}
+
+	notification, err := repo.createNotificationRow(ctx, tenantContext.OrganizationID, normalizedUserID, title, content, notificationType, request.LeadID, metadata)
+	if err != nil {
+		return DispatchNotificationResult{}, err
+	}
+
+	whatsAppResult, err := repo.dispatchWhatsAppNotification(ctx, tenantContext, request, recipient, title, content, eventKey, dedupeKey)
+	dispatchError := ""
+	if err != nil {
+		whatsAppResult.Error = err.Error()
+		dispatchError = err.Error()
+	}
+
+	return DispatchNotificationResult{
+		Success:      dispatchError == "",
+		Notification: &notification,
+		WhatsApp:     whatsAppResult,
+		Error:        dispatchError,
+	}, nil
+}
+
+func (repo Repository) createNotificationRow(ctx context.Context, organizationID string, userID string, title string, content string, notificationType string, leadID *string, metadata map[string]any) (Notification, error) {
+	return scanNotification(repo.db.Pool().QueryRow(ctx, `
+		insert into public.notifications (user_id, organization_id, title, content, type, lead_id, is_read, metadata)
+		values ($1::uuid, $2::uuid, $3, $4, $5, $6, false, $7::jsonb)
+		returning id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, coalesce(metadata, '{}'::jsonb)::text, created_at
+	`, userID, organizationID, title, optionalString(content, 1_000), notificationType, leadID, jsonb(metadata)))
+}
+
+func (repo Repository) findRecentNotificationByDedupeKey(ctx context.Context, organizationID string, userID string, dedupeKey string) (Notification, bool, error) {
+	notification, err := scanNotification(repo.db.Pool().QueryRow(ctx, `
+		select id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, coalesce(metadata, '{}'::jsonb)::text, created_at
+		from public.notifications
+		where organization_id = $1::uuid
+		  and user_id = $2::uuid
+		  and metadata->>'dedupe_key' = $3
+		  and created_at >= now() - interval '6 hours'
+		order by created_at desc
+		limit 1
+	`, organizationID, userID, dedupeKey))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Notification{}, false, nil
+	}
+	if err != nil {
+		return Notification{}, false, err
+	}
+	return notification, true, nil
+}
+
+func (repo Repository) getNotificationRecipient(ctx context.Context, organizationID string, userID string) (notificationRecipient, error) {
+	var recipient notificationRecipient
+	var name, email, whatsapp pgtype.Text
+	err := repo.db.Pool().QueryRow(ctx, `
+		select u.id::text, u.name, u.email, u.whatsapp
+		from public.users u
+		left join public.organization_members om
+		  on om.user_id = u.id
+		 and om.organization_id = $1::uuid
+		where u.id = $2::uuid
+		  and (u.organization_id = $1::uuid or om.id is not null)
+		limit 1
+	`, organizationID, userID).Scan(&recipient.ID, &name, &email, &whatsapp)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return notificationRecipient{}, ErrInvalidReference
+	}
+	if err != nil {
+		return notificationRecipient{}, err
+	}
+	recipient.Name = textValue(name)
+	recipient.Email = textValue(email)
+	recipient.WhatsApp = textValue(whatsapp)
+	return recipient, nil
+}
+
+func (repo Repository) dispatchWhatsAppNotification(ctx context.Context, tenantContext tenant.Context, request DispatchNotificationRequest, recipient notificationRecipient, title string, content string, eventKey string, dedupeKey string) (DispatchWhatsAppResult, error) {
+	config, err := repo.getNotificationWhatsAppConfig(ctx)
+	if err != nil {
+		return DispatchWhatsAppResult{}, err
+	}
+	result := DispatchWhatsAppResult{Enabled: config.Enabled}
+	webhookURL := strings.TrimSpace(firstNotificationText(config.WebhookURL, config.URL))
+	if !config.Enabled || webhookURL == "" || !requestWantsChannel(request.Channels, "whatsapp") {
+		return result, nil
+	}
+
+	to := strings.TrimSpace(request.Recipient)
+	if to == "" || strings.Contains(to, "@") {
+		to = recipient.WhatsApp
+	}
+	if strings.TrimSpace(to) == "" {
+		result.Attempted = false
+		result.Error = "recipient_whatsapp_missing"
+		return result, nil
+	}
+
+	method := strings.ToUpper(strings.TrimSpace(config.Method))
+	if method == "" {
+		method = http.MethodPost
+	}
+	timeout := time.Duration(config.TimeoutSeconds) * time.Second
+	if timeout <= 0 || timeout > 60*time.Second {
+		timeout = 10 * time.Second
+	}
+
+	payload := map[string]any{
+		"event_key":       eventKey,
+		"organization_id": tenantContext.OrganizationID,
+		"user_id":         recipient.ID,
+		"recipient":       to,
+		"notification": map[string]any{
+			"title":      title,
+			"content":    content,
+			"type":       notificationTypeForEvent(eventKey),
+			"lead_id":    request.LeadID,
+			"dedupe_key": dedupeKey,
+			"is_test":    request.IsTest,
+		},
+		"user": map[string]any{
+			"id":       recipient.ID,
+			"name":     recipient.Name,
+			"email":    recipient.Email,
+			"whatsapp": recipient.WhatsApp,
+		},
+		"variables": request.Variables,
+	}
+	rawPayload, err := json.Marshal(payload)
+	if err != nil {
+		return result, err
+	}
+
+	httpRequest, err := http.NewRequestWithContext(ctx, method, webhookURL, bytes.NewReader(rawPayload))
+	if err != nil {
+		return result, err
+	}
+	httpRequest.Header.Set("Content-Type", "application/json")
+	for key, value := range config.Headers {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key != "" && value != "" {
+			httpRequest.Header.Set(key, value)
+		}
+	}
+
+	result.Attempted = true
+	client := &http.Client{Timeout: timeout}
+	response, err := client.Do(httpRequest)
+	if err != nil {
+		return result, err
+	}
+	defer response.Body.Close()
+	result.Status = response.StatusCode
+	result.OK = response.StatusCode >= 200 && response.StatusCode < 300
+	if !result.OK {
+		result.Error = fmt.Sprintf("whatsapp_webhook_status_%d", response.StatusCode)
+	}
+	return result, nil
+}
+
+func (repo Repository) getNotificationWhatsAppConfig(ctx context.Context) (notificationWhatsAppConfig, error) {
+	var raw string
+	err := repo.db.Pool().QueryRow(ctx, `
+		select coalesce(value->'notification_dispatch'->'whatsapp', '{}'::jsonb)::text
+		from public.system_settings
+		order by updated_at desc nulls last, created_at desc nulls last
+		limit 1
+	`).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) || isUndefinedTableError(err) {
+		return notificationWhatsAppConfig{}, nil
+	}
+	if err != nil {
+		return notificationWhatsAppConfig{}, err
+	}
+	var config notificationWhatsAppConfig
+	if strings.TrimSpace(raw) != "" {
+		_ = json.Unmarshal([]byte(raw), &config)
+	}
+	return config, nil
+}
+
+func buildDispatchNotificationContent(eventKey string, request DispatchNotificationRequest, variables map[string]any) (string, string, string) {
+	title := trimMax(firstNotificationText(request.Title, stringFromMap(variables, "title")), 180)
+	content := trimMax(firstNotificationText(request.Content, stringFromMap(variables, "message"), stringFromMap(variables, "body")), 1_000)
+
+	switch eventKey {
+	case "new_lead_received":
+		if title == "" {
+			title = "Novo lead recebido"
+		}
+		if content == "" {
+			leadName := firstNotificationText(stringFromMap(variables, "lead_name"), stringFromMap(variables, "leadName"), "Lead")
+			source := stringFromMap(variables, "source")
+			content = leadName + " foi atribuido a voce"
+			if source != "" {
+				content += " (origem: " + source + ")"
+			}
+		}
+	case "deal_won":
+		if title == "" {
+			title = "Lead ganho"
+		}
+		if content == "" {
+			leadName := firstNotificationText(stringFromMap(variables, "lead_name"), stringFromMap(variables, "leadName"), "Lead")
+			content = "Venda concluida para " + leadName
+		}
+	case "lead_reentry":
+		if title == "" {
+			title = "Lead retornou"
+		}
+		if content == "" {
+			leadName := firstNotificationText(stringFromMap(variables, "lead_name"), stringFromMap(variables, "leadName"), "Lead")
+			content = leadName + " teve uma nova entrada"
+		}
+	case "update_phone_reminder":
+		if title == "" {
+			title = "Complete seu perfil"
+		}
+		if content == "" {
+			content = "Adicione seu WhatsApp para receber avisos importantes."
+		}
+	case "gamification_update":
+		if title == "" {
+			title = "Atualizacao de gamificacao"
+		}
+		if content == "" {
+			content = "Sua pontuacao foi atualizada."
+		}
+	case "whatsapp_disconnected":
+		if title == "" {
+			title = "WhatsApp desconectado"
+		}
+		if content == "" {
+			sessionName := firstNotificationText(stringFromMap(variables, "session_name"), stringFromMap(variables, "display_name"), "Sessao")
+			content = sessionName + " foi desconectada."
+		}
+	case "test_push":
+		if title == "" {
+			title = "Teste de notificacao"
+		}
+		if content == "" {
+			content = "Se voce recebeu este aviso, o dispatcher do backend esta funcionando."
+		}
+	default:
+		if title == "" {
+			title = "Notificacao Vimob"
+		}
+		if content == "" {
+			content = "Voce tem uma nova notificacao."
+		}
+	}
+
+	return title, content, notificationTypeForEvent(eventKey)
+}
+
+func notificationTypeForEvent(eventKey string) string {
+	switch eventKey {
+	case "new_lead_received", "lead_reentry", "lead_duplicate_existing":
+		return "lead"
+	case "deal_won":
+		return "deal_won"
+	case "gamification_update":
+		return "gamification"
+	case "whatsapp_disconnected":
+		return "whatsapp"
+	case "test_push":
+		return "test"
+	default:
+		return "info"
+	}
+}
+
+func requestWantsChannel(channels []string, channel string) bool {
+	if len(channels) == 0 {
+		return true
+	}
+	for _, item := range channels {
+		if strings.EqualFold(strings.TrimSpace(item), channel) {
+			return true
+		}
+	}
+	return false
+}
+
+func canDispatchNotifications(tenantContext tenant.Context) bool {
+	return tenantContext.IsSuperAdmin ||
+		canManageLeads(tenantContext) ||
+		tenantContext.HasPermission("settings_manage") ||
+		tenantContext.HasPermission("whatsapp_manage") ||
+		tenantContext.HasPermission("users_manage")
+}
+
+func firstNotificationText(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func stringFromMap(values map[string]any, key string) string {
+	value, ok := values[key]
+	if !ok || value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	default:
+		return strings.TrimSpace(fmt.Sprint(typed))
+	}
+}
+
+func isUndefinedTableError(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42P01"
+}
+
 func (repo Repository) GetLeadVisibility(ctx context.Context, tenantContext tenant.Context) (LeadVisibility, error) {
 	if canViewAllLeads(tenantContext) {
 		return LeadVisibility{CanViewAll: true}, nil
@@ -1302,11 +1738,13 @@ func buildContactWhere(tenantContext tenant.Context, filter ContactListFilter) (
 	if filter.DealStatus != "" {
 		add("l.deal_status = $%d", filter.DealStatus)
 	}
-	if filter.CreatedFrom != "" {
-		add("l.created_at >= $%d::timestamptz", filter.CreatedFrom)
-	}
-	if filter.CreatedTo != "" {
-		add("l.created_at <= $%d::timestamptz", filter.CreatedTo)
+	if filter.Search == "" {
+		if filter.CreatedFrom != "" {
+			add("l.created_at >= $%d::timestamptz", filter.CreatedFrom)
+		}
+		if filter.CreatedTo != "" {
+			add("l.created_at <= $%d::timestamptz", filter.CreatedTo)
+		}
 	}
 	addMeta := func(columnID string, columnName string, value string) {
 		if value == "" {

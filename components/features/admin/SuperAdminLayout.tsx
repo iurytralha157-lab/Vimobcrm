@@ -46,7 +46,7 @@ import { cn } from "@/lib/utils";
 
 const DEFAULT_BRAND_LOGO_DARK = "/images/logo-white.png";
 const DEFAULT_BRAND_LOGO_LIGHT = "/images/logo-black.png";
-const DEFAULT_BRAND_ICON = "/favicon.ico";
+const DEFAULT_BRAND_ICON = "/icons/favicon-laranja.png";
 const SIDEBAR_BACKGROUND = "var(--app-sidebar)";
 const SIDEBAR_ICON_STROKE = 1.6;
 const SIDEBAR_CHEVRON_STROKE = 1.7;

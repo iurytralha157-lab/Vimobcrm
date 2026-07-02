@@ -156,7 +156,7 @@ export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProp
       </CardHeader>
       <CardContent className="pb-3 flex-1 flex flex-col px-0">
         {/* Chart */}
-        <div className="dashboard-recharts-focusless relative min-h-[260px] w-full flex-1">
+        <div className="dashboard-recharts-focusless relative min-h-[200px] w-full flex-1">
           <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} onResize={handleResize}>
             <AreaChart
               data={data}

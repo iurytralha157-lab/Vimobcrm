@@ -47,8 +47,10 @@ import {
   getSystemModuleLabel,
   type SystemModuleKey,
 } from "@/config/constants";
+import { useAuth } from "@/contexts/AuthContext";
 import { useAdminPlans, type SubscriptionPlan } from "@/hooks/use-admin-plans";
 import { adminAPI } from "@/lib/api/admin";
+import { notificationsAPI } from "@/lib/api/notifications";
 import { cn } from "@/lib/utils";
 
 type AdminRecord = Record<string, unknown>;
@@ -65,6 +67,14 @@ type OrganizationPaymentRow = AdminRecord & {
   invoice_url?: string;
 };
 type OrganizationUpdatePayload = AdminRecord;
+
+type NotificationDispatchForm = {
+  enabled: boolean;
+  webhookUrl: string;
+  headerName: string;
+  headerValue: string;
+  timeoutSeconds: number;
+};
 
 type SafeQueryResult<T> = {
   data: T;
@@ -475,6 +485,45 @@ async function countAdminTable(table: string) {
 
 function useAdminRows(table: string, limit = 60) {
   return useSafeAdminQuery(["admin-rows", table, limit], () => selectAdminRows(table, limit), []);
+}
+
+function asRecord(value: unknown): AdminRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as AdminRecord : {};
+}
+
+function getNotificationDispatchForm(row: AdminRecord | undefined): NotificationDispatchForm {
+  const value = asRecord(row?.value);
+  const dispatch = asRecord(value.notification_dispatch);
+  const whatsapp = asRecord(dispatch.whatsapp);
+  const headers = asRecord(whatsapp.headers);
+  const headerEntries = Object.entries(headers).filter(([, item]) => typeof item === "string" && item.trim() !== "");
+  const [headerName = "", headerValue = ""] = headerEntries[0] || [];
+
+  return {
+    enabled: whatsapp.enabled === true,
+    webhookUrl: typeof whatsapp.webhook_url === "string" ? whatsapp.webhook_url : "",
+    headerName,
+    headerValue: typeof headerValue === "string" ? headerValue : "",
+    timeoutSeconds: typeof whatsapp.timeout_seconds === "number" ? whatsapp.timeout_seconds : 10,
+  };
+}
+
+function buildNotificationDispatchValue(row: AdminRecord | undefined, form: NotificationDispatchForm) {
+  const value = { ...asRecord(row?.value) };
+  const dispatch = { ...asRecord(value.notification_dispatch) };
+  const headers = form.headerName.trim() && form.headerValue.trim()
+    ? { [form.headerName.trim()]: form.headerValue.trim() }
+    : {};
+
+  dispatch.whatsapp = {
+    enabled: form.enabled,
+    webhook_url: form.webhookUrl.trim(),
+    method: "POST",
+    headers,
+    timeout_seconds: Math.max(3, Math.min(Number(form.timeoutSeconds) || 10, 60)),
+  };
+  value.notification_dispatch = dispatch;
+  return value;
 }
 
 function useAdminOrganizationModules(organizationId?: string) {
@@ -1877,6 +1926,160 @@ function AiContent() {
   return <AiAgentsContent />;
 }
 
+function NotificationDispatcherSettings({ rows, isLoading }: { rows: AdminRecord[]; isLoading: boolean }) {
+  const { profile, organization } = useAuth();
+  const queryClient = useQueryClient();
+  const settingsRow = rows.find((row) => getString(row, "key") === "platform") || rows[0];
+  const organizationId = profile?.organization_id || organization?.id || "";
+  const userId = profile?.id || "";
+  const settingsForm = useMemo(() => getNotificationDispatchForm(settingsRow), [settingsRow]);
+  const [form, setForm] = useState<NotificationDispatchForm>(() => settingsForm);
+
+  useEffect(() => {
+    queueMicrotask(() => setForm(settingsForm));
+  }, [settingsForm]);
+
+  const updateForm = <K extends keyof NotificationDispatchForm>(key: K, value: NotificationDispatchForm[K]) => {
+    setForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const value = buildNotificationDispatchValue(settingsRow, form);
+      if (settingsRow?.id) {
+        return adminAPI.updateTableRow("system_settings", String(settingsRow.id), {
+          value,
+          description: getString(settingsRow, "description", "Configuracoes globais da plataforma"),
+        });
+      }
+      return adminAPI.createTableRow("system_settings", {
+        key: "platform",
+        description: "Configuracoes globais da plataforma",
+        value,
+      });
+    },
+    onSuccess: () => {
+      toast.success("Disparador de WhatsApp salvo");
+      queryClient.invalidateQueries({ queryKey: ["admin-rows", "system_settings"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Nao foi possivel salvar o disparador.");
+    },
+  });
+
+  const testMutation = useMutation({
+    mutationFn: async () => notificationsAPI.dispatch({
+      eventKey: "test_push",
+      organizationId,
+      userId,
+      title: "Teste do dispatcher",
+      content: "Teste enviado pelo superadmin.",
+      variables: { source: "superadmin" },
+      channels: ["system", "whatsapp"],
+      isTest: true,
+    }),
+    onSuccess: (result) => {
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+      if (result.whatsapp?.enabled && result.whatsapp?.attempted && !result.whatsapp.ok) {
+        toast.warning(`Notificacao interna criada; WhatsApp retornou ${result.whatsapp.status || result.whatsapp.error || "erro"}.`);
+        return;
+      }
+      toast.success("Teste enviado pelo backend");
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Nao foi possivel testar o dispatcher.");
+    },
+  });
+
+  return (
+    <div className="app-card p-4">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold">Disparador WhatsApp</h2>
+          <p className="text-sm text-muted-foreground">Requisicao global chamada pelo backend para avisos no WhatsApp.</p>
+        </div>
+        <Badge className={cn("border-0", form.enabled ? "bg-emerald-500/12 text-emerald-400" : "bg-white/8 text-muted-foreground")}>
+          {form.enabled ? "Ativo" : "Inativo"}
+        </Badge>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-[1fr_180px]">
+        <label className="space-y-1.5">
+          <span className="text-xs font-medium text-muted-foreground">URL da requisicao</span>
+          <Input
+            value={form.webhookUrl}
+            onChange={(event) => updateForm("webhookUrl", event.target.value)}
+            placeholder="https://..."
+            className="border-0 bg-[var(--app-surface-soft)]"
+          />
+        </label>
+        <label className="space-y-1.5">
+          <span className="text-xs font-medium text-muted-foreground">Timeout</span>
+          <Input
+            type="number"
+            min={3}
+            max={60}
+            value={form.timeoutSeconds}
+            onChange={(event) => updateForm("timeoutSeconds", Number(event.target.value))}
+            className="border-0 bg-[var(--app-surface-soft)]"
+          />
+        </label>
+      </div>
+
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <label className="space-y-1.5">
+          <span className="text-xs font-medium text-muted-foreground">Header</span>
+          <Input
+            value={form.headerName}
+            onChange={(event) => updateForm("headerName", event.target.value)}
+            placeholder="Authorization"
+            className="border-0 bg-[var(--app-surface-soft)]"
+          />
+        </label>
+        <label className="space-y-1.5">
+          <span className="text-xs font-medium text-muted-foreground">Valor</span>
+          <Input
+            type="password"
+            value={form.headerValue}
+            onChange={(event) => updateForm("headerValue", event.target.value)}
+            placeholder="Bearer ..."
+            className="border-0 bg-[var(--app-surface-soft)]"
+          />
+        </label>
+      </div>
+
+      <div className="mt-4 flex flex-col gap-3 border-t border-white/[0.045] pt-4 sm:flex-row sm:items-center sm:justify-between">
+        <label className="flex items-center gap-3 text-sm">
+          <Switch checked={form.enabled} onCheckedChange={(checked) => updateForm("enabled", checked)} />
+          Enviar WhatsApp pelo backend
+        </label>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            className="border-0 bg-[var(--app-surface-soft)]"
+            onClick={() => testMutation.mutate()}
+            disabled={isLoading || saveMutation.isPending || testMutation.isPending || !settingsRow?.id || !organizationId || !userId}
+          >
+            {testMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Testar
+          </Button>
+          <Button
+            className="bg-[#FF4529] text-white hover:bg-[#FF4529]/90"
+            onClick={() => saveMutation.mutate()}
+            disabled={isLoading || saveMutation.isPending || testMutation.isPending}
+          >
+            {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Salvar
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsContent({ technical = false }: { technical?: boolean }) {
   const settings = useAdminRows("system_settings", 20);
   const rows = settings.data?.data || [];
@@ -1893,6 +2096,7 @@ function SettingsContent({ technical = false }: { technical?: boolean }) {
         <KpiCard title="Manutenção" value={getString(first, "maintenance_mode", "Não")} icon={AlertTriangle} />
         <KpiCard title="Última atualização" value={formatDate(first?.updated_at)} icon={Activity} />
       </div>
+      {technical ? <NotificationDispatcherSettings rows={rows} isLoading={settings.isPending} /> : null}
       <GenericRowsPreview
         title={technical ? "Configurações técnicas" : "Configurações administrativas"}
         rows={rows}
