@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import NextImage from 'next/image';
-import { X, Bell, Share2 } from 'lucide-react';
+import { X, Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useWebPush } from '@/hooks/use-web-push';
 import { useAuth } from '@/contexts/AuthContext';
@@ -56,6 +56,13 @@ export function WebPushPrompt() {
     }
 
     if (!user?.id) {
+      hidePrompt();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (showIosInstallPrompt) {
       hidePrompt();
       return () => {
         cancelled = true;
@@ -131,36 +138,34 @@ export function WebPushPrompt() {
     setShowPrompt(false);
   };
 
-  const title = showIosInstallPrompt ? 'Instale o Vimob no iPhone' : 'Ativar notificacoes';
-  const description = showIosInstallPrompt
-    ? 'No Safari, toque em compartilhar e depois em Adicionar a Tela de Inicio. Abra pelo icone para ativar push.'
-    : 'Receba alertas de novos leads e mensagens';
+  const title = 'Ativar notificacoes';
+  const description = 'Receba alertas de novos leads e mensagens';
 
   if (!user?.id || !showPrompt) {
     return null;
   }
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 p-4 bg-[var(--app-surface)] border-t border-white/[0.055] shadow-lg animate-in slide-in-from-bottom duration-300">
-      <div className="max-w-lg mx-auto flex items-center gap-4">
-        <div className="flex-shrink-0 w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center overflow-hidden">
+    <div className="fixed inset-x-0 bottom-0 z-50 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] animate-in slide-in-from-bottom duration-300 sm:p-4 sm:pb-4">
+      <div className="mx-auto flex w-full max-w-lg items-center gap-3 rounded-[14px] border border-white/[0.055] bg-[var(--app-surface-solid)] p-3 shadow-[0_18px_44px_rgba(0,0,0,0.38)] backdrop-blur-xl">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-primary/10 sm:h-12 sm:w-12">
           <NextImage src="/icons/apple-touch-icon.png" alt="App Icon" width={32} height={32} className="object-contain" />
         </div>
 
-        <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-foreground text-sm">
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-sm font-semibold text-foreground">
             {title}
           </h3>
-          <p className="text-xs text-muted-foreground leading-snug">
+          <p className="max-h-[2.35em] overflow-hidden text-xs leading-snug text-muted-foreground sm:max-h-none sm:truncate">
             {description}
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1.5">
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className="h-9 w-9 rounded-[8px]"
             onClick={handleDismiss}
             disabled={isSubscribing}
           >
@@ -168,12 +173,12 @@ export function WebPushPrompt() {
           </Button>
           <Button
             size="sm"
-            className="gap-1.5"
-            onClick={showIosInstallPrompt ? handleDismiss : handleEnable}
-            disabled={!showIosInstallPrompt && isSubscribing}
+            className="h-10 gap-1.5 rounded-[8px] px-3 text-sm"
+            onClick={handleEnable}
+            disabled={isSubscribing}
           >
-            {showIosInstallPrompt ? <Share2 className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
-            {showIosInstallPrompt ? 'Entendi' : isSubscribing ? 'Ativando...' : 'Ativar'}
+            <Bell className="h-4 w-4" />
+            {isSubscribing ? 'Ativando...' : 'Ativar'}
           </Button>
         </div>
       </div>

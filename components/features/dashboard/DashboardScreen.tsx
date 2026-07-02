@@ -740,21 +740,21 @@ function LostDealsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="app-card max-h-[80vh] w-[92vw] max-w-[80vw] overflow-hidden p-0 shadow-2xl backdrop-blur-xl sm:rounded-xl">
-        <DialogHeader className="px-5 pb-3 pt-5">
-          <DialogTitle className="flex items-center gap-2 text-base font-semibold">
-            <XCircle className="h-5 w-5 text-destructive" />
-            Perdidos - Motivos de Perda
+      <DialogContent className="app-card max-h-[82dvh] w-[calc(100vw-24px)] max-w-[980px] overflow-hidden rounded-[12px] p-0 shadow-2xl backdrop-blur-xl sm:w-[92vw] sm:rounded-xl">
+        <DialogHeader className="px-4 pb-3 pt-4 text-left sm:px-5 sm:pt-5">
+          <DialogTitle className="flex items-start gap-2 pr-8 text-[15px] font-semibold leading-snug sm:items-center sm:text-base">
+            <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive sm:mt-0" />
+            <span>Perdidos - Motivos de Perda</span>
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-xs leading-5 sm:text-sm">
             {totalLost} perdidos em {periodLabel.toLowerCase()}
             {topReason ? ` | principal motivo: ${topReason.label}` : ""}
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[calc(80vh-92px)]">
-          <div className="space-y-5 px-5 pb-5">
-            <div className="grid gap-3 md:grid-cols-4">
+        <ScrollArea className="max-h-[calc(82dvh-88px)] overflow-x-hidden">
+          <div className="space-y-4 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:space-y-5 sm:px-5 sm:pb-5">
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
               <div className="app-card-soft p-3">
                 <p className="text-xs text-muted-foreground">Perdidos</p>
                 <p className="mt-1 text-2xl font-bold text-destructive">{totalLost}</p>
@@ -773,13 +773,13 @@ function LostDealsDialog({
               </div>
             </div>
 
-            <div className="app-card-soft p-4">
+            <div className="app-card-soft overflow-hidden p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
+                <div className="min-w-0">
                   <h3 className="text-sm font-semibold">Distribuição dos motivos</h3>
                   <p className="text-xs text-muted-foreground">Maiores causas de perda no período filtrado.</p>
                 </div>
-                <PieChartIcon className="h-4 w-4 text-destructive" />
+                <PieChartIcon className="h-4 w-4 shrink-0 text-destructive" />
               </div>
 
               {reasonBuckets.length === 0 ? (
@@ -787,8 +787,8 @@ function LostDealsDialog({
                   Nenhuma perda registrada nesse período.
                 </div>
               ) : (
-                <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
-                  <div className="dashboard-recharts-focusless relative mx-auto h-[240px] w-full max-w-[280px]">
+                <div className="grid min-w-0 gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
+                  <div className="dashboard-recharts-focusless relative mx-auto h-[210px] w-full max-w-[240px] sm:h-[240px] sm:max-w-[280px]">
                     <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                       <PieChart>
                         <Pie
@@ -820,12 +820,12 @@ function LostDealsDialog({
                     </div>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="min-w-0 space-y-3">
                     {reasonBuckets.map((bucket) => (
-                      <div key={bucket.key} className="grid grid-cols-[1fr_58px_64px] items-center gap-3 text-xs">
-                        <div className="min-w-0">
+                      <div key={bucket.key} className="flex min-w-0 items-center gap-3 text-xs">
+                        <div className="min-w-0 flex-1">
                           <div className="mb-1 flex items-center gap-2">
-                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: bucket.color }} />
+                            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: bucket.color }} />
                             <span className="truncate font-semibold">{bucket.label}</span>
                           </div>
                           <div className="h-2 overflow-hidden rounded-full bg-white/[0.045]">
@@ -835,10 +835,12 @@ function LostDealsDialog({
                             />
                           </div>
                         </div>
-                        <span className="text-right font-semibold">{bucket.count}</span>
-                        <span className="text-right font-semibold" style={{ color: bucket.color }}>
-                          {formatKPIValue(bucket.percentage || 0, "percent")}
-                        </span>
+                        <div className="flex min-w-[76px] shrink-0 flex-col items-end gap-0.5 sm:min-w-[118px] sm:flex-row sm:items-center sm:justify-end sm:gap-3">
+                          <span className="font-semibold tabular-nums">{bucket.count}</span>
+                          <span className="font-semibold tabular-nums" style={{ color: bucket.color }}>
+                            {formatKPIValue(bucket.percentage || 0, "percent")}
+                          </span>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -846,10 +848,10 @@ function LostDealsDialog({
               )}
             </div>
 
-            <div className="app-card-soft p-4">
-              <div className="mb-3 flex items-center justify-between">
+            <div className="app-card-soft overflow-hidden p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold">Perdidos do período</h3>
-                <span className="text-xs text-muted-foreground">{lostDeals.length} registros</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{lostDeals.length} registros</span>
               </div>
 
               {lostDeals.length === 0 ? (
@@ -872,9 +874,9 @@ function LostDealsDialog({
                       <div className="min-w-0">
                         <p className="text-xs text-muted-foreground">Motivo</p>
                         <p className="truncate font-medium text-destructive">{deal.lostReasonGroup}</p>
-                        <p className="truncate text-xs text-muted-foreground">{deal.lostReason}</p>
+                        <p className="break-words text-xs text-muted-foreground">{deal.lostReason}</p>
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <p className="text-xs text-muted-foreground">Responsável</p>
                         <p className="truncate font-medium">{deal.assignedUserName}</p>
                       </div>
@@ -924,21 +926,21 @@ function WonDealsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="app-card max-h-[80vh] w-[92vw] max-w-[80vw] overflow-hidden p-0 shadow-2xl backdrop-blur-xl sm:rounded-xl">
-        <DialogHeader className="px-5 pb-3 pt-5">
-          <DialogTitle className="flex items-center gap-2 text-base font-semibold">
-            <Trophy className="h-5 w-5 text-emerald-500" />
-            Ganhos - Tempo de Conversão
+      <DialogContent className="app-card max-h-[82dvh] w-[calc(100vw-24px)] max-w-[980px] overflow-hidden rounded-[12px] p-0 shadow-2xl backdrop-blur-xl sm:w-[92vw] sm:rounded-xl">
+        <DialogHeader className="px-4 pb-3 pt-4 text-left sm:px-5 sm:pt-5">
+          <DialogTitle className="flex items-start gap-2 pr-8 text-[15px] font-semibold leading-snug sm:items-center sm:text-base">
+            <Trophy className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500 sm:mt-0" />
+            <span>Ganhos - Tempo de Conversão</span>
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-xs leading-5 sm:text-sm">
             {totalWon} ganhos em {periodLabel.toLowerCase()}
             {averageDays !== null && averageDays !== undefined ? ` | média: ${averageDays} dias` : ""}
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[calc(80vh-92px)]">
-          <div className="space-y-5 px-5 pb-5">
-            <div className="grid gap-3 md:grid-cols-4">
+        <ScrollArea className="max-h-[calc(82dvh-88px)] overflow-x-hidden">
+          <div className="space-y-4 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:space-y-5 sm:px-5 sm:pb-5">
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
               <div className="app-card-soft p-3">
                 <p className="text-xs text-muted-foreground">Ganhos</p>
                 <p className="mt-1 text-2xl font-bold">{totalWon}</p>
@@ -959,13 +961,13 @@ function WonDealsDialog({
               </div>
             </div>
 
-            <div className="app-card-soft p-4">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
+            <div className="app-card-soft overflow-hidden p-4">
+              <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
                   <h3 className="text-sm font-semibold">Tempo até o ganho</h3>
                   <p className="text-xs text-muted-foreground">Distribuição dos fechamentos pela idade do lead.</p>
                 </div>
-                <p className="text-sm font-semibold text-emerald-500">{formatCurrency(totalVgv)}</p>
+                <p className="text-sm font-semibold text-emerald-500 sm:text-right">{formatCurrency(totalVgv)}</p>
               </div>
 
               <div className="space-y-3">
@@ -977,34 +979,40 @@ function WonDealsDialog({
                     <div
                       key={bucket.key}
                       className={cn(
-                        "grid grid-cols-[110px_1fr_58px_58px] items-center gap-3 text-xs sm:grid-cols-[140px_1fr_70px_70px]",
+                        "grid gap-1.5 text-xs sm:grid-cols-[140px_1fr_70px_70px] sm:items-center sm:gap-3",
                         !hasDeals && "opacity-55",
                       )}
                     >
-                      <span className={cn("text-muted-foreground", !hasDeals && "text-[11px]")}>{bucket.label}</span>
-                      <div className={cn("overflow-hidden rounded-full bg-white/[0.045]", hasDeals ? "h-3" : "h-1.5")}>
-                      <div
-                        className="h-full rounded-full transition-all"
-                        style={{
+                      <div className="flex min-w-0 items-center justify-between gap-3 sm:contents">
+                        <span className={cn("min-w-0 truncate text-muted-foreground", !hasDeals && "text-[11px]")}>
+                          {bucket.label}
+                        </span>
+                        <div className="flex shrink-0 items-center gap-3 sm:contents">
+                          <span className={cn("text-right font-semibold tabular-nums", !hasDeals && "text-[11px]")}>{bucket.count}</span>
+                          <span className={cn("text-right font-semibold tabular-nums", !hasDeals && "text-[11px]")} style={{ color: bucket.color }}>
+                            {formatKPIValue(bucket.percentage || 0, "percent")}
+                          </span>
+                        </div>
+                      </div>
+                      <div className={cn("overflow-hidden rounded-full bg-white/[0.045] sm:col-start-2 sm:row-start-1", hasDeals ? "h-2.5 sm:h-3" : "h-1.5")}>
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{
                             width: `${width}%`,
-                          backgroundColor: bucket.color,
-                        }}
-                      />
+                            backgroundColor: bucket.color,
+                          }}
+                        />
+                      </div>
                     </div>
-                      <span className={cn("text-right font-semibold", !hasDeals && "text-[11px]")}>{bucket.count}</span>
-                      <span className={cn("text-right font-semibold", !hasDeals && "text-[11px]")} style={{ color: bucket.color }}>
-                      {formatKPIValue(bucket.percentage || 0, "percent")}
-                    </span>
-                  </div>
                   );
                 })}
               </div>
             </div>
 
-            <div className="app-card-soft p-4">
-              <div className="mb-3 flex items-center justify-between">
+            <div className="app-card-soft overflow-hidden p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold">Ganhos do período</h3>
-                <span className="text-xs text-muted-foreground">{wonDeals.length} registros</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{wonDeals.length} registros</span>
               </div>
 
               {wonDeals.length === 0 ? (
@@ -1024,7 +1032,7 @@ function WonDealsDialog({
                           {sourceLabels[deal.source || ""] || deal.source || "Origem não informada"}
                         </p>
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <p className="text-xs text-muted-foreground">Responsável</p>
                         <p className="truncate font-medium">{deal.assignedUserName}</p>
                       </div>
