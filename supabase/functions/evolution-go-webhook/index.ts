@@ -325,6 +325,7 @@ function getMessageNode(message: any) {
 }
 
 function detectMediaBlock(messageNode: any, message: any) {
+  const info = firstPresent(message.Info, message.info, {});
   const blocks = [
     ["image", messageNode.imageMessage || messageNode.ImageMessage],
     ["video", messageNode.videoMessage || messageNode.VideoMessage],
@@ -337,9 +338,19 @@ function detectMediaBlock(messageNode: any, message: any) {
     if (isRecord(block)) return { type, block };
   }
 
-  const hint = String(firstPresent(message.messageType, message.type, message.mediaType, message.mediatype, message.kind) || "").toLowerCase();
+  const hint = String(firstPresent(
+    message.messageType,
+    message.type,
+    message.mediaType,
+    message.mediatype,
+    message.kind,
+    info.MediaType,
+    info.mediaType,
+    info.MessageType,
+    info.messageType,
+  ) || "").toLowerCase();
   if (["image", "video", "audio", "document", "sticker"].includes(hint)) {
-    return { type: hint, block: message };
+    return { type: hint, block: isRecord(messageNode) ? messageNode : message };
   }
 
   return { type: "", block: null };
@@ -388,11 +399,59 @@ function mediaExtension(mimeType: string, type: string) {
   return map[mime] || (type === "document" ? "bin" : type);
 }
 
+function fallbackMimeType(type: string) {
+  const map: Record<string, string> = {
+    image: "image/jpeg",
+    video: "video/mp4",
+    audio: "audio/ogg",
+    document: "application/octet-stream",
+    sticker: "image/webp",
+  };
+  return map[type] || "application/octet-stream";
+}
+
 function decodeBase64(base64: string) {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
+}
+
+async function fetchInboundMedia(sourceUrl: string | null) {
+  const url = normalizeText(sourceUrl).trim();
+  if (!/^https?:\/\//i.test(url)) return null;
+
+  const headerVariants: HeadersInit[] = [
+    {},
+    EVOLUTION_GO_API_KEY ? { apikey: EVOLUTION_GO_API_KEY, Authorization: `Bearer ${EVOLUTION_GO_API_KEY}` } : {},
+  ];
+
+  for (const headers of headerVariants) {
+    try {
+      const response = await fetch(url, { headers });
+      if (!response.ok) continue;
+
+      const declaredSize = Number(response.headers.get("content-length") || 0);
+      if (declaredSize > 26 * 1024 * 1024) {
+        throw new Error("Arquivo de midia acima do limite de 25MB.");
+      }
+
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.byteLength === 0 || bytes.byteLength > 26 * 1024 * 1024) {
+        throw new Error("Arquivo de midia vazio ou acima do limite de 25MB.");
+      }
+
+      return {
+        bytes,
+        contentType: normalizeText(response.headers.get("content-type")).split(";")[0],
+        size: bytes.byteLength,
+      };
+    } catch (error) {
+      console.warn("Unable to fetch inbound WhatsApp media", { sourceUrl: url, error });
+    }
+  }
+
+  return null;
 }
 
 async function storeInboundMedia(params: {
@@ -402,15 +461,25 @@ async function storeInboundMedia(params: {
   type: string;
   mimeType: string;
   base64: string | null;
+  sourceUrl?: string | null;
 }) {
-  if (!params.base64) return null;
+  const fetched = params.base64
+    ? {
+      bytes: decodeBase64(params.base64),
+      contentType: params.mimeType.split(";")[0] || fallbackMimeType(params.type),
+      size: undefined,
+    }
+    : await fetchInboundMedia(params.sourceUrl || null);
 
-  const extension = mediaExtension(params.mimeType, params.type);
+  if (!fetched) return null;
+
+  const contentType = normalizeText(fetched.contentType) || params.mimeType.split(";")[0] || fallbackMimeType(params.type);
+  const extension = mediaExtension(contentType, params.type);
   const path = `orgs/${params.organizationId}/sessions/${params.sessionId}/incoming/${params.messageId}.${extension}`;
   const { error } = await supabase.storage
     .from("whatsapp-media")
-    .upload(path, decodeBase64(params.base64), {
-      contentType: params.mimeType.split(";")[0] || "application/octet-stream",
+    .upload(path, fetched.bytes, {
+      contentType,
       upsert: true,
     });
 
@@ -476,14 +545,22 @@ function normalizeMessage(message: any) {
     mediaBlock.mimetype,
     mediaBlock.Mimetype,
     mediaBlock.mimeType,
+    messageNode?.mimetype,
+    messageNode?.Mimetype,
+    messageNode?.mimeType,
     message.mimetype,
     message.mimeType,
-  )) || (messageType === "text" ? "" : "application/octet-stream");
+  )) || (messageType === "text" ? "" : fallbackMimeType(messageType));
 
   const mediaUrl = normalizeText(firstPresent(
     mediaBlock.url,
     mediaBlock.URL,
     mediaBlock.mediaUrl,
+    mediaBlock.media_url,
+    messageNode?.url,
+    messageNode?.URL,
+    messageNode?.mediaUrl,
+    messageNode?.media_url,
     message.media_url,
     message.mediaUrl,
     message.url,
@@ -491,9 +568,17 @@ function normalizeMessage(message: any) {
 
   const base64 = normalizeBase64(firstPresent(
     message.base64,
+    message.Base64,
     message.media,
     message.file,
+    messageNode?.base64,
+    messageNode?.Base64,
+    messageNode?.media,
+    messageNode?.file,
+    messageNode?.data?.base64,
+    messageNode?.Data?.Base64,
     mediaBlock.base64,
+    mediaBlock.Base64,
     mediaBlock.media,
     mediaBlock.file,
   ));
@@ -807,7 +892,11 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
     type: message.messageType,
     mimeType: message.mediaMimeType || "application/octet-stream",
     base64: message.mediaBase64,
+    sourceUrl: message.mediaUrl,
   });
+  const isMedia = ["image", "video", "audio", "document", "sticker"].includes(message.messageType);
+  const mediaStatus = isMedia ? (mediaStoragePath ? "ready" : "pending") : null;
+  const mediaError = isMedia && !mediaStoragePath ? "media_download_pending" : null;
 
   const row = {
     organization_id: session.organization_id,
@@ -822,9 +911,8 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
     media_url: message.mediaUrl,
     media_mime_type: message.mediaMimeType,
     media_storage_path: mediaStoragePath,
-    media_status: ["image", "video", "audio", "document", "sticker"].includes(message.messageType)
-      ? (mediaStoragePath || message.mediaUrl ? "ready" : "pending")
-      : null,
+    media_status: mediaStatus,
+    media_error: mediaError,
     media_size: message.mediaSize,
     remote_jid: message.remoteJid,
     sender_jid: message.senderJid,
@@ -848,6 +936,8 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
       .update({
         ...row,
         media_storage_path: mediaStoragePath || undefined,
+        media_status: mediaStatus || undefined,
+        media_error: mediaError || undefined,
         updated_at: undefined,
       })
       .eq("id", existing.id)

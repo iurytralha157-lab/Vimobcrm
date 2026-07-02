@@ -17,8 +17,10 @@ import (
 )
 
 type Repository struct {
-	db      *dbpkg.Postgres
-	storage storageClient
+	db                *dbpkg.Postgres
+	storage           storageClient
+	evolutionGoAPIURL string
+	evolutionGoAPIKey string
 }
 
 type scanner interface {
@@ -65,6 +67,8 @@ func NewRepository(db *dbpkg.Postgres, storageConfigs ...StorageConfig) Reposito
 	repository := Repository{db: db}
 	if len(storageConfigs) > 0 {
 		repository.storage = newStorageClient(storageConfigs[0])
+		repository.evolutionGoAPIURL = strings.TrimRight(strings.TrimSpace(storageConfigs[0].EvolutionGo.APIURL), "/")
+		repository.evolutionGoAPIKey = strings.TrimSpace(storageConfigs[0].EvolutionGo.APIKey)
 	}
 	return repository
 }

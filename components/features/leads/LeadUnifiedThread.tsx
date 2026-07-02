@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { format, isSameDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Bot, Loader2, MessageCircle, Mic, Paperclip, Plus, Send } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Bot, Loader2, MessageCircle, Mic, Paperclip } from 'lucide-react';
+import { MessageBox } from '@/components/ui/message-box';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
 import { useLeadHistory, type UnifiedHistoryEvent } from '@/hooks/use-lead-history';
@@ -497,24 +497,6 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const adjustTextareaHeight = useCallback(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.style.height = '18px';
-    const scrollHeight = textarea.scrollHeight;
-    textarea.style.height = `${Math.min(120, Math.max(18, scrollHeight))}px`;
-  }, []);
-
-  useEffect(() => {
-    if (text === '') {
-      if (textareaRef.current) {
-        textareaRef.current.style.height = '18px';
-      }
-    } else {
-      adjustTextareaHeight();
-    }
-  }, [text, adjustTextareaHeight]);
-
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const { data: history = [], isLoading: loadingHistory } = useLeadHistory(leadId);
   const { data: conversations = [] } = useWhatsAppConversations(undefined, { hideGroups: true });
@@ -537,7 +519,6 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   const conversationSessionConnected = conversation
     ? conversationSessionStatus === 'connected' || conversationSessionStatus === 'connecting' || (!conversationSessionStatus && hasConnectedSession)
     : false;
-  const canStartConversation = Boolean(hasLeadPhone && !leadHasNoWhatsApp && hasConnectedSession && !conversation);
   const canSendMessage = Boolean(
     hasLeadPhone &&
       !leadHasNoWhatsApp &&
@@ -677,51 +658,36 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
           <div ref={bottomRef} />
         </div>
 
-        <div className="p-3 pt-2">
-          <div className="flex min-h-[42px] items-end gap-1 rounded-[8px] bg-[rgb(15_23_42/0.065)] px-2 py-2 text-xs shadow-none transition-colors focus-within:bg-[rgb(15_23_42/0.085)] dark:bg-[#242424] dark:focus-within:bg-[#292929]">
-            {canSendMessage && (
-              <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 rounded-[6px] text-[var(--app-text-tertiary)] mb-[1px]" disabled>
-                <Plus className="h-3.5 w-3.5" />
-              </Button>
-            )}
-            <textarea
-              ref={textareaRef}
-              rows={1}
-              value={text}
-              onChange={(event) => {
-                setText(event.target.value);
-                adjustTextareaHeight();
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault();
-                  handleSend();
-                }
-              }}
-              disabled={!canSendMessage || isSendingMessage}
-              placeholder={inputPlaceholder}
-              className="h-[18px] min-w-0 flex-1 resize-none border-0 bg-transparent px-1 py-0.5 text-xs leading-relaxed text-[var(--app-text-primary)] shadow-none outline-none ring-0 placeholder:text-[var(--app-text-tertiary)] focus:outline-none focus:ring-0 focus-visible:ring-0 disabled:cursor-not-allowed [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-            />
-            {canSendMessage && (
-              <>
-                <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 rounded-[6px] text-[var(--app-text-tertiary)] mb-[1px]" disabled>
-                  <Paperclip className="h-3.5 w-3.5" />
-                </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 rounded-[6px] text-[var(--app-text-tertiary)] mb-[1px]" disabled>
-                  <Mic className="h-3.5 w-3.5" />
-                </Button>
-              </>
-            )}
-            <Button
-              size="icon"
-              className="h-7 w-7 shrink-0 rounded-[6px] mb-[1px]"
-              disabled={!canSendMessage || !text.trim() || isSendingMessage}
-              onClick={handleSend}
-              title={canStartConversation ? 'Iniciar conversa' : 'Enviar mensagem'}
-            >
-              {isSendingMessage ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-            </Button>
-          </div>
+        <div className="border-t border-[var(--app-border)] bg-[var(--app-surface-solid)] p-3">
+          <MessageBox
+            value={text}
+            onChange={setText}
+            onSend={handleSend}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                handleSend();
+              }
+            }}
+            placeholder={inputPlaceholder}
+            disabled={!canSendMessage || isSendingMessage}
+            isSending={isSendingMessage}
+            multiline
+            inputRef={textareaRef}
+            compact
+            showRightActionsWhenEmpty
+            className="bg-[var(--app-surface-soft)] focus-within:bg-[var(--app-surface-hover)] dark:bg-[#242424] dark:focus-within:bg-[#292929]"
+            leftActions={
+              <button type="button" disabled title="Anexar midia">
+                <Paperclip className="h-4 w-4" />
+              </button>
+            }
+            rightActions={
+              <button type="button" disabled title="Audio">
+                <Mic className="h-4 w-4" />
+              </button>
+            }
+          />
         </div>
       </div>
     </section>

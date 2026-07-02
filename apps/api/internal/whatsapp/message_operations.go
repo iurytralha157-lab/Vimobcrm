@@ -300,33 +300,7 @@ func (repo Repository) MarkAsSeenOnWhatsApp(ctx context.Context, tenantContext t
 }
 
 func (repo Repository) RetryMediaDownload(ctx context.Context, tenantContext tenant.Context, messageID string) (map[string]any, error) {
-	messageID, ok := normalizeUUID(messageID)
-	if !ok {
-		return nil, ErrMessageNotFound
-	}
-
-	var conversationID string
-	err := repo.db.Pool().QueryRow(ctx, `
-		select wm.conversation_id::text
-		from public.whatsapp_messages wm
-		where wm.organization_id = $1::uuid
-		  and wm.id = $2::uuid
-		limit 1
-	`, tenantContext.OrganizationID, messageID).Scan(&conversationID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrMessageNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	if err := repo.ensureCanViewConversation(ctx, tenantContext, conversationID); err != nil {
-		return nil, err
-	}
-
-	return repo.functions.invoke(ctx, "media-worker", map[string]any{
-		"message_id": messageID,
-		"force":      true,
-	})
+	return repo.retryStoredMediaDownload(ctx, tenantContext, messageID)
 }
 
 func (repo Repository) GetHistoryAccess(ctx context.Context, tenantContext tenant.Context, filter HistoryAccessFilter) (HistoryAccessResponse, error) {
@@ -393,6 +367,7 @@ func (repo Repository) resolveAnyConnectedSendSession(ctx context.Context, tenan
 		      select 1
 		      from public.whatsapp_session_access access
 		      where access.session_id = ws.id
+		        and access.organization_id = ws.organization_id
 		        and access.user_id = $2::uuid
 		        and coalesce(access.can_view, access.can_read, true) = true
 		        and coalesce(access.can_send, false) = true
@@ -400,7 +375,7 @@ func (repo Repository) resolveAnyConnectedSendSession(ctx context.Context, tenan
 		  )
 		order by ws.last_connected_at desc nulls last, ws.created_at desc
 		limit 2
-	`, tenantContext.OrganizationID, tenantContext.UserID, canManageWhatsApp(tenantContext))
+	`, tenantContext.OrganizationID, tenantContext.UserID, tenantContext.IsSuperAdmin)
 	if err != nil {
 		return Session{}, err
 	}
@@ -440,6 +415,8 @@ func (repo Repository) getCanSendSession(ctx context.Context, tenantContext tena
 		where ws.organization_id = $1::uuid
 		  and ws.id = $2::uuid
 		  and ws.is_active is not false
+		  and coalesce(ws.status, '') <> 'deleted'
+		  and coalesce(ws.provider, 'evolution') = 'evolution_go'
 		  and (
 		    $4::boolean
 		    or ws.owner_user_id = $3::uuid
@@ -447,13 +424,14 @@ func (repo Repository) getCanSendSession(ctx context.Context, tenantContext tena
 		      select 1
 		      from public.whatsapp_session_access access
 		      where access.session_id = ws.id
+		        and access.organization_id = ws.organization_id
 		        and access.user_id = $3::uuid
 		        and coalesce(access.can_view, access.can_read, true) = true
 		        and coalesce(access.can_send, false) = true
 		    )
 		  )
 		limit 1
-	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, canManageWhatsApp(tenantContext)))
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, tenantContext.IsSuperAdmin))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, ErrSessionNotFound
 	}

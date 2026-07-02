@@ -91,6 +91,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	leadsHandler := leads.NewHandler(leads.NewRepository(postgres, leads.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
+		EvolutionGo: leads.EvolutionGoConfig{
+			APIURL: cfg.EvolutionGo.APIURL,
+			APIKey: cfg.EvolutionGo.APIKey,
+		},
 	}), realtimeHub)
 	pipelinesHandler := pipelines.NewHandler(pipelines.NewRepository(postgres))
 	propertiesHandler := properties.NewHandler(properties.NewRepository(postgres, properties.StorageConfig{

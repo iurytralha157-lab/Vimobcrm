@@ -214,7 +214,8 @@ export default function Conversations() {
   const {
     data: whatsappMessages,
     isLoading: loadingWhatsAppMessages,
-    isFetching: fetchingWhatsAppMessages
+    isFetching: fetchingWhatsAppMessages,
+    refetch: refetchWhatsAppMessages
   } = useWhatsAppMessages(
     activePlatform === 'whatsapp' ? selectedConversation?.id || null : null,
     activePlatform === 'whatsapp' ? selectedLeadId : null,
@@ -542,6 +543,7 @@ export default function Conversations() {
   const retryMediaDownload = async (messageId: string) => {
     try {
       await whatsappAPI.retryMediaDownload(messageId, selectedConversation?.session?.organization_id);
+      await refetchWhatsAppMessages();
       toast({
         title: "Tentando novamente",
         description: "Aguarde enquanto baixamos a mídia..."

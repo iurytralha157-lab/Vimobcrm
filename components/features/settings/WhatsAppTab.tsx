@@ -24,8 +24,7 @@ import {
   CheckCircle,
   XCircle,
   Loader2,
-  Bell,
-  Bot } from
+  Bell } from
 "lucide-react";
 import {
   useWhatsAppSessions,
@@ -39,7 +38,6 @@ import {
   useRevokeSessionAccess,
   useRecreateWhatsAppInstance,
   useToggleNotificationSession,
-  useToggleAIAutoReplySession,
   type WhatsAppAccessMode,
   type WhatsAppSession,
   type WhatsAppSessionAccess } from
@@ -73,10 +71,6 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-function isAIAutoReplyEnabled(session: WhatsAppSession) {
-  return isRecord(session.advanced_settings) && session.advanced_settings.ai_auto_reply_enabled === true;
-}
-
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -93,7 +87,6 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
   const logoutSession = useLogoutSession();
   const recreateSession = useRecreateWhatsAppInstance();
   const toggleNotification = useToggleNotificationSession();
-  const toggleAIAutoReply = useToggleAIAutoReplySession();
   const isAdmin = profile?.role === 'admin' || profile?.role === 'super_admin';
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
@@ -505,35 +498,12 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                           Notif.
                         </Badge>
                   }
-                      {isAIAutoReplyEnabled(session) &&
-                  <Badge className="border-0 bg-orange-500/15 text-orange-500 text-[10px] px-1.5 py-0 shrink-0">
-                          <Bot className="w-2.5 h-2.5 mr-0.5" />
-                          IA
-                        </Badge>
-                  }
                       <span className="text-xs text-muted-foreground truncate">
                         {session.owner?.name || "-"}
                       </span>
                     </div>
                     {isAdmin &&
                 <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <Bot className="w-3.5 h-3.5 text-muted-foreground" />
-                              <Switch
-                          checked={isAIAutoReplyEnabled(session)}
-                          onCheckedChange={(checked) =>
-                          toggleAIAutoReply.mutate({ sessionId: session.id, enabled: checked })
-                          }
-                          disabled={toggleAIAutoReply.isPending} />
-
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>IA atende automaticamente esta conexao</p>
-                          </TooltipContent>
-                        </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <div className="flex items-center gap-1.5 shrink-0">

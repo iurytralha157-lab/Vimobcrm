@@ -44,7 +44,7 @@ func NewRepository(db *dbpkg.Postgres, storageConfig StorageConfig) Repository {
 }
 
 func (repo Repository) ListSessions(ctx context.Context, tenantContext tenant.Context) ([]Session, error) {
-	args := []any{tenantContext.OrganizationID, tenantContext.UserID, canManageWhatsApp(tenantContext)}
+	args := []any{tenantContext.OrganizationID, tenantContext.UserID, tenantContext.IsSuperAdmin}
 	rows, err := repo.db.Pool().Query(ctx, `
 		select `+sessionSelectFields()+`
 		from public.whatsapp_sessions ws
@@ -52,18 +52,8 @@ func (repo Repository) ListSessions(ctx context.Context, tenantContext tenant.Co
 		where ws.organization_id = $1::uuid
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') <> 'deleted'
-		  and (
-		    $3::boolean
-		    or ws.owner_user_id = $2::uuid
-		    or exists (
-		      select 1
-		      from public.whatsapp_session_access access
-		      where access.session_id = ws.id
-		        and access.organization_id = ws.organization_id
-		        and access.user_id = $2::uuid
-		        and coalesce(access.can_view, access.can_read, true) = true
-		    )
-		  )
+		  and ws.provider = 'evolution_go'
+		  and ($3::boolean or ws.owner_user_id = $2::uuid)
 		order by ws.created_at desc, ws.id desc
 	`, args...)
 	if err != nil {
@@ -100,15 +90,10 @@ func (repo Repository) GetSession(ctx context.Context, tenantContext tenant.Cont
 		  and ws.id = $2::uuid
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') <> 'deleted'
-		  and ($4::boolean or ws.owner_user_id = $3::uuid or exists (
-		    select 1
-		    from public.whatsapp_session_access access
-		    where access.session_id = ws.id
-		      and access.user_id = $3::uuid
-		      and coalesce(access.can_view, access.can_read, true) = true
-		  ))
+		  and ws.provider = 'evolution_go'
+		  and ($4::boolean or ws.owner_user_id = $3::uuid)
 		limit 1
-	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, canManageWhatsApp(tenantContext)))
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, tenantContext.IsSuperAdmin))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, ErrSessionNotFound
 	}
@@ -552,9 +537,10 @@ func (repo Repository) ensureCanManageSession(ctx context.Context, tenantContext
 			  and ws.id = $2::uuid
 			  and coalesce(ws.is_active, true) = true
 			  and coalesce(ws.status, '') <> 'deleted'
+			  and ws.provider = 'evolution_go'
 			  and ($4::boolean or ws.owner_user_id = $3::uuid)
 		)
-	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, canManageWhatsApp(tenantContext)).Scan(&ok)
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, tenantContext.IsSuperAdmin).Scan(&ok)
 	if err != nil {
 		return err
 	}
@@ -600,6 +586,9 @@ func (repo Repository) ensureCanEditConversation(ctx context.Context, tenantCont
 			where wc.organization_id = $1::uuid
 			  and wc.deleted_at is null
 			  and wc.id = $2::uuid
+			  and ws.provider = 'evolution_go'
+			  and coalesce(ws.is_active, true) = true
+			  and coalesce(ws.status, '') <> 'deleted'
 			  and (
 			    $4::boolean
 			    or ws.owner_user_id = $3::uuid
@@ -607,13 +596,14 @@ func (repo Repository) ensureCanEditConversation(ctx context.Context, tenantCont
 			      select 1
 			      from public.whatsapp_session_access access
 			      where access.session_id = wc.session_id
+			        and access.organization_id = wc.organization_id
 			        and access.user_id = $3::uuid
 			        and coalesce(access.can_view, access.can_read, true) = true
 			        and coalesce(access.can_send, false) = true
 			    )
 			  )
 		)
-	`, tenantContext.OrganizationID, conversationID, tenantContext.UserID, canManageWhatsApp(tenantContext)).Scan(&ok)
+	`, tenantContext.OrganizationID, conversationID, tenantContext.UserID, tenantContext.IsSuperAdmin).Scan(&ok)
 	if err != nil {
 		return err
 	}
@@ -1003,7 +993,7 @@ func baseConversationArgs(tenantContext tenant.Context) []any {
 	return []any{
 		tenantContext.OrganizationID,
 		tenantContext.UserID,
-		canManageWhatsApp(tenantContext),
+		tenantContext.IsSuperAdmin,
 		canViewAllLeads(tenantContext),
 		tenantContext.HasPermission("lead_view_team"),
 	}
@@ -1011,27 +1001,30 @@ func baseConversationArgs(tenantContext tenant.Context) []any {
 
 func conversationVisibilitySQL() string {
 	return `(
-		$3::boolean
-		or ws.owner_user_id = $2::uuid
-		or (
-			wc.lead_id is not null
-			and ` + leadVisibilitySQL() + `
-		)
-		or exists (
-			select 1
-			from public.whatsapp_session_access access
-			where access.session_id = wc.session_id
-			  and access.user_id = $2::uuid
-			  and coalesce(access.can_view, access.can_read, true) = true
-			  and (
-				access.access_mode = 'full_inbox'
-				or (access.access_mode = 'all_leads' and wc.lead_id is not null)
-				or (
-					access.access_mode in ('assigned_leads_only', 'team_leads')
-					and wc.lead_id is not null
-					and ` + leadVisibilitySQL() + `
+		ws.id is not null
+		and ws.provider = 'evolution_go'
+		and coalesce(ws.is_active, true) = true
+		and coalesce(ws.status, '') <> 'deleted'
+		and (
+			$3::boolean
+			or ws.owner_user_id = $2::uuid
+			or exists (
+				select 1
+				from public.whatsapp_session_access access
+				where access.session_id = wc.session_id
+				  and access.organization_id = wc.organization_id
+				  and access.user_id = $2::uuid
+				  and coalesce(access.can_view, access.can_read, true) = true
+				  and (
+					coalesce(access.access_mode, 'assigned_leads_only') = 'full_inbox'
+					or (coalesce(access.access_mode, 'assigned_leads_only') = 'all_leads' and wc.lead_id is not null)
+					or (
+						coalesce(access.access_mode, 'assigned_leads_only') in ('assigned_leads_only', 'team_leads')
+						and wc.lead_id is not null
+						and ` + leadVisibilitySQL() + `
+					)
 				)
-			  )
+			)
 		)
 	)`
 }

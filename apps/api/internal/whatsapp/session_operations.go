@@ -449,7 +449,7 @@ func (repo Repository) GetManageableSession(ctx context.Context, tenantContext t
 		  and coalesce(ws.status, '') <> 'deleted'
 		  and ($4::boolean or ws.owner_user_id = $3::uuid)
 		limit 1
-	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, canManageWhatsApp(tenantContext)))
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, tenantContext.IsSuperAdmin))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, ErrSessionNotFound
 	}

@@ -41,6 +41,9 @@ export interface DispatchNotificationResult {
     ok: boolean
     status?: number
     error?: string
+    provider?: string
+    session_id?: string
+    instance_id?: string
   }
   error?: string
 }

@@ -70,6 +70,9 @@ type OrganizationUpdatePayload = AdminRecord;
 
 type NotificationDispatchForm = {
   enabled: boolean;
+  instanceName: string;
+  instanceToken: string;
+  senderNumber: string;
   webhookUrl: string;
   headerName: string;
   headerValue: string;
@@ -501,6 +504,9 @@ function getNotificationDispatchForm(row: AdminRecord | undefined): Notification
 
   return {
     enabled: whatsapp.enabled === true,
+    instanceName: typeof whatsapp.instance_name === "string" ? whatsapp.instance_name : "",
+    instanceToken: typeof whatsapp.token === "string" ? whatsapp.token : "",
+    senderNumber: typeof whatsapp.phone_number === "string" ? whatsapp.phone_number : "",
     webhookUrl: typeof whatsapp.webhook_url === "string" ? whatsapp.webhook_url : "",
     headerName,
     headerValue: typeof headerValue === "string" ? headerValue : "",
@@ -517,6 +523,10 @@ function buildNotificationDispatchValue(row: AdminRecord | undefined, form: Noti
 
   dispatch.whatsapp = {
     enabled: form.enabled,
+    mode: form.instanceName.trim() && form.instanceToken.trim() ? "evolution_go_instance" : "webhook",
+    instance_name: form.instanceName.trim(),
+    token: form.instanceToken.trim(),
+    phone_number: form.senderNumber.trim(),
     webhook_url: form.webhookUrl.trim(),
     method: "POST",
     headers,
@@ -1999,16 +2009,47 @@ function NotificationDispatcherSettings({ rows, isLoading }: { rows: AdminRecord
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="text-base font-semibold">Disparador WhatsApp</h2>
-          <p className="text-sm text-muted-foreground">Requisicao global chamada pelo backend para avisos no WhatsApp.</p>
+          <p className="text-sm text-muted-foreground">Instancia global chamada pelo backend para avisos no WhatsApp.</p>
         </div>
         <Badge className={cn("border-0", form.enabled ? "bg-emerald-500/12 text-emerald-400" : "bg-white/8 text-muted-foreground")}>
           {form.enabled ? "Ativo" : "Inativo"}
         </Badge>
       </div>
 
+      <div className="grid gap-3 lg:grid-cols-[1fr_1fr_180px]">
+        <label className="space-y-1.5">
+          <span className="text-xs font-medium text-muted-foreground">Nome da instancia</span>
+          <Input
+            value={form.instanceName}
+            onChange={(event) => updateForm("instanceName", event.target.value)}
+            placeholder="Notificacao"
+            className="border-0 bg-[var(--app-surface-soft)]"
+          />
+        </label>
+        <label className="space-y-1.5">
+          <span className="text-xs font-medium text-muted-foreground">Token da instancia</span>
+          <Input
+            type="password"
+            value={form.instanceToken}
+            onChange={(event) => updateForm("instanceToken", event.target.value)}
+            placeholder="Token Evolution Go"
+            className="border-0 bg-[var(--app-surface-soft)]"
+          />
+        </label>
+        <label className="space-y-1.5">
+          <span className="text-xs font-medium text-muted-foreground">Numero</span>
+          <Input
+            value={form.senderNumber}
+            onChange={(event) => updateForm("senderNumber", event.target.value)}
+            placeholder="55..."
+            className="border-0 bg-[var(--app-surface-soft)]"
+          />
+        </label>
+      </div>
+
       <div className="grid gap-3 lg:grid-cols-[1fr_180px]">
         <label className="space-y-1.5">
-          <span className="text-xs font-medium text-muted-foreground">URL da requisicao</span>
+          <span className="text-xs font-medium text-muted-foreground">URL de fallback</span>
           <Input
             value={form.webhookUrl}
             onChange={(event) => updateForm("webhookUrl", event.target.value)}

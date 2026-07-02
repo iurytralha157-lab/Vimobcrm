@@ -6,10 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { MessageCircle, X, Minus, ArrowLeft, Search, Loader2, Phone, Users, Paperclip, ExternalLink, ArrowRight, Zap } from "lucide-react";
+import { Archive, MessageCircle, X, Minus, ArrowLeft, Search, Loader2, Phone, Users, Paperclip, ExternalLink, ArrowRight, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, isToday, isYesterday } from "date-fns";
 import { useWhatsAppConversations, useWhatsAppMessages, useSendWhatsAppMessage, useMarkConversationAsRead, useWhatsAppRealtimeConversations, WhatsAppConversation } from "@/hooks/use-whatsapp-conversations";
@@ -126,7 +125,7 @@ function FloatingConversationFilters({
   onShowArchivedChange
 }: FloatingConversationFiltersProps) {
   return (
-    <div className="p-4 space-y-3 border-b border-white/[0.055] shrink-0 bg-[var(--app-surface)]">
+    <div className="shrink-0 space-y-3 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] p-3">
       {connectedSessions.length > 1 && (
         <Select value={selectedSessionId} onValueChange={onSessionChange}>
           <SelectTrigger className="h-9">
@@ -141,25 +140,55 @@ function FloatingConversationFilters({
           </SelectContent>
         </Select>
       )}
-      <div className="relative">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Buscar conversas..."
-          value={searchTerm}
-          onChange={e => onSearchChange(e.target.value)}
-          className="pl-8 h-9"
-          autoComplete="off"
-        />
-      </div>
-      <div className="flex items-center gap-4">
-        <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
-          <Checkbox checked={hideGroups} onCheckedChange={checked => onHideGroupsChange(checked === true)} />
-          <span>Ocultar grupos</span>
-        </label>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
-          <Checkbox checked={showArchived} onCheckedChange={checked => onShowArchivedChange(checked === true)} />
-          <span>Arquivadas</span>
-        </label>
+      <div className="flex items-center gap-2">
+        <div className="relative min-w-0 flex-1">
+          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Buscar conversas..."
+            value={searchTerm}
+            onChange={e => onSearchChange(e.target.value)}
+            className="h-10 rounded-[8px] border-0 bg-[var(--app-surface-soft)] pl-8 pr-3 shadow-none focus-visible:ring-1 focus-visible:ring-primary/35"
+            autoComplete="off"
+          />
+        </div>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  "h-10 w-10 shrink-0 rounded-[8px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]",
+                  hideGroups && "bg-primary/15 text-primary ring-1 ring-primary/25"
+                )}
+                onClick={() => onHideGroupsChange(!hideGroups)}
+                aria-pressed={hideGroups}
+              >
+                <Users className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Ocultar grupos</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  "h-10 w-10 shrink-0 rounded-[8px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]",
+                  showArchived && "bg-primary/15 text-primary ring-1 ring-primary/25"
+                )}
+                onClick={() => onShowArchivedChange(!showArchived)}
+                aria-pressed={showArchived}
+              >
+                <Archive className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Arquivadas</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
     </div>
   );
@@ -284,7 +313,7 @@ export function FloatingChat() {
   const { mutate: markConversationAsRead } = useMarkConversationAsRead();
   const startConversation = useStartConversation();
   const findConversation = useFindConversationByPhone();
-  const { data: hasWhatsAppAccess, isLoading: loadingWhatsAppAccess } = useHasWhatsAppAccess();
+  const { data: hasWhatsAppAccess } = useHasWhatsAppAccess();
   const router = useRouter();
 
   useWhatsAppRealtimeConversations(shouldSyncFloatingChat);
@@ -708,7 +737,7 @@ export function FloatingChat() {
   };
   const unreadCount = conversations?.reduce((acc, c) => acc + (c.unread_count || 0), 0) || 0;
   const connectedSessions = sessions?.filter(s => s.status === "connected") || [];
-  const hasConnectedSession = loadingSessions || connectedSessions.length > 0;
+  const hasConnectedSession = connectedSessions.length > 0;
 
   // Session Selector Dialog Component
   const SessionSelectorDialog = () => (
@@ -766,9 +795,8 @@ export function FloatingChat() {
   // visualizar o historico de mensagens de leads (somente leitura).
   if (!isOpen) return null;
 
-  // Modo somente leitura: usuario nao tem sessao propria/acesso, mas pode ver historico
-  // de uma conversa ativa (ex.: clicou em "Ver Mensagens" num card de lead).
-  const isReadOnlyMode = !loadingWhatsAppAccess && !hasWhatsAppAccess;
+  // Modo somente leitura: sem sessao acessivel, ainda mantemos o historico visivel.
+  const isReadOnlyMode = !loadingSessions && !hasConnectedSession && !hasWhatsAppAccess;
   const whatsappMessageInputState = getWhatsAppMessageInputState(activeConversation, selectedSessionId, sessions);
   const messageInputDisabled = whatsappMessageInputState.disabled || isReadOnlyMode;
 
@@ -784,8 +812,8 @@ export function FloatingChat() {
         <div className={cn(
           "flex items-center justify-between shrink-0",
           mobile
-            ? "px-4 py-3 bg-[var(--app-surface)] border-b border-white/[0.055]"
-            : "h-16 bg-gradient-to-r from-primary via-primary to-primary/90 text-primary-foreground px-5 shadow-sm"
+            ? "border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-4 py-3"
+            : "h-16 bg-primary text-primary-foreground px-5 shadow-sm"
         )}>
           <div className="flex items-center gap-2">
             <MessageCircle className={cn("h-5 w-5", mobile && "text-primary")} />
@@ -850,7 +878,7 @@ export function FloatingChat() {
 
     return (
       <TooltipProvider>
-        <div className="border-b border-white/[0.055] bg-[var(--app-surface)] shrink-0">
+        <div className="shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)]">
           {/* Linha 1: Navegacao e info principal */}
           <div className="flex items-center gap-2 px-3 py-2">
             {/* Botao Voltar */}
@@ -1002,7 +1030,7 @@ export function FloatingChat() {
     );
   };
 
-  const DisconnectedState = () => <div className="flex-1 flex flex-col items-center justify-center p-6 text-center bg-[var(--app-surface)]">
+  const DisconnectedState = () => <div className="flex-1 flex flex-col items-center justify-center p-6 text-center bg-[var(--app-surface-solid)]">
       <Phone className="h-12 w-12 text-muted-foreground mb-4" />
       <p className="text-muted-foreground mb-2">Nenhum WhatsApp conectado</p>
       <p className="text-sm text-muted-foreground">
@@ -1010,7 +1038,7 @@ export function FloatingChat() {
       </p>
     </div>;
   const messagesViewJsx = (
-    <div className="flex-1 overflow-hidden min-h-0 flex flex-col bg-[var(--app-surface)]">
+    <div className="flex-1 overflow-hidden min-h-0 flex flex-col bg-[var(--app-surface-solid)]">
       <ScrollArea className="flex-1" onScrollCapture={handleScrollArea}>
         <div className="px-3 py-3 w-full max-w-full min-w-0 overflow-hidden overflow-x-hidden">
           {loadingMessages ? <div className="flex items-center justify-center py-8">
@@ -1064,7 +1092,7 @@ export function FloatingChat() {
     const activeLeadId = activeConversation?.lead?.id || activeConversation?.lead_id;
 
     return (
-    <div className={cn("p-3 border-t border-white/[0.055] shrink-0 bg-[var(--app-surface)]", mobile && "pb-2")}>
+    <div className={cn("shrink-0 border-t border-[var(--app-border)] bg-[var(--app-surface-solid)] p-3", mobile && "pb-2")}>
       <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx" className="hidden" />
       <MessageBox
         value={messageText}
@@ -1076,6 +1104,7 @@ export function FloatingChat() {
         isSending={sendMessage.isPending}
         multiline
         inputRef={messageInputRef}
+        className="bg-[var(--app-surface-soft)] focus-within:bg-[var(--app-surface-hover)] dark:bg-[#242424] dark:focus-within:bg-[#292929]"
         showRightActionsWhenEmpty
         leftActions={
           <>
@@ -1112,7 +1141,7 @@ export function FloatingChat() {
       onShowArchivedChange={setShowArchived}
     />
   );
-  const ConversationList = () => <div className="flex-1 overflow-hidden min-h-0 w-full max-w-full overflow-x-hidden bg-[var(--app-surface)]">
+  const ConversationList = () => <div className="flex-1 overflow-hidden min-h-0 w-full max-w-full overflow-x-hidden bg-[var(--app-surface-solid)]">
       <ScrollArea className="h-full w-full max-w-full">
         <div className="flex flex-col w-full max-w-full">
           {loadingConversations || loadingSessions ? <div className="flex items-center justify-center py-8">
@@ -1213,7 +1242,7 @@ export function FloatingChat() {
             contactName={activeContactName}
           />
         )}
-        <div className="fixed inset-0 z-50 bg-[var(--app-surface)] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+        <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-[var(--app-surface-solid)] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
           {FloatingChatHeader({ mobile: true })}
 
           {isStartingConversation && (
@@ -1227,7 +1256,7 @@ export function FloatingChat() {
             {activeConversation ? (
               <>
                 {messagesViewJsx}
-                {!isReadOnlyMode && hasConnectedSession && renderMessageInput(true)}
+                {renderMessageInput(true)}
               </>
             ) : !hasConnectedSession ? (
               DisconnectedState()
@@ -1256,7 +1285,7 @@ export function FloatingChat() {
           contactName={activeContactName}
         />
       )}
-      <div className={cn("fixed bottom-4 right-4 z-50", "bg-[var(--app-surface)]", "border border-white/[0.055]", "rounded-2xl", "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.25)]", "ring-1 ring-white/[0.055]", "transition-all duration-300 ease-out", "flex flex-col overflow-hidden", "animate-scale-in", isMinimized ? "w-80 h-14" : "w-[420px] h-[600px]")}>
+      <div className={cn("fixed bottom-4 right-4 z-50", "bg-[var(--app-surface-solid)]", "border border-[var(--app-border)]", "rounded-2xl", "shadow-[0_28px_70px_rgba(0,0,0,0.46)]", "transition-all duration-300 ease-out", "flex flex-col overflow-hidden", "animate-scale-in", isMinimized ? "w-80 h-14" : "w-[420px] h-[600px]")}>
         {/* Header */}
         {FloatingChatHeader()}
 
@@ -1272,7 +1301,7 @@ export function FloatingChat() {
             {activeConversation ? (
               <>
                 {messagesViewJsx}
-                {!isReadOnlyMode && hasConnectedSession && renderMessageInput(false)}
+                {renderMessageInput(false)}
               </>
             ) : !hasConnectedSession ? (
               DisconnectedState()

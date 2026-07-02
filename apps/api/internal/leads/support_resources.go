@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -304,11 +305,14 @@ type DispatchNotificationResult struct {
 }
 
 type DispatchWhatsAppResult struct {
-	Enabled   bool   `json:"enabled"`
-	Attempted bool   `json:"attempted"`
-	OK        bool   `json:"ok"`
-	Status    int    `json:"status,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Enabled    bool   `json:"enabled"`
+	Attempted  bool   `json:"attempted"`
+	OK         bool   `json:"ok"`
+	Status     int    `json:"status,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Provider   string `json:"provider,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
+	InstanceID string `json:"instance_id,omitempty"`
 }
 
 type notificationRecipient struct {
@@ -320,11 +324,24 @@ type notificationRecipient struct {
 
 type notificationWhatsAppConfig struct {
 	Enabled        bool              `json:"enabled"`
+	Mode           string            `json:"mode"`
 	WebhookURL     string            `json:"webhook_url"`
 	URL            string            `json:"url"`
 	Method         string            `json:"method"`
 	Headers        map[string]string `json:"headers"`
 	TimeoutSeconds int               `json:"timeout_seconds"`
+	SessionID      string            `json:"session_id"`
+	InstanceName   string            `json:"instance_name"`
+	InstanceID     string            `json:"instance_id"`
+	Token          string            `json:"token"`
+	PhoneNumber    string            `json:"phone_number"`
+}
+
+type notificationWhatsAppSession struct {
+	ID          string
+	InstanceID  string
+	InstanceKey string
+	Token       string
 }
 
 type LeadVisibility struct {
@@ -1399,8 +1416,7 @@ func (repo Repository) dispatchWhatsAppNotification(ctx context.Context, tenantC
 		return DispatchWhatsAppResult{}, err
 	}
 	result := DispatchWhatsAppResult{Enabled: config.Enabled}
-	webhookURL := strings.TrimSpace(firstNotificationText(config.WebhookURL, config.URL))
-	if !config.Enabled || webhookURL == "" || !requestWantsChannel(request.Channels, "whatsapp") {
+	if !config.Enabled || !requestWantsChannel(request.Channels, "whatsapp") {
 		return result, nil
 	}
 
@@ -1411,6 +1427,26 @@ func (repo Repository) dispatchWhatsAppNotification(ctx context.Context, tenantC
 	if strings.TrimSpace(to) == "" {
 		result.Attempted = false
 		result.Error = "recipient_whatsapp_missing"
+		return result, nil
+	}
+	messageText := buildWhatsAppNotificationText(title, content)
+
+	if notificationConfigUsesDirectInstance(config) {
+		return repo.dispatchWhatsAppViaEvolutionGo(ctx, notificationWhatsAppSession{
+			InstanceID:  strings.TrimSpace(config.InstanceID),
+			InstanceKey: firstNotificationText(config.InstanceName, config.InstanceID),
+			Token:       strings.TrimSpace(config.Token),
+		}, to, messageText, "evolution_go_instance")
+	}
+
+	if session, found, err := repo.findNotificationWhatsAppSession(ctx, tenantContext.OrganizationID, config.SessionID); err != nil {
+		return result, err
+	} else if found {
+		return repo.dispatchWhatsAppViaEvolutionGo(ctx, session, to, messageText, "evolution_go_session")
+	}
+
+	webhookURL := strings.TrimSpace(firstNotificationText(config.WebhookURL, config.URL))
+	if webhookURL == "" {
 		return result, nil
 	}
 
@@ -1463,6 +1499,7 @@ func (repo Repository) dispatchWhatsAppNotification(ctx context.Context, tenantC
 	}
 
 	result.Attempted = true
+	result.Provider = "webhook"
 	client := &http.Client{Timeout: timeout}
 	response, err := client.Do(httpRequest)
 	if err != nil {
@@ -1475,6 +1512,142 @@ func (repo Repository) dispatchWhatsAppNotification(ctx context.Context, tenantC
 		result.Error = fmt.Sprintf("whatsapp_webhook_status_%d", response.StatusCode)
 	}
 	return result, nil
+}
+
+func notificationConfigUsesDirectInstance(config notificationWhatsAppConfig) bool {
+	mode := strings.ToLower(strings.TrimSpace(config.Mode))
+	if mode == "evolution_go_instance" || mode == "instance" || mode == "direct_instance" {
+		return true
+	}
+	return strings.TrimSpace(config.Token) != "" && strings.TrimSpace(firstNotificationText(config.InstanceName, config.InstanceID)) != ""
+}
+
+func (repo Repository) findNotificationWhatsAppSession(ctx context.Context, organizationID string, sessionID string) (notificationWhatsAppSession, bool, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID != "" {
+		normalized, ok := normalizeUUID(sessionID)
+		if !ok {
+			return notificationWhatsAppSession{}, false, fmt.Errorf("%w: notification WhatsApp session_id is invalid", ErrInvalidInput)
+		}
+		sessionID = normalized
+	}
+
+	var session notificationWhatsAppSession
+	err := repo.db.Pool().QueryRow(ctx, `
+		select
+			ws.id::text,
+			coalesce(nullif(ws.instance_id, ''), ''),
+			coalesce(
+				nullif(ws.advanced_settings->>'evolution_go_resolved_instance_key', ''),
+				nullif(ws.instance_id, ''),
+				nullif(ws.instance_name, '')
+			),
+			coalesce(nullif(ws.advanced_settings->>'token', ''), '')
+		from public.whatsapp_sessions ws
+		where ws.organization_id = $1::uuid
+		  and ws.provider = 'evolution_go'
+		  and coalesce(ws.is_active, true) = true
+		  and coalesce(ws.status, '') = 'connected'
+		  and (
+		    ($2 = '' and coalesce(ws.is_notification_session, false) = true)
+		    or ($2 <> '' and ws.id = $2::uuid)
+		  )
+		order by ws.last_connected_at desc nulls last, ws.created_at desc
+		limit 1
+	`, organizationID, sessionID).Scan(&session.ID, &session.InstanceID, &session.InstanceKey, &session.Token)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return notificationWhatsAppSession{}, false, nil
+	}
+	if err != nil {
+		return notificationWhatsAppSession{}, false, err
+	}
+	return session, true, nil
+}
+
+func (repo Repository) dispatchWhatsAppViaEvolutionGo(ctx context.Context, session notificationWhatsAppSession, to string, text string, provider string) (DispatchWhatsAppResult, error) {
+	result := DispatchWhatsAppResult{
+		Enabled:    true,
+		Attempted:  true,
+		Provider:   provider,
+		SessionID:  session.ID,
+		InstanceID: firstNotificationText(session.InstanceID, session.InstanceKey),
+	}
+	if strings.TrimSpace(repo.evolutionGoAPIURL) == "" {
+		result.Error = "evolution_go_api_url_missing"
+		return result, fmt.Errorf("%w: Evolution Go API URL is not configured", ErrInvalidInput)
+	}
+
+	token := strings.TrimSpace(session.Token)
+	if token == "" {
+		token = strings.TrimSpace(repo.evolutionGoAPIKey)
+	}
+	if token == "" {
+		result.Error = "evolution_go_token_missing"
+		return result, fmt.Errorf("%w: Evolution Go token is not configured", ErrInvalidInput)
+	}
+
+	payload := map[string]any{
+		"number": normalizeNotificationWhatsAppRecipient(to),
+		"text":   text,
+	}
+	rawPayload, err := json.Marshal(payload)
+	if err != nil {
+		return result, err
+	}
+
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, repo.evolutionGoAPIURL+"/send/text", bytes.NewReader(rawPayload))
+	if err != nil {
+		return result, err
+	}
+	httpRequest.Header.Set("Accept", "application/json")
+	httpRequest.Header.Set("Content-Type", "application/json")
+	httpRequest.Header.Set("apikey", token)
+	if strings.TrimSpace(session.InstanceKey) != "" {
+		httpRequest.Header.Set("instanceId", strings.TrimSpace(session.InstanceKey))
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	response, err := client.Do(httpRequest)
+	if err != nil {
+		result.Error = err.Error()
+		return result, err
+	}
+	defer response.Body.Close()
+
+	result.Status = response.StatusCode
+	result.OK = response.StatusCode >= 200 && response.StatusCode < 300
+	if !result.OK {
+		raw, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		result.Error = trimMax(firstNotificationText(strings.TrimSpace(string(raw)), response.Status), 240)
+	}
+	return result, nil
+}
+
+func normalizeNotificationWhatsAppRecipient(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, "@g.us") || strings.Contains(value, "@s.whatsapp.net") {
+		return value
+	}
+
+	var builder strings.Builder
+	for _, item := range value {
+		if item >= '0' && item <= '9' {
+			builder.WriteRune(item)
+		}
+	}
+	return builder.String()
+}
+
+func buildWhatsAppNotificationText(title string, content string) string {
+	title = strings.TrimSpace(title)
+	content = strings.TrimSpace(content)
+	if title == "" {
+		return content
+	}
+	if content == "" {
+		return title
+	}
+	return title + "\n" + content
 }
 
 func (repo Repository) getNotificationWhatsAppConfig(ctx context.Context) (notificationWhatsAppConfig, error) {

@@ -19,8 +19,14 @@ var (
 )
 
 type StorageConfig struct {
-	ProjectURL string
-	APIKey     string
+	ProjectURL  string
+	APIKey      string
+	EvolutionGo EvolutionGoConfig
+}
+
+type EvolutionGoConfig struct {
+	APIURL string
+	APIKey string
 }
 
 type storageClient struct {
