@@ -73,8 +73,20 @@ interface ImpersonateSession {
 }
 
 const IMPERSONATING_STORAGE_KEY = 'impersonating';
-const AUTH_BOOTSTRAP_TIMEOUT_MS = 8000;
+const AUTH_CONTEXT_CACHE_KEY_PREFIX = 'vimob_auth_context_';
+const AUTH_CONTEXT_CACHE_VERSION = 1;
+const AUTH_CONTEXT_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
+const AUTH_BOOTSTRAP_TIMEOUT_MS = 12000;
 const SIGN_IN_ROLE_TIMEOUT_MS = 3500;
+
+interface CachedAuthContext {
+  version: number;
+  cachedAt: string;
+  profile: UserProfile | null;
+  organization: Organization | null;
+  userOrganizations: UserOrganization[];
+  isSuperAdmin: boolean;
+}
 
 function isInvalidSessionError(error: unknown) {
   const candidate = error as { code?: unknown; message?: unknown; status?: unknown } | null;
@@ -158,6 +170,90 @@ function clearStoredImpersonation() {
   }
 }
 
+function getAuthContextCacheKey(userId: string) {
+  return `${AUTH_CONTEXT_CACHE_KEY_PREFIX}${userId}`;
+}
+
+function readCachedAuthContext(userId: string): CachedAuthContext | null {
+  if (typeof window === 'undefined') return null;
+
+  const cacheKey = getAuthContextCacheKey(userId);
+
+  try {
+    const stored = window.localStorage?.getItem(cacheKey);
+    if (!stored) return null;
+
+    const parsed = JSON.parse(stored) as Partial<CachedAuthContext>;
+    if (parsed.version !== AUTH_CONTEXT_CACHE_VERSION || typeof parsed.cachedAt !== 'string') {
+      window.localStorage?.removeItem(cacheKey);
+      return null;
+    }
+
+    const cachedAt = new Date(parsed.cachedAt).getTime();
+    if (!Number.isFinite(cachedAt) || Date.now() - cachedAt > AUTH_CONTEXT_CACHE_TTL_MS) {
+      window.localStorage?.removeItem(cacheKey);
+      return null;
+    }
+
+    const cachedContext: CachedAuthContext = {
+      version: AUTH_CONTEXT_CACHE_VERSION,
+      cachedAt: parsed.cachedAt,
+      profile: parsed.profile || null,
+      organization: parsed.organization || null,
+      userOrganizations: Array.isArray(parsed.userOrganizations) ? parsed.userOrganizations : [],
+      isSuperAdmin: Boolean(parsed.isSuperAdmin),
+    };
+
+    if (
+      !cachedContext.profile &&
+      !cachedContext.organization &&
+      cachedContext.userOrganizations.length === 0 &&
+      !cachedContext.isSuperAdmin
+    ) {
+      return null;
+    }
+
+    return cachedContext;
+  } catch {
+    try {
+      window.localStorage?.removeItem(cacheKey);
+    } catch {
+      // Browser storage may be unavailable in restricted contexts.
+    }
+    return null;
+  }
+}
+
+function persistCachedAuthContext(
+  userId: string,
+  context: Omit<CachedAuthContext, 'version' | 'cachedAt'>,
+) {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage?.setItem(
+      getAuthContextCacheKey(userId),
+      JSON.stringify({
+        version: AUTH_CONTEXT_CACHE_VERSION,
+        cachedAt: new Date().toISOString(),
+        ...context,
+      }),
+    );
+  } catch {
+    // Browser storage may be unavailable in restricted contexts.
+  }
+}
+
+function clearCachedAuthContext(userId: string) {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage?.removeItem(getAuthContextCacheKey(userId));
+  } catch {
+    // Browser storage may be unavailable in restricted contexts.
+  }
+}
+
 interface AuthContextType {
   user: User | null;
   session: Session | null;
@@ -208,10 +304,62 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setOrganization(nextOrganization);
   };
 
+  const persistCurrentAuthContext = (
+    userId: string,
+    overrides?: Partial<Omit<CachedAuthContext, 'version' | 'cachedAt'>>,
+  ) => {
+    persistCachedAuthContext(userId, {
+      profile: overrides?.profile ?? profile,
+      organization: overrides?.organization ?? organizationRef.current,
+      userOrganizations: overrides?.userOrganizations ?? userOrganizations,
+      isSuperAdmin: overrides?.isSuperAdmin ?? lastSuperAdminRef.current,
+    });
+  };
+
+  const hydrateCachedAuthContext = (
+    userId: string,
+    options?: { includeActiveOrganization?: boolean },
+  ) => {
+    const cachedContext = readCachedAuthContext(userId);
+    if (!cachedContext) return false;
+    const includeActiveOrganization = options?.includeActiveOrganization ?? true;
+    const cachedOrganization = includeActiveOrganization ? cachedContext.organization : null;
+    const cachedProfile = includeActiveOrganization || !cachedContext.profile
+      ? cachedContext.profile
+      : { ...cachedContext.profile, organization_id: null };
+
+    setProfile(cachedProfile);
+    setActiveOrganization(cachedOrganization);
+    setUserOrganizations(cachedContext.userOrganizations);
+    setIsSuperAdmin(cachedContext.isSuperAdmin);
+    lastSuperAdminRef.current = cachedContext.isSuperAdmin;
+
+    const hasResolvedContext = Boolean(
+      cachedOrganization ||
+      cachedContext.userOrganizations.length > 0 ||
+      cachedContext.isSuperAdmin,
+    );
+
+    if (hasResolvedContext) {
+      setOrganizationsLoaded(true);
+    }
+
+    return hasResolvedContext;
+  };
+
+  const hasResolvedOrganizationContext = (organizationListLoaded = false) => Boolean(
+    organizationListLoaded ||
+    organizationRef.current ||
+    lastSuperAdminRef.current ||
+    readStoredImpersonation() ||
+    !userRef.current,
+  );
+
   const resetClientAuthState = () => {
     const currentUserId = userRef.current?.id;
     if (currentUserId) {
       localStorage.removeItem(`vimob_active_organization_${currentUserId}`);
+      clearCachedAuthContext(currentUserId);
     }
 
     setSession(null);
@@ -308,25 +456,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return false;
           }
 
-          setProfile({
+          const nextProfile = {
             ...profileData,
             role: normalizeProfileRole(profileData.role),
-          } as UserProfile);
+          } as UserProfile;
+
+          setProfile(nextProfile);
 
           const orgData = response.organization;
+          let nextOrganization: Organization | null = null;
           if (orgData) {
             if (!orgData.is_active && !superAdmin && !activeImpersonation) {
               console.warn('Organization is deactivated, signing out');
               await supabase.auth.signOut();
               return false;
             }
-            setActiveOrganization({
+            nextOrganization = {
               ...orgData,
               theme_mode: orgData.theme_mode || 'system',
               accent_color: orgData.accent_color || '#FF4529',
-            } as Organization);
-          } else {
-            setActiveOrganization(null);
+            } as Organization;
+          }
+
+          setActiveOrganization(nextOrganization);
+          persistCurrentAuthContext(userId, {
+            profile: nextProfile,
+            organization: nextOrganization,
+            isSuperAdmin: superAdmin,
+          });
+          if (nextOrganization || superAdmin || activeImpersonation) {
+            setOrganizationsLoaded(true);
           }
 
           return true;
@@ -402,12 +561,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const checkMultiOrg = async (
     userId: string,
     options?: { forceSelectorForMultiOrg?: boolean }
-  ) => {
+  ): Promise<boolean> => {
     return performanceTracker.trackTimed('checkMultiOrg', async () => {
+      let organizationListLoaded = false;
+      let uniqueOrgs: UserOrganization[] = [];
+
       try {
         console.log('[AuthContext] checking organizations for userId:', userId);
 
-        const uniqueOrgs = await usersAPI.listUserOrganizations();
+        uniqueOrgs = await usersAPI.listUserOrganizations();
         setUserOrganizations(uniqueOrgs);
         const count = uniqueOrgs.length;
         console.log('[AuthContext] found', count, 'active organizations');
@@ -431,7 +593,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.log('[AuthContext] multiple organizations found; forcing organization selector');
             setActiveOrganization(null);
             setProfile(prev => prev ? { ...prev, organization_id: null } : prev);
-            return;
+            organizationListLoaded = true;
+            return true;
           }
 
           const savedOrgId = localStorage.getItem(`vimob_active_organization_${userId}`);
@@ -457,24 +620,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.log('[AuthContext] multiple organizations found but none active/saved');
           }
         }
+
+        organizationListLoaded = true;
+        return true;
       } catch (err) {
         console.error('[AuthContext] Error in checkMultiOrg:', err);
         if (isInvalidSessionError(err)) {
           await recoverFromInvalidSession();
-          return;
+          return false;
         }
+        return false;
       } finally {
-        setOrganizationsLoaded(true);
+        if (organizationListLoaded) {
+          persistCurrentAuthContext(userId, { userOrganizations: uniqueOrgs });
+          setOrganizationsLoaded(true);
+        }
       }
     });
   };
 
   const fetchProfileRef = useRef(fetchProfile);
   const checkMultiOrgRef = useRef(checkMultiOrg);
+  const hydrateCachedAuthContextRef = useRef(hydrateCachedAuthContext);
 
   useEffect(() => {
     fetchProfileRef.current = fetchProfile;
     checkMultiOrgRef.current = checkMultiOrg;
+    hydrateCachedAuthContextRef.current = hydrateCachedAuthContext;
   });
 
   useEffect(() => {
@@ -486,6 +658,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const currentUserId = userRef.current?.id;
       if (currentUserId) {
         localStorage.removeItem(`vimob_active_organization_${currentUserId}`);
+        clearCachedAuthContext(currentUserId);
       }
 
       setSession(null);
@@ -505,13 +678,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const safetyTimeout = setTimeout(() => {
       const state = authStateRef.current;
       if (isMounted && (!state.authInitialized || !state.organizationsLoaded)) {
-        console.warn('Auth safety timeout reached - forcing all loading states to complete');
+        const hasSignedInUser = Boolean(userRef.current);
+        const hasUsableContext = hasResolvedOrganizationContext(state.organizationsLoaded);
+        console.warn('Auth safety timeout reached while waiting for auth context');
         setLoading(false);
         setAuthInitialized(true);
-        setOrganizationsLoaded(true);
-        setIsInitializingOrg(false);
+        if (!hasSignedInUser || hasUsableContext) {
+          setOrganizationsLoaded(true);
+          setIsInitializingOrg(false);
+        } else {
+          setIsInitializingOrg(true);
+        }
       }
-    }, 15000);
+    }, 20000);
 
     console.log('getSession started');
     supabase.auth.getSession().then(async ({ data: { session }, error }) => {
@@ -530,23 +709,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(session);
       setUser(session.user);
       userRef.current = session.user;
+      const hydratedFromCache = hydrateCachedAuthContextRef.current(session.user.id);
+      if (hydratedFromCache) {
+        setLoading(false);
+        setAuthInitialized(true);
+      }
       console.log('[AuthContext] login user loaded:', session.user.id);
 
+      let initialOrganizationListLoaded = hydratedFromCache;
       try {
         // Sequencial to ensure organizations are loaded before setting initialized.
         // These calls depend on our backend, so they must not leave a valid Supabase
         // session stuck if a secondary module/API is slow or temporarily unavailable.
         await withSoftTimeout(fetchProfileRef.current(session.user.id), false, 'initial fetchProfile');
         if (userRef.current) {
-          await withSoftTimeout(checkMultiOrgRef.current(session.user.id), undefined, 'initial checkMultiOrg');
+          const fetchedOrganizationListLoaded = await withSoftTimeout(
+            checkMultiOrgRef.current(session.user.id),
+            false,
+            'initial checkMultiOrg',
+          );
+          initialOrganizationListLoaded = initialOrganizationListLoaded || fetchedOrganizationListLoaded;
+        }
+        const resolvedContext = hasResolvedOrganizationContext(initialOrganizationListLoaded);
+        if (resolvedContext) {
+          setOrganizationsLoaded(true);
         }
       } catch (err) {
         console.error('[AuthContext] Error during initial auth data fetch:', err);
       } finally {
         if (isMounted) {
+          const resolvedContext = hasResolvedOrganizationContext(initialOrganizationListLoaded);
           setLoading(false);
           setAuthInitialized(true);
-          setOrganizationsLoaded(true);
+          if (resolvedContext) {
+            setOrganizationsLoaded(true);
+            setIsInitializingOrg(false);
+          } else {
+            setIsInitializingOrg(true);
+          }
           console.log('[AuthContext] Auth initialization complete naturally');
         }
       }
@@ -622,29 +822,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               return;
             }
 
-            setLoading(true);
-            setOrganizationsLoaded(false);
-            setIsInitializingOrg(true);
             setSession(session);
             setUser(session.user);
             userRef.current = session.user;
+            const cachedContext = readCachedAuthContext(session.user.id);
+            const hydratedFromCache = hydrateCachedAuthContextRef.current(session.user.id, {
+              includeActiveOrganization: authEvent !== 'SIGNED_IN' || (cachedContext?.userOrganizations.length || 0) <= 1,
+            });
+            setLoading(!hydratedFromCache);
+            setOrganizationsLoaded(hydratedFromCache);
+            setIsInitializingOrg(true);
 
             // Defer Supabase calls to avoid deadlock with the auth listener
             setTimeout(() => {
               if (!isMounted) return;
-              Promise.all([
-                withSoftTimeout(fetchProfileRef.current(session.user.id), false, 'signIn fetchProfile'),
-                withSoftTimeout(checkMultiOrgRef.current(session.user.id, {
+              void (async () => {
+                await withSoftTimeout(fetchProfileRef.current(session.user.id), false, 'signIn fetchProfile');
+                const organizationListLoaded = await withSoftTimeout(checkMultiOrgRef.current(session.user.id, {
                   forceSelectorForMultiOrg: authEvent === 'SIGNED_IN',
-                }), undefined, 'signIn checkMultiOrg'),
-              ]).catch((error) => {
+                }), false, 'signIn checkMultiOrg');
+                return organizationListLoaded;
+              })().catch((error) => {
                 console.error('[AuthContext] Deferred auth bootstrap failed:', error);
-              }).finally(() => {
+                return false;
+              }).then((organizationListLoaded) => {
                 if (!isMounted) return;
-                setIsInitializingOrg(false);
+                const resolvedContext = hasResolvedOrganizationContext(organizationListLoaded || hydratedFromCache);
+                setIsInitializingOrg(!resolvedContext);
                 setLoading(false);
                 setAuthInitialized(true);
-                setOrganizationsLoaded(true);
+                if (resolvedContext) {
+                  setOrganizationsLoaded(true);
+                }
               });
             }, 0);
           } else {
@@ -692,10 +901,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         'signIn checkSuperAdmin',
         SIGN_IN_ROLE_TIMEOUT_MS,
       );
-
-      void fetchProfile(data.user.id).catch((profileError) => {
-        console.error('[AuthContext] Non-blocking signIn profile refresh failed:', profileError);
-      });
 
       setTimeout(() => {
         logAuditAction('login', 'session', data.user.id, undefined, {
@@ -755,6 +960,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const currentUserId = user?.id;
     if (currentUserId) {
       logAuditAction('logout', 'session', currentUserId).catch(console.error);
+      clearCachedAuthContext(currentUserId);
     }
 
     // Tentar signOut global (invalida refresh token no servidor)

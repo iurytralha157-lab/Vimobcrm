@@ -72,6 +72,9 @@ interface FilteredStageCountsParams extends PipelineQueryFilters {
 }
 
 const LEADS_PER_STAGE = 12;
+const PIPELINE_REFERENCE_STALE_TIME_MS = 1000 * 60 * 10;
+const PIPELINE_BOARD_STALE_TIME_MS = 1000 * 60 * 2;
+const PIPELINE_CACHE_TIME_MS = 1000 * 60 * 30;
 
 export async function buildPipelineLeadQueryFilters(): Promise<{
   filteredLeadIds: string[] | null;
@@ -90,6 +93,7 @@ export function useStages(pipelineId?: string) {
 
   return useQuery({
     queryKey: ['stages', organizationId, pipelineId],
+    enabled: Boolean(organizationId && pipelineId),
     queryFn: async () => {
       const stages = await pipelinesAPI.getStages(pipelineId, organizationId);
 
@@ -98,7 +102,8 @@ export function useStages(pipelineId?: string) {
         lead_count: 0,
       })) as Stage[];
     },
-    staleTime: 1000 * 60 * 10,
+    staleTime: PIPELINE_REFERENCE_STALE_TIME_MS,
+    gcTime: PIPELINE_CACHE_TIME_MS,
   });
 }
 
@@ -113,11 +118,12 @@ export function useStagesWithLeads(
   const organizationId = useOrganizationId();
 
   return useQuery({
-    queryKey: stageWithLeadsQueryKey({ pipelineId, filterUserId, filters }),
-    staleTime: 30_000,
-    gcTime: 1000 * 60 * 15,
+    queryKey: stageWithLeadsQueryKey({ organizationId, pipelineId, filterUserId, filters }),
+    staleTime: PIPELINE_BOARD_STALE_TIME_MS,
+    gcTime: PIPELINE_CACHE_TIME_MS,
     placeholderData: keepPreviousData,
-    enabled: options?.enabled ?? true,
+    enabled: Boolean(organizationId && pipelineId && (options?.enabled ?? true)),
+    refetchOnMount: false,
     queryFn: async () => {
       try {
         return (await getPipelineBoard({
@@ -140,11 +146,13 @@ export function useLeadMetaFilters(dateRange?: { from: Date; to: Date } | null) 
 
   return useQuery({
     queryKey: ['lead-meta-filters', organizationId, dateRange?.from?.toISOString(), dateRange?.to?.toISOString()],
+    enabled: Boolean(organizationId),
     queryFn: async () => {
       if (!organizationId) return { campaigns: [], adsets: [], ads: [] };
       return getLeadMetaFiltersFromAPI({ organizationId, dateRange });
     },
-    staleTime: 1000 * 60 * 5,
+    staleTime: PIPELINE_REFERENCE_STALE_TIME_MS,
+    gcTime: PIPELINE_CACHE_TIME_MS,
   });
 }
 
@@ -193,8 +201,9 @@ export function useFilteredStageCounts({
       filterSource,
       filterUserIds?.join(','),
     ],
-    enabled: !!pipelineId && stageIds.length > 0,
-    staleTime: 30_000,
+    enabled: Boolean(organizationId && pipelineId && stageIds.length > 0),
+    staleTime: PIPELINE_BOARD_STALE_TIME_MS,
+    gcTime: PIPELINE_CACHE_TIME_MS,
     queryFn: async () => {
       if (!pipelineId || stageIds.length === 0) return {} as Record<string, number>;
 
@@ -219,7 +228,10 @@ export function usePipelines() {
 
   return useQuery({
     queryKey: ['pipelines', organizationId],
+    enabled: Boolean(organizationId),
     queryFn: () => pipelinesAPI.getPipelines(organizationId),
+    staleTime: PIPELINE_REFERENCE_STALE_TIME_MS,
+    gcTime: PIPELINE_CACHE_TIME_MS,
   });
 }
 
@@ -347,7 +359,7 @@ export function useLoadMoreLeads() {
     },
     onSuccess: ({ stageId, leads }, { pipelineId, filterUserId, filters }) => {
       queryClient.setQueryData(
-        stageWithLeadsQueryKey({ pipelineId, filterUserId, filters }),
+        stageWithLeadsQueryKey({ organizationId, pipelineId, filterUserId, filters }),
         (old: StageWithLeads[] | undefined) => {
           if (!old) return old;
 
@@ -375,14 +387,16 @@ function useOrganizationId() {
 }
 
 function stageWithLeadsQueryKey(params: {
+  organizationId?: string;
   pipelineId?: string;
   filterUserId?: string;
   filters?: PipelineQueryFilters;
 }) {
-  const { pipelineId, filterUserId, filters } = params;
+  const { organizationId, pipelineId, filterUserId, filters } = params;
 
   return [
     'stages-with-leads',
+    organizationId,
     pipelineId,
     filterUserId,
     filters?.dateRange?.from?.toISOString(),

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -82,6 +82,22 @@ interface OAuthPayload {
   facebook_user_name?: string;
 }
 
+interface OAuthStatus {
+  status?: string;
+  flowId?: string | null;
+  error?: string | null;
+  nonce?: number;
+}
+
+interface OAuthWindowMessage {
+  type?: string;
+  data?: OAuthPayload | null;
+  status?: string;
+  flowId?: string | null;
+  error?: string | null;
+  nonce?: number;
+}
+
 interface AccountGroup {
   key: string;
   name: string;
@@ -95,6 +111,8 @@ interface AccountGroup {
 
 const getPagePicture = (page?: MetaPage | null) => page?.picture?.data?.url || "";
 const searchableText = (value: unknown) => String(value ?? "").toLowerCase();
+const META_OAUTH_CHANNEL = "vimob-meta-oauth";
+const META_OAUTH_STORAGE_KEY = "vimob:meta-oauth";
 
 const buildConfigForm = (config: MetaFormConfig): MetaForm => ({
   id: config.form_id,
@@ -123,8 +141,12 @@ const mergeFormsWithConfigured = (
 
 export function MetaIntegrationSettings({
   oauthPayload,
+  oauthStatus,
+  listenForOAuthMessages = true,
 }: {
   oauthPayload?: OAuthPayload | null;
+  oauthStatus?: OAuthStatus | null;
+  listenForOAuthMessages?: boolean;
 }) {
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -138,6 +160,8 @@ export function MetaIntegrationSettings({
   const [editingConfig, setEditingConfig] = useState<MetaFormConfig | undefined>();
   const [newOAuth, setNewOAuth] = useState<OAuthPayload | null>(null);
   const [disconnectTarget, setDisconnectTarget] = useState<AccountGroup | null>(null);
+  const handledOAuthStatusRef = useRef<string | number | null>(null);
+  const handledOAuthMessageRef = useRef<string | number | null>(null);
 
   const { data: integrations = [], isLoading, refetch: refetchIntegrations } = useMetaIntegrations();
   const { data: configs = [], refetch: refetchConfigs } = useAllMetaFormConfigs();
@@ -191,9 +215,56 @@ export function MetaIntegrationSettings({
   }, [oauthPayload]);
 
   useEffect(() => {
-    if (oauthPayload !== undefined) return;
+    if (!oauthStatus) return;
+    const statusKey = oauthStatus.nonce ?? oauthStatus.flowId ?? oauthStatus.status ?? oauthStatus.error ?? "unknown";
+    if (handledOAuthStatusRef.current === statusKey) return;
+    handledOAuthStatusRef.current = statusKey;
+
+    queueMicrotask(async () => {
+      if (oauthStatus.status === "success") {
+        setNewOAuth(null);
+        setSelectedAccountKey("");
+        setAccountSearch("");
+        setWizardOpen(false);
+        setAccountModalOpen(true);
+        await Promise.all([refetchIntegrations(), refetchConfigs()]);
+        toast.success("Conta do Facebook reconectada com sucesso.");
+        return;
+      }
+
+      if (oauthStatus.error) {
+        toast.error(`Erro ao reconectar Facebook: ${oauthStatus.error}`);
+      }
+    });
+  }, [oauthStatus, refetchConfigs, refetchIntegrations]);
+
+  useEffect(() => {
+    if (!listenForOAuthMessages || oauthPayload !== undefined) return;
 
     const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const message = event.data as OAuthWindowMessage;
+      if (!message?.type) return;
+      const messageKey =
+        message?.nonce ??
+        `${message?.type ?? ""}:${message?.flowId ?? ""}:${message?.status ?? ""}:${message?.error ?? ""}:${message?.data?.facebook_user_id ?? ""}`;
+      if (handledOAuthMessageRef.current === messageKey) return;
+      handledOAuthMessageRef.current = messageKey;
+
+      if (event.data?.type === "META_OAUTH_STATUS") {
+        setNewOAuth(null);
+        setSelectedAccountKey("");
+        setAccountSearch("");
+        setWizardOpen(false);
+        setAccountModalOpen(true);
+        refetchIntegrations();
+        refetchConfigs();
+        if (event.data.status === "success") {
+          toast.success("Conta do Facebook reconectada com sucesso.");
+        }
+        return;
+      }
+
       if (!event.data || event.data.type !== "META_OAUTH_SUCCESS") return;
       setNewOAuth(event.data.data || null);
       setSelectedAccountKey("new-oauth");
@@ -202,9 +273,39 @@ export function MetaIntegrationSettings({
       toast.success("Conta do Facebook conectada. Escolha a página para continuar.");
     };
 
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== META_OAUTH_STORAGE_KEY || !event.newValue) return;
+      try {
+        handleMessage(new MessageEvent("message", {
+          data: JSON.parse(event.newValue) as OAuthWindowMessage,
+          origin: window.location.origin,
+        }));
+      } catch {
+        // Ignore malformed cross-window events.
+      }
+    };
+
     window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [oauthPayload]);
+    window.addEventListener("storage", handleStorage);
+
+    let channel: BroadcastChannel | null = null;
+    try {
+      if ("BroadcastChannel" in window) {
+        channel = new BroadcastChannel(META_OAUTH_CHANNEL);
+        channel.onmessage = (event) => {
+          handleMessage(new MessageEvent("message", { data: event.data, origin: window.location.origin }));
+        };
+      }
+    } catch {
+      channel = null;
+    }
+
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      window.removeEventListener("storage", handleStorage);
+      channel?.close();
+    };
+  }, [listenForOAuthMessages, oauthPayload, refetchConfigs, refetchIntegrations]);
 
   const accounts = useMemo<AccountGroup[]>(() => {
     const grouped = new Map<string, AccountGroup>();
@@ -257,10 +358,16 @@ export function MetaIntegrationSettings({
   });
 
   const openOAuth = async () => {
-    const returnUrl = `${window.location.origin}${window.location.pathname}${window.location.search}`;
-    const result = await getAuthUrl.mutateAsync({ returnUrl });
+    const returnUrl = new URL(window.location.href);
+    returnUrl.searchParams.set("meta_oauth_popup", "1");
+    const result = await getAuthUrl.mutateAsync({ returnUrl: returnUrl.toString() });
     const popup = window.open(result.auth_url, "meta_oauth", "width=600,height=720");
-    if (!popup) window.location.href = result.auth_url;
+    if (!popup) {
+      const fallbackReturnUrl = new URL(window.location.href);
+      fallbackReturnUrl.searchParams.delete("meta_oauth_popup");
+      const fallbackResult = await getAuthUrl.mutateAsync({ returnUrl: fallbackReturnUrl.toString() });
+      window.location.href = fallbackResult.auth_url;
+    }
   };
 
   const disconnectAccount = async (account: AccountGroup) => {

@@ -604,6 +604,7 @@ export default function Pipelines() {
 
     const queryKey = [
       'stages-with-leads',
+      activeOrganizationId,
       selectedPipelineId,
       effectiveFilterUser,
       dateFromISO,
@@ -749,7 +750,7 @@ export default function Pipelines() {
         isDraggingRef.current = false;
       }, 500);
     }
-  }, [stages, dateRange, filterTag, filterDealStatus, searchQuery, filterCampaign, filterAdSet, filterAd, filterSource, selectedPipelineId, effectivePipelineFilterUser, scopedVisibleUserIds, queryClient, profile, realtimeOrganizationId]);
+  }, [stages, dateRange, filterTag, filterDealStatus, searchQuery, filterCampaign, filterAdSet, filterAd, filterSource, selectedPipelineId, activeOrganizationId, effectivePipelineFilterUser, scopedVisibleUserIds, queryClient, profile, realtimeOrganizationId]);
 
   const handleDragEnd = useCallback(async (result: DropResult) => {
     isDraggingRef.current = false;

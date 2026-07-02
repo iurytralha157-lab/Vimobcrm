@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Key, Lock, MessageCircle, Search, Settings2, Webhook } from "lucide-react";
 import NextImage from "next/image";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,50 @@ interface MetaOAuthPayload {
   user_token?: string;
   facebook_user_id?: string;
   facebook_user_name?: string;
+}
+
+interface MetaOAuthStatus {
+  status?: string;
+  flowId?: string | null;
+  error?: string | null;
+  nonce?: number;
+}
+
+interface MetaOAuthWindowMessage {
+  type?: string;
+  data?: MetaOAuthPayload | null;
+  status?: string;
+  flowId?: string | null;
+  error?: string | null;
+  nonce?: number;
+}
+
+const META_OAUTH_CHANNEL = "vimob-meta-oauth";
+const META_OAUTH_STORAGE_KEY = "vimob:meta-oauth";
+
+function publishMetaOAuthReturn(message: MetaOAuthWindowMessage) {
+  const payload = { ...message, nonce: message.nonce ?? Date.now() };
+
+  if (window.opener && !window.opener.closed) {
+    window.opener.postMessage(payload, window.location.origin);
+  }
+
+  try {
+    if ("BroadcastChannel" in window) {
+      const channel = new BroadcastChannel(META_OAUTH_CHANNEL);
+      channel.postMessage(payload);
+      channel.close();
+    }
+  } catch {
+    // BroadcastChannel can be unavailable in restricted browser modes.
+  }
+
+  try {
+    window.localStorage.setItem(META_OAUTH_STORAGE_KEY, JSON.stringify(payload));
+    window.localStorage.removeItem(META_OAUTH_STORAGE_KEY);
+  } catch {
+    // Storage can be unavailable in restricted browser modes; postMessage/BroadcastChannel still cover normal flow.
+  }
 }
 
 interface IntegrationItem {
@@ -70,15 +114,43 @@ export function IntegrationsTab({
     !canManageAdminIntegrations;
   const [search, setSearch] = useState("");
   const [metaOAuthPayload, setMetaOAuthPayload] = useState<MetaOAuthPayload | null>(null);
+  const [metaOAuthStatus, setMetaOAuthStatus] = useState<MetaOAuthStatus | null>(null);
   const [activeIntegration, setActiveIntegration] = useState<IntegrationKey | null>(
     defaultIntegrationKey && !defaultIntegrationLocked ? defaultIntegrationKey : null,
   );
-  const { data: metaIntegrations = [] } = useMetaIntegrations();
+  const handledMetaOAuthEventRef = useRef<string | number | null>(null);
+  const { data: metaIntegrations = [], refetch: refetchMetaIntegrations } = useMetaIntegrations();
   const { data: whatsappSessions = [] } = useWhatsAppSessions();
   const { data: vistaIntegration } = useVistaIntegration();
   const { data: imoviewIntegration } = useImoviewIntegration();
   const { data: googleCalendarStatus } = useGoogleCalendarStatus();
   const disabledIntegrations = new Set<IntegrationKey>();
+
+  const handleMetaOAuthMessage = useCallback((message: MetaOAuthWindowMessage) => {
+    if (!message?.type) return;
+    const eventKey =
+      message.nonce ??
+      `${message.type}:${message.flowId ?? ""}:${message.status ?? ""}:${message.error ?? ""}:${message.data?.facebook_user_id ?? ""}`;
+    if (handledMetaOAuthEventRef.current === eventKey) return;
+    handledMetaOAuthEventRef.current = eventKey;
+
+    if (message.type === "META_OAUTH_SUCCESS") {
+      setMetaOAuthPayload(message.data || null);
+      setActiveIntegration("meta");
+      return;
+    }
+
+    if (message.type === "META_OAUTH_STATUS") {
+      setMetaOAuthStatus({
+        status: message.status,
+        flowId: message.flowId,
+        error: message.error,
+        nonce: message.nonce ?? Date.now(),
+      });
+      setActiveIntegration("meta");
+      refetchMetaIntegrations();
+    }
+  }, [refetchMetaIntegrations]);
 
   useEffect(() => {
     const parseOAuthPayload = (raw: string): MetaOAuthPayload => {
@@ -91,42 +163,90 @@ export function IntegrationsTab({
 
     const params = new URLSearchParams(window.location.search);
     const raw = params.get("meta_oauth_data");
-    if (!raw) return;
+    const status = params.get("meta_oauth_status");
+    const flowId = params.get("meta_oauth_flow_id");
+    const error = params.get("meta_oauth_error");
+    const isOAuthPopupReturn = params.get("meta_oauth_popup") === "1";
+    if (!raw && !status && !flowId && !error) return;
 
     try {
-      const payload = parseOAuthPayload(raw);
+      if (raw) {
+        const payload = parseOAuthPayload(raw);
 
-      if (window.opener && !window.opener.closed) {
-        window.opener.postMessage({ type: "META_OAUTH_SUCCESS", data: payload }, window.location.origin);
-        window.close();
-        return;
+        if ((window.opener && !window.opener.closed) || isOAuthPopupReturn) {
+          publishMetaOAuthReturn({ type: "META_OAUTH_SUCCESS", data: payload });
+          window.close();
+          return;
+        }
+
+        /* eslint-disable react-hooks/set-state-in-effect -- Consome o retorno OAuth da URL apenas uma vez ao abrir a tela. */
+        setMetaOAuthPayload(payload);
+        setActiveIntegration("meta");
+        /* eslint-enable react-hooks/set-state-in-effect */
+      } else {
+        const oauthStatus: MetaOAuthStatus = {
+          status: status || undefined,
+          flowId,
+          error,
+          nonce: Date.now(),
+        };
+
+        if ((window.opener && !window.opener.closed) || isOAuthPopupReturn) {
+          publishMetaOAuthReturn({ type: "META_OAUTH_STATUS", ...oauthStatus });
+          window.close();
+          return;
+        }
+
+        setMetaOAuthStatus(oauthStatus);
+        setActiveIntegration("meta");
+        refetchMetaIntegrations();
       }
-
-      /* eslint-disable react-hooks/set-state-in-effect -- Consome o retorno OAuth da URL apenas uma vez ao abrir a tela. */
-      setMetaOAuthPayload(payload);
-      setActiveIntegration("meta");
-      /* eslint-enable react-hooks/set-state-in-effect */
     } catch (error) {
       console.error("Invalid Meta OAuth payload", error);
     } finally {
       params.delete("meta_oauth_data");
+      params.delete("meta_oauth_status");
+      params.delete("meta_oauth_flow_id");
+      params.delete("meta_oauth_error");
+      params.delete("meta_oauth_popup");
       window.history.replaceState({}, "", `${window.location.pathname}${params.toString() ? `?${params}` : ""}`);
     }
-  }, []);
+  }, [refetchMetaIntegrations]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
-      const message = event.data as { type?: string; data?: MetaOAuthPayload | null };
-      if (!message || message.type !== "META_OAUTH_SUCCESS") return;
+      handleMetaOAuthMessage(event.data as MetaOAuthWindowMessage);
+    };
 
-      setMetaOAuthPayload(message.data || null);
-      setActiveIntegration("meta");
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== META_OAUTH_STORAGE_KEY || !event.newValue) return;
+      try {
+        handleMetaOAuthMessage(JSON.parse(event.newValue) as MetaOAuthWindowMessage);
+      } catch {
+        // Ignore malformed cross-window events.
+      }
     };
 
     window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, []);
+    window.addEventListener("storage", handleStorage);
+
+    let channel: BroadcastChannel | null = null;
+    try {
+      if ("BroadcastChannel" in window) {
+        channel = new BroadcastChannel(META_OAUTH_CHANNEL);
+        channel.onmessage = (event) => handleMetaOAuthMessage(event.data as MetaOAuthWindowMessage);
+      }
+    } catch {
+      channel = null;
+    }
+
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      window.removeEventListener("storage", handleStorage);
+      channel?.close();
+    };
+  }, [handleMetaOAuthMessage]);
 
   const integrations = useMemo<IntegrationItem[]>(() => {
     const metaConnected = metaIntegrations.some((item) => item.is_connected);
@@ -301,7 +421,13 @@ export function IntegrationsTab({
             <DialogTitle>{activeTitle ? `Integração com ${activeTitle}` : "Integração"}</DialogTitle>
           </DialogHeader>
           {effectiveActiveIntegration === "whatsapp" && <WhatsAppTab embedded />}
-          {effectiveActiveIntegration === "meta" && <MetaIntegrationSettings oauthPayload={metaOAuthPayload} />}
+          {effectiveActiveIntegration === "meta" && (
+            <MetaIntegrationSettings
+              oauthPayload={metaOAuthPayload}
+              oauthStatus={metaOAuthStatus}
+              listenForOAuthMessages={false}
+            />
+          )}
           {effectiveActiveIntegration === "google-calendar" && <GoogleCalendarConnect />}
           {effectiveActiveIntegration === "webhooks" && <WebhooksTab />}
           {effectiveActiveIntegration === "api" && <APITab />}

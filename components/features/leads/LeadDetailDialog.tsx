@@ -823,7 +823,7 @@ export function LeadDetailDialog({
       if (!Array.isArray(cachedData)) return;
 
       const keyParts = Array.isArray(queryKey) ? queryKey : [];
-      const filterUserId = keyParts[2] as string | null | undefined;
+      const filterUserId = keyParts[3] as string | null | undefined;
       const shouldKeepInFilteredView =
         !filterUserId || filterUserId === 'all' || filterUserId === nextLead.assigned_user_id;
 
