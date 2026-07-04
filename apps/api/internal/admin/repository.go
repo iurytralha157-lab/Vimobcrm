@@ -243,12 +243,19 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 	}
 
 	var email *string
+	existingAccount := false
 	if request.Email != nil {
 		normalizedEmail, err := normalizeEmail(*request.Email)
 		if err != nil {
 			return nil, err
 		}
 		email = &normalizedEmail
+		existingUserID, lookupErr := repo.userIDByEmail(ctx, normalizedEmail)
+		if lookupErr == nil && existingUserID != "" {
+			existingAccount = true
+		} else if lookupErr != nil && !errors.Is(lookupErr, pgx.ErrNoRows) {
+			return nil, lookupErr
+		}
 	}
 
 	item, err := repo.queryJSONObject(ctx, `
@@ -285,10 +292,12 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 				OrganizationName: organizationName,
 				Role:             role,
 				InviteURL:        repo.invitationURL(token),
+				ExistingAccount:  existingAccount,
 			}) == nil
 		}
 	}
 	item["email_sent"] = emailSent
+	item["existing_account"] = existingAccount
 	return item, nil
 }
 
@@ -339,7 +348,13 @@ func (repo Repository) ShowInvitationByToken(ctx context.Context, token string) 
 			'role', i.role,
 			'organization_id', i.organization_id::text,
 			'organization_name', o.name,
-			'expires_at', i.expires_at
+			'expires_at', i.expires_at,
+			'existing_account', exists (
+				select 1
+				from public.users u
+				where lower(u.email) = lower(i.email)
+				limit 1
+			)
 		)
 		from public.invitations i
 		join public.organizations o on o.id = i.organization_id

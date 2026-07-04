@@ -8,6 +8,7 @@ interface InvitationByToken {
   organization_id: string;
   organization_name?: string;
   expires_at: string;
+  existing_account?: boolean;
 }
 
 export function useInvitationByToken(token: string | null) {

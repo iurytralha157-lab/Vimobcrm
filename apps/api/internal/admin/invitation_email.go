@@ -16,6 +16,7 @@ type invitationEmailInput struct {
 	OrganizationName string
 	Role             string
 	InviteURL        string
+	ExistingAccount  bool
 }
 
 func (repo Repository) invitationURL(token string) string {
@@ -27,11 +28,16 @@ func (repo Repository) sendInvitationEmail(ctx context.Context, input invitation
 		return fmt.Errorf("resend invitation email is not configured")
 	}
 
+	subject := fmt.Sprintf("Convite para acessar %s no Vimob", input.OrganizationName)
+	if input.ExistingAccount {
+		subject = fmt.Sprintf("Acesse %s com sua conta Vimob", input.OrganizationName)
+	}
+
 	payload, err := json.Marshal(map[string]any{
 		"from":     repo.fromEmail,
 		"to":       []string{cleanEmailHeader(input.Email)},
 		"reply_to": repo.replyTo,
-		"subject":  fmt.Sprintf("Convite para acessar %s no Vimob", input.OrganizationName),
+		"subject":  subject,
 		"html":     repo.renderInvitationHTML(input),
 	})
 	if err != nil {
@@ -68,6 +74,13 @@ func (repo Repository) renderInvitationHTML(input invitationEmailInput) string {
 	}
 	inviteURL := html.EscapeString(input.InviteURL)
 	supportEmail := html.EscapeString(firstNonEmpty(repo.supportEmail, repo.replyTo, "contato@vimobcrm.com.br"))
+	heading := fmt.Sprintf("Voce foi convidado para %s", organizationName)
+	body := fmt.Sprintf("Voce recebeu acesso como <strong>%s</strong>. Complete seu cadastro para entrar na organizacao pelo Vimob CRM.", roleLabel)
+	buttonLabel := "Completar cadastro"
+	if input.ExistingAccount {
+		body = fmt.Sprintf("Voce recebeu acesso como <strong>%s</strong>. Use sua conta Vimob atual para aceitar o convite e acessar esta organizacao.", roleLabel)
+		buttonLabel = "Entrar e aceitar"
+	}
 
 	return fmt.Sprintf(`<!doctype html>
 <html lang="pt-BR">
@@ -88,12 +101,12 @@ func (repo Repository) renderInvitationHTML(input invitationEmailInput) string {
             </tr>
             <tr>
               <td style="padding:8px 30px 26px;">
-                <h1 style="margin:0 0 12px;font-size:22px;line-height:1.25;font-weight:600;">Você foi convidado para %s</h1>
+                <h1 style="margin:0 0 12px;font-size:22px;line-height:1.25;font-weight:600;">%s</h1>
                 <p style="margin:0 0 18px;font-size:15px;line-height:1.65;color:#5c626b;">
-                  Você recebeu acesso como <strong>%s</strong>. Confirme o convite para entrar na organização pelo Vimob CRM.
+                  %s
                 </p>
                 <a href="%s" style="display:inline-block;background:#ff4529;color:#ffffff;text-decoration:none;border-radius:6px;padding:13px 22px;font-size:14px;font-weight:600;">
-                  Aceitar convite
+                  %s
                 </a>
                 <p style="margin:22px 0 0;font-size:12px;line-height:1.6;color:#8a9099;">
                   Se o botão não funcionar, copie e cole este link no navegador:<br>
@@ -111,7 +124,7 @@ func (repo Repository) renderInvitationHTML(input invitationEmailInput) string {
       </tr>
     </table>
   </body>
-</html>`, organizationName, roleLabel, inviteURL, inviteURL, supportEmail)
+</html>`, heading, body, inviteURL, buttonLabel, inviteURL, supportEmail)
 }
 
 func cleanEmailHeader(value string) string {

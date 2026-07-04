@@ -60,6 +60,7 @@ type AcceptInvitationRequest struct {
 type AcceptInvitationResult struct {
 	Success          bool   `json:"success"`
 	RequiresLogin    bool   `json:"requiresLogin"`
+	ExistingAccount  bool   `json:"existingAccount,omitempty"`
 	Email            string `json:"email"`
 	OrganizationID   string `json:"organizationId"`
 	OrganizationName string `json:"organizationName"`

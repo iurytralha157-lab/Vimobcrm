@@ -28,6 +28,7 @@ func (repo Repository) AcceptInvitationPublic(ctx context.Context, token string,
 		return AcceptInvitationResult{
 			Success:          false,
 			RequiresLogin:    true,
+			ExistingAccount:  true,
 			Email:            invitation.Email,
 			OrganizationID:   invitation.OrganizationID,
 			OrganizationName: invitation.OrganizationName,
@@ -46,6 +47,17 @@ func (repo Repository) AcceptInvitationPublic(ctx context.Context, token string,
 
 	authUserID, err := repo.createAuthUser(ctx, invitation.Email, password, name)
 	if err != nil {
+		if isAuthUserAlreadyExistsError(err) {
+			return AcceptInvitationResult{
+				Success:          false,
+				RequiresLogin:    true,
+				ExistingAccount:  true,
+				Email:            invitation.Email,
+				OrganizationID:   invitation.OrganizationID,
+				OrganizationName: invitation.OrganizationName,
+				Message:          "Este e-mail ja possui uma conta. Entre para aceitar o convite.",
+			}, nil
+		}
 		return AcceptInvitationResult{}, err
 	}
 
@@ -56,6 +68,7 @@ func (repo Repository) AcceptInvitationPublic(ctx context.Context, token string,
 	return AcceptInvitationResult{
 		Success:          true,
 		RequiresLogin:    false,
+		ExistingAccount:  false,
 		Email:            invitation.Email,
 		OrganizationID:   invitation.OrganizationID,
 		OrganizationName: invitation.OrganizationName,
@@ -89,6 +102,7 @@ func (repo Repository) AcceptInvitationAuthenticated(ctx context.Context, userID
 	return AcceptInvitationResult{
 		Success:          true,
 		RequiresLogin:    false,
+		ExistingAccount:  true,
 		Email:            invitation.Email,
 		OrganizationID:   invitation.OrganizationID,
 		OrganizationName: invitation.OrganizationName,
@@ -243,6 +257,17 @@ func userRoleFromInvitation(role string) string {
 		return "admin"
 	}
 	return "user"
+}
+
+func isAuthUserAlreadyExistsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "already") ||
+		strings.Contains(message, "registered") ||
+		strings.Contains(message, "exists") ||
+		strings.Contains(message, "unique")
 }
 
 func memberRoleFromInvitation(role string) string {

@@ -2,17 +2,19 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { adminAPI } from "@/lib/api/admin";
 import { authAPI } from "@/lib/api/auth";
+import { supabase } from "@/integrations/supabase/client";
 import { useInvitationByToken } from "@/hooks/use-invitation-by-token";
 import { cn } from "@/lib/utils";
 
 type AcceptResult = {
   success: boolean;
   requiresLogin: boolean;
+  existingAccount?: boolean;
   email: string;
   organizationId: string;
   organizationName: string;
@@ -46,10 +48,36 @@ export function InvitationScreen({ token }: { token: string }) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [requiresLogin, setRequiresLogin] = useState(false);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [checkingSession, setCheckingSession] = useState(true);
 
   const email = invitation?.email || "";
   const organizationName = invitation?.organization_name || "sua imobiliaria";
   const roleLabel = useMemo(() => (invitation?.role === "admin" ? "Administrador" : "Usuario"), [invitation?.role]);
+  const existingAccount = Boolean(invitation?.existing_account || requiresLogin);
+  const loggedEmailMatches = Boolean(
+    currentUserEmail && email && currentUserEmail.toLowerCase() === email.toLowerCase(),
+  );
+
+  useEffect(() => {
+    let mounted = true;
+
+    supabase.auth.getUser().then(({ data }) => {
+      if (!mounted) return;
+      setCurrentUserEmail(data.user?.email ?? null);
+      setCheckingSession(false);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setCurrentUserEmail(session?.user?.email ?? null);
+      setCheckingSession(false);
+    });
+
+    return () => {
+      mounted = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
 
   async function handleAcceptNewAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -100,7 +128,7 @@ export function InvitationScreen({ token }: { token: string }) {
         return;
       }
 
-      router.replace("/dashboard");
+      router.replace("/select-organization?redirectTo=/dashboard");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Nao foi possivel aceitar o convite agora.");
     } finally {
@@ -121,6 +149,11 @@ export function InvitationScreen({ token }: { token: string }) {
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  async function handleLoginForInvitation() {
+    await supabase.auth.signOut();
+    router.replace(`/login?redirectTo=/convite/${encodeURIComponent(token)}`);
   }
 
   return (
@@ -176,15 +209,31 @@ export function InvitationScreen({ token }: { token: string }) {
                   <p className="mt-1 text-white/55">Funcao: {roleLabel}</p>
                 </div>
 
-                {requiresLogin ? (
-                  <button
-                    type="button"
-                    onClick={handleAcceptExistingAccount}
-                    disabled={isSubmitting}
-                    className="h-12 w-full rounded-[6px] bg-[#FF4529] text-[12px] font-extralight uppercase tracking-[0.08em] text-white transition-opacity hover:opacity-90 disabled:opacity-55"
-                  >
-                    {isSubmitting ? "Verificando..." : "Entrar e aceitar convite"}
-                  </button>
+                {existingAccount ? (
+                  <div className="space-y-3">
+                    <div className="rounded-[6px] bg-white/[0.06] p-3 text-sm font-extralight leading-6 text-white/65">
+                      {checkingSession ? (
+                        "Verificando sua sessao..."
+                      ) : loggedEmailMatches ? (
+                        "Voce ja esta conectado com este e-mail. Confirme para entrar nesta organizacao."
+                      ) : currentUserEmail ? (
+                        <>
+                          Voce esta conectado como <span className="text-white">{currentUserEmail}</span>. Saia e entre com{" "}
+                          <span className="text-white">{email}</span> para aceitar o convite.
+                        </>
+                      ) : (
+                        "Este e-mail ja possui uma conta Vimob. Entre com seu acesso atual para aceitar o convite."
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={loggedEmailMatches ? handleAcceptExistingAccount : handleLoginForInvitation}
+                      disabled={isSubmitting || checkingSession}
+                      className="h-12 w-full rounded-[6px] bg-[#FF4529] text-[12px] font-extralight uppercase tracking-[0.08em] text-white transition-opacity hover:opacity-90 disabled:opacity-55"
+                    >
+                      {isSubmitting ? "Verificando..." : loggedEmailMatches ? "Aceitar convite" : "Entrar para aceitar"}
+                    </button>
+                  </div>
                 ) : (
                   <>
                     <div className="space-y-2">

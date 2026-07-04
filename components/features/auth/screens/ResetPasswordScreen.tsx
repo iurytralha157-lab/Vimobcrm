@@ -11,7 +11,6 @@ import { useToast } from "@/hooks/use-toast";
 import { usePasswordStrength, type PasswordStrength } from "@/hooks/use-password-strength";
 import { VimobLoader } from "@/components/shared/loading";
 import { supabase } from "@/integrations/supabase/client";
-import { settingsAPI } from "@/lib/api/settings";
 import { getFriendlyErrorMessage } from "@/lib/error-handler";
 
 type RecoveryState = "checking" | "ready" | "invalid" | "success";
@@ -254,10 +253,14 @@ export default function ResetPasswordScreen() {
 
     setLoading(true);
     try {
-      const result = await settingsAPI.changePassword({
-        password,
-        source: "recovery",
-      });
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) throw error;
+
+      const result: { allowed?: boolean; emailNotificationSent?: boolean | null; message?: string } = {
+        allowed: true,
+        emailNotificationSent: false,
+        message: "",
+      };
 
       if (result?.allowed === false) {
         const message = result.message || "Não foi possível alterar sua senha agora.";
@@ -270,7 +273,7 @@ export default function ResetPasswordScreen() {
         return;
       }
 
-      setEmailNotificationSent(result?.emailNotificationSent ?? null);
+      setEmailNotificationSent(null);
       setRecoveryState("success");
       setPassword("");
       setConfirmPassword("");
