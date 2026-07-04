@@ -287,13 +287,19 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 		}
 		token, _ := item["token"].(string)
 		if token != "" {
-			emailSent = repo.sendInvitationEmail(ctx, invitationEmailInput{
+			if err := repo.sendInvitationEmail(ctx, invitationEmailInput{
 				Email:            *email,
 				OrganizationName: organizationName,
 				Role:             role,
 				InviteURL:        repo.invitationURL(token),
 				ExistingAccount:  existingAccount,
-			}) == nil
+			}); err != nil {
+				if id, _ := item["id"].(string); id != "" {
+					_, _ = repo.db.Pool().Exec(ctx, `delete from public.invitations where id = $1::uuid`, id)
+				}
+				return nil, fmt.Errorf("%w: %v", ErrInvitationEmailFailed, err)
+			}
+			emailSent = true
 		}
 	}
 	item["email_sent"] = emailSent

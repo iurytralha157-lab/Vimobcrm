@@ -56,7 +56,6 @@ export function useAdminInvitations(organizationId: string | undefined) {
       return invitation;
     },
     onSuccess: () => {
-      toast.success('Convite criado com sucesso!');
       queryClient.invalidateQueries({ queryKey: ['admin-invitations', organizationId] });
     },
     onError: (error: unknown) => {

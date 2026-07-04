@@ -61,6 +61,8 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DateFilterPopover } from '@/components/ui/date-filter-popover';
+import { type DatePreset, getDateRangeFromPreset } from '@/hooks/use-dashboard-filters';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   useGamificationAdmin,
@@ -380,22 +382,21 @@ const getFilteredRanking = (
   baseRanking: GamificationRankingEntry[],
   history: GamificationEvent[],
   rankType: string,
-  period: 'month' | 'general'
+  datePreset: DatePreset | null,
+  customDateRange: { from: Date; to: Date } | null
 ): GamificationRankingEntry[] => {
-  const currentMonth = new Date().getMonth();
-  const currentYear = new Date().getFullYear();
+  const range = getDateRangeFromPreset(datePreset || 'thisMonth');
+  const fromDate = datePreset === 'custom' && customDateRange ? customDateRange.from : range.from;
+  const toDate = datePreset === 'custom' && customDateRange ? customDateRange.to : range.to;
 
   const periodEvents = history.filter(event => {
     if (!event.createdAt) return false;
     const date = new Date(event.createdAt);
-    if (period === 'month') {
-      return date.getMonth() === currentMonth && date.getFullYear() === currentYear;
-    }
-    return true;
+    return date >= fromDate && date <= toDate;
   });
 
   if (rankType === 'geral') {
-    if (period === 'month') {
+    if (datePreset === 'thisMonth') {
       return baseRanking;
     }
     const pointsByUser: Record<string, number> = {};
@@ -430,10 +431,11 @@ const getFilteredRanking = (
 };
 
 function ArenaView({ data }: { data: GamificationOverview }) {
-  const [period, setPeriod] = useState<'month' | 'general'>('month');
+  const [datePreset, setDatePreset] = useState<DatePreset | null>('thisMonth');
+  const [customDateRange, setCustomDateRange] = useState<{ from: Date; to: Date } | null>(null);
   const [rankType, setRankType] = useState<string>('geral');
 
-  const filteredRanking = getFilteredRanking(data.ranking, data.history, rankType, period);
+  const filteredRanking = getFilteredRanking(data.ranking, data.history, rankType, datePreset, customDateRange);
 
   return (
     <div>
@@ -441,8 +443,10 @@ function ArenaView({ data }: { data: GamificationOverview }) {
         <PodiumStage ranking={filteredRanking} />
         <ClassificationPanel
           ranking={filteredRanking}
-          period={period}
-          setPeriod={setPeriod}
+          datePreset={datePreset}
+          setDatePreset={setDatePreset}
+          customDateRange={customDateRange}
+          setCustomDateRange={setCustomDateRange}
           rankType={rankType}
           setRankType={setRankType}
         />
@@ -581,7 +585,7 @@ function DistributionPanel({ data, totalActions }: { data: GamificationOverview;
                   <span>{item.label}</span>
                   <span>{percentage}%</span>
                 </div>
-                <Progress value={percentage} className="h-2 bg-white/10" />
+                 <Progress value={percentage} className="h-2 bg-black/10 dark:bg-white/10" />
                 <p className="text-xs text-muted-foreground">{formatNumber(item.value)} acoes</p>
               </div>
             );
@@ -599,19 +603,19 @@ function PodiumStage({ ranking }: { ranking: GamificationRankingEntry[] }) {
   return (
     <section className="relative flex h-full flex-col overflow-hidden rounded-xl bg-[var(--app-surface-solid)] p-5 sm:p-6 shadow-xl min-h-[580px] lg:min-h-0">
       <div className="absolute inset-x-8 bottom-10 h-16 rounded-full bg-primary/10 blur-3xl pointer-events-none" />
-
+      
       {/* Title / Header */}
       <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-border/5 pb-4 shrink-0">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-400/10 text-amber-400">
             <Trophy className="h-5 w-5" />
           </div>
-          <h2 className="text-base sm:text-lg font-black italic tracking-wider uppercase text-white">
+          <h2 className="text-base sm:text-lg font-black italic tracking-wider uppercase text-foreground">
             Arena Imobiliária de Elite
           </h2>
         </div>
         <div className="flex items-center gap-4 text-xs font-semibold">
-          <Volume2 className="h-4 w-4 text-muted-foreground cursor-pointer hover:text-white transition-colors" />
+          <Volume2 className="h-4 w-4 text-muted-foreground cursor-pointer hover:text-foreground transition-colors" />
           <span className="flex items-center gap-2 text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
             LIVE
@@ -654,15 +658,15 @@ function PodiumSpot({
   };
 
   const pedestalStyles = {
-    gold: 'border-t border-t-amber-400/50 border-x-0 border-b-0 bg-gradient-to-b from-amber-500/25 via-amber-500/8 to-amber-500/0 text-amber-300',
-    silver: 'border-t border-t-slate-300/40 border-x-0 border-b-0 bg-gradient-to-b from-slate-400/20 via-slate-400/6 to-slate-400/0 text-slate-100',
-    bronze: 'border-t border-t-orange-500/40 border-x-0 border-b-0 bg-gradient-to-b from-orange-600/20 via-orange-600/5 to-orange-600/0 text-orange-200',
+    gold: 'border-t border-t-amber-400/50 border-x-0 border-b-0 bg-gradient-to-b from-amber-500/15 dark:from-amber-500/25 via-amber-500/3 dark:via-amber-500/8 to-transparent text-amber-750 dark:text-amber-300',
+    silver: 'border-t border-t-slate-300/40 border-x-0 border-b-0 bg-gradient-to-b from-slate-400/15 dark:from-slate-400/20 via-slate-400/3 dark:via-slate-400/6 to-transparent text-slate-700 dark:text-slate-100',
+    bronze: 'border-t border-t-orange-500/40 border-x-0 border-b-0 bg-gradient-to-b from-orange-600/15 dark:from-orange-600/20 via-orange-600/3 dark:via-orange-600/5 to-transparent text-orange-750 dark:text-orange-200',
   };
 
   const toneClasses = {
-    gold: 'border-amber-400 shadow-[0_0_20px_rgba(251,191,36,0.25)]',
-    silver: 'border-slate-300 shadow-[0_0_12px_rgba(203,213,225,0.15)]',
-    bronze: 'border-orange-600 shadow-[0_0_10px_rgba(234,88,12,0.15)]',
+    gold: 'border-amber-400',
+    silver: 'border-slate-300',
+    bronze: 'border-orange-600',
   };
 
   const avatarSizes = {
@@ -677,7 +681,7 @@ function PodiumSpot({
         <div className="relative z-10 flex h-16 w-16 items-center justify-center rounded-full border-2 border-dashed border-border/40 text-muted-foreground bg-[var(--app-surface-solid)] font-bold">
           {place}
         </div>
-        <div
+        <div 
           className={cn(
             'mt-[-16px] z-0 flex w-full flex-col items-center justify-center rounded-xl border border-dashed border-border/20 p-4 text-center',
             pedestalHeights[tone]
@@ -700,7 +704,7 @@ function PodiumSpot({
         )}
         <Avatar className={cn('border-4 bg-background', avatarSizes[tone], toneClasses[tone])}>
           <AvatarImage src={entry.avatarUrl || undefined} />
-          <AvatarFallback className="text-xl font-bold bg-[var(--app-surface-soft)] text-white">
+          <AvatarFallback className="text-xl font-bold bg-[var(--app-surface-soft)] text-foreground">
             {getInitials(entry.name)}
           </AvatarFallback>
         </Avatar>
@@ -724,25 +728,25 @@ function PodiumSpot({
       </div>
 
       {/* Pedestal Column */}
-      <div
+      <div 
         className={cn(
           'mt-[-28px] z-0 flex w-full flex-col items-center justify-end pb-5 pt-8 px-3 text-center rounded-t-xl rounded-b-lg transition-all duration-500 hover:brightness-110',
           pedestalHeights[tone],
           pedestalStyles[tone]
         )}
       >
-        <p className="text-xs sm:text-sm font-bold text-white line-clamp-1 w-full px-1">{entry.name}</p>
-
+        <p className="text-xs sm:text-sm font-bold text-foreground line-clamp-1 w-full px-1">{entry.name}</p>
+        
         <p className={cn(
           'font-black leading-none mt-2',
-          featured ? 'text-3xl sm:text-4xl text-amber-400' : place === 2 ? 'text-2xl sm:text-3xl text-slate-200' : 'text-xl sm:text-2xl text-orange-300'
+          featured ? 'text-3xl sm:text-4xl text-amber-600 dark:text-amber-400' : place === 2 ? 'text-2xl sm:text-3xl text-slate-700 dark:text-slate-200' : 'text-xl sm:text-2xl text-orange-600 dark:text-orange-300'
         )}>
           {formatNumber(entry.points)}
         </p>
-
+        
         <p className={cn(
           'text-[9px] font-bold uppercase tracking-widest mt-1',
-          featured ? 'text-amber-500/90' : place === 2 ? 'text-slate-400' : 'text-orange-400/90'
+          featured ? 'text-amber-700 dark:text-amber-500/90' : place === 2 ? 'text-slate-500 dark:text-slate-400' : 'text-orange-700 dark:text-orange-400/90'
         )}>
           {place === 1 ? 'Campeão' : 'Pontos'}
         </p>
@@ -753,16 +757,20 @@ function PodiumSpot({
 
 interface ClassificationPanelProps {
   ranking: GamificationRankingEntry[];
-  period: 'month' | 'general';
-  setPeriod: (period: 'month' | 'general') => void;
+  datePreset: DatePreset | null;
+  setDatePreset: (preset: DatePreset | null) => void;
+  customDateRange: { from: Date; to: Date } | null;
+  setCustomDateRange: (range: { from: Date; to: Date } | null) => void;
   rankType: string;
   setRankType: (rankType: string) => void;
 }
 
 function ClassificationPanel({
   ranking,
-  period,
-  setPeriod,
+  datePreset,
+  setDatePreset,
+  customDateRange,
+  setCustomDateRange,
   rankType,
   setRankType,
 }: ClassificationPanelProps) {
@@ -772,32 +780,18 @@ function ClassificationPanel({
       <div className="border-b border-border/5 pb-4 shrink-0">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-base sm:text-lg font-bold tracking-wide text-white">Classificação</h2>
+            <h2 className="text-base sm:text-lg font-bold tracking-wide text-foreground">Classificação</h2>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {/* Period Filter Dropdown */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-9 rounded-lg text-xs px-3 border border-primary text-primary hover:text-primary/90 flex items-center gap-1.5 bg-transparent"
-                >
-                  <Calendar className="h-3.5 w-3.5" />
-                  {period === 'month' ? 'Este mês' : 'Geral'}
-                  <ChevronDown className="h-3 w-3 ml-0.5 opacity-60" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="bg-popover rounded-xl border border-border/10">
-                <DropdownMenuItem onClick={() => setPeriod('month')} className="cursor-pointer rounded-lg text-xs">
-                  Este mês
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setPeriod('general')} className="cursor-pointer rounded-lg text-xs">
-                  Geral
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <DateFilterPopover
+              datePreset={datePreset}
+              onDatePresetChange={setDatePreset}
+              customDateRange={customDateRange}
+              onCustomDateRangeChange={setCustomDateRange}
+              triggerClassName="h-9 gap-2 rounded-lg border border-primary text-primary hover:bg-primary/5 hover:text-primary transition-colors bg-transparent text-xs px-3"
+              align="end"
+            />
 
             {/* Rank Type Dropdown */}
             <DropdownMenu>
@@ -806,7 +800,7 @@ function ClassificationPanel({
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="h-9 rounded-lg text-xs px-3 border border-border/20 text-white hover:bg-white/5 flex items-center gap-1.5 bg-transparent"
+                  className="h-9 rounded-lg text-xs px-3 border border-border/20 text-foreground hover:bg-black/5 dark:hover:bg-white/5 flex items-center gap-1.5 bg-transparent"
                 >
                   {(() => {
                     const active = rankLabels[rankType] || rankLabels.geral;
@@ -867,12 +861,12 @@ function ClassificationRow({ entry }: { entry: GamificationRankingEntry }) {
         ? 'bg-slate-300 text-slate-900'
         : entry.position === 3
           ? 'bg-orange-500 text-orange-950'
-          : 'bg-white/5 text-slate-400';
+          : 'bg-black/5 dark:bg-white/5 text-muted-foreground';
 
   return (
     <div
       className={cn(
-        'group flex min-h-[64px] items-center gap-3 border-b border-border/5 py-3 px-2 transition-all duration-300 hover:bg-white/[0.02] hover:-translate-y-0.5 hover:shadow-sm rounded-lg',
+        'group flex min-h-[64px] items-center gap-3 border-b border-border/30 py-3 px-2 transition-all duration-300 hover:bg-black/[0.02] dark:hover:bg-white/[0.02] hover:-translate-y-0.5 hover:shadow-sm rounded-lg',
         entry.isCurrentUser && 'bg-primary/5 border-l-2 border-l-primary pl-3',
       )}
     >
@@ -889,7 +883,7 @@ function ClassificationRow({ entry }: { entry: GamificationRankingEntry }) {
       {/* Avatar */}
       <Avatar className="h-10 w-10 shrink-0 border border-border/30">
         <AvatarImage src={entry.avatarUrl || undefined} />
-        <AvatarFallback className="text-xs bg-[var(--app-surface-soft)] font-bold text-white">
+        <AvatarFallback className="text-xs bg-[var(--app-surface-soft)] font-bold text-foreground">
           {getInitials(entry.name)}
         </AvatarFallback>
       </Avatar>
@@ -897,7 +891,7 @@ function ClassificationRow({ entry }: { entry: GamificationRankingEntry }) {
       {/* Broker Details */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
-          <p className="truncate text-sm font-semibold text-white group-hover:text-primary transition-colors">
+          <p className="truncate text-sm font-semibold text-foreground group-hover:text-primary transition-colors">
             {entry.name}
           </p>
           {entry.position === 1 && (
@@ -912,7 +906,7 @@ function ClassificationRow({ entry }: { entry: GamificationRankingEntry }) {
 
       {/* Score / Points */}
       <div className="shrink-0 text-right pl-2">
-        <p className="text-base font-black text-white">{formatNumber(entry.points)}</p>
+        <p className="text-base font-black text-foreground">{formatNumber(entry.points)}</p>
         <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/80 mt-0.5">
           pontos
         </p>
@@ -1517,7 +1511,7 @@ function MissionsPanel({ missions }: { missions: GamificationMission[] }) {
                   </div>
                   <Badge variant="secondary">+{mission.bonusPoints} pts</Badge>
                 </div>
-                <Progress value={progress} className="h-2 bg-white/10" />
+                <Progress value={progress} className="h-2 bg-black/10 dark:bg-white/10" />
                 <p className="text-xs text-muted-foreground">
                   {formatNumber(mission.currentProgress)} de {formatNumber(mission.targetCount)}
                 </p>
@@ -1561,7 +1555,7 @@ function StatsWidget({ entry, myPosition }: { entry?: GamificationRankingEntry; 
               {formatNumber(entry.xpCurrentLevel)} / {formatNumber(entry.xpNextLevel)}
             </span>
           </div>
-          <Progress value={progress} className="h-2 bg-white/10" />
+          <Progress value={progress} className="h-2 bg-black/10 dark:bg-white/10" />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <MiniStat label="Pontos" value={formatNumber(entry.points)} />
@@ -1581,7 +1575,7 @@ function RankingRow({ entry }: { entry: GamificationRankingEntry }) {
         <span
           className={cn(
             'flex h-9 w-9 items-center justify-center rounded-md text-sm font-bold',
-            entry.position <= 3 ? 'bg-primary text-white' : 'bg-white/10 text-muted-foreground',
+            entry.position <= 3 ? 'bg-primary text-white' : 'bg-black/10 dark:bg-white/10 text-muted-foreground',
           )}
         >
           {entry.position}
@@ -1608,7 +1602,7 @@ function RankingRow({ entry }: { entry: GamificationRankingEntry }) {
             {formatNumber(entry.xpCurrentLevel)} / {formatNumber(entry.xpNextLevel)}
           </span>
         </div>
-        <Progress value={progress} className="h-2 bg-white/10" />
+        <Progress value={progress} className="h-2 bg-black/10 dark:bg-white/10" />
       </div>
 
       <div className="flex items-center justify-between gap-3 md:justify-end">

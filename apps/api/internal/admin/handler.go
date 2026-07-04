@@ -656,6 +656,8 @@ func writeAdminError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusNotFound, "admin_resource_not_found", "Admin resource was not found.")
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
+	case errors.Is(err, ErrInvitationEmailFailed):
+		httpserver.WriteError(w, r, http.StatusBadGateway, "invitation_email_failed", "Nao foi possivel enviar o convite por e-mail. Verifique a configuracao de envio.")
 	default:
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "admin_operation_failed", "Unable to complete admin operation.")
 	}

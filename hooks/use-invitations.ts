@@ -32,9 +32,9 @@ export function useCreateInvitation() {
         email: email || null,
         role,
       }),
-    onSuccess: () => {
+    onSuccess: (invitation) => {
       queryClient.invalidateQueries({ queryKey: ['invitations'] });
-      toast.success('Convite criado!');
+      toast.success(invitation.email_sent === false ? 'Convite criado sem envio de e-mail.' : 'Convite enviado por e-mail.');
     },
     onError: (error) => {
       toast.error('Erro ao criar convite: ' + error.message);

@@ -3,8 +3,9 @@ package admin
 import "errors"
 
 var (
-	ErrInvalidInput = errors.New("invalid admin input")
-	ErrNotFound     = errors.New("admin resource not found")
+	ErrInvalidInput          = errors.New("invalid admin input")
+	ErrNotFound              = errors.New("admin resource not found")
+	ErrInvitationEmailFailed = errors.New("invitation email failed")
 )
 
 type Envelope[T any] struct {
