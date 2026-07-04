@@ -26,6 +26,14 @@ export type PropertyCondominium = {
   neighborhood_id: string | null
   name: string
   address: string | null
+  photo_url: string | null
+  cep: string | null
+  number: string | null
+  complement: string | null
+  default_condominium_fee: number | null
+  has_concierge: boolean | null
+  concierge_type: string | null
+  notes: string | null
   latitude: number | null
   longitude: number | null
   is_active: boolean
@@ -40,6 +48,23 @@ type ListResponse<T> = {
 
 type ItemResponse<T> = {
   data: T
+}
+
+export type CreatePropertyCondominiumInput = {
+  name: string
+  city_id?: string
+  neighborhood_id?: string
+  address?: string
+  photo_url?: string
+  cep?: string
+  number?: string
+  complement?: string
+  default_condominium_fee?: number
+  has_concierge?: boolean
+  concierge_type?: string
+  notes?: string
+  latitude?: number
+  longitude?: number
 }
 
 export const propertyLocationsAPI = {
@@ -95,14 +120,7 @@ export const propertyLocationsAPI = {
 
   async createCondominium(
     organizationId: string,
-    condominium: {
-      name: string
-      city_id?: string
-      neighborhood_id?: string
-      address?: string
-      latitude?: number
-      longitude?: number
-    },
+    condominium: CreatePropertyCondominiumInput,
   ) {
     return vimobAPIRequest<ItemResponse<PropertyCondominium>>('/v1/property-condominiums', {
       method: 'POST',

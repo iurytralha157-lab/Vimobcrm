@@ -60,6 +60,7 @@ interface SharedFiltersProps {
   hideSearch?: boolean;
   datePosition?: "start" | "end";
   onFiltersOpenChange?: (open: boolean) => void;
+  tourPrefix?: string;
 }
 
 export function SharedFilters({
@@ -99,6 +100,7 @@ export function SharedFilters({
   hideSearch = false,
   datePosition = "start",
   onFiltersOpenChange,
+  tourPrefix,
 }: SharedFiltersProps) {
   const { user, profile } = useAuth();
   const { data: teams = [] } = useTeams();
@@ -268,6 +270,7 @@ export function SharedFilters({
           onDatePresetChange={handleDatePresetChange}
           customDateRange={customDateRange}
           onCustomDateRangeChange={onCustomDateRangeChange}
+          triggerDataTour={tourPrefix ? `${tourPrefix}-date-filter` : undefined}
           triggerClassName={cn(
             dashboardTriggerClass,
             isMobile ? "px-2 text-xs font-medium normal-case tracking-normal" : "",
@@ -285,6 +288,7 @@ export function SharedFilters({
               variant="outline"
               size="sm"
               aria-expanded={filtersOpen}
+              data-tour={tourPrefix ? `${tourPrefix}-advanced-filters` : undefined}
               className={cn(
                 dashboardTriggerClass,
                 isMobile ? "px-2.5 text-xs font-medium normal-case tracking-normal" : "",
@@ -306,6 +310,7 @@ export function SharedFilters({
           </PopoverTrigger>
 
           <PopoverContent
+            data-tour={tourPrefix ? `${tourPrefix}-filters-panel` : undefined}
             align="end"
             onOpenAutoFocus={(e) => e.preventDefault()}
             onInteractOutside={(e) => {
@@ -655,6 +660,7 @@ export function SharedFilters({
           onDatePresetChange={handleDatePresetChange}
           customDateRange={customDateRange}
           onCustomDateRangeChange={onCustomDateRangeChange}
+          triggerDataTour={tourPrefix ? `${tourPrefix}-date-filter` : undefined}
           triggerClassName={cn(
             "h-8 gap-2 text-[11px] font-semibold uppercase tracking-wider px-3 border-white/[0.08] hover:border-primary/50 transition-colors",
             isMobile ? "px-2 text-xs font-medium normal-case tracking-normal" : "",

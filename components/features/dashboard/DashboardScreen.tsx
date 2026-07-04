@@ -51,6 +51,8 @@ import { SharedFilters } from "@/components/shared/SharedFilters";
 import { datePresetOptions, sourceLabels } from "@/hooks/use-dashboard-filters";
 import { getDashboardExtraCounts } from "@/lib/api/dashboard";
 
+const DASHBOARD_EXTRA_COUNTS_STALE_TIME_MS = 1000 * 60 * 10;
+
 type KPIFormat = "number" | "currency" | "percent" | "time";
 
 type KPIRateVariant = "negative" | "auto";
@@ -84,6 +86,7 @@ export default function Dashboard() {
   const [mobileChartTab, setMobileChartTab] = useState("funnel");
   const [lostDialogOpen, setLostDialogOpen] = useState(false);
   const [wonDialogOpen, setWonDialogOpen] = useState(false);
+  const [shouldLoadFilterOptions, setShouldLoadFilterOptions] = useState(false);
   const { organization } = useAuth();
 
   const {
@@ -121,7 +124,7 @@ export default function Dashboard() {
     isLoadingCampaigns,
     isLoadingAdSets,
     isLoadingAds,
-  } = useSharedFilters();
+  } = useSharedFilters({ loadDynamicOptions: shouldLoadFilterOptions });
 
   // Mapeamento de strings de data para chaves de cache estáveis
   const dateFromStr = filters.dateRange.from.toISOString();
@@ -131,6 +134,7 @@ export default function Dashboard() {
   const { data: stats, isLoading: statsLoading } = useEnhancedDashboardStats(filters);
   const { data: evolutionData = [], isLoading: evolutionLoading } = useDealsEvolutionData(filters);
   const { data: sourcesData = [], isLoading: sourcesLoading } = useLeadSourcesData(filters);
+  const hasOrganization = Boolean(organization?.id);
 
   const { data: extraCounts, isLoading: extraCountsLoading } = useQuery({
     queryKey: [
@@ -150,18 +154,21 @@ export default function Dashboard() {
     ],
     queryFn: () => getDashboardExtraCounts({ organizationId: organization?.id, filters }),
     enabled: !!organization?.id,
-    staleTime: 1000 * 60,
+    staleTime: DASHBOARD_EXTRA_COUNTS_STALE_TIME_MS,
   });
 
   const propertyCount = extraCounts?.propertyCount ?? 0;
   const siteVisits = extraCounts?.siteVisits ?? 0;
   const scheduledVisitsCount = extraCounts?.scheduledVisits ?? 0;
+  const kpisLoading = !hasOrganization || statsLoading || extraCountsLoading;
+  const evolutionDataLoading = !hasOrganization || evolutionLoading;
+  const sourcesDataLoading = !hasOrganization || sourcesLoading;
 
   useEffect(() => {
-    if (!statsLoading && !evolutionLoading) {
+    if (hasOrganization && !statsLoading && !evolutionLoading) {
       performanceTracker.addMetric("Dashboard Full Load", performance.now(), "ms");
     }
-  }, [statsLoading, evolutionLoading]);
+  }, [hasOrganization, statsLoading, evolutionLoading]);
 
   const funnelComponent = <SalesFunnelWithPipeline filters={filters} />;
   const periodLabel = datePresetOptions.find((o) => o.value === datePreset)?.label || "Período selecionado";
@@ -236,6 +243,10 @@ export default function Dashboard() {
             isLoadingCampaigns={isLoadingCampaigns}
             isLoadingAdSets={isLoadingAdSets}
             isLoadingAds={isLoadingAds}
+            onFiltersOpenChange={(open) => {
+              if (open) setShouldLoadFilterOptions(true);
+            }}
+            tourPrefix="dashboard"
           />
         </div>
 
@@ -245,7 +256,7 @@ export default function Dashboard() {
             <div className="flex-shrink-0">
               <KPICardsGrid
                 data={kpiData}
-                isLoading={statsLoading || extraCountsLoading}
+                isLoading={kpisLoading}
                 periodLabel={periodLabel}
                 propertyCount={propertyCount}
                 siteVisits={siteVisits}
@@ -257,7 +268,7 @@ export default function Dashboard() {
             </div>
 
             <div data-tour="dashboard-evolution" className="flex-1 min-h-0">
-              <DealsEvolutionChart data={evolutionData} isLoading={evolutionLoading} />
+              <DealsEvolutionChart data={evolutionData} isLoading={evolutionDataLoading} />
             </div>
           </div>
 
@@ -266,7 +277,7 @@ export default function Dashboard() {
             <div data-tour="dashboard-sources" className="h-[52%] min-h-0">
               <LeadSourcesChart
                 data={sourcesData}
-                isLoading={sourcesLoading}
+                isLoading={sourcesDataLoading}
                 selectedSource={source}
                 onSourceChange={setSource}
               />
@@ -278,7 +289,7 @@ export default function Dashboard() {
         <div className={cn("app-scrollbar lg:hidden flex flex-col gap-4 overflow-y-auto", !isMobile ? "flex-1 min-h-0" : "")}>
           <KPICards
             data={kpiData}
-            isLoading={statsLoading || extraCountsLoading}
+            isLoading={kpisLoading}
             periodLabel={periodLabel}
             scheduledVisits={scheduledVisitsCount}
             propertyCount={propertyCount}
@@ -308,14 +319,14 @@ export default function Dashboard() {
             </TabsContent>
             <TabsContent value="evolution" className={cn("mt-3", !isMobile ? "flex-1 min-h-0" : "")}>
               <div data-tour="dashboard-evolution" className="h-[400px]">
-                <DealsEvolutionChart data={evolutionData} isLoading={evolutionLoading} />
+                <DealsEvolutionChart data={evolutionData} isLoading={evolutionDataLoading} />
               </div>
             </TabsContent>
             <TabsContent value="sources" className={cn("mt-3", !isMobile ? "flex-1 min-h-0" : "")}>
               <div data-tour="dashboard-sources" className="h-[450px]">
                 <LeadSourcesChart
                   data={sourcesData}
-                  isLoading={sourcesLoading}
+                  isLoading={sourcesDataLoading}
                   selectedSource={source}
                   onSourceChange={setSource}
                 />
@@ -558,11 +569,12 @@ function KPICardsGrid({
     };
 
     return (
-      <div key={kpi.title} data-tour={kpi.tourTarget} className={cn("h-full", className)}>
+      <div key={kpi.title} className={cn("h-full", className)}>
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
             <Card
+              data-tour={kpi.tourTarget}
               className={cn(
                 "app-card card-hover h-full border-0 transition-colors",
                 kpi.interactive
@@ -735,7 +747,7 @@ function LostDealsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="app-card max-h-[82dvh] w-[calc(100vw-24px)] max-w-[980px] overflow-hidden rounded-[12px] p-0 shadow-2xl backdrop-blur-xl sm:w-[92vw] sm:rounded-xl">
+      <DialogContent data-tour="dashboard-lost-dialog" className="app-card max-h-[82dvh] w-[calc(100vw-24px)] max-w-[980px] overflow-hidden rounded-[12px] p-0 shadow-2xl backdrop-blur-xl sm:w-[92vw] sm:rounded-xl">
         <DialogHeader className="px-4 pb-3 pt-4 text-left sm:px-5 sm:pt-5">
           <DialogTitle className="flex items-start gap-2 pr-8 text-[15px] font-semibold leading-snug sm:items-center sm:text-base">
             <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive sm:mt-0" />
@@ -921,7 +933,7 @@ function WonDealsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="app-card max-h-[82dvh] w-[calc(100vw-24px)] max-w-[980px] overflow-hidden rounded-[12px] p-0 shadow-2xl backdrop-blur-xl sm:w-[92vw] sm:rounded-xl">
+      <DialogContent data-tour="dashboard-won-dialog" className="app-card max-h-[82dvh] w-[calc(100vw-24px)] max-w-[980px] overflow-hidden rounded-[12px] p-0 shadow-2xl backdrop-blur-xl sm:w-[92vw] sm:rounded-xl">
         <DialogHeader className="px-4 pb-3 pt-4 text-left sm:px-5 sm:pt-5">
           <DialogTitle className="flex items-start gap-2 pr-8 text-[15px] font-semibold leading-snug sm:items-center sm:text-base">
             <Trophy className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500 sm:mt-0" />

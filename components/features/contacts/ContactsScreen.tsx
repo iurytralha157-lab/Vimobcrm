@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useDeferredValue } from "react";
+import { useState, useDeferredValue, useEffect } from "react";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { Card } from "@/components/ui/card";
 import { LeadDetailDialog } from "@/components/features/leads/LeadDetailDialog";
@@ -69,6 +69,7 @@ import { ReentryBadge } from "@/components/features/leads/ReentryBadge";
 import { useToast } from "@/hooks/use-toast";
 import { SharedFilters } from "@/components/shared/SharedFilters";
 import { useSharedFilters } from "@/hooks/use-shared-filters";
+import { useAuth } from "@/contexts/AuthContext";
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -91,6 +92,7 @@ function SortIcon({
 function LeadCountBadge({ isLoading, totalCount }: { isLoading: boolean; totalCount: number }) {
   return (
     <div
+      data-tour="contacts-count"
       className="flex h-9 shrink-0 items-center rounded-md bg-[var(--app-surface-soft)] px-3 text-sm font-semibold text-[var(--app-text-primary)]"
       aria-label="Total de leads filtrados"
     >
@@ -100,6 +102,8 @@ function LeadCountBadge({ isLoading, totalCount }: { isLoading: boolean; totalCo
 }
 
 export default function Contacts() {
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id ?? profile?.organization_id ?? null;
   const isMobile = useIsMobile();
   const { toast } = useToast();
 
@@ -151,7 +155,30 @@ export default function Contacts() {
   const [lostLeadsView, setLostLeadsView] = useState(false);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
+  const [shiftPressed, setShiftPressed] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Shift") {
+        setShiftPressed(true);
+      }
+    };
+    const handleKeyUp = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Shift") {
+        setShiftPressed(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, []);
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
@@ -252,12 +279,14 @@ export default function Contacts() {
           createdFrom: dateRange ? dateRange.from.toISOString() : undefined,
           createdTo: dateRange ? dateRange.to.toISOString() : undefined,
         },
-        filename: `contatos-${format(new Date(), "yyyy-MM-dd")}`,
+        organizationId,
+        filename: `leads-${format(new Date(), "yyyy-MM-dd")}`,
+        exportFormat: "csv",
       });
 
       toast({
         title: "Exportação concluída",
-        description: `${count} contatos exportados com sucesso`,
+        description: `${count} leads exportados com sucesso`,
       });
     } catch (error: unknown) {
       toast({
@@ -283,13 +312,35 @@ export default function Contacts() {
   const toggleSelectOne = (id: string) => {
     const newSet = new Set(selectedIds);
 
-    if (newSet.has(id)) {
-      newSet.delete(id);
+    if (shiftPressed && lastSelectedId) {
+      const lastIdx = contacts.findIndex((c) => c.id === lastSelectedId);
+      const currentIdx = contacts.findIndex((c) => c.id === id);
+
+      if (lastIdx !== -1 && currentIdx !== -1) {
+        const start = Math.min(lastIdx, currentIdx);
+        const end = Math.max(lastIdx, currentIdx);
+
+        const shouldSelect = selectedIds.has(lastSelectedId);
+
+        for (let i = start; i <= end; i++) {
+          const contactId = contacts[i].id;
+          if (shouldSelect) {
+            newSet.add(contactId);
+          } else {
+            newSet.delete(contactId);
+          }
+        }
+      }
     } else {
-      newSet.add(id);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
     }
 
     setSelectedIds(newSet);
+    setLastSelectedId(id);
   };
 
   const handleBulkDelete = async () => {
@@ -302,16 +353,16 @@ export default function Contacts() {
   };
 
   const hasActiveFilters =
-    search ||
+    Boolean(search) ||
     selectedPipeline !== "all" ||
     selectedStage !== "all" ||
-    selectedAssignee !== "all" ||
-    selectedTag !== "all" ||
-    selectedSource !== "all" ||
-    selectedDealStatus !== "all" ||
+    Boolean(selectedAssignee && selectedAssignee !== "all") ||
+    Boolean(selectedTag && selectedTag !== "all") ||
+    Boolean(selectedSource && selectedSource !== "all") ||
+    Boolean(selectedDealStatus && selectedDealStatus !== "all") ||
     lostLeadsView ||
-    datePreset ||
-    customDateRange;
+    datePreset !== "last30days" ||
+    Boolean(customDateRange);
 
   const getInitials = (name: string) => {
     return name
@@ -398,6 +449,7 @@ export default function Contacts() {
                 isLoadingAdSets={isLoadingAdSets}
                 isLoadingAds={isLoadingAds}
                 datePosition="end"
+                tourPrefix="contacts"
               />
             </div>
 
@@ -420,14 +472,14 @@ export default function Contacts() {
                   <Upload className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuItem onClick={() => setImportDialogOpen(true)} className="py-2.5">
+              <DropdownMenuContent data-tour="contacts-import-menu" align="end" className="w-48">
+                <DropdownMenuItem data-tour="contacts-import-action" onClick={() => setImportDialogOpen(true)} className="py-2.5">
                   <Upload className="h-4 w-4 mr-2 text-primary" />
                   Importar CSV/Excel
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleExport} disabled={isExporting || totalCount === 0} className="py-2.5">
+                <DropdownMenuItem data-tour="contacts-export-action" onClick={handleExport} disabled={isExporting || totalCount === 0} className="py-2.5">
                   <Download className="h-4 w-4 mr-2 text-primary" />
-                  {isExporting ? "Exportando..." : "Exportar Lista"}
+                  {isExporting ? "Exportando..." : "Exportar"}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -446,18 +498,19 @@ export default function Contacts() {
                       <ChevronDown className="h-4 w-4 opacity-50" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-48">
-                    <DropdownMenuItem onClick={() => setImportDialogOpen(true)} className="py-2.5">
+                  <DropdownMenuContent data-tour="contacts-import-menu" align="end" className="w-48">
+                    <DropdownMenuItem data-tour="contacts-import-action" onClick={() => setImportDialogOpen(true)} className="py-2.5">
                       <Upload className="h-4 w-4 mr-2 text-primary" />
                       Importar CSV/Excel
                     </DropdownMenuItem>
                     <DropdownMenuItem
+                      data-tour="contacts-export-action"
                       onClick={handleExport}
                       disabled={isExporting || totalCount === 0}
                       className="py-2.5"
                     >
                       <Download className="h-4 w-4 mr-2 text-primary" />
-                      {isExporting ? "Exportando..." : "Exportar Lista"}
+                      {isExporting ? "Exportando..." : "Exportar"}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -517,6 +570,7 @@ export default function Contacts() {
                     isLoadingAdSets={isLoadingAdSets}
                     isLoadingAds={isLoadingAds}
                     datePosition="end"
+                    tourPrefix="contacts"
                   />
                 </div>
 
@@ -581,7 +635,7 @@ export default function Contacts() {
                   hasActiveFilters={!!hasActiveFilters}
                   onImport={() => setImportDialogOpen(true)}
                   onCreate={() => setIsCreateDialogOpen(true)}
-                  onClearFilters={clearFilters}
+                  onClearFilters={handleClearFilters}
                 />
               ) : (
                 <div className="divide-y divide-white/[0.045]">
@@ -608,14 +662,15 @@ export default function Contacts() {
                   hasActiveFilters={!!hasActiveFilters}
                   onImport={() => setImportDialogOpen(true)}
                   onCreate={() => setIsCreateDialogOpen(true)}
-                  onClearFilters={clearFilters}
+                  onClearFilters={handleClearFilters}
                 />
               ) : (
                 <Table className="contacts-table">
                   <TableHeader>
-                    <TableRow className="border-0 hover:bg-transparent">
+                    <TableRow className="border-b border-[var(--app-border-strong)] bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-soft)]">
                       <TableHead className="w-10">
                         <Checkbox
+                          data-tour="contacts-select-all"
                           checked={selectedIds.size === contacts.length && contacts.length > 0}
                           onCheckedChange={toggleSelectAll}
                         />
@@ -653,7 +708,7 @@ export default function Contacts() {
                         <TableRow
                           key={contact.id}
                           className={cn(
-                            "border-0 cursor-pointer hover:bg-[var(--app-surface-hover)]",
+                            "cursor-pointer border-b border-[var(--app-border-strong)] hover:bg-[var(--app-surface-hover)] last:border-b-0",
                             isLost && "bg-[var(--lead-status-lost-card)] hover:bg-[var(--lead-status-lost-card-hover)]",
                             isWon &&
                               "bg-[var(--lead-status-won-card)] hover:bg-[var(--lead-status-won-card-hover)]",

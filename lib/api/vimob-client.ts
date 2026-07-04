@@ -3,6 +3,12 @@ import { supabase } from '@/integrations/supabase/client'
 const DEFAULT_API_URL = 'http://localhost:8081'
 const LOCAL_DEV_FALLBACK_API_URL = 'http://localhost:8081'
 const DEFAULT_REQUEST_TIMEOUT_MS = 12000
+const API_ACCESS_TOKEN_CACHE_TTL_MS = 60_000
+const READ_RETRY_DELAYS_MS = [500, 1500]
+const RETRYABLE_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504, 520, 522, 524])
+
+let accessTokenCache: { token: string; expiresAt: number } | null = null
+let accessTokenPromise: Promise<string> | null = null
 
 type RequestOptions = {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
@@ -36,30 +42,28 @@ export class VimobAPIError extends Error {
   }
 }
 
+export function setVimobAPIAccessToken(accessToken?: string | null) {
+  if (accessToken) {
+    cacheAccessToken(accessToken)
+    return
+  }
+
+  clearAccessTokenCache()
+}
+
 export async function vimobAPIRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+  const accessToken = await getAccessTokenForAPI()
+  let headers = createAuthenticatedHeaders(accessToken, options)
+  let result = await makeRequestWithLocalFallback(path, options, headers)
 
-  if (sessionError || !sessionData.session?.access_token) {
-    throw new VimobAPIError('Sessao expirada. Faca login novamente.', {
-      code: 'missing_session',
-      status: 401,
-    })
+  if (result.response.status === 401) {
+    clearAccessTokenCache()
+    const refreshedAccessToken = await refreshAccessTokenForAPI()
+    if (refreshedAccessToken) {
+      headers = createAuthenticatedHeaders(refreshedAccessToken, options)
+      result = await makeRequestWithLocalFallback(path, options, headers)
+    }
   }
-
-  const headers = new Headers({
-    Authorization: `Bearer ${sessionData.session.access_token}`,
-    Accept: 'application/json',
-  })
-
-  if (options.body !== undefined && !isFormDataBody(options.body)) {
-    headers.set('Content-Type', 'application/json')
-  }
-
-  if (options.organizationId) {
-    headers.set('X-Organization-ID', options.organizationId)
-  }
-
-  const result = await makeRequestWithLocalFallback(path, options, headers)
 
   if (!result.response.ok) {
     const envelope = result.payload as APIErrorEnvelope | null
@@ -79,6 +83,82 @@ export async function vimobAPIRequest<T>(path: string, options: RequestOptions =
   }
 
   return result.payload as T
+}
+
+async function getAccessTokenForAPI() {
+  if (accessTokenCache && accessTokenCache.expiresAt > Date.now()) {
+    return accessTokenCache.token
+  }
+
+  if (accessTokenPromise) {
+    return accessTokenPromise
+  }
+
+  accessTokenPromise = resolveAccessTokenForAPI().finally(() => {
+    accessTokenPromise = null
+  })
+
+  return accessTokenPromise
+}
+
+async function resolveAccessTokenForAPI() {
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+
+  if (!sessionError && sessionData.session?.access_token) {
+    cacheAccessToken(sessionData.session.access_token)
+    return sessionData.session.access_token
+  }
+
+  const refreshedAccessToken = await refreshAccessTokenForAPI()
+  if (refreshedAccessToken) return refreshedAccessToken
+
+  throw new VimobAPIError('Sessao expirada. Faca login novamente.', {
+    code: 'missing_session',
+    status: 401,
+  })
+}
+
+async function refreshAccessTokenForAPI() {
+  try {
+    const { data, error } = await supabase.auth.refreshSession()
+    if (error || !data.session?.access_token) {
+      clearAccessTokenCache()
+      return null
+    }
+    cacheAccessToken(data.session.access_token)
+    return data.session.access_token
+  } catch {
+    clearAccessTokenCache()
+    return null
+  }
+}
+
+function cacheAccessToken(token: string) {
+  accessTokenCache = {
+    token,
+    expiresAt: Date.now() + API_ACCESS_TOKEN_CACHE_TTL_MS,
+  }
+}
+
+function clearAccessTokenCache() {
+  accessTokenCache = null
+}
+
+function createAuthenticatedHeaders(accessToken: string, options: RequestOptions) {
+  const headers = new Headers({
+    Authorization: `Bearer ${accessToken}`,
+    Accept: 'application/json',
+  })
+
+  if (options.body !== undefined && !isFormDataBody(options.body)) {
+    headers.set('Content-Type', 'application/json')
+  }
+
+  if (options.organizationId) {
+    headers.set('X-Organization-ID', options.organizationId)
+  }
+
+  return headers
 }
 
 export async function vimobPublicAPIRequest<T>(path: string, options: Omit<RequestOptions, 'organizationId'> = {}): Promise<T> {
@@ -151,21 +231,36 @@ async function makeRequestWithLocalFallback(path: string, options: RequestOption
   let lastError: VimobAPIError | null = null
 
   for (const baseURL of candidates) {
-    try {
-      const result = await makeRequestOrThrow(path, options, headers, baseURL)
+    const retryDelays = getRetryDelays(options)
 
-      if (shouldRetryLocalDevAPI(result, baseURL)) {
-        continue
+    for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
+      try {
+        const result = await makeRequestOrThrow(path, options, headers, baseURL)
+
+        if (shouldRetryLocalDevAPI(result, baseURL)) {
+          break
+        }
+
+        if (shouldRetryTransientHTTPResult(result, options) && attempt < retryDelays.length) {
+          await wait(retryDelays[attempt])
+          continue
+        }
+
+        return result
+      } catch (error) {
+        if (isRetryableTransientAPIError(error, options) && attempt < retryDelays.length) {
+          lastError = error as VimobAPIError
+          await wait(retryDelays[attempt])
+          continue
+        }
+
+        if (isRetryableLocalAPIError(error, baseURL)) {
+          lastError = error as VimobAPIError
+          break
+        }
+
+        throw error
       }
-
-      return result
-    } catch (error) {
-      if (isRetryableLocalAPIError(error, baseURL)) {
-        lastError = error as VimobAPIError
-        continue
-      }
-
-      throw error
     }
   }
 
@@ -173,6 +268,31 @@ async function makeRequestWithLocalFallback(path: string, options: RequestOption
     code: 'api_unavailable',
     status: 0,
   })
+}
+
+function getRetryDelays(options: RequestOptions) {
+  const method = options.method || 'GET'
+  if (method !== 'GET') return []
+  if (options.signal?.aborted) return []
+  return READ_RETRY_DELAYS_MS
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function shouldRetryTransientHTTPResult(
+  result: Awaited<ReturnType<typeof makeRequest>>,
+  options: RequestOptions,
+) {
+  if (getRetryDelays(options).length === 0) return false
+  return RETRYABLE_HTTP_STATUSES.has(result.response.status)
+}
+
+function isRetryableTransientAPIError(error: unknown, options: RequestOptions) {
+  if (getRetryDelays(options).length === 0) return false
+  if (!(error instanceof VimobAPIError)) return false
+  return error.code === 'api_unavailable' || error.code === 'api_timeout'
 }
 
 function createRequestSignal(externalSignal?: AbortSignal, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
@@ -220,7 +340,8 @@ export function buildAPIURL(path: string, query?: RequestOptions['query'], baseU
 }
 
 export function getAPIBaseURL() {
-  return (process.env.NEXT_PUBLIC_VIMOB_API_URL || DEFAULT_API_URL).replace(/\/+$/, '')
+  const configuredBaseURL = (process.env.NEXT_PUBLIC_VIMOB_API_URL || DEFAULT_API_URL).replace(/\/+$/, '')
+  return getBrowserLocalAPIBaseURL(configuredBaseURL) || configuredBaseURL
 }
 
 function getAPIBaseURLCandidates() {
@@ -242,20 +363,36 @@ function getAPIBaseURLCandidates() {
   return Array.from(new Set(candidates))
 }
 
+function getBrowserLocalAPIBaseURL(configuredBaseURL: string) {
+  if (process.env.NODE_ENV === 'production' || typeof window === 'undefined') return null
+
+  const browserHostname = window.location.hostname
+  if (!isLocalDevelopmentHostname(browserHostname) || !isLocalDevelopmentAPI(configuredBaseURL)) {
+    return null
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:'
+  return `${protocol}//${browserHostname}:8081`
+}
+
 function isLocalDevelopmentAPI(baseURL: string) {
   if (process.env.NODE_ENV === 'production') return false
 
   try {
     const { hostname } = new URL(baseURL)
-    return hostname === 'localhost'
-      || hostname === '127.0.0.1'
-      || hostname === '0.0.0.0'
-      || hostname.startsWith('192.168.')
-      || hostname.startsWith('10.')
-      || /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+    return isLocalDevelopmentHostname(hostname)
   } catch {
     return false
   }
+}
+
+function isLocalDevelopmentHostname(hostname: string) {
+  return hostname === 'localhost'
+    || hostname === '127.0.0.1'
+    || hostname === '0.0.0.0'
+    || hostname.startsWith('192.168.')
+    || hostname.startsWith('10.')
+    || /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
 }
 
 function isRetryableLocalAPIError(error: unknown, baseURL: string) {

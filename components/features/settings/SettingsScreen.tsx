@@ -11,6 +11,7 @@ import { TeamTab } from '@/components/features/settings/TeamTab';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { SubscriptionTab } from '@/components/features/settings/SubscriptionTab';
 import { IntegrationsTab } from '@/components/features/settings/IntegrationsTab';
+import { PropertySettingsTab } from '@/components/features/settings/PropertySettingsTab';
 import { isBillingBlockedStatus } from '@/lib/billing-access';
 
 export default function Settings() {
@@ -57,7 +58,7 @@ export default function Settings() {
     const rawTab = searchParams.get('tab');
     const t = rawTab === 'webhook' ? 'webhooks' : rawTab;
     const normalizedTab = t && legacyIntegrationTabs.includes(t) ? 'integrations' : t;
-    if (normalizedTab && !canManageOrganization && ['team', 'subscription'].includes(normalizedTab)) {
+    if (normalizedTab && !canManageOrganization && ['team', 'subscription', 'properties'].includes(normalizedTab)) {
       if (activeTab !== 'account') setActiveTab('account');
       const next = new URLSearchParams(searchParams);
       next.set('tab', 'account');
@@ -104,6 +105,12 @@ export default function Settings() {
               hasAPIModule={hasAPIModule}
             />
           </TabsContent>
+
+          {canManageOrganization && (
+            <TabsContent value="properties">
+              <PropertySettingsTab />
+            </TabsContent>
+          )}
 
           {(canManageOrganization || isBillingBlocked) && (
             <TabsContent value="subscription">

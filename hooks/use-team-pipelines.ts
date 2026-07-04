@@ -11,13 +11,20 @@ export function useTeamPipelines(teamId?: string) {
       return teamsAPI.listTeamPipelines({ teamId });
     },
     enabled: !!teamId,
+    staleTime: 1000 * 60 * 10,
+    gcTime: 1000 * 60 * 60,
+    refetchOnWindowFocus: false,
   });
 }
 
-export function useAllTeamPipelines() {
+export function useAllTeamPipelines(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['all-team-pipelines'],
     queryFn: () => teamsAPI.listTeamPipelines(),
+    enabled: options?.enabled ?? true,
+    staleTime: 1000 * 60 * 10,
+    gcTime: 1000 * 60 * 60,
+    refetchOnWindowFocus: false,
   });
 }
 

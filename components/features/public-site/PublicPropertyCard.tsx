@@ -1,3 +1,5 @@
+/* eslint-disable @next/next/no-img-element */
+
 import Link from "next/link";
 import { Bath, BedDouble, Car, MapPin, Maximize2 } from "lucide-react";
 

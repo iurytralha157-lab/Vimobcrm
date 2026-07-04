@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -98,6 +98,16 @@ export function TeamTab() {
     setInviteEmail("");
     setInviteRole("user");
   };
+
+  useEffect(() => {
+    const handleMobileCreate = () => {
+      if (!isAdmin) return;
+      setInviteDialogOpen(true);
+    };
+
+    window.addEventListener("vimob:mobile-create-user", handleMobileCreate);
+    return () => window.removeEventListener("vimob:mobile-create-user", handleMobileCreate);
+  }, [isAdmin]);
 
   const handleAssignRole = async (userId: string, roleId: string | null) => {
     await assignUserRole.mutateAsync({ userId, roleId });

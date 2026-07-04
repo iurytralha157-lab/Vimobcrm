@@ -276,7 +276,7 @@ export default function Conversations() {
     conversationId?: string;
   }>({});
   const [showLeadPanel, setShowLeadPanel] = useState(true);
-  useWhatsAppRealtimeConversations();
+  useWhatsAppRealtimeConversations(true, loadingSessions ? undefined : accessibleSessionIds);
 
   const handleChannelChange = (value: string) => {
     if (value === 'meta-all') {
@@ -671,7 +671,7 @@ export default function Conversations() {
               </div>
 
               {/* Mobile Message Input */}
-              <footer className="shrink-0 border-t border-white/[0.045] bg-[var(--app-surface)] p-3">
+              <footer className="shrink-0 bg-[var(--app-surface-soft)] px-3 pb-3 pt-2">
                 <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx" className="hidden" />
                 <MessageBox
                   value={messageText}
@@ -1209,7 +1209,7 @@ export default function Conversations() {
               </div>
 
               {/* Input de mensagem */}
-              <footer className="shrink-0 border-t border-white/[0.045] bg-[var(--app-surface)] p-3">
+              <footer className="shrink-0 bg-[var(--app-surface-soft)] px-3 pb-3 pt-2">
                 <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx" className="hidden" />
                 <MessageBox
                   value={messageText}

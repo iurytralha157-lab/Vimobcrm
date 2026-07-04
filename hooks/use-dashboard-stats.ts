@@ -12,6 +12,9 @@ import { performanceTracker } from "@/lib/performance";
 import { useAuth } from "@/contexts/AuthContext";
 import { DashboardFilters, sourceLabels } from "./use-dashboard-filters";
 
+const DASHBOARD_STALE_TIME_MS = 1000 * 60 * 10;
+const DASHBOARD_SHORT_STALE_TIME_MS = 1000 * 60 * 5;
+
 export interface DealsEvolutionPoint {
   date: string;
   ganhos: number;
@@ -155,7 +158,7 @@ export function useDashboardStats() {
         closedTrend: stats.closedTrend,
       };
     },
-    staleTime: 1000 * 60 * 5,
+    staleTime: DASHBOARD_STALE_TIME_MS,
   });
 }
 
@@ -186,7 +189,7 @@ export function useEnhancedDashboardStats(filters?: DashboardFilters) {
       performanceTracker.trackTimed("useEnhancedDashboardStats", () =>
         getDashboardStats({ organizationId, filters }) as Promise<EnhancedDashboardStats>,
       ),
-    staleTime: 1000 * 60 * 5,
+    staleTime: DASHBOARD_STALE_TIME_MS,
   });
 }
 
@@ -199,7 +202,7 @@ export function useLeadsChartData() {
     queryFn: async (): Promise<ChartDataPoint[]> => {
       return [];
     },
-    staleTime: 1000 * 60 * 5,
+    staleTime: DASHBOARD_STALE_TIME_MS,
   });
 }
 
@@ -227,7 +230,7 @@ export function useFunnelData(filters?: DashboardFilters, pipelineId?: string | 
     ],
     enabled: !!user?.id && !!organizationId,
     queryFn: () => getDashboardFunnel({ organizationId, filters, pipelineId }) as Promise<FunnelDataPoint[]>,
-    staleTime: 1000 * 60 * 5,
+    staleTime: DASHBOARD_STALE_TIME_MS,
   });
 }
 
@@ -262,7 +265,7 @@ export function useLeadSourcesData(filters?: DashboardFilters, pipelineId?: stri
         rawSource: item.rawSource,
       }));
     },
-    staleTime: 1000 * 60 * 5,
+    staleTime: DASHBOARD_STALE_TIME_MS,
   });
 }
 
@@ -290,7 +293,7 @@ export function useTopBrokers(filters?: DashboardFilters) {
     ],
     enabled: !!currentUserId && !!organizationId,
     queryFn: () => getDashboardTopBrokers({ organizationId, filters }) as Promise<TopBrokersResult>,
-    staleTime: 1000 * 60 * 5,
+    staleTime: DASHBOARD_STALE_TIME_MS,
   });
 }
 
@@ -303,7 +306,7 @@ export function useUpcomingTasks() {
     queryKey: ["upcoming-tasks", currentUserId, organizationId],
     enabled: !!currentUserId && !!organizationId,
     queryFn: () => getDashboardUpcomingTasks({ organizationId, limit: 5 }) as Promise<UpcomingTask[]>,
-    staleTime: 1000 * 60 * 2,
+    staleTime: DASHBOARD_SHORT_STALE_TIME_MS,
   });
 }
 
@@ -334,6 +337,6 @@ export function useDealsEvolutionData(filters?: DashboardFilters) {
       performanceTracker.trackTimed("useDealsEvolutionData", () =>
         getDashboardDealsEvolution({ organizationId, filters }) as Promise<DealsEvolutionPoint[]>,
       ),
-    staleTime: 1000 * 60 * 5,
+    staleTime: DASHBOARD_STALE_TIME_MS,
   });
 }

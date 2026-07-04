@@ -128,9 +128,9 @@ export function useWhatsAppConversations(
       }) as Promise<WhatsAppConversation[]>;
     },
     enabled: !!profile?.organization_id,
-    refetchInterval: 12_000,
+    refetchInterval: 30_000,
     refetchIntervalInBackground: false,
-    staleTime: 5_000,
+    staleTime: 30_000,
     gcTime: 1000 * 60 * 10,
   });
 }
@@ -178,12 +178,12 @@ export function useWhatsAppMessages(
       return page.messages as WhatsAppMessage[];
     },
     enabled: (!!conversationId && !!profile?.organization_id) || (!!leadId && !!profile?.organization_id),
-    refetchInterval: conversationId || leadId ? 10_000 : false,
+    refetchInterval: conversationId || leadId ? 30_000 : false,
     refetchIntervalInBackground: false,
-    staleTime: 8_000,
+    staleTime: 30_000,
     gcTime: 1000 * 60 * 15,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: true,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -522,12 +522,19 @@ export function useLinkConversationToLead() {
   });
 }
 
-export function useWhatsAppRealtimeConversations(enabled: boolean = true) {
+export function useWhatsAppRealtimeConversations(enabled: boolean = true, accessibleSessionIds?: string[]) {
   const queryClient = useQueryClient();
   const { profile } = useAuth();
+  const accessibleSessionKey = accessibleSessionIds ? accessibleSessionIds.join("|") : null;
 
   useEffect(() => {
     if (!enabled || !profile?.organization_id) return;
+    const scopedSessionIds = accessibleSessionKey === null
+      ? undefined
+      : accessibleSessionKey
+        ? accessibleSessionKey.split("|").filter(Boolean)
+        : [];
+    if (scopedSessionIds && scopedSessionIds.length === 0) return;
 
     const organizationId = profile.organization_id;
     const invalidateConversations = () => {
@@ -594,27 +601,31 @@ export function useWhatsAppRealtimeConversations(enabled: boolean = true) {
     };
 
     const channelName = `whatsapp-live:${organizationId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
-    const channel = supabase
-      .channel(channelName)
-      .on(
+    let channel = supabase.channel(channelName);
+    const sessionFilters = scopedSessionIds?.length && scopedSessionIds.length <= 40
+      ? scopedSessionIds.slice(0, 40).map((sessionId) => `session_id=eq.${sessionId}`)
+      : [`organization_id=eq.${organizationId}`];
+
+    sessionFilters.forEach((filter) => {
+      channel = channel.on(
         "postgres_changes",
         {
           event: "*",
           schema: "public",
           table: "whatsapp_conversations",
-          filter: `organization_id=eq.${organizationId}`,
+          filter,
         },
         () => {
           invalidateConversations();
         },
-      )
-      .on(
+      );
+      channel = channel.on(
         "postgres_changes",
         {
           event: "*",
           schema: "public",
           table: "whatsapp_messages",
-          filter: `organization_id=eq.${organizationId}`,
+          filter,
         },
         (payload) => {
           const row = (payload.new || payload.old) as Record<string, unknown> | null;
@@ -627,13 +638,14 @@ export function useWhatsAppRealtimeConversations(enabled: boolean = true) {
             window.dispatchEvent(new CustomEvent("vimob:whatsapp-message-insert", { detail: row }));
           }
         },
-      )
-      .subscribe();
+      );
+    });
+    channel.subscribe();
 
     return () => {
       messageRefreshTimers.forEach((timer) => window.clearTimeout(timer));
       messageRefreshTimers.clear();
       void supabase.removeChannel(channel);
     };
-  }, [enabled, profile?.organization_id, queryClient]);
+  }, [enabled, profile?.organization_id, queryClient, accessibleSessionKey]);
 }

@@ -358,9 +358,25 @@ export function IntegrationsTab({
           const isTemporarilyDisabled = disabledIntegrations.has(item.key);
           const isAccessLocked = item.requiresAdmin && !canManageAdminIntegrations;
           const isDisabled = isTemporarilyDisabled || isAccessLocked;
+          const tourTarget =
+            item.key === "whatsapp"
+              ? "whatsapp-integration-card"
+              : item.key === "meta"
+                ? "meta-integration"
+                : item.key === "google-calendar"
+                  ? "google-calendar-integration"
+                  : undefined;
+          const buttonTourTarget =
+            item.key === "whatsapp"
+              ? "whatsapp-integration-button"
+              : item.key === "meta"
+                ? "meta-integration-button"
+                : item.key === "google-calendar"
+                  ? "google-calendar-integration-button"
+                  : undefined;
 
           return (
-            <Card key={item.key} className={`overflow-hidden shadow-none ${isDisabled ? "opacity-60 grayscale" : ""}`}>
+            <Card key={item.key} data-tour={tourTarget} className={`overflow-hidden shadow-none ${isDisabled ? "opacity-60 grayscale" : ""}`}>
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
@@ -389,6 +405,7 @@ export function IntegrationsTab({
                   </p>
                 )}
                 <Button
+                  data-tour={buttonTourTarget}
                   variant={item.connected ? "outline" : "default"}
                   className="w-full gap-2"
                   disabled={isDisabled}
@@ -411,6 +428,7 @@ export function IntegrationsTab({
         onOpenChange={(open) => !open && setActiveIntegration(null)}
       >
         <DialogContent
+          data-tour={effectiveActiveIntegration ? `${effectiveActiveIntegration}-integration-dialog` : undefined}
           className={
             effectiveActiveIntegration === "whatsapp" ?
             "w-[96vw] max-w-[96vw] max-h-[90vh] overflow-y-auto lg:w-[80vw] lg:max-w-[80vw] lg:max-h-[80vh]" :

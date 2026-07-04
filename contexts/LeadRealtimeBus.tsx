@@ -19,6 +19,8 @@ const LEAD_REALTIME_STORAGE_KEY = "vimob:lead-realtime:last-change";
 
 const LEAD_LIST_QUERY_KEYS = [
   "stages-with-leads",
+  "filtered-stage-counts",
+  "lead-meta-filters",
   "leads",
   "contacts-list",
   "dashboard-stats",
@@ -33,6 +35,9 @@ const LEAD_LIST_QUERY_KEYS = [
   "top-brokers",
   "upcoming-tasks",
   "dashboard-alerts",
+  "lead-analytics",
+  "campaign-insights",
+  "gamification-overview",
   "vgv-stats",
   "vgv-by-broker",
   "stage-vgv",

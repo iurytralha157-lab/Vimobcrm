@@ -105,7 +105,7 @@ export function getWhatsAppMessageInputState(
       disabled: true,
       placeholder: connectedSessions.length > 1
         ? "Selecione qual WhatsApp deseja usar para enviar"
-        : "Conecte uma conta de WhatsApp para enviar",
+        : "Conecte um WhatsApp para enviar",
     };
   }
 

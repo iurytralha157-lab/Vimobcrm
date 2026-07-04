@@ -5,7 +5,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-webhook-token",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, x-api-key, x-webhook-token, x-evolution-webhook-token, content-type",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
@@ -48,6 +48,11 @@ function normalizeText(value: unknown) {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return "";
+}
+
+function cleanText(value: unknown) {
+  const text = normalizeText(value).trim();
+  return text || null;
 }
 
 function normalizeDigits(value: unknown) {
@@ -231,8 +236,8 @@ function validateWebhookAuth(req: Request, url: URL, session: JsonRecord) {
     req.headers.get("x-evolution-webhook-token"),
   );
 
-  if (expectedWebhookToken && incomingWebhookToken !== expectedWebhookToken) {
-    return false;
+  if (expectedWebhookToken) {
+    return incomingWebhookToken === expectedWebhookToken;
   }
 
   const incomingKey = firstPresent(
@@ -242,10 +247,11 @@ function validateWebhookAuth(req: Request, url: URL, session: JsonRecord) {
     url.searchParams.get("apikey"),
   );
 
-  if (!expectedWebhookToken && EVOLUTION_GO_API_KEY && incomingKey && incomingKey !== EVOLUTION_GO_API_KEY) {
-    return false;
+  if (EVOLUTION_GO_API_KEY) {
+    return incomingKey === EVOLUTION_GO_API_KEY;
   }
 
+  console.warn("Evolution webhook accepted without a session webhook_token or EVOLUTION_GO_API_KEY configured.");
   return true;
 }
 
@@ -322,6 +328,156 @@ function extractMessages(payload: any) {
 
 function getMessageNode(message: any) {
   return firstPresent(message.message, message.Message, message.data?.message, message.Data?.Message, {});
+}
+
+function firstObject(...values: unknown[]) {
+  return values.find(isRecord) as JsonRecord | undefined;
+}
+
+function findNestedObject(value: unknown, predicate: (candidate: JsonRecord) => boolean, depth = 0): JsonRecord | null {
+  if (!isRecord(value) || depth > 5) return null;
+  if (predicate(value)) return value;
+
+  for (const child of Object.values(value)) {
+    if (Array.isArray(child)) {
+      for (const item of child) {
+        const found = findNestedObject(item, predicate, depth + 1);
+        if (found) return found;
+      }
+      continue;
+    }
+    const found = findNestedObject(child, predicate, depth + 1);
+    if (found) return found;
+  }
+
+  return null;
+}
+
+function firstUrl(...values: unknown[]) {
+  for (const value of values) {
+    const text = cleanText(value);
+    if (text && /^https?:\/\//i.test(text)) return text;
+  }
+  return null;
+}
+
+function mediaTypeLabel(value: unknown) {
+  const raw = cleanText(value)?.toLowerCase() || "";
+  if (!raw) return null;
+  if (raw.includes("video") || raw === "2") return "video";
+  if (raw.includes("image") || raw.includes("photo") || raw === "1") return "image";
+  if (raw.includes("carousel")) return "carousel";
+  return raw;
+}
+
+function normalizeReferralCandidate(candidate: JsonRecord | null | undefined) {
+  if (!candidate) return null;
+
+  const sourceUrl = firstUrl(
+    candidate.source_url,
+    candidate.sourceUrl,
+    candidate.SourceURL,
+    candidate.source,
+    candidate.url,
+    candidate.link,
+  );
+  const sourceId = cleanText(firstPresent(
+    candidate.source_id,
+    candidate.sourceId,
+    candidate.SourceID,
+    candidate.ad_id,
+    candidate.adId,
+    candidate.AdID,
+  ));
+  const ctwaClid = cleanText(firstPresent(
+    candidate.ctwa_clid,
+    candidate.ctwaClid,
+    candidate.CTWAClid,
+    candidate.click_id,
+    candidate.clickId,
+  ));
+  const headline = cleanText(firstPresent(candidate.headline, candidate.title, candidate.Title));
+  const body = cleanText(firstPresent(candidate.body, candidate.description, candidate.text, candidate.Body));
+  const mediaType = mediaTypeLabel(firstPresent(candidate.media_type, candidate.mediaType, candidate.MediaType));
+  const thumbnailUrl = firstUrl(
+    candidate.thumbnail_url,
+    candidate.thumbnailUrl,
+    candidate.ThumbnailURL,
+    candidate.preview_url,
+    candidate.jpegThumbnail,
+  );
+  const imageUrl = firstUrl(candidate.image_url, candidate.imageUrl, candidate.ImageURL, candidate.picture, thumbnailUrl);
+  const rawVideoUrl = firstUrl(candidate.video_url, candidate.videoUrl, candidate.VideoURL, candidate.media_url, candidate.mediaUrl);
+  const videoUrl = mediaType === "video" ? rawVideoUrl : firstUrl(candidate.video_url, candidate.videoUrl, candidate.VideoURL);
+  const sourceType = cleanText(firstPresent(candidate.source_type, candidate.sourceType, candidate.SourceType)) || (sourceId || sourceUrl || ctwaClid ? "ad" : null);
+
+  if (!sourceUrl && !sourceId && !ctwaClid && !headline && !body && !imageUrl && !videoUrl && !thumbnailUrl) {
+    return null;
+  }
+
+  return {
+    source_url: sourceUrl,
+    source_id: sourceId,
+    source_type: sourceType,
+    headline,
+    body,
+    media_type: mediaType,
+    image_url: imageUrl,
+    video_url: videoUrl,
+    thumbnail_url: thumbnailUrl,
+    ctwa_clid: ctwaClid,
+  };
+}
+
+function extractWhatsAppReferral(messageNode: any, message: any, mediaBlock: any) {
+  const contextCandidates = [
+    message?.referral,
+    message?.Referral,
+    messageNode?.referral,
+    messageNode?.Referral,
+    message?.contextInfo,
+    message?.ContextInfo,
+    messageNode?.contextInfo,
+    messageNode?.ContextInfo,
+    messageNode?.extendedTextMessage?.contextInfo,
+    messageNode?.ExtendedTextMessage?.ContextInfo,
+    messageNode?.imageMessage?.contextInfo,
+    messageNode?.ImageMessage?.ContextInfo,
+    messageNode?.videoMessage?.contextInfo,
+    messageNode?.VideoMessage?.ContextInfo,
+    mediaBlock?.contextInfo,
+    mediaBlock?.ContextInfo,
+  ].filter(Boolean);
+
+  for (const candidate of contextCandidates) {
+    const normalizedDirect = normalizeReferralCandidate(candidate);
+    if (normalizedDirect) return normalizedDirect;
+
+    const container = firstObject(candidate);
+    const external = firstObject(
+      container?.externalAdReply,
+      container?.ExternalAdReply,
+      container?.externalAdReplyInfo,
+      container?.externalAdReplyMessage,
+      container?.quotedAd,
+      container?.ad,
+      container?.referral,
+    );
+    const normalizedExternal = normalizeReferralCandidate(external);
+    if (normalizedExternal) return normalizedExternal;
+  }
+
+  const nested = findNestedObject(message, (candidate) => Boolean(
+    candidate.ctwa_clid ||
+    candidate.ctwaClid ||
+    candidate.source_url ||
+    candidate.sourceUrl ||
+    candidate.source_id ||
+    candidate.sourceId ||
+    candidate.externalAdReply ||
+    candidate.ExternalAdReply,
+  ));
+  return normalizeReferralCandidate(firstObject(nested?.externalAdReply, nested?.ExternalAdReply, nested));
 }
 
 function detectMediaBlock(messageNode: any, message: any) {
@@ -585,6 +741,7 @@ function normalizeMessage(message: any) {
 
   const reaction = firstPresent(messageNode?.reactionMessage, messageNode?.ReactionMessage, message.reaction, null);
   const isReaction = isRecord(reaction);
+  const referral = extractWhatsAppReferral(messageNode, message, mediaBlock);
 
   return {
     messageId,
@@ -604,6 +761,7 @@ function normalizeMessage(message: any) {
     reactionToMessageId: isReaction ? normalizeText(firstPresent(reaction.key?.id, reaction.Key?.ID, reaction.messageId)) : null,
     reactionEmoji: isReaction ? normalizeText(firstPresent(reaction.text, reaction.emoji)) : null,
     avatarUrl: normalizeText(firstPresent(message.profilePicture, message.profilePicUrl, message.avatar, message.pictureUrl)) || null,
+    referral,
     raw: message,
   };
 }
@@ -628,6 +786,72 @@ function detectCampaign(content: string | null) {
   return match?.[1]?.trim() || null;
 }
 
+function detectPropertyCode(message: ReturnType<typeof normalizeMessage>) {
+  if (!message) return null;
+  const referral = message.referral || {};
+  const text = [
+    message.content,
+    referral.headline,
+    referral.body,
+    referral.source_url,
+  ].filter(Boolean).join(" ");
+
+  const url = cleanText(referral.source_url);
+  if (url) {
+    try {
+      const parsed = new URL(url);
+      for (const key of ["property_code", "codigo", "cod", "imovel", "imóvel", "ref", "utm_content"]) {
+        const value = cleanText(parsed.searchParams.get(key));
+        if (value) return value.slice(0, 80);
+      }
+    } catch {
+      // ignore malformed ad URLs
+    }
+  }
+
+  const match = text.match(/\b(?:cod(?:igo)?|im[oó]vel|ref)\s*[:#-]?\s*([a-z0-9][a-z0-9._/-]{1,40})\b/i);
+  return match?.[1]?.trim() || null;
+}
+
+function campaignLabelForMessage(message: ReturnType<typeof normalizeMessage>, rule?: JsonRecord | null) {
+  if (!message) return null;
+  return cleanText(firstPresent(
+    rule?.campaign_label,
+    message.referral?.headline,
+    message.referral?.body,
+    detectCampaign(message.content),
+  ));
+}
+
+function whatsappAttribution(message: ReturnType<typeof normalizeMessage>) {
+  if (!message?.referral) return null;
+  const referral = message.referral;
+  const propertyCode = detectPropertyCode(message);
+  const attribution = {
+    source: "whatsapp",
+    source_type: "whatsapp_click_to_message",
+    platform: "meta",
+    ad_id: referral.source_id,
+    ad_name: referral.headline,
+    campaign_name: referral.headline,
+    creative_name: referral.headline,
+    creative_type: referral.media_type,
+    creative_url: referral.image_url || referral.thumbnail_url,
+    creative_video_url: referral.video_url,
+    creative_link_url: referral.source_url,
+    creative_destination_url: referral.source_url,
+    ctwa_clid: referral.ctwa_clid,
+    source_id: referral.source_id,
+    source_url: referral.source_url,
+    source_referral: referral,
+    property_code: propertyCode,
+  };
+
+  return Object.fromEntries(
+    Object.entries(attribution).filter(([, value]) => value !== undefined && value !== null && value !== ""),
+  );
+}
+
 function ruleMatches(rule: JsonRecord, message: ReturnType<typeof normalizeMessage>) {
   if (!message) return false;
   const rawMatchType = normalizeText(rule.match_type || "contains").toLowerCase();
@@ -643,8 +867,15 @@ function ruleMatches(rule: JsonRecord, message: ReturnType<typeof normalizeMessa
     phone: normalizeDigits(message.remoteJid),
     name: message.contactName || "",
     contact_name: message.contactName || "",
-    campaign: detectCampaign(message.content) || "",
-    any: `${message.content || ""} ${message.contactName || ""} ${message.remoteJid}`,
+    campaign: campaignLabelForMessage(message) || "",
+    ad: message.referral?.source_id || "",
+    ad_id: message.referral?.source_id || "",
+    source_id: message.referral?.source_id || "",
+    source_url: message.referral?.source_url || "",
+    ctwa_clid: message.referral?.ctwa_clid || "",
+    property_code: detectPropertyCode(message) || "",
+    creative: `${message.referral?.headline || ""} ${message.referral?.body || ""}`,
+    any: `${message.content || ""} ${message.contactName || ""} ${message.remoteJid} ${message.referral?.source_id || ""} ${message.referral?.source_url || ""} ${message.referral?.headline || ""} ${message.referral?.body || ""} ${message.referral?.ctwa_clid || ""} ${detectPropertyCode(message) || ""}`,
   };
   const haystack = normalizeText(sourceByField[field] ?? sourceByField.any).toLowerCase();
 
@@ -718,7 +949,7 @@ async function findLeadByPhone(organizationId: string, phone: string) {
 
   const { data, error } = await supabase
     .from("leads")
-    .select("id, name, assigned_user_id, whatsapp_avatar_url")
+    .select("id, name, assigned_user_id, whatsapp_avatar_url, property_code, property_id, interest_property_id, source_detail, metadata")
     .eq("organization_id", organizationId)
     .or(filters.join(","))
     .order("created_at", { ascending: false })
@@ -727,6 +958,29 @@ async function findLeadByPhone(organizationId: string, phone: string) {
 
   if (error) throw error;
   return data || null;
+}
+
+async function resolvePropertyByCode(organizationId: string, propertyCode: string | null) {
+  const code = cleanText(propertyCode);
+  if (!code) return null;
+
+  for (const column of ["code", "referencia_alternativa", "external_id", "imoview_codigo", "vista_codigo"]) {
+    const { data, error } = await supabase
+      .from("properties")
+      .select("id, code, title")
+      .eq("organization_id", organizationId)
+      .eq(column, code)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      if (error.code === "42703") continue;
+      throw error;
+    }
+    if (data?.id) return data;
+  }
+
+  return null;
 }
 
 async function ensureLead(session: JsonRecord, message: ReturnType<typeof normalizeMessage>, rule: JsonRecord | null) {
@@ -738,23 +992,38 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
   const existing = await findLeadByPhone(session.organization_id, phone);
   const now = new Date().toISOString();
   const avatarUrl = message.avatarUrl || existing?.whatsapp_avatar_url || null;
+  const attribution = whatsappAttribution(message);
+  const propertyCode = detectPropertyCode(message);
+  const property = await resolvePropertyByCode(session.organization_id, propertyCode);
+  const campaignLabel = campaignLabelForMessage(message, rule);
 
   if (existing) {
     const update: JsonRecord = {
       last_contact_at: now,
       updated_at: now,
+      metadata: {
+        ...(existing.metadata || {}),
+        ...(attribution ? { whatsapp_attribution: attribution } : {}),
+        last_whatsapp_session_id: session.id,
+        last_whatsapp_remote_jid: message.remoteJid,
+      },
     };
     if (avatarUrl && !existing.whatsapp_avatar_url) {
       update.whatsapp_avatar_url = avatarUrl;
       update.whatsapp_avatar_synced_at = now;
     }
+    if (propertyCode && !existing.property_code) update.property_code = propertyCode;
+    if (property?.id && !existing.property_id) update.property_id = property.id;
+    if (property?.id && !existing.interest_property_id) update.interest_property_id = property.id;
+    if ((campaignLabel || attribution?.campaign_name) && !existing.source_detail) {
+      update.source_detail = campaignLabel || attribution?.campaign_name;
+    }
     await supabase.from("leads").update(update).eq("id", existing.id);
-    return existing;
+    return { ...existing, ...update, is_new_lead: false };
   }
 
   const roundRobinAssignee = await resolveRoundRobinAssignee(rule, session.organization_id);
   const assignedUserId = rule?.target_user_id || roundRobinAssignee?.userId || session.owner_user_id || session.created_by || null;
-  const campaignLabel = rule?.campaign_label || detectCampaign(message.content);
   const sourceLabel = rule?.source_label || "WhatsApp";
 
   const { data: lead, error } = await supabase
@@ -771,6 +1040,9 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
       source_session_id: session.id,
       initial_message: message.content,
       message: message.content,
+      property_code: propertyCode,
+      property_id: property?.id || null,
+      interest_property_id: property?.id || null,
       assigned_user_id: assignedUserId,
       assigned_at: assignedUserId ? now : null,
       pipeline_id: rule?.target_pipeline_id || null,
@@ -787,9 +1059,11 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
         target_team_id: rule?.target_team_id || null,
         target_round_robin_id: rule?.target_round_robin_id || null,
         campaign_label: campaignLabel,
+        whatsapp_attribution: attribution,
+        property_id: property?.id || null,
       },
     })
-    .select("id, name, assigned_user_id, whatsapp_avatar_url")
+    .select("id, name, assigned_user_id, whatsapp_avatar_url, property_code, property_id, interest_property_id, source_detail, metadata")
     .single();
 
   if (error) throw error;
@@ -806,15 +1080,170 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
       lead_id: lead.id,
       assigned_user_id: roundRobinAssignee.userId,
       reason: "whatsapp_inbound_rule",
-      metadata: { whatsapp_session_id: session.id, matched_rule_id: rule?.id || null },
+      metadata: { whatsapp_session_id: session.id, matched_rule_id: rule?.id || null, whatsapp_attribution: attribution },
     });
   }
 
-  return lead;
+  return { ...lead, is_new_lead: true };
+}
+
+async function upsertLeadMetaAttribution(session: JsonRecord, lead: JsonRecord | null, message: ReturnType<typeof normalizeMessage>) {
+  if (!lead?.id || !message) return;
+  const attribution = whatsappAttribution(message);
+  if (!attribution) return;
+
+  const payload = {
+    ...attribution,
+    channel: "whatsapp",
+    source: "whatsapp",
+    source_type: "whatsapp_click_to_message",
+    message_id: message.messageId,
+    remote_jid: message.remoteJid,
+    whatsapp_session_id: session.id,
+    received_at: message.sentAt,
+    property_id: lead.property_id || lead.interest_property_id || null,
+  };
+
+  const { data: existing, error: existingError } = await supabase
+    .from("lead_meta")
+    .select("id")
+    .eq("organization_id", session.organization_id)
+    .eq("lead_id", lead.id)
+    .maybeSingle();
+  if (existingError) throw existingError;
+
+  if (existing?.id) {
+    const { error } = await supabase
+      .from("lead_meta")
+      .update({
+        platform: "meta",
+        source_type: "whatsapp_click_to_message",
+        ad_id: attribution.ad_id,
+        ad_name: attribution.ad_name,
+        campaign_name: attribution.campaign_name,
+        creative_url: attribution.creative_url,
+        creative_video_url: attribution.creative_video_url,
+        payload,
+        raw_payload: payload,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id)
+      .or("source_type.is.null,source_type.eq.whatsapp_click_to_message,platform.eq.whatsapp");
+    if (error) throw error;
+    return;
+  }
+
+  const { error } = await supabase.from("lead_meta").insert({
+    organization_id: session.organization_id,
+    lead_id: lead.id,
+    platform: "meta",
+    source_type: "whatsapp_click_to_message",
+    ad_id: attribution.ad_id || null,
+    ad_name: attribution.ad_name || null,
+    campaign_name: attribution.campaign_name || null,
+    creative_url: attribution.creative_url || null,
+    creative_video_url: attribution.creative_video_url || null,
+    payload,
+    raw_payload: payload,
+  });
+  if (error) throw error;
+}
+
+async function logLeadEntryAttribution(
+  session: JsonRecord,
+  conversation: JsonRecord,
+  lead: JsonRecord | null,
+  message: ReturnType<typeof normalizeMessage>,
+) {
+  if (!lead?.id || !message || message.fromMe || message.isGroup) return;
+  const attribution = whatsappAttribution(message);
+  if (!attribution) return;
+
+  const metadata = {
+    ...attribution,
+    source: "whatsapp",
+    source_type: "whatsapp_click_to_message",
+    channel: "whatsapp",
+    message_id: message.messageId,
+    conversation_id: conversation.id,
+    whatsapp_session_id: session.id,
+    remote_jid: message.remoteJid,
+    property_id: lead.property_id || lead.interest_property_id || null,
+  };
+
+  const { data: existing, error: existingError } = await supabase
+    .from("lead_entry_events")
+    .select("id")
+    .eq("organization_id", session.organization_id)
+    .eq("lead_id", lead.id)
+    .eq("source", "whatsapp")
+    .eq("metadata->>message_id", message.messageId)
+    .maybeSingle();
+  if (existingError) throw existingError;
+  if (existing?.id) return;
+
+  const { error } = await supabase.from("lead_entry_events").insert({
+    organization_id: session.organization_id,
+    lead_id: lead.id,
+    source: "whatsapp",
+    entry_type: lead.is_new_lead ? "initial" : "reentry",
+    property_id: lead.property_id || lead.interest_property_id || null,
+    campaign_name: attribution.campaign_name || attribution.ad_name || null,
+    utm_source: "facebook",
+    utm_medium: "click_to_whatsapp",
+    utm_campaign: attribution.campaign_name || null,
+    metadata,
+  });
+  if (error) throw error;
+}
+
+async function logCreativeActivity(
+  session: JsonRecord,
+  conversation: JsonRecord,
+  lead: JsonRecord | null,
+  message: ReturnType<typeof normalizeMessage>,
+) {
+  if (!lead?.id || !message || message.fromMe || message.isGroup) return;
+  const attribution = whatsappAttribution(message);
+  if (!attribution) return;
+
+  const metadata = {
+    ...attribution,
+    source: "whatsapp",
+    source_type: "whatsapp_click_to_message",
+    channel: "whatsapp",
+    message_id: message.messageId,
+    conversation_id: conversation.id,
+    whatsapp_session_id: session.id,
+    remote_jid: message.remoteJid,
+    property_id: lead.property_id || lead.interest_property_id || null,
+  };
+
+  const { data: existing, error: existingError } = await supabase
+    .from("activities")
+    .select("id")
+    .eq("organization_id", session.organization_id)
+    .eq("lead_id", lead.id)
+    .eq("type", "meta_creative")
+    .eq("metadata->>message_id", message.messageId)
+    .maybeSingle();
+  if (existingError) throw existingError;
+  if (existing?.id) return;
+
+  const { error } = await supabase.from("activities").insert({
+    organization_id: session.organization_id,
+    lead_id: lead.id,
+    user_id: null,
+    type: "meta_creative",
+    content: attribution.creative_name || attribution.ad_name || "Criativo do anuncio",
+    metadata,
+  });
+  if (error) throw error;
 }
 
 async function ensureConversation(session: JsonRecord, message: ReturnType<typeof normalizeMessage>, lead: JsonRecord | null) {
   if (!message) throw new Error("Missing normalized message");
+  const attribution = whatsappAttribution(message);
 
   const { data: existing, error: existingError } = await supabase
     .from("whatsapp_conversations")
@@ -836,6 +1265,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       metadata: {
         ...(existing.metadata || {}),
         last_webhook_at: new Date().toISOString(),
+        ...(attribution ? { whatsapp_attribution: attribution } : {}),
       },
     };
     const { data, error } = await supabase
@@ -864,6 +1294,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       metadata: {
         source: "evolution_go",
         created_from_webhook: true,
+        ...(attribution ? { whatsapp_attribution: attribution } : {}),
       },
     })
     .select("*")
@@ -926,6 +1357,8 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
     received_at: message.fromMe ? null : new Date().toISOString(),
     metadata: {
       source: "evolution_go_webhook",
+      whatsapp_attribution: whatsappAttribution(message),
+      whatsapp_referral: message.referral,
       raw: message.raw,
     },
   };
@@ -987,6 +1420,8 @@ async function logInbound(session: JsonRecord, conversation: JsonRecord, lead: J
       match_field: rule?.match_field || null,
       match_value: rule?.match_value || null,
       campaign_label: rule?.campaign_label || detectCampaign(message.content),
+      whatsapp_attribution: whatsappAttribution(message),
+      property_code: detectPropertyCode(message),
     },
   });
 }
@@ -1055,6 +1490,9 @@ async function handleMessages(session: JsonRecord, payload: any) {
     await updateConversationAfterMessage(conversation, message, result.inserted);
     await logInbound(session, conversation, lead, rule, message);
     if (result.inserted) {
+      await upsertLeadMetaAttribution(session, lead, message);
+      await logLeadEntryAttribution(session, conversation, lead, message);
+      await logCreativeActivity(session, conversation, lead, message);
       await triggerAutoReply(session, conversation, result.message, message);
     }
     processed += 1;

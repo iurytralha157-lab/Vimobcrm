@@ -3,6 +3,7 @@ package httpserver
 import (
 	"log/slog"
 	"net/http"
+	"net/url"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -61,6 +62,7 @@ func LogRequests(logger *slog.Logger) Middleware {
 
 func CORS(allowedOrigins []string) Middleware {
 	allowAll := false
+	allowPrivateDevOrigins := false
 	allowed := make(map[string]struct{}, len(allowedOrigins))
 	for _, origin := range allowedOrigins {
 		origin = strings.TrimSpace(origin)
@@ -70,6 +72,9 @@ func CORS(allowedOrigins []string) Middleware {
 		}
 		if origin != "" {
 			allowed[origin] = struct{}{}
+			if isPrivateDevOrigin(origin) {
+				allowPrivateDevOrigins = true
+			}
 		}
 	}
 
@@ -79,7 +84,7 @@ func CORS(allowedOrigins []string) Middleware {
 			if origin != "" {
 				if allowAll {
 					w.Header().Set("Access-Control-Allow-Origin", "*")
-				} else if _, ok := allowed[origin]; ok {
+				} else if _, ok := allowed[origin]; ok || (allowPrivateDevOrigins && isPrivateDevOrigin(origin)) {
 					w.Header().Set("Access-Control-Allow-Origin", origin)
 					w.Header().Set("Vary", "Origin")
 				}
@@ -88,6 +93,7 @@ func CORS(allowedOrigins []string) Middleware {
 			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization,Content-Type,X-Organization-ID,X-Request-ID,X-Webhook-Token")
 			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
+			w.Header().Set("Access-Control-Max-Age", "600")
 
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
@@ -97,6 +103,37 @@ func CORS(allowedOrigins []string) Middleware {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func isPrivateDevOrigin(origin string) bool {
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme != "http" {
+		return false
+	}
+
+	port := parsed.Port()
+	if port != "" && port != "3000" && port != "3001" {
+		return false
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" {
+		return true
+	}
+	if strings.HasPrefix(host, "192.168.") || strings.HasPrefix(host, "10.") {
+		return true
+	}
+	if strings.HasPrefix(host, "172.") {
+		secondOctet, _, ok := strings.Cut(strings.TrimPrefix(host, "172."), ".")
+		if ok {
+			switch secondOctet {
+			case "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31":
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func RequireAuth(verifier *authpkg.Verifier, next http.Handler) http.Handler {

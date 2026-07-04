@@ -6,8 +6,9 @@ type Envelope<T> = {
 }
 
 export const contactsAPI = {
-  async list(filters: ContactListFilters) {
+  async list(filters: ContactListFilters, organizationId?: string | null) {
     const response = await vimobAPIRequest<Envelope<Contact[]>>('/v1/contacts', {
+      organizationId,
       query: {
         search: filters.search,
         teamId: filters.teamId,
@@ -27,6 +28,7 @@ export const contactsAPI = {
         sortDir: filters.sortDir,
         page: filters.page,
         limit: filters.limit,
+        mode: filters.mode || 'compact',
       },
     })
 

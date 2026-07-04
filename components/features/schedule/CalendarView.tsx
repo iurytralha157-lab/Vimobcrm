@@ -150,11 +150,11 @@ function ActivityCard({ event, onEditEvent, onEventUpdate, isDragging, style, cl
         onClick={(e) => { e.stopPropagation(); onEditEvent?.(event); }}
         title={`${format(start, 'HH:mm')} - ${format(end, 'HH:mm')} · ${event.title}`}
         className={cn(
-          "absolute left-0.5 right-0.5 rounded-[4px] border text-white overflow-hidden shadow-sm hover:shadow-md z-10 cursor-grab active:cursor-grabbing group flex items-center px-1.5 gap-1",
+          "absolute left-0.5 right-0.5 rounded-[4px] border-0 text-white overflow-hidden shadow-sm hover:shadow-md z-10 cursor-grab active:cursor-grabbing group flex items-center px-1.5 gap-1",
           isDragging && "opacity-50 grayscale",
           className
         )}
-        style={{ ...style, ...dragStyle, backgroundColor: userColor.background, borderColor: userColor.border, height: `${currentHeight}px` }}
+        style={{ ...style, ...dragStyle, backgroundColor: userColor.background, height: `${currentHeight}px` }}
       >
         <span className="text-[9px] font-bold tabular-nums opacity-80 shrink-0">
           {event.is_all_day ? 'Dia inteiro' : format(start, 'HH:mm')}
@@ -177,7 +177,7 @@ function ActivityCard({ event, onEditEvent, onEventUpdate, isDragging, style, cl
       }}
       title={`${format(start, 'HH:mm')} - ${format(end, 'HH:mm')} · ${event.title}`}
       className={cn(
-        "absolute left-0.5 right-0.5 rounded-[4px] border text-white overflow-hidden shadow-sm transition-shadow hover:shadow-md z-10 cursor-grab active:cursor-grabbing group",
+        "absolute left-0.5 right-0.5 rounded-[4px] border-0 text-white overflow-hidden shadow-sm transition-shadow hover:shadow-md z-10 cursor-grab active:cursor-grabbing group",
         isDragging && "opacity-50 grayscale",
         resizing && "z-50 ring-2 ring-primary ring-offset-1",
         className
@@ -186,7 +186,6 @@ function ActivityCard({ event, onEditEvent, onEventUpdate, isDragging, style, cl
         ...style,
         ...dragStyle,
         backgroundColor: userColor.background,
-        borderColor: userColor.border,
         height: `${currentHeight}px`
       }}
     >
@@ -443,7 +442,7 @@ export function CalendarView({
                 <div className="flex justify-between items-center mb-1">
                   <span className={cn(
                     "text-[11px] font-black h-6 w-6 flex items-center justify-center rounded-lg transition-all",
-                    isDayToday ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20" : "text-muted-foreground group-hover:text-foreground"
+                      isDayToday ? "bg-primary text-primary-foreground" : "text-muted-foreground group-hover:text-foreground"
                   )}>
                     {format(day, 'd')}
                   </span>
@@ -461,9 +460,9 @@ export function CalendarView({
                           onEditEvent?.(event);
                         }}
                         className={cn(
-                          "px-2 py-1 rounded-lg text-[9px] font-bold border truncate flex items-center gap-1.5 text-white shadow-sm transition-all hover:scale-[1.02] active:scale-95",
+                          "px-2 py-1 rounded-lg text-[9px] font-bold border-0 truncate flex items-center gap-1.5 text-white shadow-sm transition-all hover:scale-[1.02] active:scale-95",
                         )}
-                        style={{ backgroundColor: userColor.background, borderColor: userColor.border }}
+                        style={{ backgroundColor: userColor.background }}
                       >
                         <Icon className="h-2.5 w-2.5 flex-shrink-0 opacity-80" />
                         <span className="truncate tracking-tight">{event.title}</span>
@@ -497,9 +496,9 @@ export function CalendarView({
                                   onEditEvent?.(event);
                                 }}
                                 className={cn(
-                                  "px-2 py-1.5 rounded-xl text-[10px] font-bold border truncate flex items-center gap-2 text-white shadow-sm cursor-pointer transition-all hover:translate-x-1",
+                                  "px-2 py-1.5 rounded-xl text-[10px] font-bold border-0 truncate flex items-center gap-2 text-white shadow-sm cursor-pointer transition-all hover:translate-x-1",
                                 )}
-                                style={{ backgroundColor: userColor.background, borderColor: userColor.border }}
+                                style={{ backgroundColor: userColor.background }}
                               >
                                 <Icon className="h-3 w-3 flex-shrink-0 opacity-80" />
                                 <div className="flex flex-col truncate">
@@ -634,7 +633,7 @@ export function CalendarView({
         <ScrollArea className="h-full border-0 bg-transparent">
           <div className="relative flex flex-col min-w-[1000px] min-h-full">
             {/* Header */}
-            <div className="flex border-b border-white/[0.045] sticky top-0 bg-[var(--app-surface-solid)] z-20 shadow-sm">
+            <div className="flex border-b border-white/[0.045] sticky top-0 bg-[var(--app-surface-solid)] z-20">
               <div className="w-16 border-r border-white/[0.045] flex-shrink-0 bg-white/[0.025]" />
               {weekDays.map(day => (
                 <div key={day.toString()} className="flex-1 border-r border-white/[0.045] last:border-r-0 py-2.5 text-center">
@@ -643,7 +642,7 @@ export function CalendarView({
                   </span>
                   <span className={cn(
                     "text-base font-black h-8 w-8 inline-flex items-center justify-center rounded-xl transition-all",
-                    isToday(day) ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20 scale-105" : "text-foreground"
+                      isToday(day) ? "bg-primary text-primary-foreground scale-105" : "text-foreground"
                   )}>
                     {format(day, 'd')}
                   </span>
@@ -784,7 +783,7 @@ export function CalendarView({
                       className={cn(
                         "text-[10px] h-7 flex items-center justify-center rounded-lg cursor-pointer relative font-bold",
                         !isCurrentMonth && "opacity-10",
-                        isDayToday && "bg-primary text-primary-foreground shadow-sm shadow-primary/20",
+                        isDayToday && "bg-primary text-primary-foreground",
                         !isDayToday && isCurrentMonth && "hover:bg-accent",
                         hasEvents && !isDayToday && "text-primary ring-1 ring-primary/20"
                       )}

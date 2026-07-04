@@ -55,6 +55,8 @@ const SIDEBAR_ICON_STROKE = 1.32;
 const SIDEBAR_CHEVRON_STROKE = 1.4;
 const SIDEBAR_NAV_RESET =
   "border-0 shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0";
+const SIDEBAR_NAV_TEXT = "font-sans text-sm font-extralight leading-none tracking-wide";
+const SIDEBAR_NAV_CHILD_TEXT = "font-sans text-xs font-extralight leading-none tracking-wide";
 
 interface NavItem {
   icon: ElementType;
@@ -105,6 +107,7 @@ const allNavItems: NavItem[] = [
       { icon: Building2, labelKey: 'propertiesRentals', path: '/properties/rentals' },
       { icon: Building2, labelKey: 'propertiesCondos', path: '/properties/condominiums' },
       { icon: MapPin, labelKey: 'propertiesLocations', path: '/properties/locations' },
+      { icon: Users, labelKey: 'propertiesOwners', path: '/properties/owners' },
     ],
   },
   { icon: Calendar, labelKey: 'schedule', path: '/agenda', module: 'agenda' },
@@ -145,6 +148,7 @@ const allNavItems: NavItem[] = [
       { icon: BarChart3, labelKey: 'dashboard', path: '/gamificacao#dashboard' },
       { icon: Zap, labelKey: 'arenaRanking', path: '/gamificacao#rankings' },
       { icon: History, labelKey: 'history', path: '/gamificacao#history' },
+      { icon: Settings, labelKey: 'arenaSettings', path: '/gamificacao#config', adminOnly: true },
     ],
   },
 ];
@@ -159,6 +163,7 @@ const bottomItems: NavItem[] = [
       { icon: Users, labelKey: 'settingsUsers', path: '/settings?tab=team', adminOnly: true },
       { icon: CreditCard, labelKey: 'settingsBilling', path: '/settings?tab=subscription', adminOnly: true },
       { icon: Plug, labelKey: 'settingsIntegrations', path: '/settings?tab=integrations' },
+      { icon: Building2, labelKey: 'settingsProperties', path: '/settings?tab=properties', adminOnly: true },
       { icon: Globe, labelKey: 'site', path: '/settings/site', adminOnly: true, module: 'site' },
     ],
   },
@@ -345,7 +350,8 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                     <button
                       onClick={() => toggleMenu(item.path)}
                       className={cn(
-                        "w-full flex items-center justify-between px-3 py-3 rounded-[6px] text-sm font-extralight tracking-wide transition-colors",
+                        "w-full flex items-center justify-between px-3 py-3 rounded-[6px] transition-colors",
+                        SIDEBAR_NAV_TEXT,
                         SIDEBAR_NAV_RESET,
                         isActiveParent(item)
                           ? "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal"
@@ -371,7 +377,8 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                               <button
                                 onClick={() => handleNavigation(child.path)}
                                 className={cn(
-                                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-[6px] text-xs font-extralight tracking-wide transition-colors",
+                                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-[6px] transition-colors",
+                                  SIDEBAR_NAV_CHILD_TEXT,
                                   SIDEBAR_NAV_RESET,
                                   isPathActive(child.path)
                                     ? "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal"
@@ -395,7 +402,8 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                   <button
                     onClick={() => handleNavigation(item.path)}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-3 rounded-[6px] text-sm font-extralight tracking-wide transition-colors",
+                      "w-full flex items-center gap-3 px-3 py-3 rounded-[6px] transition-colors",
+                      SIDEBAR_NAV_TEXT,
                       SIDEBAR_NAV_RESET,
                       isActiveParent(item)
                         ? "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal"
@@ -424,7 +432,8 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                     <button
                       onClick={() => toggleMenu(item.path)}
                       className={cn(
-                        "w-full flex items-center justify-between px-3 py-3 rounded-[6px] text-sm font-extralight tracking-wide transition-colors",
+                        "w-full flex items-center justify-between px-3 py-3 rounded-[6px] transition-colors",
+                        SIDEBAR_NAV_TEXT,
                         SIDEBAR_NAV_RESET,
                         isActiveParent(item)
                           ? "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal"
@@ -451,7 +460,8 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                               <button
                                 onClick={() => handleNavigation(child.path)}
                                 className={cn(
-                                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-[6px] text-xs font-extralight tracking-wide transition-colors",
+                                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-[6px] transition-colors",
+                                  SIDEBAR_NAV_CHILD_TEXT,
                                   SIDEBAR_NAV_RESET,
                                   isPathActive(child.path)
                                     ? "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal"
@@ -475,7 +485,8 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                   <button
                     onClick={() => handleNavigation(item.path)}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-3 rounded-[6px] text-sm font-extralight tracking-wide transition-colors",
+                      "w-full flex items-center gap-3 px-3 py-3 rounded-[6px] transition-colors",
+                      SIDEBAR_NAV_TEXT,
                       SIDEBAR_NAV_RESET,
                       pathname === item.path
                         ? "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal"

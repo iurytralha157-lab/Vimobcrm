@@ -457,13 +457,43 @@ func (repo Repository) ListActiveSubscriptionPlans(ctx context.Context) ([]map[s
 	return repo.queryJSONRows(ctx, `
 		select jsonb_build_object(
 			'id', p.id::text,
+			'slug', p.slug,
 			'name', p.name,
 			'price', p.price,
 			'billing_cycle', p.billing_cycle,
-			'description', p.description
+			'description', p.description,
+			'trial_enabled', p.trial_enabled,
+			'trial_days', p.trial_days,
+			'max_users', p.max_users,
+			'max_leads', p.max_leads,
+			'max_whatsapp_sessions', p.max_whatsapp_sessions,
+			'modules', coalesce(to_jsonb(p.modules), '[]'::jsonb),
+			'is_public', p.is_public
 		)
 		from public.admin_subscription_plans p
 		where coalesce(p.is_active, true) = true
+		order by p.price asc, p.name asc
+	`)
+}
+
+func (repo Repository) ListPublicSubscriptionPlans(ctx context.Context) ([]map[string]any, error) {
+	return repo.queryJSONRows(ctx, `
+		select jsonb_build_object(
+			'id', p.id::text,
+			'slug', p.slug,
+			'name', p.name,
+			'price', p.price,
+			'billing_cycle', p.billing_cycle,
+			'description', p.description,
+			'trial_enabled', p.trial_enabled,
+			'trial_days', p.trial_days,
+			'max_users', p.max_users,
+			'max_whatsapp_sessions', p.max_whatsapp_sessions,
+			'modules', coalesce(to_jsonb(p.modules), '[]'::jsonb)
+		)
+		from public.admin_subscription_plans p
+		where coalesce(p.is_active, true) = true
+		  and coalesce(p.is_public, true) = true
 		order by p.price asc, p.name asc
 	`)
 }

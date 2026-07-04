@@ -3,8 +3,13 @@ import { useAuth } from "@/contexts/AuthContext";
 import { whatsappAPI } from "@/lib/api/whatsapp";
 import { WhatsAppSession } from "./use-whatsapp-sessions";
 
-export function useAccessibleSessions() {
+type UseAccessibleSessionsOptions = {
+  enabled?: boolean;
+};
+
+export function useAccessibleSessions(options: UseAccessibleSessionsOptions = {}) {
   const { profile } = useAuth();
+  const shouldFetch = options.enabled ?? true;
 
   return useQuery({
     queryKey: ["accessible-sessions", profile?.id, profile?.organization_id, profile?.role],
@@ -19,11 +24,12 @@ export function useAccessibleSessions() {
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
       );
     },
-    enabled: !!profile?.id && !!profile?.organization_id,
-    refetchInterval: 15_000,
+    enabled: shouldFetch && !!profile?.id && !!profile?.organization_id,
+    refetchInterval: 60_000,
     refetchIntervalInBackground: false,
-    staleTime: 5_000,
+    staleTime: 60_000,
+    gcTime: 10 * 60_000,
     retry: false,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
   });
 }

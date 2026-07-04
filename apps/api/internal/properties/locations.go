@@ -23,12 +23,20 @@ type NeighborhoodInput struct {
 }
 
 type CondominiumInput struct {
-	Name           string
-	CityID         string
-	NeighborhoodID string
-	Address        string
-	Latitude       *float64
-	Longitude      *float64
+	Name                  string
+	CityID                string
+	NeighborhoodID        string
+	Address               string
+	PhotoURL              string
+	CEP                   string
+	Number                string
+	Complement            string
+	DefaultCondominiumFee *float64
+	HasConcierge          bool
+	ConciergeType         string
+	Notes                 string
+	Latitude              *float64
+	Longitude             *float64
 }
 
 func (repo Repository) ListCities(ctx context.Context, tenantContext tenant.Context) ([]Location, error) {
@@ -226,6 +234,12 @@ func (repo Repository) CreateCondominium(ctx context.Context, tenantContext tena
 
 	input.Name = trimMax(input.Name, 120)
 	input.Address = trimMax(input.Address, 300)
+	input.PhotoURL = trimMax(input.PhotoURL, 1000)
+	input.CEP = trimMax(input.CEP, 20)
+	input.Number = trimMax(input.Number, 40)
+	input.Complement = trimMax(input.Complement, 160)
+	input.ConciergeType = trimMax(input.ConciergeType, 80)
+	input.Notes = trimMax(input.Notes, 1200)
 	cityID, hasCity := normalizeOptionalUUID(input.CityID)
 	neighborhoodID, hasNeighborhood := normalizeOptionalUUID(input.NeighborhoodID)
 	if input.Name == "" {
@@ -296,14 +310,24 @@ func (repo Repository) insertCondominium(ctx context.Context, tx pgx.Tx, organiz
 	if err != nil {
 		return nil, err
 	}
+	hasRichColumns, err := repo.tableHasColumn(ctx, "property_condominiums", "default_condominium_fee")
+	if err != nil {
+		return nil, err
+	}
 
-	if hasLatitude && hasLongitude {
+	if hasLatitude && hasLongitude && hasRichColumns {
 		return scanLocation(tx.QueryRow(ctx, `
 			with inserted as (
 				insert into public.property_condominiums (
-					organization_id, city_id, neighborhood_id, name, address, latitude, longitude
+					organization_id, city_id, neighborhood_id, name, address,
+					photo_url, cep, number, complement, default_condominium_fee,
+					has_concierge, concierge_type, notes, latitude, longitude
 				)
-				values ($1::uuid, nullif($2, '')::uuid, nullif($3, '')::uuid, $4, nullif($5, ''), $6, $7)
+				values (
+					$1::uuid, nullif($2, '')::uuid, nullif($3, '')::uuid, $4, nullif($5, ''),
+					nullif($6, ''), nullif($7, ''), nullif($8, ''), nullif($9, ''), $10,
+					$11, nullif($12, ''), nullif($13, ''), $14, $15
+				)
 				returning *
 			)
 			select (
@@ -313,7 +337,9 @@ func (repo Repository) insertCondominium(ctx context.Context, tx pgx.Tx, organiz
 			from inserted
 			left join public.property_cities c on c.id = inserted.city_id
 			left join public.property_neighborhoods n on n.id = inserted.neighborhood_id
-		`, organizationID, cityID, neighborhoodID, input.Name, input.Address, input.Latitude, input.Longitude))
+		`, organizationID, cityID, neighborhoodID, input.Name, input.Address,
+			input.PhotoURL, input.CEP, input.Number, input.Complement, input.DefaultCondominiumFee,
+			input.HasConcierge, input.ConciergeType, input.Notes, input.Latitude, input.Longitude))
 	}
 
 	return scanLocation(tx.QueryRow(ctx, `

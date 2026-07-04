@@ -29,6 +29,7 @@ type Contact struct {
 	Name                   string       `json:"name"`
 	Phone                  *string      `json:"phone"`
 	Email                  *string      `json:"email"`
+	WhatsApp               *string      `json:"whatsapp"`
 	WhatsAppAvatarURL      *string      `json:"whatsapp_avatar_url"`
 	PipelineID             *string      `json:"pipeline_id"`
 	PipelineName           *string      `json:"pipeline_name"`
@@ -39,7 +40,20 @@ type Contact struct {
 	AssigneeName           *string      `json:"assignee_name"`
 	AssigneeAvatar         *string      `json:"assignee_avatar"`
 	Source                 string       `json:"source"`
+	SourceDetail           *string      `json:"source_detail"`
+	SourceSessionID        *string      `json:"source_session_id"`
+	SourceWebhookID        *string      `json:"source_webhook_id"`
+	VisitorSessionID       *string      `json:"visitor_session_id"`
+	Status                 string       `json:"status"`
+	Priority               *string      `json:"priority"`
+	Message                *string      `json:"message"`
+	InitialMessage         *string      `json:"initial_message"`
+	PropertyCode           *string      `json:"property_code"`
+	PropertyID             *string      `json:"property_id"`
+	InterestPropertyID     *string      `json:"interest_property_id"`
+	InterestPlanID         *string      `json:"interest_plan_id"`
 	CreatedAt              time.Time    `json:"created_at"`
+	UpdatedAt              time.Time    `json:"updated_at"`
 	SLAStatus              *string      `json:"sla_status"`
 	LastInteractionAt      *time.Time   `json:"last_interaction_at"`
 	LastInteractionPreview *string      `json:"last_interaction_preview"`
@@ -48,8 +62,69 @@ type Contact struct {
 	TotalCount             int64        `json:"total_count"`
 	DealStatus             *string      `json:"deal_status"`
 	LostReason             *string      `json:"lost_reason"`
+	Feedback               *string      `json:"feedback"`
+	InterestValue          *string      `json:"valor_interesse"`
+	CommissionPercentage   *string      `json:"commission_percentage"`
+	PriceRange             *string      `json:"faixa_valor_imovel"`
+	FamilyIncome           *string      `json:"renda_familiar"`
+	PurchasePurpose        *string      `json:"finalidade_compra"`
+	SeekingFinancing       *bool        `json:"procura_financiamento"`
+	Works                  *bool        `json:"trabalha"`
+	Role                   *string      `json:"cargo"`
+	Company                *string      `json:"empresa"`
+	Profession             *string      `json:"profissao"`
+	PostalCode             *string      `json:"cep"`
+	Address                *string      `json:"endereco"`
+	AddressNumber          *string      `json:"numero"`
+	AddressComplement      *string      `json:"complemento"`
+	Neighborhood           *string      `json:"bairro"`
+	City                   *string      `json:"cidade"`
+	State                  *string      `json:"uf"`
+	IsOwnResource          *bool        `json:"is_own_resource"`
+	FirstTouchAt           *time.Time   `json:"first_touch_at"`
+	FirstTouchSeconds      *int32       `json:"first_touch_seconds"`
+	FirstTouchChannel      *string      `json:"first_touch_channel"`
+	FirstTouchActorUserID  *string      `json:"first_touch_actor_user_id"`
+	FirstResponseAt        *time.Time   `json:"first_response_at"`
+	FirstResponseSeconds   *int32       `json:"first_response_seconds"`
+	FirstResponseChannel   *string      `json:"first_response_channel"`
+	FirstResponseAuto      *bool        `json:"first_response_is_automation"`
+	FirstResponseActorID   *string      `json:"first_response_actor_user_id"`
+	StageEnteredAt         *time.Time   `json:"stage_entered_at"`
 	LastEntryAt            *time.Time   `json:"last_entry_at"`
 	ReentryCount           int          `json:"reentry_count"`
+	RedistributionCount    int          `json:"redistribution_count"`
+	LastContactAt          *time.Time   `json:"last_contact_at"`
+	NextFollowUpAt         *time.Time   `json:"next_follow_up_at"`
+	WonAt                  *time.Time   `json:"won_at"`
+	LostAt                 *time.Time   `json:"lost_at"`
+	CreatedBy              *string      `json:"created_by"`
+	MetadataJSON           *string      `json:"metadata_json"`
+	MetaLeadID             *string      `json:"meta_lead_id"`
+	MetaFormID             *string      `json:"meta_form_id"`
+	MetaCampaignID         *string      `json:"meta_campaign_id"`
+	MetaAdsetID            *string      `json:"meta_adset_id"`
+	MetaAdID               *string      `json:"meta_ad_id"`
+	MetaClickID            *string      `json:"meta_click_id"`
+	CampaignID             *string      `json:"campaign_id"`
+	CampaignName           *string      `json:"campaign_name"`
+	AdsetID                *string      `json:"adset_id"`
+	AdsetName              *string      `json:"adset_name"`
+	AdID                   *string      `json:"ad_id"`
+	AdName                 *string      `json:"ad_name"`
+	FormID                 *string      `json:"form_id"`
+	FormName               *string      `json:"form_name"`
+	Platform               *string      `json:"platform"`
+	UTMSource              *string      `json:"utm_source"`
+	UTMMedium              *string      `json:"utm_medium"`
+	UTMCampaign            *string      `json:"utm_campaign"`
+	UTMContent             *string      `json:"utm_content"`
+	UTMTerm                *string      `json:"utm_term"`
+	CreativeURL            *string      `json:"creative_url"`
+	CreativeVideoURL       *string      `json:"creative_video_url"`
+	CreativeInstagramURL   *string      `json:"creative_instagram_url"`
+	MetaPayloadJSON        *string      `json:"meta_payload_json"`
+	MetaRawPayloadJSON     *string      `json:"meta_raw_payload_json"`
 }
 
 type ContactListFilter struct {
@@ -71,6 +146,7 @@ type ContactListFilter struct {
 	SortDir     string
 	Page        int
 	Limit       int
+	Mode        string
 }
 
 type Tag struct {
@@ -380,6 +456,7 @@ func ParseContactListFilter(values url.Values) (ContactListFilter, error) {
 		SortDir:     cleanContactFilterValue(values.Get("sortDir")),
 		Page:        page,
 		Limit:       limit,
+		Mode:        strings.ToLower(cleanContactFilterValue(values.Get("mode"))),
 	}
 
 	for _, item := range []struct {
@@ -411,6 +488,12 @@ func ParseContactListFilter(values url.Values) (ContactListFilter, error) {
 	}
 	if !validEnum(filter.SortDir, "asc", "desc") {
 		return ContactListFilter{}, fmt.Errorf("%w: sortDir is invalid", ErrInvalidInput)
+	}
+	if filter.Mode == "" || filter.Mode == "export" {
+		filter.Mode = "full"
+	}
+	if !validEnum(filter.Mode, "compact", "full") {
+		return ContactListFilter{}, fmt.Errorf("%w: mode is invalid", ErrInvalidInput)
 	}
 
 	return filter, nil
@@ -550,23 +633,59 @@ func (request CompleteCadenceTaskRequest) Validate() (CompleteCadenceTaskRequest
 }
 
 func (repo Repository) ListContacts(ctx context.Context, tenantContext tenant.Context, filter ContactListFilter) ([]Contact, error) {
+	if filter.Mode == "compact" {
+		return repo.listContactsCompact(ctx, tenantContext, filter)
+	}
+	return repo.listContactsFull(ctx, tenantContext, filter)
+}
+
+func (repo Repository) countContacts(ctx context.Context, tenantContext tenant.Context, filter ContactListFilter) (int64, error) {
+	where, args, err := buildContactWhere(tenantContext, filter)
+	if err != nil {
+		return 0, err
+	}
+
+	var total int64
+	err = repo.db.Pool().QueryRow(ctx, `
+		select count(*)::bigint
+		from public.leads l
+		where `+strings.Join(where, " and "),
+		args...,
+	).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func (repo Repository) listContactsFull(ctx context.Context, tenantContext tenant.Context, filter ContactListFilter) ([]Contact, error) {
+	total, err := repo.countContacts(ctx, tenantContext, filter)
+	if err != nil {
+		return nil, err
+	}
+	if total == 0 {
+		return []Contact{}, nil
+	}
+
 	where, args, err := buildContactWhere(tenantContext, filter)
 	if err != nil {
 		return nil, err
 	}
 
 	offset := (filter.Page - 1) * filter.Limit
-	args = append(args, filter.Limit, offset)
+	args = append(args, total, filter.Limit, offset)
+	totalIndex := len(args) - 2
 	limitIndex := len(args) - 1
 	offsetIndex := len(args)
 
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
-			count(*) over() as total_count,
+			$`+fmt.Sprint(totalIndex)+`::bigint as total_count,
 			l.id::text,
 			l.name,
 			l.phone,
 			l.email,
+			coalesce(to_jsonb(l)->>'whatsapp', l.phone),
 			l.whatsapp_avatar_url,
 			l.pipeline_id::text,
 			p.name,
@@ -577,7 +696,20 @@ func (repo Repository) ListContacts(ctx context.Context, tenantContext tenant.Co
 			u.name,
 			u.avatar_url,
 			l.source,
+			to_jsonb(l)->>'source_detail',
+			l.source_session_id,
+			l.source_webhook_id::text,
+			l.visitor_session_id,
+			l.status,
+			l.priority,
+			l.message,
+			l.initial_message,
+			l.property_code,
+			l.property_id::text,
+			l.interest_property_id::text,
+			l.interest_plan_id::text,
 			l.created_at,
+			l.updated_at,
 			null::text as sla_status,
 			l.last_entry_at,
 			null::text as last_interaction_preview,
@@ -585,8 +717,235 @@ func (repo Repository) ListContacts(ctx context.Context, tenantContext tenant.Co
 			coalesce(tags.tags, '[]'::json)::text,
 			l.deal_status,
 			l.lost_reason,
+			l.feedback,
+			l.valor_interesse::text,
+			l.commission_percentage::text,
+			l.faixa_valor_imovel,
+			l.renda_familiar,
+			l.finalidade_compra,
+			l.procura_financiamento,
+			l.trabalha,
+			l.cargo,
+			l.empresa,
+			l.profissao,
+			l.cep,
+			l.endereco,
+			l.numero,
+			l.complemento,
+			l.bairro,
+			l.cidade,
+			l.uf,
+			l.is_own_resource,
+			l.first_touch_at,
+			l.first_touch_seconds,
+			l.first_touch_channel,
+			l.first_touch_actor_user_id::text,
+			l.first_response_at,
+			l.first_response_seconds,
+			l.first_response_channel,
+			l.first_response_is_automation,
+			l.first_response_actor_user_id::text,
+			l.stage_entered_at,
 			l.last_entry_at,
-			l.reentry_count
+			l.reentry_count,
+			l.redistribution_count,
+			l.last_contact_at,
+			l.next_follow_up_at,
+			l.won_at,
+			l.lost_at,
+			l.created_by::text,
+			coalesce(to_jsonb(l)->'metadata', '{}'::jsonb)::text,
+			l.meta_lead_id,
+			l.meta_form_id,
+			l.meta_campaign_id,
+			l.meta_adset_id,
+			l.meta_ad_id,
+			l.meta_click_id,
+			coalesce(lm.campaign_id, l.meta_campaign_id),
+			coalesce(lm.campaign_name, l.utm_campaign),
+			coalesce(lm.adset_id, l.meta_adset_id),
+			lm.adset_name,
+			coalesce(lm.ad_id, l.meta_ad_id),
+			coalesce(lm.ad_name, l.utm_content),
+			coalesce(lm.form_id, l.meta_form_id),
+			coalesce(lm.form_name, l.utm_term),
+			coalesce(lm.platform, l.utm_medium),
+			coalesce(lm.utm_source, l.utm_source),
+			coalesce(lm.utm_medium, l.utm_medium),
+			coalesce(lm.utm_campaign, l.utm_campaign),
+			coalesce(lm.utm_content, l.utm_content),
+			coalesce(lm.utm_term, l.utm_term),
+			lm.creative_url,
+			lm.creative_video_url,
+			lm.creative_instagram_url,
+			lm.payload::text,
+			lm.raw_payload::text
+		from public.leads l
+		left join public.pipelines p on p.id = l.pipeline_id and p.organization_id = l.organization_id
+		left join public.stages s on s.id = l.stage_id and s.organization_id = l.organization_id
+		left join public.users u on u.id = l.assigned_user_id
+		left join lateral (
+			select lm.*
+			from public.lead_meta lm
+			where lm.organization_id = l.organization_id
+			  and lm.lead_id = l.id
+			order by lm.updated_at desc nulls last, lm.created_at desc nulls last
+			limit 1
+		) lm on true
+		left join lateral (
+			select json_agg(json_build_object('id', t.id::text, 'name', t.name, 'color', t.color) order by t.name) as tags
+			from public.lead_tags lt
+			join public.tags t on t.id = lt.tag_id
+			where lt.lead_id = l.id
+			  and t.organization_id = l.organization_id
+		) tags on true
+		where `+strings.Join(where, " and ")+`
+		`+contactOrderBy(filter)+`
+		limit $`+fmt.Sprint(limitIndex)+`
+		offset $`+fmt.Sprint(offsetIndex),
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	contacts := make([]Contact, 0, filter.Limit)
+	for rows.Next() {
+		contact, err := scanContact(rows)
+		if err != nil {
+			return nil, err
+		}
+		contacts = append(contacts, contact)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return contacts, nil
+}
+
+func (repo Repository) listContactsCompact(ctx context.Context, tenantContext tenant.Context, filter ContactListFilter) ([]Contact, error) {
+	total, err := repo.countContacts(ctx, tenantContext, filter)
+	if err != nil {
+		return nil, err
+	}
+	if total == 0 {
+		return []Contact{}, nil
+	}
+
+	where, args, err := buildContactWhere(tenantContext, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	offset := (filter.Page - 1) * filter.Limit
+	args = append(args, total, filter.Limit, offset)
+	totalIndex := len(args) - 2
+	limitIndex := len(args) - 1
+	offsetIndex := len(args)
+
+	rows, err := repo.db.Pool().Query(ctx, `
+		select
+			$`+fmt.Sprint(totalIndex)+`::bigint as total_count,
+			l.id::text,
+			l.name,
+			l.phone,
+			l.email,
+			coalesce(to_jsonb(l)->>'whatsapp', l.phone),
+			l.whatsapp_avatar_url,
+			l.pipeline_id::text,
+			p.name,
+			l.stage_id::text,
+			s.name,
+			s.color,
+			l.assigned_user_id::text,
+			u.name,
+			u.avatar_url,
+			l.source,
+			null::text as source_detail,
+			l.source_session_id,
+			l.source_webhook_id::text,
+			l.visitor_session_id,
+			coalesce(l.status, 'new'),
+			l.priority,
+			null::text as message,
+			null::text as initial_message,
+			l.property_code,
+			l.property_id::text,
+			l.interest_property_id::text,
+			l.interest_plan_id::text,
+			l.created_at,
+			l.updated_at,
+			null::text as sla_status,
+			l.last_entry_at,
+			null::text as last_interaction_preview,
+			null::text as last_interaction_channel,
+			coalesce(tags.tags, '[]'::json)::text,
+			l.deal_status,
+			l.lost_reason,
+			null::text as feedback,
+			null::text as valor_interesse,
+			null::text as commission_percentage,
+			null::text as faixa_valor_imovel,
+			null::text as renda_familiar,
+			null::text as finalidade_compra,
+			null::boolean as procura_financiamento,
+			null::boolean as trabalha,
+			null::text as cargo,
+			null::text as empresa,
+			null::text as profissao,
+			null::text as cep,
+			null::text as endereco,
+			null::text as numero,
+			null::text as complemento,
+			null::text as bairro,
+			null::text as cidade,
+			null::text as uf,
+			l.is_own_resource,
+			l.first_touch_at,
+			l.first_touch_seconds,
+			l.first_touch_channel,
+			l.first_touch_actor_user_id::text,
+			l.first_response_at,
+			l.first_response_seconds,
+			l.first_response_channel,
+			l.first_response_is_automation,
+			l.first_response_actor_user_id::text,
+			l.stage_entered_at,
+			l.last_entry_at,
+			coalesce(l.reentry_count, 0),
+			coalesce(l.redistribution_count, 0),
+			l.last_contact_at,
+			l.next_follow_up_at,
+			l.won_at,
+			l.lost_at,
+			l.created_by::text,
+			null::text as metadata_json,
+			l.meta_lead_id,
+			l.meta_form_id,
+			l.meta_campaign_id,
+			l.meta_adset_id,
+			l.meta_ad_id,
+			l.meta_click_id,
+			null::text as campaign_id,
+			null::text as campaign_name,
+			null::text as adset_id,
+			null::text as adset_name,
+			null::text as ad_id,
+			null::text as ad_name,
+			null::text as form_id,
+			null::text as form_name,
+			null::text as platform,
+			null::text as utm_source,
+			null::text as utm_medium,
+			null::text as utm_campaign,
+			null::text as utm_content,
+			null::text as utm_term,
+			null::text as creative_url,
+			null::text as creative_video_url,
+			null::text as creative_instagram_url,
+			null::text as meta_payload_json,
+			null::text as meta_raw_payload_json
 		from public.leads l
 		left join public.pipelines p on p.id = l.pipeline_id and p.organization_id = l.organization_id
 		left join public.stages s on s.id = l.stage_id and s.organization_id = l.organization_id
@@ -1958,10 +2317,23 @@ func contactOrderBy(filter ContactListFilter) string {
 
 func scanContact(row scanner) (Contact, error) {
 	var contact Contact
-	var phone, email, avatar, pipelineID, pipelineName, stageID, stageName, stageColor pgtype.Text
+	var phone, email, whatsApp, avatar, pipelineID, pipelineName, stageID, stageName, stageColor pgtype.Text
 	var assignedUserID, assigneeName, assigneeAvatar, slaStatus, preview, channel pgtype.Text
-	var dealStatus, lostReason pgtype.Text
-	var lastInteraction, lastEntry pgtype.Timestamptz
+	var sourceDetail, sourceSessionID, sourceWebhookID, visitorSessionID pgtype.Text
+	var priority, message, initialMessage, propertyCode, propertyID, interestPropertyID, interestPlanID pgtype.Text
+	var dealStatus, lostReason, feedback, interestValue, commissionPercentage pgtype.Text
+	var priceRange, familyIncome, purchasePurpose, role, company, profession pgtype.Text
+	var postalCode, address, addressNumber, addressComplement, neighborhood, city, state pgtype.Text
+	var createdBy, metadataJSON pgtype.Text
+	var firstTouchChannel, firstTouchActorUserID, firstResponseChannel, firstResponseActorUserID pgtype.Text
+	var metaLeadID, campaignID, campaignName, adsetID, adsetName, adID, adName pgtype.Text
+	var formID, formName, platform, utmSource, utmMedium, utmCampaign, utmContent, utmTerm pgtype.Text
+	var metaFormID, metaCampaignID, metaAdsetID, metaAdID, metaClickID pgtype.Text
+	var creativeURL, creativeVideoURL, creativeInstagramURL, metaPayloadJSON, metaRawPayloadJSON pgtype.Text
+	var seekingFinancing, works, isOwnResource, firstResponseAuto pgtype.Bool
+	var firstTouchSeconds, firstResponseSeconds pgtype.Int4
+	var lastInteraction, firstTouchAt, firstResponseAt, stageEnteredAt, lastEntry pgtype.Timestamptz
+	var lastContactAt, nextFollowUpAt, wonAt, lostAt pgtype.Timestamptz
 	var tagsJSON string
 	if err := row.Scan(
 		&contact.TotalCount,
@@ -1969,6 +2341,7 @@ func scanContact(row scanner) (Contact, error) {
 		&contact.Name,
 		&phone,
 		&email,
+		&whatsApp,
 		&avatar,
 		&pipelineID,
 		&pipelineName,
@@ -1979,7 +2352,20 @@ func scanContact(row scanner) (Contact, error) {
 		&assigneeName,
 		&assigneeAvatar,
 		&contact.Source,
+		&sourceDetail,
+		&sourceSessionID,
+		&sourceWebhookID,
+		&visitorSessionID,
+		&contact.Status,
+		&priority,
+		&message,
+		&initialMessage,
+		&propertyCode,
+		&propertyID,
+		&interestPropertyID,
+		&interestPlanID,
 		&contact.CreatedAt,
+		&contact.UpdatedAt,
 		&slaStatus,
 		&lastInteraction,
 		&preview,
@@ -1987,13 +2373,75 @@ func scanContact(row scanner) (Contact, error) {
 		&tagsJSON,
 		&dealStatus,
 		&lostReason,
+		&feedback,
+		&interestValue,
+		&commissionPercentage,
+		&priceRange,
+		&familyIncome,
+		&purchasePurpose,
+		&seekingFinancing,
+		&works,
+		&role,
+		&company,
+		&profession,
+		&postalCode,
+		&address,
+		&addressNumber,
+		&addressComplement,
+		&neighborhood,
+		&city,
+		&state,
+		&isOwnResource,
+		&firstTouchAt,
+		&firstTouchSeconds,
+		&firstTouchChannel,
+		&firstTouchActorUserID,
+		&firstResponseAt,
+		&firstResponseSeconds,
+		&firstResponseChannel,
+		&firstResponseAuto,
+		&firstResponseActorUserID,
+		&stageEnteredAt,
 		&lastEntry,
 		&contact.ReentryCount,
+		&contact.RedistributionCount,
+		&lastContactAt,
+		&nextFollowUpAt,
+		&wonAt,
+		&lostAt,
+		&createdBy,
+		&metadataJSON,
+		&metaLeadID,
+		&metaFormID,
+		&metaCampaignID,
+		&metaAdsetID,
+		&metaAdID,
+		&metaClickID,
+		&campaignID,
+		&campaignName,
+		&adsetID,
+		&adsetName,
+		&adID,
+		&adName,
+		&formID,
+		&formName,
+		&platform,
+		&utmSource,
+		&utmMedium,
+		&utmCampaign,
+		&utmContent,
+		&utmTerm,
+		&creativeURL,
+		&creativeVideoURL,
+		&creativeInstagramURL,
+		&metaPayloadJSON,
+		&metaRawPayloadJSON,
 	); err != nil {
 		return Contact{}, err
 	}
 	contact.Phone = textPtr(phone)
 	contact.Email = textPtr(email)
+	contact.WhatsApp = textPtr(whatsApp)
 	contact.WhatsAppAvatarURL = textPtr(avatar)
 	contact.PipelineID = textPtr(pipelineID)
 	contact.PipelineName = textPtr(pipelineName)
@@ -2003,18 +2451,97 @@ func scanContact(row scanner) (Contact, error) {
 	contact.AssignedUserID = textPtr(assignedUserID)
 	contact.AssigneeName = textPtr(assigneeName)
 	contact.AssigneeAvatar = textPtr(assigneeAvatar)
+	contact.SourceDetail = textPtr(sourceDetail)
+	contact.SourceSessionID = textPtr(sourceSessionID)
+	contact.SourceWebhookID = textPtr(sourceWebhookID)
+	contact.VisitorSessionID = textPtr(visitorSessionID)
+	contact.Priority = textPtr(priority)
+	contact.Message = textPtr(message)
+	contact.InitialMessage = textPtr(initialMessage)
+	contact.PropertyCode = textPtr(propertyCode)
+	contact.PropertyID = textPtr(propertyID)
+	contact.InterestPropertyID = textPtr(interestPropertyID)
+	contact.InterestPlanID = textPtr(interestPlanID)
 	contact.SLAStatus = textPtr(slaStatus)
 	contact.LastInteractionAt = timePtr(lastInteraction)
 	contact.LastInteractionPreview = textPtr(preview)
 	contact.LastInteractionChannel = textPtr(channel)
 	contact.DealStatus = textPtr(dealStatus)
 	contact.LostReason = textPtr(lostReason)
+	contact.Feedback = textPtr(feedback)
+	contact.InterestValue = textPtr(interestValue)
+	contact.CommissionPercentage = textPtr(commissionPercentage)
+	contact.PriceRange = textPtr(priceRange)
+	contact.FamilyIncome = textPtr(familyIncome)
+	contact.PurchasePurpose = textPtr(purchasePurpose)
+	contact.SeekingFinancing = boolPtr(seekingFinancing)
+	contact.Works = boolPtr(works)
+	contact.Role = textPtr(role)
+	contact.Company = textPtr(company)
+	contact.Profession = textPtr(profession)
+	contact.PostalCode = textPtr(postalCode)
+	contact.Address = textPtr(address)
+	contact.AddressNumber = textPtr(addressNumber)
+	contact.AddressComplement = textPtr(addressComplement)
+	contact.Neighborhood = textPtr(neighborhood)
+	contact.City = textPtr(city)
+	contact.State = textPtr(state)
+	contact.IsOwnResource = boolPtr(isOwnResource)
+	contact.FirstTouchAt = timePtr(firstTouchAt)
+	contact.FirstTouchSeconds = int32Ptr(firstTouchSeconds)
+	contact.FirstTouchChannel = textPtr(firstTouchChannel)
+	contact.FirstTouchActorUserID = textPtr(firstTouchActorUserID)
+	contact.FirstResponseAt = timePtr(firstResponseAt)
+	contact.FirstResponseSeconds = int32Ptr(firstResponseSeconds)
+	contact.FirstResponseChannel = textPtr(firstResponseChannel)
+	contact.FirstResponseAuto = boolPtr(firstResponseAuto)
+	contact.FirstResponseActorID = textPtr(firstResponseActorUserID)
+	contact.StageEnteredAt = timePtr(stageEnteredAt)
 	contact.LastEntryAt = timePtr(lastEntry)
+	contact.LastContactAt = timePtr(lastContactAt)
+	contact.NextFollowUpAt = timePtr(nextFollowUpAt)
+	contact.WonAt = timePtr(wonAt)
+	contact.LostAt = timePtr(lostAt)
+	contact.CreatedBy = textPtr(createdBy)
+	contact.MetadataJSON = textPtr(metadataJSON)
+	contact.MetaLeadID = textPtr(metaLeadID)
+	contact.MetaFormID = textPtr(metaFormID)
+	contact.MetaCampaignID = textPtr(metaCampaignID)
+	contact.MetaAdsetID = textPtr(metaAdsetID)
+	contact.MetaAdID = textPtr(metaAdID)
+	contact.MetaClickID = textPtr(metaClickID)
+	contact.CampaignID = textPtr(campaignID)
+	contact.CampaignName = textPtr(campaignName)
+	contact.AdsetID = textPtr(adsetID)
+	contact.AdsetName = textPtr(adsetName)
+	contact.AdID = textPtr(adID)
+	contact.AdName = textPtr(adName)
+	contact.FormID = textPtr(formID)
+	contact.FormName = textPtr(formName)
+	contact.Platform = textPtr(platform)
+	contact.UTMSource = textPtr(utmSource)
+	contact.UTMMedium = textPtr(utmMedium)
+	contact.UTMCampaign = textPtr(utmCampaign)
+	contact.UTMContent = textPtr(utmContent)
+	contact.UTMTerm = textPtr(utmTerm)
+	contact.CreativeURL = textPtr(creativeURL)
+	contact.CreativeVideoURL = textPtr(creativeVideoURL)
+	contact.CreativeInstagramURL = textPtr(creativeInstagramURL)
+	contact.MetaPayloadJSON = textPtr(metaPayloadJSON)
+	contact.MetaRawPayloadJSON = textPtr(metaRawPayloadJSON)
 	contact.Tags = []ContactTag{}
 	if strings.TrimSpace(tagsJSON) != "" {
 		_ = json.Unmarshal([]byte(tagsJSON), &contact.Tags)
 	}
 	return contact, nil
+}
+
+func int32Ptr(value pgtype.Int4) *int32 {
+	if !value.Valid {
+		return nil
+	}
+	v := value.Int32
+	return &v
 }
 
 func scanTag(row scanner) (Tag, error) {

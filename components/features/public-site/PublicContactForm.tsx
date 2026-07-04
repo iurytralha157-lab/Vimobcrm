@@ -38,6 +38,7 @@ export function PublicContactForm({
 }>) {
   const [formData, setFormData] = useState(initialState);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const fieldClass = "mt-1 w-full rounded-[10px] border-0 bg-zinc-100 px-3 text-sm font-normal text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:bg-zinc-50";
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -76,46 +77,46 @@ export function PublicContactForm({
   return (
     <form onSubmit={handleSubmit} className={cn("space-y-4", className)}>
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="space-y-2 text-sm font-medium">
+        <label className="space-y-2 text-sm font-normal">
           Nome
           <input
             required
             value={formData.name}
             onChange={(event) => setFormData((current) => ({ ...current, name: event.target.value }))}
-            className="mt-1 h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+            className={`${fieldClass} h-11`}
             placeholder="Seu nome"
           />
         </label>
 
-        <label className="space-y-2 text-sm font-medium">
+        <label className="space-y-2 text-sm font-normal">
           Telefone
           <input
             required
             value={formData.phone}
             onChange={(event) => setFormData((current) => ({ ...current, phone: event.target.value }))}
-            className="mt-1 h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+            className={`${fieldClass} h-11`}
             placeholder="(00) 00000-0000"
           />
         </label>
       </div>
 
-      <label className="block space-y-2 text-sm font-medium">
+      <label className="block space-y-2 text-sm font-normal">
         E-mail
         <input
           type="email"
           value={formData.email}
           onChange={(event) => setFormData((current) => ({ ...current, email: event.target.value }))}
-          className="mt-1 h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+          className={`${fieldClass} h-11`}
           placeholder="voce@email.com"
         />
       </label>
 
-      <label className="block space-y-2 text-sm font-medium">
+      <label className="block space-y-2 text-sm font-normal">
         Mensagem
         <textarea
           value={formData.message}
           onChange={(event) => setFormData((current) => ({ ...current, message: event.target.value }))}
-          className="mt-1 min-h-32 w-full rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+          className={`${fieldClass} min-h-32 py-3`}
           placeholder="Conte o que voce procura"
         />
       </label>
@@ -123,7 +124,7 @@ export function PublicContactForm({
       <button
         type="submit"
         disabled={isSubmitting}
-        className="inline-flex h-11 items-center justify-center gap-2 rounded-lg px-5 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-70"
+        className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-5 text-sm font-normal text-white transition disabled:cursor-not-allowed disabled:opacity-70"
         style={{ backgroundColor: primaryColor }}
       >
         <Send className="h-4 w-4" />

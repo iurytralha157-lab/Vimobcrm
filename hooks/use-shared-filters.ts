@@ -68,9 +68,11 @@ export function useSharedFilters(options?: { loadDynamicOptions?: boolean }) {
   const [dealStatus, setDealStatus] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const shouldLoadDynamicOptions = options?.loadDynamicOptions ?? true;
+  const dateFromStr = dateRange.from.toISOString();
+  const dateToStr = dateRange.to.toISOString();
 
   const contactsQuery = useQuery({
-    queryKey: ['shared-filter-contacts', organizationId, dateRange, teamId, userId, source, campaignId, adSetId, adId, dealStatus, searchQuery],
+    queryKey: ['shared-filter-contacts', organizationId, dateFromStr, dateToStr, teamId, userId, source, campaignId, adSetId, adId, dealStatus, searchQuery],
     enabled: shouldLoadDynamicOptions && !!organizationId,
     queryFn: () =>
       contactsAPI.list({
@@ -86,19 +88,27 @@ export function useSharedFilters(options?: { loadDynamicOptions?: boolean }) {
         createdTo: dateRange.to.toISOString(),
         page: 1,
         limit: 500,
-      }),
+      }, organizationId),
+    staleTime: 1000 * 60 * 10,
+    gcTime: 1000 * 60 * 60,
+    refetchOnWindowFocus: false,
+    placeholderData: (previous) => previous ?? [],
   });
 
   const metaInsightsQuery = useQuery({
-    queryKey: ['shared-filter-meta-insights', organizationId, dateRange, campaignId, adSetId],
+    queryKey: ['shared-filter-meta-insights', organizationId, dateFromStr, dateToStr, campaignId, adSetId],
     enabled: shouldLoadDynamicOptions && !!organizationId,
     queryFn: () =>
       analyticsAPI.metaInsights<MetaInsightOption>({
-        dateFrom: dateRange.from.toISOString(),
-        dateTo: dateRange.to.toISOString(),
+        dateFrom: dateFromStr,
+        dateTo: dateToStr,
         campaignId,
         adSetId,
       }),
+    staleTime: 1000 * 60 * 10,
+    gcTime: 1000 * 60 * 60,
+    refetchOnWindowFocus: false,
+    placeholderData: (previous) => previous ?? [],
   });
 
   const dynamicSources = useMemo(() => {

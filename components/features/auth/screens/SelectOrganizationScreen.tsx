@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { useRouter } from 'next/navigation';
-import { useTheme } from 'next-themes';
 import { AlertCircle, ArrowRight, Building2, LogOut, Shield, User } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSystemSettings } from '@/hooks/use-system-settings';
@@ -78,7 +77,6 @@ export default function SelectOrganization() {
   } = useAuth();
   const router = useRouter();
   const { data: systemSettings } = useSystemSettings();
-  const { resolvedTheme } = useTheme();
   const [emptyStateReadyKey, setEmptyStateReadyKey] = useState<string | null>(null);
   const [pendingOrgId, setPendingOrgId] = useState<string | null>(null);
   const autoRoutingOrgIdRef = useRef<string | null>(null);

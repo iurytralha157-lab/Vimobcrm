@@ -19,12 +19,20 @@ type neighborhoodRequest struct {
 }
 
 type condominiumRequest struct {
-	Name           string   `json:"name"`
-	CityID         string   `json:"city_id"`
-	NeighborhoodID string   `json:"neighborhood_id"`
-	Address        string   `json:"address"`
-	Latitude       *float64 `json:"latitude"`
-	Longitude      *float64 `json:"longitude"`
+	Name                  string   `json:"name"`
+	CityID                string   `json:"city_id"`
+	NeighborhoodID        string   `json:"neighborhood_id"`
+	Address               string   `json:"address"`
+	PhotoURL              string   `json:"photo_url"`
+	CEP                   string   `json:"cep"`
+	Number                string   `json:"number"`
+	Complement            string   `json:"complement"`
+	DefaultCondominiumFee *float64 `json:"default_condominium_fee"`
+	HasConcierge          bool     `json:"has_concierge"`
+	ConciergeType         string   `json:"concierge_type"`
+	Notes                 string   `json:"notes"`
+	Latitude              *float64 `json:"latitude"`
+	Longitude             *float64 `json:"longitude"`
 }
 
 func (handler Handler) ListCities(w http.ResponseWriter, r *http.Request) {
@@ -172,12 +180,20 @@ func (handler Handler) CreateCondominium(w http.ResponseWriter, r *http.Request)
 	}
 
 	item, err := handler.repo.CreateCondominium(r.Context(), tenantContext, CondominiumInput{
-		Name:           request.Name,
-		CityID:         request.CityID,
-		NeighborhoodID: request.NeighborhoodID,
-		Address:        request.Address,
-		Latitude:       request.Latitude,
-		Longitude:      request.Longitude,
+		Name:                  request.Name,
+		CityID:                request.CityID,
+		NeighborhoodID:        request.NeighborhoodID,
+		Address:               request.Address,
+		PhotoURL:              request.PhotoURL,
+		CEP:                   request.CEP,
+		Number:                request.Number,
+		Complement:            request.Complement,
+		DefaultCondominiumFee: request.DefaultCondominiumFee,
+		HasConcierge:          request.HasConcierge,
+		ConciergeType:         request.ConciergeType,
+		Notes:                 request.Notes,
+		Latitude:              request.Latitude,
+		Longitude:             request.Longitude,
 	})
 	if err != nil {
 		writePropertyError(w, r, err)

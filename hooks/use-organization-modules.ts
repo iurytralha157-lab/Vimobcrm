@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { DEFAULT_ENABLED_MODULE_KEYS, type SystemModuleKey } from '@/config/constants';
 import { settingsAPI, type OrganizationModule } from '@/lib/api/settings';
@@ -11,6 +12,15 @@ export const DEFAULT_ENABLED_MODULES: ModuleName[] = [...DEFAULT_ENABLED_MODULE_
 export function useOrganizationModules() {
   const { organization, profile, loading: authLoading } = useAuth();
   const orgId = organization?.id || profile?.organization_id;
+  const [readyOrgId, setReadyOrgId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!orgId || authLoading) return undefined;
+
+    const timeout = setTimeout(() => setReadyOrgId(orgId), 1200);
+    return () => clearTimeout(timeout);
+  }, [authLoading, orgId]);
+  const ready = !!orgId && readyOrgId === orgId;
 
   const { data: modules = [], isLoading: modulesLoading } = useQuery({
     queryKey: ['organization-modules', orgId],
@@ -24,7 +34,7 @@ export function useOrganizationModules() {
         return [];
       }
     },
-    enabled: !!orgId,
+    enabled: ready && !!orgId,
     placeholderData: (previousModules) => previousModules ?? [],
     staleTime: 1000 * 60 * 5,
     gcTime: 1000 * 60 * 15,

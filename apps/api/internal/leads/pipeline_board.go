@@ -27,6 +27,19 @@ func (repo Repository) GetPipelineBoard(ctx context.Context, tenantContext tenan
 		return nil, err
 	}
 
+	stageIDs := make([]string, 0, len(stages))
+	for _, stage := range stages {
+		stageIDs = append(stageIDs, stage.ID)
+	}
+	countFilter := filter
+	countFilter.PipelineID = pipelineID
+	countFilter.StageID = ""
+	countFilter.StageIDs = stageIDs
+	counts, err := repo.CountPipelineStageLeads(ctx, tenantContext, countFilter)
+	if err != nil {
+		return nil, err
+	}
+
 	allLeads := []*PipelineBoardLead{}
 	for index := range stages {
 		stageFilter := filter
@@ -34,10 +47,11 @@ func (repo Repository) GetPipelineBoard(ctx context.Context, tenantContext tenan
 		stageFilter.StageID = stages[index].ID
 		stageFilter.Offset = 0
 
-		leads, total, err := repo.listPipelineBoardLeads(ctx, tenantContext, stageFilter, true)
+		leads, _, err := repo.listPipelineBoardLeads(ctx, tenantContext, stageFilter, false)
 		if err != nil {
 			return nil, err
 		}
+		total := counts[stages[index].ID]
 		stages[index].Leads = leads
 		stages[index].TotalLeadCount = total
 		stages[index].HasMore = total > int64(len(leads))

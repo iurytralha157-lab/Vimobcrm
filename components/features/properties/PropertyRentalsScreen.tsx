@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useDeferredValue } from 'react';
+import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/shared/layout/AppLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -10,34 +11,69 @@ import {
   Home,
   Building2
 } from 'lucide-react';
-import { useProperties, Property } from '@/hooks/use-properties';
+import { useDeleteProperty, useProperties, useUpdateProperty, Property } from '@/hooks/use-properties';
 import { PropertyCard } from '@/components/features/properties/PropertyCard';
 import { PropertyPreviewDialog } from '@/components/features/properties/PropertyPreviewDialog';
+import { getPropertySiteInfo } from '@/lib/api/property-support';
+import { useAuth } from '@/contexts/AuthContext';
+import { useQuery } from '@tanstack/react-query';
 
 const formatPrice = (value: number | null, tipo: string | null) => {
   if (!value) return 'Preço não informado';
-  if (tipo === 'Aluguel') {
+  const normalized = (tipo || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  if (normalized === 'aluguel' || normalized === 'locacao' || normalized === 'venda e aluguel' || normalized === 'venda e locacao' || normalized === 'temporada') {
     return `R$ ${value.toLocaleString('pt-BR')}/mês`;
   }
   return `R$ ${value.toLocaleString('pt-BR')}`;
 };
 
+const isRentalDeal = (dealType?: string | null) => {
+  const normalized = (dealType || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return normalized === 'aluguel' || normalized === 'locacao' || normalized === 'venda e aluguel' || normalized === 'venda e locacao' || normalized === 'temporada';
+};
+
+const isRentalProperty = (property: Property) => {
+  const title = (property.title || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return (
+    isRentalDeal(property.tipo_de_negocio) ||
+    title.includes('locacao') ||
+    title.includes('aluguel') ||
+    title.includes('alugar') ||
+    (Number(property.valor_locacao) > 0 && property.preco == null)
+  );
+};
+
 export default function PropertyRentals() {
+  const router = useRouter();
   const [search, setSearch] = useState('');
   const [previewProperty, setPreviewProperty] = useState<Property | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const { profile, organization, isSuperAdmin } = useAuth();
+  const isAdmin = profile?.role === 'admin' || isSuperAdmin;
+  const organizationId = organization?.id || profile?.organization_id;
+  const updateProperty = useUpdateProperty();
+  const deleteProperty = useDeleteProperty();
 
   const deferredSearch = useDeferredValue(search);
 
   const { data: allProperties = [], isLoading } = useProperties(deferredSearch);
+  const { data: siteInfo = null } = useQuery({
+    queryKey: ['org-site-info', organizationId],
+    queryFn: async () => getPropertySiteInfo(organizationId),
+    enabled: !!organizationId,
+    staleTime: 1000 * 60 * 5,
+  });
 
-  // Filter only rentals
-  const properties = allProperties.filter(p => p.tipo_de_negocio === 'Aluguel');
+  const properties = allProperties.filter(isRentalProperty);
 
   const stats = {
     total: properties.length,
     ativos: properties.filter(p => p.status === 'ativo').length,
     destaque: properties.filter(p => p.destaque).length,
+  };
+
+  const handleToggleVisibility = async (id: string, isPublic: boolean) => {
+    await updateProperty.mutateAsync({ id, anunciar: isPublic });
   };
 
   if (isLoading) {
@@ -124,13 +160,16 @@ export default function PropertyRentals() {
             <PropertyCard
               key={property.id}
               property={property}
-              onEdit={() => {}}
-              onDelete={() => {}}
+              onEdit={(item) => router.push(`/properties/${item.id}/edit`)}
+              onDelete={(id) => deleteProperty.mutateAsync(id)}
               onPreview={(p) => {
                 setPreviewProperty(p);
                 setPreviewOpen(true);
               }}
+              onToggleVisibility={handleToggleVisibility}
               formatPrice={formatPrice}
+              canEdit={isAdmin || property.cadastrado_por === profile?.id}
+              siteInfo={siteInfo}
             />
           ))}
         </div>

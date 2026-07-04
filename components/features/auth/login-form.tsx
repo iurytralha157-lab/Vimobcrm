@@ -158,6 +158,7 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
     organizationsLoaded,
     isInitializingOrg,
     isSuperAdmin,
+    organization,
     userOrganizations,
   } = useAuth();
   const [formMode, setFormMode] = useState<FormMode>("login");
@@ -197,7 +198,7 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
 
   useEffect(() => {
     if (!pendingPostLoginPath) return;
-    if (loading || !authInitialized || !organizationsLoaded || isInitializingOrg) return;
+    if (loading || !authInitialized) return;
 
     const activeOrganizations = userOrganizations.filter((org) => org.is_active);
 
@@ -205,6 +206,13 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
       router.replace(pendingPostLoginPath.startsWith("/admin") ? pendingPostLoginPath : "/admin");
       return;
     }
+
+    if (organization) {
+      router.replace(pendingPostLoginPath);
+      return;
+    }
+
+    if (!organizationsLoaded || isInitializingOrg) return;
 
     if (activeOrganizations.length === 1) {
       router.replace(pendingPostLoginPath);
@@ -217,6 +225,7 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
     isInitializingOrg,
     isSuperAdmin,
     loading,
+    organization,
     organizationsLoaded,
     pendingPostLoginPath,
     router,
@@ -282,6 +291,7 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
         router.replace(nextPath.startsWith("/admin") ? nextPath : "/admin");
         return;
       }
+      router.replace(nextPath);
       setPendingPostLoginPath(nextPath);
     } catch {
       setLoginError("Não foi possível entrar agora. Tente novamente em instantes.");
@@ -336,7 +346,7 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
       </header>
 
       {isRecoveringPassword ? (
-        <form method="post" onSubmit={handleRecoverySubmit} className="space-y-6">
+        <form method="post" autoComplete="on" onSubmit={handleRecoverySubmit} className="space-y-6">
           <button
             type="button"
             onClick={showLoginForm}
@@ -366,7 +376,12 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
                 id="recovery-email"
                 name="email"
                 type="email"
+                inputMode="email"
                 autoComplete="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                enterKeyHint="send"
                 required
                 placeholder="seu@email.com"
                 className={`${inputClass} pl-11`}
@@ -396,7 +411,7 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
         </form>
       ) : (
         <>
-          <form method="post" onSubmit={handleSubmit} className="space-y-4">
+          <form method="post" autoComplete="on" onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <label
                 htmlFor="email"
@@ -412,7 +427,12 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
                   id="email"
                   name="email"
                   type="email"
-                  autoComplete="email"
+                  inputMode="email"
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  enterKeyHint="next"
                   required
                   placeholder="seu@email.com"
                   className={`${inputClass} pl-11`}

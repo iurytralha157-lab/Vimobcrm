@@ -5,7 +5,8 @@ import { toast } from "sonner";
 import { useAccessibleSessions } from "./use-accessible-sessions";
 import { whatsappAPI } from "@/lib/api/whatsapp";
 
-const POLL_INTERVAL = 30000;
+const POLL_INTERVAL = 120000;
+const INITIAL_SESSION_LOAD_DELAY_MS = 15000;
 const ERROR_THRESHOLD = 2;
 
 interface SessionHealthState {
@@ -22,12 +23,21 @@ export function useWhatsAppHealthMonitor() {
   const { profile } = useAuth();
   const organizationId = profile?.organization_id;
   const queryClient = useQueryClient();
-  const { data: sessions } = useAccessibleSessions();
+  const [monitorEnabledUserId, setMonitorEnabledUserId] = useState<string | null>(null);
+  const monitorEnabled = !!profile?.id && monitorEnabledUserId === profile.id;
+  const { data: sessions } = useAccessibleSessions({ enabled: monitorEnabled });
 
   const healthStatesRef = useRef<Map<string, SessionHealthState>>(new Map());
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isPollingRef = useRef(false);
   const [isPolling, setIsPolling] = useState(false);
+
+  useEffect(() => {
+    if (!profile?.id) return undefined;
+
+    const timeout = setTimeout(() => setMonitorEnabledUserId(profile.id), INITIAL_SESSION_LOAD_DELAY_MS);
+    return () => clearTimeout(timeout);
+  }, [profile?.id]);
 
   const checkSessionHealth = useCallback(async (
     sessionId: string,
@@ -65,6 +75,7 @@ export function useWhatsAppHealthMonitor() {
 
   const pollSessions = useCallback(async () => {
     if (!profile?.id || !sessions || sessions.length === 0 || isPollingRef.current) return;
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
 
     isPollingRef.current = true;
     setIsPolling(true);
@@ -153,7 +164,7 @@ export function useWhatsAppHealthMonitor() {
   }, [sessions, checkSessionHealth]);
 
   useEffect(() => {
-    if (!profile?.id || !sessions) return;
+    if (!monitorEnabled || !profile?.id || !sessions) return;
 
     const initialTimeout = setTimeout(() => {
       pollSessions();
@@ -168,7 +179,7 @@ export function useWhatsAppHealthMonitor() {
         pollIntervalRef.current = null;
       }
     };
-  }, [profile?.id, sessions, pollSessions]);
+  }, [monitorEnabled, profile?.id, sessions, pollSessions]);
 
   return { checkNow, isPolling };
 }

@@ -59,6 +59,8 @@ export type MeOrganization = {
   email?: string | null
   website?: string | null
   default_commission_percentage?: number | null
+  property_edit_policy?: 'everyone' | 'responsible_or_admin' | null
+  property_owner_contact_visibility?: 'visible' | 'hidden' | null
 }
 
 export type MeProfileResponse = MeResponse & {

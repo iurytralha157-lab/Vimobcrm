@@ -75,6 +75,9 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	if filter.Neighborhood != "" {
 		addFilter("p.bairro ilike $%d", "%"+filter.Neighborhood+"%")
 	}
+	if filter.AcceptsExchange != nil {
+		addFilter("coalesce(p.aceita_permuta, false) = $%d::boolean", *filter.AcceptsExchange)
+	}
 	if filter.ResponsibleID != "" {
 		args = append(args, filter.ResponsibleID)
 		index := len(args)
@@ -129,9 +132,13 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 				'finalidade', p.finalidade,
 				'finalidade_uso', p.finalidade_uso,
 				'status', p.status,
+				'owner_id', p.owner_id,
 				'bairro', p.bairro,
 				'cidade', p.cidade,
 				'uf', p.uf,
+				'city_id', p.city_id,
+				'neighborhood_id', p.neighborhood_id,
+				'condominium_id', p.condominium_id,
 				'endereco', p.endereco,
 				'numero', p.numero,
 				'quartos', p.quartos,
@@ -142,6 +149,9 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 				'area_total', p.area_total,
 				'preco', p.preco,
 				'valor_locacao', p.valor_locacao,
+				'condominio', p.condominio,
+				'iptu', p.iptu,
+				'aceita_permuta', coalesce(p.aceita_permuta, false),
 				'is_featured', p.is_featured,
 				'destaque', p.destaque,
 				'published_on_site', p.published_on_site,
@@ -275,7 +285,11 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err != nil {
 		return nil, err
 	}
-	if !canEditProperty(tenantContext, current.CreatorID) {
+	editPolicy, err := repo.propertyEditPolicy(ctx, tx, tenantContext.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	if !canEditProperty(tenantContext, current.CreatorID, editPolicy) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -368,6 +382,22 @@ func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, orga
 	snapshot.Title = textValue(title)
 	snapshot.Code = textValue(code)
 	return snapshot, nil
+}
+
+func (repo Repository) propertyEditPolicy(ctx context.Context, tx pgx.Tx, organizationID string) (string, error) {
+	var policy string
+	err := tx.QueryRow(ctx, `
+		select coalesce(nullif(property_edit_policy, ''), 'responsible_or_admin')
+		from public.organizations
+		where id = $1::uuid
+	`, organizationID).Scan(&policy)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "responsible_or_admin", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return policy, nil
 }
 
 func (repo Repository) generatePropertyCode(ctx context.Context, tx pgx.Tx, organizationID string, propertyType string) (string, error) {
@@ -832,9 +862,14 @@ func canManageProperties(tenantContext tenant.Context) bool {
 		tenantContext.HasPermission("property_manage")
 }
 
-func canEditProperty(tenantContext tenant.Context, creatorID string) bool {
-	return canManageProperties(tenantContext) ||
-		(creatorID != "" && creatorID == tenantContext.UserID)
+func canEditProperty(tenantContext tenant.Context, creatorID string, editPolicy ...string) bool {
+	if canManageProperties(tenantContext) {
+		return true
+	}
+	if len(editPolicy) > 0 && editPolicy[0] == "everyone" && tenantContext.UserID != "" {
+		return true
+	}
+	return creatorID != "" && creatorID == tenantContext.UserID
 }
 
 func canDeleteProperties(tenantContext tenant.Context) bool {

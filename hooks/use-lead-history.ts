@@ -50,6 +50,27 @@ type DistributionLogRow = {
   assigned_user?: HistoryActor | null;
 };
 
+type LeadMetaHistoryRow = {
+  id?: string | null;
+  lead_id?: string | null;
+  page_id?: string | null;
+  form_id?: string | null;
+  form_name?: string | null;
+  ad_id?: string | null;
+  ad_name?: string | null;
+  adset_id?: string | null;
+  adset_name?: string | null;
+  campaign_id?: string | null;
+  campaign_name?: string | null;
+  platform?: string | null;
+  source_type?: string | null;
+  creative_url?: string | null;
+  creative_video_url?: string | null;
+  creative_instagram_url?: string | null;
+  raw_payload?: Record<string, unknown> | null;
+  created_at?: string | null;
+};
+
 type LeadHistoryLead = {
   id: string;
   source?: string | null;
@@ -65,6 +86,7 @@ type LeadHistoryRaw = {
   activityEvents?: ActivityEventRow[];
   entryEvents?: LeadEntryEventRow[];
   lead?: LeadHistoryLead | null;
+  leadMeta?: LeadMetaHistoryRow | null;
   distributionLogs?: DistributionLogRow[];
   users?: HistoryActor[];
 };
@@ -107,6 +129,173 @@ function metadataNumber(value: unknown): number | null {
   return Number.isFinite(numberValue) ? numberValue : null;
 }
 
+function metadataRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function answerText(value: unknown): string | null {
+  if (Array.isArray(value)) {
+    const items = value.map(answerText).filter(Boolean);
+    return items.length > 0 ? items.join(', ') : null;
+  }
+  if (value === null || value === undefined || value === false) return null;
+  if (typeof value === 'object') {
+    const values = metadataRecord(value)?.values;
+    return values !== undefined ? answerText(values) : null;
+  }
+  const text = String(value).trim();
+  return text || null;
+}
+
+function normalizeFieldKey(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isStandardMetaLeadField(question: string) {
+  const key = normalizeFieldKey(question);
+  if (!key) return true;
+  return (
+    key === 'nome' ||
+    key === 'name' ||
+    key === 'full name' ||
+    key.includes('email') ||
+    key.includes('e mail') ||
+    key.includes('telefone') ||
+    key.includes('phone') ||
+    key.includes('whatsapp') ||
+    key.includes('mensagem') ||
+    key.includes('message') ||
+    key.includes('observacao') ||
+    key.includes('cargo') ||
+    key.includes('empresa') ||
+    key.includes('company') ||
+    key.includes('cidade') ||
+    key.includes('city') ||
+    key.includes('bairro') ||
+    key.includes('campaign') ||
+    key.includes('campanha') ||
+    key.includes('adset') ||
+    key.includes('ad set') ||
+    key.includes('anuncio') ||
+    key.includes('form id') ||
+    key.includes('leadgen')
+  );
+}
+
+function formatMetaQuestion(question: string) {
+  const trimmed = question.trim();
+  return trimmed.includes('_') || trimmed.includes('-')
+    ? trimmed.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+    : trimmed;
+}
+
+function extractMetaFormAnswers(metadata: HistoryMetadata) {
+  const answers: Array<{ question: string; answer: string }> = [];
+  const seen = new Set<string>();
+
+  const pushAnswer = (question: string, value: unknown, skipStandard: boolean) => {
+    const cleanQuestion = formatMetaQuestion(question);
+    if (!cleanQuestion || (skipStandard && isStandardMetaLeadField(cleanQuestion))) return;
+    const answer = answerText(value);
+    if (!answer) return;
+    const key = `${normalizeFieldKey(cleanQuestion)}:${answer}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    answers.push({ question: cleanQuestion, answer });
+  };
+
+  const rawMetadata = metadata as Record<string, unknown>;
+  const customFields = metadataRecord(rawMetadata.custom_fields);
+  if (customFields) {
+    Object.entries(customFields).forEach(([question, value]) => pushAnswer(question, value, false));
+  }
+
+  const fieldData = metadataRecord(rawMetadata.field_data);
+  if (fieldData) {
+    Object.entries(fieldData).forEach(([question, value]) => pushAnswer(question, value, true));
+  }
+
+  return answers;
+}
+
+type MetaCreativeHistory = {
+  name: string | null;
+  adName: string | null;
+  type: string | null;
+  imageUrl: string | null;
+  videoUrl: string | null;
+  linkUrl: string | null;
+  instagramUrl: string | null;
+  destinationUrl: string | null;
+};
+
+function firstURL(...values: unknown[]) {
+  for (const value of values) {
+    const text = answerText(value);
+    if (!text || !/^https?:\/\//i.test(text)) continue;
+    return text;
+  }
+  return null;
+}
+
+function firstText(...values: unknown[]) {
+  for (const value of values) {
+    const text = answerText(value);
+    if (text) return text;
+  }
+  return null;
+}
+
+function rawLeadDetails(source: Record<string, unknown>) {
+  const rawPayload = metadataRecord(source.raw_payload);
+  return metadataRecord(rawPayload?.lead_details) || metadataRecord(source.lead_details) || source;
+}
+
+function extractMetaCreative(source: Record<string, unknown> | null | undefined): MetaCreativeHistory | null {
+  if (!source) return null;
+  const details = rawLeadDetails(source);
+  const creative = metadataRecord(details.creative);
+
+  const imageUrl = firstURL(
+    source.creative_url,
+    source.creative_thumbnail_url,
+    details.creative_url,
+    details.creative_thumbnail_url,
+    creative?.thumbnail_url,
+    creative?.image_url,
+  );
+  const videoUrl = firstURL(source.creative_video_url, details.creative_video_url);
+  const instagramUrl = firstURL(source.creative_instagram_url, details.creative_instagram_url);
+  const linkUrl = firstURL(
+    source.creative_permalink_url,
+    details.creative_permalink_url,
+    instagramUrl,
+    source.creative_url,
+    details.creative_url,
+  );
+  const destinationUrl = firstURL(source.creative_destination_url, details.creative_destination_url);
+
+  if (!imageUrl && !videoUrl && !linkUrl && !instagramUrl && !destinationUrl) return null;
+
+  return {
+    name: firstText(source.creative_name, details.creative_name, creative?.name),
+    adName: firstText(source.ad_name, details.ad_name),
+    type: firstText(source.creative_type, details.creative_type),
+    imageUrl,
+    videoUrl,
+    linkUrl,
+    instagramUrl,
+    destinationUrl,
+  };
+}
+
 function sourceLabel(source?: string | null): string | null {
   if (!source) return null;
   const labels: Record<string, string> = {
@@ -128,6 +317,8 @@ const ACTIVITY_ONLY_TYPES = new Set([
   'email',
   'note',
   'message',
+  'meta_form_answer',
+  'meta_creative',
   'task_completed',
   'contact_updated',
   'automation_message',
@@ -214,6 +405,12 @@ function buildLabel(type: string, metadata: HistoryMetadata): string {
       return 'Email enviado';
     case 'message':
       return 'Mensagem enviada';
+    case 'meta_form_answer': {
+      const question = metadataString(metadata?.question);
+      return question ? `Meta: ${question}` : 'Resposta do formulario Meta';
+    }
+    case 'meta_creative':
+      return 'Criativo Meta';
     case 'automation_message': {
       const ch = metadata?.channel || 'whatsapp';
       return `Mensagem automática (${ch === 'whatsapp' ? 'WhatsApp' : ch})`;
@@ -315,6 +512,7 @@ export function useLeadHistory(leadId: string | null) {
       const activityEvents = raw.activityEvents || [];
       const entryEvents = raw.entryEvents || [];
       const lead = raw.lead || null;
+      const leadMeta = raw.leadMeta || null;
       const distributionLogs = raw.distributionLogs || [];
 
       // Collect all user IDs that need resolution from metadata
@@ -352,15 +550,35 @@ export function useLeadHistory(leadId: string | null) {
       function getActivityFingerprint(activity: ActivityEventRow): string {
         const meta = asMetadata(activity.metadata);
         const ts = Math.floor(new Date(activity.created_at).getTime() / 2000); // 2-second window
+        if (activity.type === 'stage_change' || activity.type === 'stage_changed') {
+          const from = metadataString(meta.from_stage_id) || metadataString(meta.old_stage_id) || metadataString(meta.from_stage) || metadataString(meta.old_stage_name) || '';
+          const to = metadataString(meta.to_stage_id) || metadataString(meta.new_stage_id) || metadataString(meta.to_stage) || metadataString(meta.new_stage_name) || '';
+          return `${activity.type}-${from}->${to}-${ts}`;
+        }
         return `${activity.type}-${metadataString(meta.to_stage) || metadataString(meta.to_user_id) || metadataString(meta.new_stage_name) || ''}-${ts}`;
       }
-      const seenActivities = new Set<string>();
-      const dedupedActivityEvents = activityEvents.filter((activity) => {
+
+      function getActivityDetailScore(activity: ActivityEventRow): number {
+        const meta = asMetadata(activity.metadata);
+        let score = 0;
+        if (metadataString(meta.from_stage) || metadataString(meta.old_stage_name)) score += 3;
+        if (metadataString(meta.to_stage) || metadataString(meta.new_stage_name)) score += 3;
+        if (/movido de\s+"/i.test(activity.content || '')) score += 2;
+        if (activity.user_id || metadataString(meta.actor_id)) score += 1;
+        return score;
+      }
+
+      const dedupedActivityMap = new Map<string, ActivityEventRow>();
+      activityEvents.forEach((activity) => {
         const fp = getActivityFingerprint(activity);
-        if (seenActivities.has(fp)) return false;
-        seenActivities.add(fp);
-        return true;
+        const existing = dedupedActivityMap.get(fp);
+        if (!existing || getActivityDetailScore(activity) > getActivityDetailScore(existing)) {
+          dedupedActivityMap.set(fp, activity);
+        }
       });
+      const dedupedActivityEvents = Array.from(dedupedActivityMap.values()).sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
 
       // Build unified events from timeline
       const timelineMapped: UnifiedHistoryEvent[] = timelineEvents.map((event) => {
@@ -435,6 +653,127 @@ export function useLeadHistory(leadId: string | null) {
             isAutomation: Boolean(meta.is_automation) || activity.type.startsWith('automation_'),
           };
         });
+
+      const metaFormAnswerMapped: UnifiedHistoryEvent[] = dedupedActivityEvents.flatMap((activity) => {
+        if (activity.type !== 'lead_created' && activity.type !== 'lead_reentry') return [];
+        const meta = asMetadata(activity.metadata);
+        const source = metadataString(meta.source);
+        const sourceType = metadataString(meta.source_type);
+        if (source !== 'meta' && sourceType !== 'meta_lead_ads') return [];
+
+        const baseTime = new Date(activity.created_at).getTime();
+        return extractMetaFormAnswers(meta).map((answer, index) => {
+          const timestamp = Number.isFinite(baseTime)
+            ? new Date(baseTime + index + 1).toISOString()
+            : activity.created_at;
+          const answerMetadata: HistoryMetadata = {
+            source: 'meta',
+            source_type: 'meta_lead_ads',
+            question: answer.question,
+            answer: answer.answer,
+            form_name: metadataString(meta.form_name),
+            form_id: metadataString(meta.form_id),
+            leadgen_id: metadataString(meta.leadgen_id),
+          };
+
+          return {
+            id: `meta-answer-${activity.id}-${index}`,
+            type: 'meta_form_answer',
+            label: buildLabel('meta_form_answer', answerMetadata),
+            content: answer.answer,
+            timestamp,
+            actor: null,
+            source: 'activity' as const,
+            metadata: answerMetadata,
+            channel: 'meta',
+            isAutomation: false,
+            sourceOrigin: 'meta',
+          };
+        });
+      });
+
+      const metaCreativeMappedFromActivities: UnifiedHistoryEvent[] = dedupedActivityEvents.flatMap((activity) => {
+        if (activity.type !== 'lead_created' && activity.type !== 'lead_reentry') return [];
+        const meta = asMetadata(activity.metadata);
+        const source = metadataString(meta.source);
+        const sourceType = metadataString(meta.source_type);
+        if (source !== 'meta' && sourceType !== 'meta_lead_ads') return [];
+
+        const creative = extractMetaCreative(meta as Record<string, unknown>);
+        if (!creative) return [];
+
+        const baseTime = new Date(activity.created_at).getTime();
+        const timestamp = Number.isFinite(baseTime)
+          ? new Date(baseTime + 1).toISOString()
+          : activity.created_at;
+        const creativeMetadata: HistoryMetadata = {
+          source: 'meta',
+          source_type: 'meta_lead_ads',
+          creative_name: creative.name,
+          ad_name: creative.adName,
+          creative_type: creative.type,
+          creative_url: creative.imageUrl,
+          creative_video_url: creative.videoUrl,
+          creative_link_url: creative.linkUrl,
+          creative_instagram_url: creative.instagramUrl,
+          creative_destination_url: creative.destinationUrl,
+          form_name: metadataString(meta.form_name),
+          form_id: metadataString(meta.form_id),
+          leadgen_id: metadataString(meta.leadgen_id),
+        };
+
+        return [{
+          id: `meta-creative-${activity.id}`,
+          type: 'meta_creative',
+          label: buildLabel('meta_creative', creativeMetadata),
+          content: creative.name || creative.adName || 'Criativo do anuncio',
+          timestamp,
+          actor: null,
+          source: 'activity' as const,
+          metadata: creativeMetadata,
+          channel: 'meta',
+          isAutomation: false,
+          sourceOrigin: 'meta',
+        }];
+      });
+
+      const metaCreativeMappedFromLeadMeta: UnifiedHistoryEvent[] = (() => {
+        if (metaCreativeMappedFromActivities.length > 0) return [];
+        const creative = extractMetaCreative(leadMeta as Record<string, unknown> | null);
+        if (!creative) return [];
+
+        const createdAt = leadMeta?.created_at || lead?.created_at || new Date().toISOString();
+        const baseTime = new Date(createdAt).getTime();
+        const timestamp = Number.isFinite(baseTime) ? new Date(baseTime + 1).toISOString() : createdAt;
+        const metadata: HistoryMetadata = {
+          source: 'meta',
+          source_type: 'meta_lead_ads',
+          creative_name: creative.name,
+          ad_name: creative.adName,
+          creative_type: creative.type,
+          creative_url: creative.imageUrl,
+          creative_video_url: creative.videoUrl,
+          creative_link_url: creative.linkUrl,
+          creative_instagram_url: creative.instagramUrl,
+          creative_destination_url: creative.destinationUrl,
+          form_name: leadMeta?.form_name || null,
+          form_id: leadMeta?.form_id || null,
+        };
+
+        return [{
+          id: `meta-creative-lead-meta-${leadMeta?.id || lead?.id || leadId}`,
+          type: 'meta_creative',
+          label: buildLabel('meta_creative', metadata),
+          content: creative.name || creative.adName || 'Criativo do anuncio',
+          timestamp,
+          actor: null,
+          source: 'activity' as const,
+          metadata,
+          channel: 'meta',
+          isAutomation: false,
+          sourceOrigin: 'meta',
+        }];
+      })();
 
       // Build entry events mapped to unified format
       const entriesMapped: UnifiedHistoryEvent[] = entryEvents
@@ -548,7 +887,16 @@ export function useLeadHistory(leadId: string | null) {
       }
 
       // Merge and sort chronologically (oldest first)
-      return [...fallbackEvents, ...timelineMapped, ...activityMapped, ...entriesMapped, ...distributionMapped].sort(
+      return [
+        ...fallbackEvents,
+        ...timelineMapped,
+        ...activityMapped,
+        ...metaCreativeMappedFromActivities,
+        ...metaCreativeMappedFromLeadMeta,
+        ...metaFormAnswerMapped,
+        ...entriesMapped,
+        ...distributionMapped,
+      ].sort(
         (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
       );
     },

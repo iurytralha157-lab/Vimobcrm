@@ -14,13 +14,13 @@ import (
 )
 
 type ExternalConfig struct {
-	ProjectURL    string
-	APIKey        string
-	ResendAPIKey  string
-	FromEmail     string
-	ReplyTo       string
-	SupportEmail  string
-	AppURL        string
+	ProjectURL   string
+	APIKey       string
+	ResendAPIKey string
+	FromEmail    string
+	ReplyTo      string
+	SupportEmail string
+	AppURL       string
 }
 
 type storageClient struct {
@@ -172,10 +172,10 @@ func (client passwordNotificationClient) sendPasswordChanged(ctx context.Context
 	}
 
 	body, _ := json.Marshal(map[string]any{
-		"from":    client.fromEmail,
-		"to":      []string{email},
-		"subject": "Senha alterada com sucesso no Vimob CRM",
-		"html":    client.renderPasswordChangedHTML(input, changedAt),
+		"from":     client.fromEmail,
+		"to":       []string{email},
+		"subject":  "Senha alterada com sucesso no Vimob CRM",
+		"html":     client.renderPasswordChangedHTML(input, changedAt),
 		"reply_to": client.replyTo,
 	})
 

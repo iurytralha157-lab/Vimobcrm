@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import { useAuth } from '@/contexts/AuthContext';
@@ -40,6 +41,7 @@ interface PublishAnnouncementParams {
 }
 
 const BROKER_ROLES = new Set(['corretor', 'broker', 'agent', 'user']);
+const ANNOUNCEMENTS_INITIAL_LOAD_DELAY_MS = 2000;
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
@@ -79,6 +81,15 @@ function isAnnouncementTargeted(
 
 export function useActiveAnnouncements() {
   const { profile, organization } = useAuth();
+  const [readyProfileId, setReadyProfileId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!profile?.id) return undefined;
+
+    const timeout = setTimeout(() => setReadyProfileId(profile.id), ANNOUNCEMENTS_INITIAL_LOAD_DELAY_MS);
+    return () => clearTimeout(timeout);
+  }, [profile?.id]);
+  const ready = !!profile?.id && readyProfileId === profile.id;
 
   return useQuery({
     queryKey: ['active-announcements', profile?.id, profile?.role, organization?.id],
@@ -93,9 +104,11 @@ export function useActiveAnnouncements() {
         .filter((announcement) => isWithinSchedule(announcement, now))
         .filter((announcement) => isAnnouncementTargeted(announcement, currentUserId, currentRole, currentOrgId));
     },
-    enabled: !!profile?.id,
+    enabled: ready && !!profile?.id,
     staleTime: 1000 * 60,
     gcTime: 1000 * 60 * 10,
+    placeholderData: (previous) => previous ?? [],
+    refetchOnWindowFocus: false,
   });
 }
 

@@ -78,19 +78,19 @@ type UpdateUserRequest struct {
 }
 
 type UpdateUserPayload struct {
-	Name     *string `json:"name"`
-	Role     *string `json:"role"`
-	IsActive *bool   `json:"is_active"`
+	Name      *string `json:"name"`
+	Role      *string `json:"role"`
+	IsActive  *bool   `json:"is_active"`
 	AvatarURL *string `json:"avatar_url"`
-	Whatsapp *string `json:"whatsapp"`
+	Whatsapp  *string `json:"whatsapp"`
 }
 
 type UpdateUserInput struct {
-	Name     *string
-	Role     *string
-	IsActive *bool
+	Name      *string
+	Role      *string
+	IsActive  *bool
 	AvatarURL *string
-	Whatsapp *string
+	Whatsapp  *string
 }
 
 type MutateUserResult struct {

@@ -40,6 +40,14 @@ func NewRepository(db *dbpkg.Postgres, config Config) Repository {
 	}
 }
 
+const metaLeadDetailsFields = "id,created_time,field_data,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,platform"
+
+const metaAdWithCreativeFields = "id,name,creative{id,name,thumbnail_url,image_url,object_url,object_type,object_story_spec,asset_feed_spec,instagram_permalink_url,effective_object_story_id,effective_instagram_story_id,video_id,url_tags,template_url}"
+
+const metaVideoDetailsFields = "id,source,permalink_url,picture,thumbnails"
+
+const metaStoryDetailsFields = "id,permalink_url,full_picture,attachments{media,type,target,subattachments}"
+
 func (repo Repository) InsertWebhookEvent(ctx context.Context, eventContext webhookEventContext, payload map[string]any, signatureValid bool) (string, error) {
 	payloadJSON := jsonb(payload)
 
@@ -294,20 +302,48 @@ func (repo Repository) findFormConfig(ctx context.Context, integration metaInteg
 
 func (repo Repository) leadDetails(ctx context.Context, change leadgenChange, integration metaIntegration) (map[string]any, error) {
 	if hasFieldData(change.Raw) {
-		return cloneObject(change.Raw), nil
+		body := cloneObject(change.Raw)
+		repo.enrichLeadDetailsWithCreative(ctx, body, change, integration)
+		return body, nil
 	}
 	if integration.AccessToken == nil || strings.TrimSpace(*integration.AccessToken) == "" {
 		return nil, errors.New("Meta page access token is missing")
 	}
 
-	endpoint, err := url.Parse(strings.TrimRight(repo.config.GraphBaseURL, "/") + "/" + strings.Trim(strings.TrimSpace(repo.config.GraphVersion), "/") + "/" + url.PathEscape(change.LeadgenID))
+	body, err := repo.metaGraphGet(ctx, change.LeadgenID, *integration.AccessToken, metaLeadDetailsFields)
+	if err != nil {
+		return nil, err
+	}
+
+	for key, value := range change.Raw {
+		if _, exists := body[key]; !exists {
+			body[key] = value
+		}
+	}
+	repo.enrichLeadDetailsWithCreative(ctx, body, change, integration)
+	return body, nil
+}
+
+func (repo Repository) metaGraphGet(ctx context.Context, objectID string, accessToken string, fields string) (map[string]any, error) {
+	objectID = strings.TrimSpace(objectID)
+	accessToken = strings.TrimSpace(accessToken)
+	if objectID == "" {
+		return nil, errors.New("Meta Graph object id is missing")
+	}
+	if accessToken == "" {
+		return nil, errors.New("Meta access token is missing")
+	}
+
+	endpoint, err := url.Parse(strings.TrimRight(repo.config.GraphBaseURL, "/") + "/" + strings.Trim(strings.TrimSpace(repo.config.GraphVersion), "/") + "/" + url.PathEscape(objectID))
 	if err != nil {
 		return nil, err
 	}
 
 	query := endpoint.Query()
-	query.Set("access_token", *integration.AccessToken)
-	query.Set("fields", "id,created_time,field_data,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,platform")
+	query.Set("access_token", accessToken)
+	if strings.TrimSpace(fields) != "" {
+		query.Set("fields", fields)
+	}
 	endpoint.RawQuery = query.Encode()
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
@@ -322,19 +358,269 @@ func (repo Repository) leadDetails(ctx context.Context, change leadgenChange, in
 	defer response.Body.Close()
 
 	var body map[string]any
-	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&body); err != nil {
 		return nil, err
 	}
 	if response.StatusCode >= 400 {
 		return nil, fmt.Errorf("Meta Graph returned HTTP %d: %s", response.StatusCode, metaGraphErrorMessage(body))
 	}
+	return body, nil
+}
 
-	for key, value := range change.Raw {
-		if _, exists := body[key]; !exists {
-			body[key] = value
+func (repo Repository) enrichLeadDetailsWithCreative(ctx context.Context, details map[string]any, change leadgenChange, integration metaIntegration) {
+	if details == nil || integration.AccessToken == nil || strings.TrimSpace(*integration.AccessToken) == "" {
+		return
+	}
+
+	adID := metaText(details, change.Raw, "ad_id")
+	if adID == "" {
+		return
+	}
+
+	adObject, err := repo.metaGraphGet(ctx, adID, *integration.AccessToken, metaAdWithCreativeFields)
+	if err != nil {
+		details["creative_fetch_error"] = err.Error()
+		return
+	}
+	details["ad_object"] = adObject
+
+	creative := objectMap(adObject["creative"])
+	if len(creative) == 0 {
+		details["creative_fetch_error"] = "Meta ad creative object was not returned"
+		return
+	}
+	details["creative"] = creative
+
+	normalized := normalizeMetaCreative(adObject, creative)
+
+	if videoID := textFromAny(normalized["creative_video_id"]); videoID != "" {
+		video, err := repo.metaGraphGet(ctx, videoID, *integration.AccessToken, metaVideoDetailsFields)
+		if err != nil {
+			details["creative_video_fetch_error"] = err.Error()
+		} else {
+			details["creative_video"] = video
+			setFirstURL(normalized, "creative_video_url", video["source"])
+			setFirstURL(normalized, "creative_permalink_url", video["permalink_url"])
+			setFirstURL(normalized, "creative_url", video["picture"])
+			setFirstURL(normalized, "creative_thumbnail_url", video["picture"])
+			if thumbnail := firstVideoThumbnailURL(video); thumbnail != "" {
+				setFirstURL(normalized, "creative_url", thumbnail)
+				setFirstURL(normalized, "creative_thumbnail_url", thumbnail)
+			}
 		}
 	}
-	return body, nil
+
+	if storyID := metaText(creative, nil, "effective_object_story_id"); storyID != "" {
+		story, err := repo.metaGraphGet(ctx, storyID, *integration.AccessToken, metaStoryDetailsFields)
+		if err != nil {
+			details["creative_story_fetch_error"] = err.Error()
+		} else {
+			details["creative_story"] = story
+			setFirstURL(normalized, "creative_permalink_url", story["permalink_url"])
+			setFirstURL(normalized, "creative_url", story["full_picture"])
+			setFirstURL(normalized, "creative_thumbnail_url", story["full_picture"])
+			if attachmentURL := firstAttachmentMediaURL(story); attachmentURL != "" {
+				setFirstURL(normalized, "creative_url", attachmentURL)
+				setFirstURL(normalized, "creative_thumbnail_url", attachmentURL)
+			}
+		}
+	}
+
+	for key, value := range normalized {
+		switch typed := value.(type) {
+		case string:
+			if strings.TrimSpace(typed) != "" {
+				details[key] = strings.TrimSpace(typed)
+			}
+		default:
+			details[key] = typed
+		}
+	}
+}
+
+func normalizeMetaCreative(adObject map[string]any, creative map[string]any) map[string]any {
+	storySpec := objectMap(creative["object_story_spec"])
+	assetFeed := objectMap(creative["asset_feed_spec"])
+	linkData := objectMap(storySpec["link_data"])
+	videoData := objectMap(storySpec["video_data"])
+	photoData := objectMap(storySpec["photo_data"])
+
+	videoID := firstNonEmpty(
+		textFromAny(videoData["video_id"]),
+		textFromAny(creative["video_id"]),
+		firstAssetVideoID(assetFeed),
+		firstChildAttachmentVideoID(linkData),
+	)
+
+	imageURL := firstURL(
+		creative["image_url"],
+		creative["thumbnail_url"],
+		creative["object_url"],
+		linkData["picture"],
+		photoData["url"],
+		videoData["image_url"],
+		videoData["thumbnail_url"],
+		firstAssetImageURL(assetFeed),
+		firstChildAttachmentImageURL(linkData),
+	)
+
+	thumbnailURL := firstURL(creative["thumbnail_url"], imageURL)
+	instagramURL := firstURL(creative["instagram_permalink_url"])
+	destinationURL := firstURL(creative["template_url"], linkData["link"], nestedValue(videoData, "call_to_action", "value", "link"), nestedValue(linkData, "call_to_action", "value", "link"))
+
+	out := map[string]any{
+		"creative_id":                 textFromAny(creative["id"]),
+		"creative_name":               firstNonEmpty(textFromAny(creative["name"]), textFromAny(adObject["name"])),
+		"creative_type":               inferMetaCreativeType(creative, storySpec, assetFeed, videoID),
+		"creative_url":                imageURL,
+		"creative_thumbnail_url":      thumbnailURL,
+		"creative_video_id":           videoID,
+		"creative_instagram_url":      instagramURL,
+		"creative_permalink_url":      instagramURL,
+		"creative_destination_url":    destinationURL,
+		"creative_object_story_id":    textFromAny(creative["effective_object_story_id"]),
+		"creative_instagram_story_id": textFromAny(creative["effective_instagram_story_id"]),
+	}
+	return out
+}
+
+func inferMetaCreativeType(creative map[string]any, storySpec map[string]any, assetFeed map[string]any, videoID string) string {
+	if videoID != "" {
+		return "video"
+	}
+	if len(anySlice(assetFeed["carousels"])) > 0 || len(anySlice(objectMap(storySpec["link_data"])["child_attachments"])) > 0 {
+		return "carousel"
+	}
+	objectType := strings.ToLower(textFromAny(creative["object_type"]))
+	if strings.Contains(objectType, "video") {
+		return "video"
+	}
+	if strings.Contains(objectType, "carousel") {
+		return "carousel"
+	}
+	return "image"
+}
+
+func firstAssetImageURL(assetFeed map[string]any) string {
+	for _, item := range anySlice(assetFeed["images"]) {
+		image := objectMap(item)
+		if url := firstURL(image["url"], image["thumbnail_url"], image["image_url"]); url != "" {
+			return url
+		}
+	}
+	return ""
+}
+
+func firstAssetVideoID(assetFeed map[string]any) string {
+	for _, item := range anySlice(assetFeed["videos"]) {
+		video := objectMap(item)
+		if id := firstNonEmpty(textFromAny(video["video_id"]), textFromAny(video["id"])); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func firstChildAttachmentImageURL(linkData map[string]any) string {
+	for _, item := range anySlice(linkData["child_attachments"]) {
+		attachment := objectMap(item)
+		if url := firstURL(attachment["picture"], attachment["image_url"], attachment["thumbnail_url"]); url != "" {
+			return url
+		}
+	}
+	return ""
+}
+
+func firstChildAttachmentVideoID(linkData map[string]any) string {
+	for _, item := range anySlice(linkData["child_attachments"]) {
+		attachment := objectMap(item)
+		if id := firstNonEmpty(textFromAny(attachment["video_id"]), textFromAny(attachment["id"])); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func firstVideoThumbnailURL(video map[string]any) string {
+	thumbnails := objectMap(video["thumbnails"])
+	for _, item := range anySlice(thumbnails["data"]) {
+		thumbnail := objectMap(item)
+		if url := firstURL(thumbnail["uri"]); url != "" {
+			return url
+		}
+	}
+	return ""
+}
+
+func firstAttachmentMediaURL(story map[string]any) string {
+	attachments := objectMap(story["attachments"])
+	for _, item := range anySlice(attachments["data"]) {
+		attachment := objectMap(item)
+		if url := firstURL(nestedValue(attachment, "media", "image", "src"), nestedValue(attachment, "media", "source")); url != "" {
+			return url
+		}
+		for _, child := range anySlice(objectMap(attachment["subattachments"])["data"]) {
+			childAttachment := objectMap(child)
+			if url := firstURL(nestedValue(childAttachment, "media", "image", "src"), nestedValue(childAttachment, "media", "source")); url != "" {
+				return url
+			}
+		}
+	}
+	return ""
+}
+
+func nestedValue(source map[string]any, keys ...string) any {
+	var current any = source
+	for _, key := range keys {
+		currentMap := objectMap(current)
+		if len(currentMap) == 0 {
+			return nil
+		}
+		current = currentMap[key]
+	}
+	return current
+}
+
+func anySlice(value any) []any {
+	switch typed := value.(type) {
+	case []any:
+		return typed
+	case []map[string]any:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, item)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func firstURL(values ...any) string {
+	for _, value := range values {
+		text := textFromAny(value)
+		if text == "" {
+			continue
+		}
+		parsed, err := url.Parse(text)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			continue
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			continue
+		}
+		return text
+	}
+	return ""
+}
+
+func setFirstURL(target map[string]any, key string, values ...any) {
+	if textFromAny(target[key]) != "" {
+		return
+	}
+	if url := firstURL(values...); url != "" {
+		target[key] = url
+	}
 }
 
 func (repo Repository) persistLead(ctx context.Context, webhookPayload map[string]any, details map[string]any, change leadgenChange, integration metaIntegration, formConfig metaFormConfig, lead leadData) (string, bool, error) {
@@ -818,11 +1104,18 @@ func (repo Repository) insertLeadMeta(ctx context.Context, tx pgx.Tx, organizati
 		    ad_id = coalesce($7, ad_id),
 		    ad_name = coalesce($8, ad_name),
 		    form_id = coalesce($9, form_id),
-		    payload = $10::jsonb,
+		    page_id = coalesce($10, page_id),
+		    form_name = coalesce($11, form_name),
+		    source_type = coalesce($12, source_type),
+		    creative_url = coalesce($13, creative_url),
+		    creative_video_url = coalesce($14, creative_video_url),
+		    creative_instagram_url = coalesce($15, creative_instagram_url),
+		    payload = $16::jsonb,
+		    raw_payload = $16::jsonb,
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and lead_id = $2::uuid
-	`, organizationID, leadID, nullableString(metaText(details, change.Raw, "campaign_id")), nullableString(metaText(details, change.Raw, "campaign_name")), nullableString(metaText(details, change.Raw, "adset_id")), nullableString(metaText(details, change.Raw, "adset_name")), nullableString(metaText(details, change.Raw, "ad_id")), nullableString(metaText(details, change.Raw, "ad_name")), change.FormID, payload)
+	`, organizationID, leadID, nullableString(metaText(details, change.Raw, "campaign_id")), nullableString(metaText(details, change.Raw, "campaign_name")), nullableString(metaText(details, change.Raw, "adset_id")), nullableString(metaText(details, change.Raw, "adset_name")), nullableString(metaText(details, change.Raw, "ad_id")), nullableString(metaText(details, change.Raw, "ad_name")), change.FormID, change.PageID, nullablePointer(formConfig.FormName), "meta", nullableString(metaText(details, change.Raw, "creative_url", "creative_thumbnail_url")), nullableString(metaText(details, change.Raw, "creative_video_url")), nullableString(metaText(details, change.Raw, "creative_instagram_url")), payload)
 	if err != nil {
 		return err
 	}
@@ -842,10 +1135,17 @@ func (repo Repository) insertLeadMeta(ctx context.Context, tx pgx.Tx, organizati
 			ad_id,
 			ad_name,
 			form_id,
-			payload
+			page_id,
+			form_name,
+			source_type,
+			creative_url,
+			creative_video_url,
+			creative_instagram_url,
+			payload,
+			raw_payload
 		)
-		values ($1::uuid, $2::uuid, 'meta', $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
-	`, organizationID, leadID, nullableString(metaText(details, change.Raw, "campaign_id")), nullableString(metaText(details, change.Raw, "campaign_name")), nullableString(metaText(details, change.Raw, "adset_id")), nullableString(metaText(details, change.Raw, "adset_name")), nullableString(metaText(details, change.Raw, "ad_id")), nullableString(metaText(details, change.Raw, "ad_name")), change.FormID, payload)
+		values ($1::uuid, $2::uuid, 'meta', $3, $4, $5, $6, $7, $8, $9, $10, $11, 'meta', $12, $13, $14, $15::jsonb, $15::jsonb)
+	`, organizationID, leadID, nullableString(metaText(details, change.Raw, "campaign_id")), nullableString(metaText(details, change.Raw, "campaign_name")), nullableString(metaText(details, change.Raw, "adset_id")), nullableString(metaText(details, change.Raw, "adset_name")), nullableString(metaText(details, change.Raw, "ad_id")), nullableString(metaText(details, change.Raw, "ad_name")), change.FormID, change.PageID, nullablePointer(formConfig.FormName), nullableString(metaText(details, change.Raw, "creative_url", "creative_thumbnail_url")), nullableString(metaText(details, change.Raw, "creative_video_url")), nullableString(metaText(details, change.Raw, "creative_instagram_url")), payload)
 	return err
 }
 
@@ -1100,15 +1400,22 @@ func mapLeadData(details map[string]any, change leadgenChange, integration metaI
 		Custom:    map[string]any{},
 		RawFields: map[string]any{},
 		Meta: map[string]any{
-			"leadgen_id":    change.LeadgenID,
-			"form_id":       change.FormID,
-			"page_id":       change.PageID,
-			"campaign_id":   metaText(details, change.Raw, "campaign_id"),
-			"campaign_name": metaText(details, change.Raw, "campaign_name"),
-			"adset_id":      metaText(details, change.Raw, "adset_id"),
-			"adset_name":    metaText(details, change.Raw, "adset_name"),
-			"ad_id":         metaText(details, change.Raw, "ad_id"),
-			"ad_name":       metaText(details, change.Raw, "ad_name"),
+			"leadgen_id":             change.LeadgenID,
+			"form_id":                change.FormID,
+			"page_id":                change.PageID,
+			"campaign_id":            metaText(details, change.Raw, "campaign_id"),
+			"campaign_name":          metaText(details, change.Raw, "campaign_name"),
+			"adset_id":               metaText(details, change.Raw, "adset_id"),
+			"adset_name":             metaText(details, change.Raw, "adset_name"),
+			"ad_id":                  metaText(details, change.Raw, "ad_id"),
+			"ad_name":                metaText(details, change.Raw, "ad_name"),
+			"creative_id":            metaText(details, change.Raw, "creative_id"),
+			"creative_name":          metaText(details, change.Raw, "creative_name"),
+			"creative_type":          metaText(details, change.Raw, "creative_type"),
+			"creative_url":           metaText(details, change.Raw, "creative_url"),
+			"creative_video_url":     metaText(details, change.Raw, "creative_video_url"),
+			"creative_instagram_url": metaText(details, change.Raw, "creative_instagram_url"),
+			"creative_permalink_url": metaText(details, change.Raw, "creative_permalink_url"),
 		},
 	}
 
@@ -1251,25 +1558,34 @@ func aggregateResults(results []LeadgenResult) (string, string, string, int) {
 
 func buildLeadMetadata(webhookPayload map[string]any, details map[string]any, change leadgenChange, integration metaIntegration, formConfig metaFormConfig, lead leadData) map[string]any {
 	return map[string]any{
-		"source":          "meta",
-		"source_type":     "meta_lead_ads",
-		"integration_id":  integration.ID,
-		"form_config_id":  formConfig.ID,
-		"page_id":         change.PageID,
-		"page_name":       nullablePointer(integration.PageName),
-		"form_id":         change.FormID,
-		"form_name":       nullablePointer(formConfig.FormName),
-		"leadgen_id":      change.LeadgenID,
-		"created_time":    change.CreatedTime,
-		"campaign_id":     metaText(details, change.Raw, "campaign_id"),
-		"campaign_name":   metaText(details, change.Raw, "campaign_name"),
-		"adset_id":        metaText(details, change.Raw, "adset_id"),
-		"adset_name":      metaText(details, change.Raw, "adset_name"),
-		"ad_id":           metaText(details, change.Raw, "ad_id"),
-		"ad_name":         metaText(details, change.Raw, "ad_name"),
-		"field_data":      lead.RawFields,
-		"custom_fields":   lead.Custom,
-		"webhook_payload": webhookPayload,
+		"source":                   "meta",
+		"source_type":              "meta_lead_ads",
+		"integration_id":           integration.ID,
+		"form_config_id":           formConfig.ID,
+		"page_id":                  change.PageID,
+		"page_name":                nullablePointer(integration.PageName),
+		"form_id":                  change.FormID,
+		"form_name":                nullablePointer(formConfig.FormName),
+		"leadgen_id":               change.LeadgenID,
+		"created_time":             change.CreatedTime,
+		"campaign_id":              metaText(details, change.Raw, "campaign_id"),
+		"campaign_name":            metaText(details, change.Raw, "campaign_name"),
+		"adset_id":                 metaText(details, change.Raw, "adset_id"),
+		"adset_name":               metaText(details, change.Raw, "adset_name"),
+		"ad_id":                    metaText(details, change.Raw, "ad_id"),
+		"ad_name":                  metaText(details, change.Raw, "ad_name"),
+		"creative_id":              metaText(details, change.Raw, "creative_id"),
+		"creative_name":            metaText(details, change.Raw, "creative_name"),
+		"creative_type":            metaText(details, change.Raw, "creative_type"),
+		"creative_url":             metaText(details, change.Raw, "creative_url"),
+		"creative_video_url":       metaText(details, change.Raw, "creative_video_url"),
+		"creative_thumbnail_url":   metaText(details, change.Raw, "creative_thumbnail_url"),
+		"creative_instagram_url":   metaText(details, change.Raw, "creative_instagram_url"),
+		"creative_permalink_url":   metaText(details, change.Raw, "creative_permalink_url"),
+		"creative_destination_url": metaText(details, change.Raw, "creative_destination_url"),
+		"field_data":               lead.RawFields,
+		"custom_fields":            lead.Custom,
+		"webhook_payload":          webhookPayload,
 	}
 }
 

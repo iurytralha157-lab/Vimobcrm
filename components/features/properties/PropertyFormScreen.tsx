@@ -17,6 +17,18 @@ import { type Property, useProperty, useCreateProperty, useUpdateProperty } from
 import { usePropertyTypes, useCreatePropertyType } from '@/hooks/use-property-types';
 import { usePropertyFeatures, useCreatePropertyFeature, useSeedDefaultFeatures, DEFAULT_FEATURES } from '@/hooks/use-property-features';
 import { usePropertyProximities, useCreatePropertyProximity, useSeedDefaultProximities, DEFAULT_PROXIMITIES } from '@/hooks/use-property-proximities';
+import {
+  useCreateCity,
+  useCreateCondominium,
+  useCreateNeighborhood,
+  usePropertyCities,
+  usePropertyCondominiums,
+  usePropertyNeighborhoods,
+  type PropertyCity,
+  type PropertyCondominium,
+  type PropertyNeighborhood,
+} from '@/hooks/use-property-locations';
+import { useCreatePropertyOwner, usePropertyOwners, type PropertyOwner } from '@/hooks/use-property-owners';
 import { ImageUploader } from '@/components/features/properties/ImageUploader';
 import { FeatureSelector } from '@/components/features/properties/FeatureSelector';
 import { useUsers } from '@/hooks/use-users';
@@ -37,8 +49,11 @@ interface PropertyFormData {
   complemento: string;
   bairro: string;
   cidade: string;
+  city_id: string;
   uf: string;
   cep: string;
+  neighborhood_id: string;
+  condominium_id: string;
   public_address_visibility: string;
   quartos: string;
   suites: string;
@@ -65,6 +80,7 @@ interface PropertyFormData {
   proximidades: string[];
   // New fields - Owner
   owner_name: string;
+  owner_id: string;
   owner_phone_residential: string;
   owner_phone_commercial: string;
   owner_cellphone: string;
@@ -92,6 +108,7 @@ interface PropertyFormData {
   // Extras
   usou_fgts: boolean;
   aceita_financiamento: boolean;
+  aceita_permuta: boolean;
   zoneamento: string;
   valor_venda_avaliado: string;
   valor_locacao_avaliado: string;
@@ -127,19 +144,19 @@ interface PropertyFormData {
 const initialFormData: PropertyFormData = {
   title: '', tipo_de_imovel: 'Apartamento', tipo_de_negocio: 'Venda', status: 'ativo',
   destaque: false, endereco: '', numero: '', complemento: '', bairro: '', cidade: '',
-   uf: '', cep: '', public_address_visibility: 'parcial', quartos: '', suites: '', banheiros: '', vagas: '', area_util: '',
+   city_id: '', neighborhood_id: '', condominium_id: '', uf: '', cep: '', public_address_visibility: 'parcial', quartos: '', suites: '', banheiros: '', vagas: '', area_util: '',
   area_total: '', mobilia: '', regra_pet: false, andar: '', ano_construcao: '', preco: '',
   valor_locacao: '', condominio: '', iptu: '', seguro_incendio: '', taxa_de_servico: '', commission_percentage: '',
   descricao: '', imagem_principal: '', fotos: [], video_imovel: '', detalhes_extras: [],
   proximidades: [],
-  owner_name: '', owner_phone_residential: '', owner_phone_commercial: '', owner_cellphone: '',
+  owner_id: '', owner_name: '', owner_phone_residential: '', owner_phone_commercial: '', owner_cellphone: '',
   owner_email: '', owner_media_source: '', owner_notify_email: false,
   finalidade: 'Residencial', pais: 'Brasil',
   cadastrado_por: '', referencia_alternativa: '', condicao_pagamento: '', valor_itr: '',
   valor_seguro_fianca: '',
   padrao: '', posicao_localizacao: '', situacao_imovel: '', ocupacao: '',
   autorizado_comercializacao: true, exclusividade: false, ano_reforma: '',
-  usou_fgts: false, aceita_financiamento: true, zoneamento: '',
+  usou_fgts: false, aceita_financiamento: true, aceita_permuta: false, zoneamento: '',
   valor_venda_avaliado: '', valor_locacao_avaliado: '', comentarios_internos: '', marcadores: [],
   local_chaves: '',
   anunciar: true, super_destaque: false, tour_virtual: '', descricao_site: '',
@@ -199,6 +216,7 @@ function propertyToFormData(p: Property): PropertyFormData {
     tipo_de_negocio: p.tipo_de_negocio || 'Venda', status: p.status || 'ativo',
     destaque: p.destaque || false, endereco: p.endereco || '', numero: p.numero || '',
     complemento: p.complemento || '', bairro: p.bairro || '', cidade: p.cidade || '',
+    city_id: p.city_id || '', neighborhood_id: p.neighborhood_id || '', condominium_id: p.condominium_id || '',
     uf: p.uf || '', cep: p.cep || '', public_address_visibility: p.public_address_visibility || 'parcial', quartos: p.quartos?.toString() || '',
     suites: p.suites?.toString() || '', banheiros: p.banheiros?.toString() || '',
     vagas: p.vagas?.toString() || '', area_util: p.area_util?.toString() || '',
@@ -214,7 +232,7 @@ function propertyToFormData(p: Property): PropertyFormData {
     fotos: toStringArray(p.fotos), video_imovel: p.video_imovel || '',
     detalhes_extras: p.detalhes_extras || [],
     proximidades: p.proximidades || [],
-    owner_name: p.owner_name || '', owner_phone_residential: p.owner_phone_residential || '',
+    owner_id: p.owner_id || '', owner_name: p.owner_name || '', owner_phone_residential: p.owner_phone_residential || '',
     owner_phone_commercial: p.owner_phone_commercial || '',
     owner_cellphone: p.owner_cellphone || '', owner_email: p.owner_email || '',
     owner_media_source: p.owner_media_source || '', owner_notify_email: p.owner_notify_email || false,
@@ -227,6 +245,7 @@ function propertyToFormData(p: Property): PropertyFormData {
     autorizado_comercializacao: p.autorizado_comercializacao ?? true,
     exclusividade: p.exclusividade || false, ano_reforma: p.ano_reforma?.toString() || '',
     usou_fgts: p.usou_fgts || false, aceita_financiamento: p.aceita_financiamento ?? true,
+    aceita_permuta: p.aceita_permuta || false,
     zoneamento: p.zoneamento || '', valor_venda_avaliado: p.valor_venda_avaliado?.toString() || '',
     valor_locacao_avaliado: p.valor_locacao_avaliado?.toString() || '',
     comentarios_internos: p.comentarios_internos || '', marcadores: p.marcadores || [],
@@ -285,6 +304,17 @@ export default function PropertyForm() {
   const [hasTriedSubmit, setHasTriedSubmit] = useState(false);
   const [newTypeName, setNewTypeName] = useState('');
   const [showAddType, setShowAddType] = useState(false);
+  const [showAddCity, setShowAddCity] = useState(false);
+  const [showAddNeighborhood, setShowAddNeighborhood] = useState(false);
+  const [showAddCondominium, setShowAddCondominium] = useState(false);
+  const [newCityName, setNewCityName] = useState('');
+  const [newCityUf, setNewCityUf] = useState('');
+  const [newNeighborhoodName, setNewNeighborhoodName] = useState('');
+  const [newCondominiumName, setNewCondominiumName] = useState('');
+  const [newCondominiumFee, setNewCondominiumFee] = useState('');
+  const [newCondominiumPhoto, setNewCondominiumPhoto] = useState('');
+  const [newCondominiumHasConcierge, setNewCondominiumHasConcierge] = useState(false);
+  const [newCondominiumConciergeType, setNewCondominiumConciergeType] = useState('');
   const [isCepLoading, setIsCepLoading] = useState(false);
   const lastCepLookupRef = useRef('');
 
@@ -292,12 +322,20 @@ export default function PropertyForm() {
   const { data: propertyTypes = [] } = usePropertyTypes();
   const { data: features = [], isLoading: loadingFeatures } = usePropertyFeatures();
   const { data: proximities = [], isLoading: loadingProximities } = usePropertyProximities();
+  const { data: cities = [] } = usePropertyCities();
+  const { data: neighborhoods = [] } = usePropertyNeighborhoods(formData.city_id || undefined);
+  const { data: condominiums = [] } = usePropertyCondominiums(formData.neighborhood_id || undefined);
+  const { data: propertyOwners = [] } = usePropertyOwners();
   const { data: users = [] } = useUsers();
   const createPropertyType = useCreatePropertyType();
   const createProperty = useCreateProperty();
   const updateProperty = useUpdateProperty();
   const createFeature = useCreatePropertyFeature();
   const createProximity = useCreatePropertyProximity();
+  const createCity = useCreateCity();
+  const createNeighborhood = useCreateNeighborhood();
+  const createCondominium = useCreateCondominium();
+  const createPropertyOwner = useCreatePropertyOwner();
   const { mutate: seedDefaultFeatures } = useSeedDefaultFeatures();
   const { mutate: seedDefaultProximities } = useSeedDefaultProximities();
 
@@ -308,6 +346,60 @@ export default function PropertyForm() {
 
   const set = <K extends keyof PropertyFormData>(field: K, value: PropertyFormData[K]) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const applyCity = (city: PropertyCity | null) => {
+    setFormData(prev => ({
+      ...prev,
+      city_id: city?.id || '',
+      cidade: city?.name || prev.cidade,
+      uf: city?.uf || prev.uf,
+      neighborhood_id: city?.id === prev.city_id ? prev.neighborhood_id : '',
+      condominium_id: city?.id === prev.city_id ? prev.condominium_id : '',
+    }));
+  };
+
+  const applyNeighborhood = (neighborhood: PropertyNeighborhood | null) => {
+    setFormData(prev => ({
+      ...prev,
+      neighborhood_id: neighborhood?.id || '',
+      bairro: neighborhood?.name || prev.bairro,
+      city_id: neighborhood?.city?.id || prev.city_id,
+      cidade: neighborhood?.city?.name || prev.cidade,
+      uf: neighborhood?.city?.uf || prev.uf,
+      condominium_id: neighborhood?.id === prev.neighborhood_id ? prev.condominium_id : '',
+    }));
+  };
+
+  const applyCondominium = (condominium: PropertyCondominium | null) => {
+    setFormData(prev => ({
+      ...prev,
+      condominium_id: condominium?.id || '',
+      city_id: condominium?.city?.id || prev.city_id,
+      neighborhood_id: condominium?.neighborhood?.id || prev.neighborhood_id,
+      cidade: condominium?.city?.name || prev.cidade,
+      uf: condominium?.city?.uf || prev.uf,
+      bairro: condominium?.neighborhood?.name || prev.bairro,
+      endereco: condominium?.address || prev.endereco,
+      cep: condominium?.cep ? formatCep(condominium.cep) : prev.cep,
+      condominio: condominium?.default_condominium_fee != null
+        ? String(Math.round(Number(condominium.default_condominium_fee)))
+        : prev.condominio,
+    }));
+  };
+
+  const applyOwner = (owner: PropertyOwner | null) => {
+    setFormData(prev => ({
+      ...prev,
+      owner_id: owner?.id || '',
+      owner_name: owner?.name || prev.owner_name,
+      owner_phone_residential: owner?.phone_residential || prev.owner_phone_residential,
+      owner_phone_commercial: owner?.phone_commercial || prev.owner_phone_commercial,
+      owner_cellphone: owner?.cellphone || prev.owner_cellphone,
+      owner_email: owner?.email || prev.owner_email,
+      owner_media_source: owner?.media_source || prev.owner_media_source,
+      owner_notify_email: owner?.notify_email ?? prev.owner_notify_email,
+    }));
   };
 
   const lookupCep = async (rawCep: string) => {
@@ -333,12 +425,26 @@ export default function PropertyForm() {
         return;
       }
 
+      const matchedCity = cities.find(city =>
+        normalize(city.name) === normalize(data.localidade || '') &&
+        (!data.uf || !city.uf || city.uf.toUpperCase() === data.uf.toUpperCase())
+      );
+      const matchedNeighborhood = neighborhoods.find(neighborhood =>
+        normalize(neighborhood.name) === normalize(data.bairro || '') &&
+        (!matchedCity || !neighborhood.city_id || neighborhood.city_id === matchedCity.id)
+      );
+      const cepHasCity = Boolean(data.localidade);
+      const cepHasNeighborhood = Boolean(data.bairro);
+
       setFormData(prev => ({
         ...prev,
         endereco: data.logradouro || prev.endereco,
         bairro: data.bairro || prev.bairro,
         cidade: data.localidade || prev.cidade,
         uf: data.uf || prev.uf,
+        city_id: matchedCity?.id || (cepHasCity ? '' : prev.city_id),
+        neighborhood_id: matchedNeighborhood?.id || (cepHasNeighborhood ? '' : prev.neighborhood_id),
+        condominium_id: cepHasCity || cepHasNeighborhood ? '' : prev.condominium_id,
       }));
     } catch {
       lastCepLookupRef.current = '';
@@ -440,6 +546,9 @@ export default function PropertyForm() {
       destaque: formData.destaque, endereco: formData.endereco || null,
       numero: formData.numero || null, complemento: formData.complemento || null,
       bairro: formData.bairro || null, cidade: formData.cidade || null,
+      city_id: formData.city_id || null,
+      neighborhood_id: formData.neighborhood_id || null,
+      condominium_id: formData.condominium_id || null,
       uf: formData.uf || null, cep: formData.cep || null,
       public_address_visibility: formData.public_address_visibility,
       quartos: parseInt2(formData.quartos), suites: parseInt2(formData.suites),
@@ -456,6 +565,7 @@ export default function PropertyForm() {
       fotos: formData.fotos, video_imovel: formData.video_imovel || null,
       detalhes_extras: formData.detalhes_extras, proximidades: formData.proximidades,
       // New fields
+      owner_id: formData.owner_id || null,
       owner_name: formData.owner_name || null, owner_phone_residential: formData.owner_phone_residential || null,
       owner_phone_commercial: formData.owner_phone_commercial || null,
       owner_cellphone: formData.owner_cellphone || null, owner_email: formData.owner_email || null,
@@ -469,6 +579,7 @@ export default function PropertyForm() {
       autorizado_comercializacao: formData.autorizado_comercializacao,
       exclusividade: formData.exclusividade, ano_reforma: parseInt2(formData.ano_reforma),
       usou_fgts: formData.usou_fgts, aceita_financiamento: formData.aceita_financiamento,
+      aceita_permuta: formData.aceita_permuta,
       zoneamento: formData.zoneamento || null, valor_venda_avaliado: parseNum(formData.valor_venda_avaliado),
       valor_locacao_avaliado: parseNum(formData.valor_locacao_avaliado),
       comentarios_internos: formData.comentarios_internos || null, marcadores: formData.marcadores,
@@ -511,6 +622,82 @@ export default function PropertyForm() {
     setShowAddType(false);
   };
 
+  const handleCreateCity = async () => {
+    const name = (newCityName || formData.cidade).trim();
+    const uf = (newCityUf || formData.uf).trim().toUpperCase();
+    if (!name) {
+      toast.error('Informe o nome da cidade.');
+      return;
+    }
+    const city = await createCity.mutateAsync({ name, uf });
+    applyCity(city);
+    setNewCityName('');
+    setNewCityUf('');
+    setShowAddCity(false);
+  };
+
+  const handleCreateNeighborhood = async () => {
+    const name = (newNeighborhoodName || formData.bairro).trim();
+    if (!formData.city_id) {
+      toast.error('Selecione ou cadastre a cidade antes do bairro.');
+      return;
+    }
+    if (!name) {
+      toast.error('Informe o nome do bairro.');
+      return;
+    }
+    const neighborhood = await createNeighborhood.mutateAsync({ name, city_id: formData.city_id });
+    applyNeighborhood(neighborhood);
+    setNewNeighborhoodName('');
+    setShowAddNeighborhood(false);
+  };
+
+  const handleCreateCondominium = async () => {
+    const name = newCondominiumName.trim();
+    if (!name) {
+      toast.error('Informe o nome do condomínio.');
+      return;
+    }
+    const fee = newCondominiumFee ? Number(parseCurrencyInput(newCondominiumFee)) : undefined;
+    const condominium = await createCondominium.mutateAsync({
+      name,
+      city_id: formData.city_id || undefined,
+      neighborhood_id: formData.neighborhood_id || undefined,
+      address: formData.endereco || undefined,
+      cep: formData.cep || undefined,
+      number: formData.numero || undefined,
+      complement: formData.complemento || undefined,
+      photo_url: newCondominiumPhoto || undefined,
+      default_condominium_fee: Number.isFinite(fee) ? fee : undefined,
+      has_concierge: newCondominiumHasConcierge,
+      concierge_type: newCondominiumConciergeType || undefined,
+    });
+    applyCondominium(condominium);
+    setNewCondominiumName('');
+    setNewCondominiumFee('');
+    setNewCondominiumPhoto('');
+    setNewCondominiumHasConcierge(false);
+    setNewCondominiumConciergeType('');
+    setShowAddCondominium(false);
+  };
+
+  const handleCreateOwner = async () => {
+    if (!formData.owner_name.trim()) {
+      toast.error('Informe o nome do proprietário.');
+      return;
+    }
+    const owner = await createPropertyOwner.mutateAsync({
+      name: formData.owner_name,
+      phone_residential: formData.owner_phone_residential || undefined,
+      phone_commercial: formData.owner_phone_commercial || undefined,
+      cellphone: formData.owner_cellphone || undefined,
+      email: formData.owner_email || undefined,
+      media_source: formData.owner_media_source || undefined,
+      notify_email: formData.owner_notify_email,
+    });
+    applyOwner(owner);
+  };
+
   if (isEditing && loadingProperty) {
     return (
       <AppLayout title="Carregando...">
@@ -535,7 +722,7 @@ export default function PropertyForm() {
   ];
   return (
     <AppLayout title={isEditing ? 'Editar Imóvel' : 'Novo Imóvel'} disableMainScroll>
-      <form onSubmit={handleSubmit} className="h-full min-h-0 flex flex-col gap-3 animate-in">
+      <form data-tour="property-form" onSubmit={handleSubmit} className="h-full min-h-0 flex flex-col gap-3 animate-in">
         {/* Top bar */}
         <div className="flex flex-col gap-3 flex-shrink-0 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-2">
@@ -555,7 +742,7 @@ export default function PropertyForm() {
             >
               Cancelar
             </Button>
-            <Button type="submit" className="min-w-0" disabled={createProperty.isPending || updateProperty.isPending || !canEdit}>
+            <Button data-tour="property-save-button" type="submit" className="min-w-0" disabled={createProperty.isPending || updateProperty.isPending || !canEdit}>
               {(createProperty.isPending || updateProperty.isPending) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               <Save className="h-4 w-4 mr-2" />
               {isEditing ? 'Salvar' : 'Cadastrar Imóvel'}
@@ -589,7 +776,7 @@ export default function PropertyForm() {
         )}
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col gap-3">
-          <nav className="app-card app-scrollbar flex flex-nowrap gap-1.5 overflow-x-auto overflow-y-hidden p-1.5">
+          <nav data-tour="property-form-tabs" className="app-card app-scrollbar flex flex-nowrap gap-1.5 overflow-x-auto overflow-y-hidden p-1.5">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.value;
@@ -599,29 +786,26 @@ export default function PropertyForm() {
                 <button
                   key={tab.value}
                   type="button"
+                  data-tour={`property-tab-${tab.value}`}
+                  title={`${tab.label} - ${tab.description}`}
                   onClick={() => setActiveTab(tab.value)}
                   className={cn(
-                    "flex min-w-[140px] items-center gap-2 rounded-[6px] px-2.5 py-2 text-left transition-colors",
+                    "relative flex h-11 w-11 shrink-0 items-center justify-center rounded-[6px] transition-colors",
                     isActive
                       ? "bg-primary text-primary-foreground"
                       : "text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground"
                   )}
                 >
                   <span className={cn(
-                    "flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]",
+                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px]",
                     isActive ? "bg-white/15" : "bg-[var(--app-surface-soft)]"
                   )}>
-                    <Icon className="h-3.5 w-3.5" />
+                    <Icon className="h-4 w-4" />
                   </span>
-                  <span className="min-w-0">
-                    <span className="flex items-center gap-1 text-xs font-medium">
-                      {tab.label}
-                      {tabHasIssue && <span className={cn("h-1.5 w-1.5 rounded-full", isActive ? "bg-white" : "bg-primary")} />}
-                    </span>
-                    <span className={cn("line-clamp-1 text-[11px]", isActive ? "text-primary-foreground/75" : "text-muted-foreground")}>
-                      {tab.description}
-                    </span>
-                  </span>
+                  {tabHasIssue && (
+                    <span className={cn("absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full", isActive ? "bg-white" : "bg-primary")} />
+                  )}
+                  <span className="sr-only">{tab.label}</span>
                 </button>
               );
             })}
@@ -630,7 +814,7 @@ export default function PropertyForm() {
           <div className="app-scrollbar flex-1 min-h-0 overflow-y-auto pr-1 space-y-4">
           {/* 1. Proprietário */}
           <TabsContent value="owner">
-            <Card className="app-card">
+            <Card data-tour="property-owner-section" className="app-card">
               <CardHeader><CardTitle className="text-lg">Responsável e Proprietário</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <div className="app-card-soft border-0 p-4">
@@ -658,10 +842,49 @@ export default function PropertyForm() {
                     </p>
                   </div>
                 </div>
+                <div className="app-card-soft border-0 p-4">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto] md:items-end">
+                    <div className="space-y-2">
+                      <Label>Proprietário cadastrado</Label>
+                      <Select
+                        value={formData.owner_id || '__manual__'}
+                        onValueChange={(value) => {
+                          if (value === '__manual__') {
+                            set('owner_id', '');
+                            return;
+                          }
+                          applyOwner(propertyOwners.find(owner => owner.id === value) || null);
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecionar proprietário" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__manual__">Digitar novo proprietário</SelectItem>
+                          {propertyOwners.map(owner => (
+                            <SelectItem key={owner.id} value={owner.id}>
+                              {owner.name}{owner.cellphone ? ` - ${owner.cellphone}` : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleCreateOwner}
+                      disabled={createPropertyOwner.isPending || !formData.owner_name.trim()}
+                    >
+                      {createPropertyOwner.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      <Plus className="mr-2 h-4 w-4" />
+                      Salvar proprietário
+                    </Button>
+                  </div>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Nome do Proprietário <RequiredMark /></Label>
-                    <Input value={formData.owner_name} onChange={e => set('owner_name', e.target.value)} placeholder="Nome completo" />
+                    <Input value={formData.owner_name} onChange={e => { set('owner_id', ''); set('owner_name', e.target.value); }} placeholder="Nome completo" />
                   </div>
                   <div className="space-y-2">
                     <Label>E-mail</Label>
@@ -711,7 +934,7 @@ export default function PropertyForm() {
 
           {/* 2. Estrutura */}
           <TabsContent value="structure">
-            <Card className="app-card">
+            <Card data-tour="property-structure-section" className="app-card">
               <CardHeader><CardTitle className="text-lg">Estrutura</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
@@ -788,7 +1011,7 @@ export default function PropertyForm() {
 
           {/* 3. Localização */}
           <TabsContent value="location">
-            <Card className="app-card">
+            <Card data-tour="property-location-section" className="app-card">
               <CardHeader><CardTitle className="text-lg">Localização do Imóvel</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -801,8 +1024,50 @@ export default function PropertyForm() {
                     <Input maxLength={2} value={formData.uf} onChange={e => set('uf', e.target.value.toUpperCase())} placeholder="SP" />
                   </div>
                   <div className="space-y-2">
-                    <Label>Cidade</Label>
-                    <Input value={formData.cidade} onChange={e => set('cidade', e.target.value)} placeholder="São Paulo" />
+                    <div className="flex items-center justify-between">
+                      <Label>Cidade</Label>
+                      <Button type="button" variant="ghost" size="sm" className="h-6 text-xs" onClick={() => {
+                        setNewCityName(formData.cidade);
+                        setNewCityUf(formData.uf);
+                        setShowAddCity(open => !open);
+                      }}>
+                        <Plus className="mr-1 h-3 w-3" /> Nova
+                      </Button>
+                    </div>
+                    {showAddCity && (
+                      <div className="mb-2 grid grid-cols-[1fr_72px_auto] gap-2">
+                        <Input value={newCityName} onChange={e => setNewCityName(e.target.value)} placeholder="Cidade" className="h-8 text-sm" />
+                        <Input value={newCityUf} onChange={e => setNewCityUf(e.target.value.toUpperCase())} placeholder="UF" maxLength={2} className="h-8 text-sm" />
+                        <Button type="button" size="sm" className="h-8" onClick={handleCreateCity} disabled={createCity.isPending}>
+                          OK
+                        </Button>
+                      </div>
+                    )}
+                    <Select
+                      value={formData.city_id || '__manual__'}
+                      onValueChange={(value) => {
+                        if (value === '__manual__') {
+                          set('city_id', '');
+                          return;
+                        }
+                        applyCity(cities.find(city => city.id === value) || null);
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecione a cidade" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__manual__">Digitar cidade manualmente</SelectItem>
+                        {cities.map(city => (
+                          <SelectItem key={city.id} value={city.id}>
+                            {city.name}{city.uf ? ` (${city.uf})` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {!formData.city_id && (
+                      <Input value={formData.cidade} onChange={e => set('cidade', e.target.value)} placeholder="São Paulo" />
+                    )}
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -862,9 +1127,120 @@ export default function PropertyForm() {
                     <Input value={formData.complemento} onChange={e => set('complemento', e.target.value)} placeholder="Apto 101, Bloco A..." />
                   </div>
                   <div className="space-y-2">
-                    <Label>Bairro</Label>
-                    <Input value={formData.bairro} onChange={e => set('bairro', e.target.value)} placeholder="Jardins" />
+                    <div className="flex items-center justify-between">
+                      <Label>Bairro</Label>
+                      <Button type="button" variant="ghost" size="sm" className="h-6 text-xs" onClick={() => {
+                        setNewNeighborhoodName(formData.bairro);
+                        setShowAddNeighborhood(open => !open);
+                      }}>
+                        <Plus className="mr-1 h-3 w-3" /> Novo
+                      </Button>
+                    </div>
+                    {showAddNeighborhood && (
+                      <div className="mb-2 flex gap-2">
+                        <Input value={newNeighborhoodName} onChange={e => setNewNeighborhoodName(e.target.value)} placeholder="Novo bairro" className="h-8 text-sm" />
+                        <Button type="button" size="sm" className="h-8" onClick={handleCreateNeighborhood} disabled={createNeighborhood.isPending}>
+                          OK
+                        </Button>
+                      </div>
+                    )}
+                    <Select
+                      value={formData.neighborhood_id || '__manual__'}
+                      onValueChange={(value) => {
+                        if (value === '__manual__') {
+                          set('neighborhood_id', '');
+                          return;
+                        }
+                        applyNeighborhood(neighborhoods.find(neighborhood => neighborhood.id === value) || null);
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecione o bairro" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__manual__">Digitar bairro manualmente</SelectItem>
+                        {neighborhoods.map(neighborhood => (
+                          <SelectItem key={neighborhood.id} value={neighborhood.id}>
+                            {neighborhood.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {!formData.neighborhood_id && (
+                      <Input value={formData.bairro} onChange={e => set('bairro', e.target.value)} placeholder="Jardins" />
+                    )}
                   </div>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Condomínio</Label>
+                    <Button type="button" variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setShowAddCondominium(open => !open)}>
+                      <Plus className="mr-1 h-3 w-3" /> Novo
+                    </Button>
+                  </div>
+                  <Select
+                    value={formData.condominium_id || '__none__'}
+                    onValueChange={(value) => {
+                      if (value === '__none__') {
+                        applyCondominium(null);
+                        return;
+                      }
+                      applyCondominium(condominiums.find(condominium => condominium.id === value) || null);
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione o condomínio" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">Sem condomínio</SelectItem>
+                      {condominiums.map(condominium => (
+                        <SelectItem key={condominium.id} value={condominium.id}>
+                          {condominium.name}
+                          {condominium.default_condominium_fee ? ` - R$ ${Number(condominium.default_condominium_fee).toLocaleString('pt-BR')}` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {showAddCondominium && (
+                    <div className="app-card-soft mt-2 grid grid-cols-1 gap-3 border-0 p-3 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>Nome do condomínio</Label>
+                        <Input value={newCondominiumName} onChange={e => setNewCondominiumName(e.target.value)} placeholder="Residencial..." />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Taxa padrão (R$)</Label>
+                        <Input value={formatCurrencyDisplay(newCondominiumFee)} onChange={e => setNewCondominiumFee(parseCurrencyInput(e.target.value))} placeholder="800" />
+                      </div>
+                      <div className="space-y-2 md:col-span-2">
+                        <Label>Foto do condomínio (URL)</Label>
+                        <Input value={newCondominiumPhoto} onChange={e => setNewCondominiumPhoto(e.target.value)} placeholder="https://..." />
+                      </div>
+                      <div className={togglePanelClass}>
+                        <Label>Tem portaria</Label>
+                        <Switch checked={newCondominiumHasConcierge} onCheckedChange={setNewCondominiumHasConcierge} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Tipo de portaria</Label>
+                        <Select value={newCondominiumConciergeType || undefined} onValueChange={setNewCondominiumConciergeType}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="24h">24h</SelectItem>
+                            <SelectItem value="comercial">Horário comercial</SelectItem>
+                            <SelectItem value="remota">Remota</SelectItem>
+                            <SelectItem value="sem_portaria">Sem portaria</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex justify-end md:col-span-2">
+                        <Button type="button" onClick={handleCreateCondominium} disabled={createCondominium.isPending}>
+                          {createCondominium.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                          Cadastrar condomínio
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -1047,7 +1423,7 @@ export default function PropertyForm() {
               <Card className="app-card">
                 <CardHeader><CardTitle className="text-lg">Financiamento e Outros</CardTitle></CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div className={togglePanelClass}>
                       <Label>Usou FGTS nos últimos 3 anos?</Label>
                       <Switch checked={formData.usou_fgts} onCheckedChange={v => set('usou_fgts', v)} />
@@ -1055,6 +1431,10 @@ export default function PropertyForm() {
                     <div className={togglePanelClass}>
                       <Label>Aceita Financiamento</Label>
                       <Switch checked={formData.aceita_financiamento} onCheckedChange={v => set('aceita_financiamento', v)} />
+                    </div>
+                    <div className={togglePanelClass}>
+                      <Label>Aceita permuta</Label>
+                      <Switch checked={formData.aceita_permuta} onCheckedChange={v => set('aceita_permuta', v)} />
                     </div>
                     <div className="space-y-2">
                       <Label>Zoneamento</Label>
@@ -1116,7 +1496,7 @@ export default function PropertyForm() {
 
           {/* 6. Valores */}
           <TabsContent value="values">
-            <Card className="app-card">
+            <Card data-tour="property-values-section" className="app-card">
               <CardHeader><CardTitle className="text-lg">Valores</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1156,7 +1536,7 @@ export default function PropertyForm() {
 
           {/* 7. Fotos / Mídia */}
           <TabsContent value="media">
-            <Card className="app-card">
+            <Card data-tour="property-media-section" className="app-card">
               <CardHeader><CardTitle className="text-lg">Fotos e Mídia</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <ImageUploader
@@ -1193,7 +1573,7 @@ export default function PropertyForm() {
 
           {/* 8. Publicação */}
           <TabsContent value="publication">
-            <Card className="app-card">
+            <Card data-tour="property-publication-section" className="app-card">
               <CardHeader><CardTitle className="text-lg">Publicação na Web</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

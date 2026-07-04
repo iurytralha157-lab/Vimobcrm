@@ -288,21 +288,6 @@ export function MetaIntegrationSettings({
 
     queueMicrotask(async () => {
       await handleOAuthStatusResult(currentOAuthStatus);
-      return;
-      if (currentOAuthStatus.status === "success") {
-        setNewOAuth(null);
-        setSelectedAccountKey("");
-        setAccountSearch("");
-        setWizardOpen(false);
-        setAccountModalOpen(true);
-        await Promise.all([refetchIntegrations(), refetchConfigs()]);
-        toast.success("Conta do Facebook reconectada com sucesso.");
-        return;
-      }
-
-      if (currentOAuthStatus.error) {
-        toast.error(`Erro ao reconectar Facebook: ${currentOAuthStatus.error}`);
-      }
     });
   }, [handleOAuthStatusResult, oauthStatus, organizationId]);
 
@@ -326,17 +311,6 @@ export function MetaIntegrationSettings({
           error: event.data.error,
           nonce: event.data.nonce,
         });
-        return;
-        setNewOAuth(null);
-        setSelectedAccountKey("");
-        setAccountSearch("");
-        setWizardOpen(false);
-        setAccountModalOpen(true);
-        refetchIntegrations();
-        refetchConfigs();
-        if (event.data.status === "success") {
-          toast.success("Conta do Facebook reconectada com sucesso.");
-        }
         return;
       }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, type ElementType } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import {
   LayoutDashboard,
   Kanban,
@@ -33,6 +33,7 @@ export function MobileBottomNav() {
   const [createLeadOpen, setCreateLeadOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname() || '';
+  const searchParams = useSearchParams();
   const { profile, isSuperAdmin, organization } = useAuth();
   const { t } = useLanguage();
   const { hasModule } = useOrganizationModules();
@@ -86,7 +87,42 @@ export function MobileBottomNav() {
     return (t.nav as Record<string, string>)[labelKey] || labelKey;
   };
 
-  const showFab = hasModule('crm') && !isBillingBlocked;
+  const managementTab = searchParams.get('tab');
+  const isContextualFabRoute =
+    pathname.startsWith('/properties') ||
+    pathname === '/agenda' ||
+    pathname.startsWith('/crm/management') ||
+    pathname.startsWith('/settings');
+  const showFab = !isBillingBlocked && (hasModule('crm') || isContextualFabRoute);
+
+  const handleFabClick = () => {
+    if (pathname.startsWith('/properties')) {
+      router.push('/properties/new');
+      return;
+    }
+
+    if (pathname === '/agenda') {
+      window.dispatchEvent(new CustomEvent('vimob:mobile-create-agenda'));
+      return;
+    }
+
+    if (pathname.startsWith('/crm/management') && managementTab === 'teams') {
+      window.dispatchEvent(new CustomEvent('vimob:mobile-create-team'));
+      return;
+    }
+
+    if (pathname.startsWith('/crm/management') && managementTab === 'distribution') {
+      window.dispatchEvent(new CustomEvent('vimob:mobile-create-distribution'));
+      return;
+    }
+
+    if (pathname.startsWith('/settings') && (managementTab === 'team' || managementTab === 'users')) {
+      window.dispatchEvent(new CustomEvent('vimob:mobile-create-user'));
+      return;
+    }
+
+    setCreateLeadOpen(true);
+  };
 
   return (
     <>
@@ -98,9 +134,9 @@ export function MobileBottomNav() {
                 <div key="fab" className="flex flex-col items-center justify-center -mt-4">
                   {showFab ? (
                     <button
-                      onClick={() => setCreateLeadOpen(true)}
-                      className="h-12 w-12 rounded-[6px] bg-[#FF4529] text-white flex items-center justify-center shadow-lg active:scale-95 transition-transform"
-                      aria-label="Criar lead"
+                      onClick={handleFabClick}
+                      className="h-12 w-12 rounded-[6px] bg-[#FF4529] text-white flex items-center justify-center shadow-none active:scale-95 transition-transform"
+                      aria-label="Criar novo item"
                     >
                       <Plus className="h-6 w-6" />
                     </button>

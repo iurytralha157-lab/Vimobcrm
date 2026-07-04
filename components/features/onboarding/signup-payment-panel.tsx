@@ -8,10 +8,19 @@ import { toast } from "sonner";
 import { paymentsAPI } from "@/lib/api/payments";
 
 type SignupPaymentPlan = {
+  id?: string;
+  slug?: string;
   name: string;
   price: string;
   description: string;
   signupPath: "trial" | "paid";
+  billingCycle?: string | null;
+  trialEnabled?: boolean | null;
+  trialDays?: number | null;
+  maxUsers?: number | null;
+  maxWhatsappSessions?: number | null;
+  modules?: string[];
+  features?: string[];
 };
 
 type PaymentMethod = "PIX" | "CREDIT_CARD";
@@ -157,6 +166,118 @@ function getExpiryParts(value: string) {
 
 function isPaidStatus(status?: string) {
   return status === "CONFIRMED" || status === "RECEIVED" || status === "RECEIVED_IN_CASH";
+}
+
+function formatLimit(value?: number | null) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "--";
+  return value.toLocaleString("pt-BR");
+}
+
+function getTrialDays(plan: SignupPaymentPlan) {
+  if (typeof plan.trialDays === "number" && plan.trialDays > 0) return plan.trialDays;
+  return plan.signupPath === "trial" ? 7 : null;
+}
+
+function getPlanFeatures(plan: SignupPaymentPlan) {
+  if (plan.features?.length) return plan.features;
+
+  const slug = String(plan.slug || plan.name || "").toLowerCase();
+  const modules = new Set((plan.modules || []).map((moduleName) => moduleName.toLowerCase()));
+  const features = ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integracao Meta", "Imoveis"];
+
+  if (modules.has("site") || slug.includes("pro") || slug.includes("intermediario") || slug.includes("master")) {
+    features.push("Site");
+  }
+
+  if (modules.has("automations") || slug.includes("master")) {
+    features.push("Automacoes");
+  }
+
+  return features;
+}
+
+function getPlanBadge(plan: SignupPaymentPlan, trialDays: number | null) {
+  const slug = String(plan.slug || plan.name || "").toLowerCase();
+
+  if (trialDays) return "Teste gratis";
+  if (slug.includes("master")) return "Mais completo";
+  if (slug.includes("pro") || slug.includes("intermediario")) return "Recomendado";
+
+  return null;
+}
+
+function AsaasDisclosure() {
+  return (
+    <p className="text-center text-[10px] font-extralight leading-[1.15] text-white/36">
+      <span className="block">O cartao sera enviado diretamente ao Asaas.</span>
+      <span className="block">O Vimob CRM guarda apenas os identificadores da assinatura.</span>
+    </p>
+  );
+}
+
+function PlanSummary({ plan }: { plan: SignupPaymentPlan }) {
+  const trialDays = getTrialDays(plan);
+  const features = getPlanFeatures(plan);
+  const badge = getPlanBadge(plan, trialDays);
+
+  return (
+    <div className="rounded-[8px] border border-[#FF4529]/26 bg-[#151515]/56 px-4 py-4 shadow-[0_18px_52px_rgba(0,0,0,0.18)]">
+      <div className="text-center">
+        {badge ? (
+          <p className="mx-auto mb-2 inline-flex h-6 items-center rounded-full bg-[#FF4529]/14 px-3 text-[10px] font-light uppercase tracking-[0.12em] text-[#FF8A76]">
+            {badge}
+          </p>
+        ) : null}
+        <p className="text-base font-light tracking-wide text-white">{plan.name}</p>
+        <p className="mt-1 text-[18px] font-light tracking-wide text-white">
+          {plan.price}
+        </p>
+        <p className="mx-auto mt-1 max-w-[360px] text-[11px] font-extralight leading-4 text-white/46">
+          {trialDays
+            ? `${trialDays} dias gratis. Nenhum pagamento sera cobrado agora.`
+            : plan.description}
+        </p>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2 border-y border-white/8 py-3">
+        <div className="rounded-[6px] bg-[#121212]/50 px-3 py-2 text-center">
+          <p className="text-[10px] font-extralight uppercase tracking-[0.12em] text-white/34">
+            Usuarios
+          </p>
+          <p className="mt-0.5 text-sm font-light text-white">
+            Ate {formatLimit(plan.maxUsers)}
+          </p>
+        </div>
+        <div className="rounded-[6px] bg-[#121212]/50 px-3 py-2 text-center">
+          <p className="text-[10px] font-extralight uppercase tracking-[0.12em] text-white/34">
+            WhatsApp
+          </p>
+          <p className="mt-0.5 text-sm font-light text-white">
+            Ate {formatLimit(plan.maxWhatsappSessions)}
+          </p>
+        </div>
+      </div>
+
+      {features.length > 0 ? (
+        <div className="mt-3">
+          <p className="mb-2 text-[10px] font-extralight uppercase tracking-[0.12em] text-white/36">
+            Acesso incluso
+          </p>
+          <div className="grid gap-1.5">
+            {features.map((feature) => (
+              <span
+                key={feature}
+                className="flex min-w-0 items-start gap-2 text-[11.5px] font-extralight leading-4 text-white/62"
+              >
+                <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-[#FF4529]" />
+                <span>{feature}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function SignupPaymentPanel({
@@ -350,25 +471,20 @@ export function SignupPaymentPanel({
           <p>O pagamento aparece aqui depois da escolha do plano.</p>
           <p>Para Starter, o acesso entra em teste gratis. Para Pro e Master, o pagamento fica nesta coluna.</p>
         </div>
-      ) : !isPaidPlan ? (
-        <div className="space-y-4">
-          <div className="flex items-center gap-3 rounded-[6px] bg-[#FF4529]/10 p-4">
-            <ShieldCheck className="h-5 w-5 text-[#FF4529]" />
-            <p className="text-sm font-extralight leading-6 text-white/58">
-              O Starter comeca com 7 dias gratis. Nenhum pagamento e cobrado agora.
+      ) : selectedPlan && !isPaidPlan ? (
+        <div className="space-y-2">
+          <PlanSummary plan={selectedPlan} />
+          <div className="flex items-center gap-2 rounded-[6px] bg-[#FF4529]/10 px-3 py-2">
+            <ShieldCheck className="h-4 w-4 shrink-0 text-[#FF4529]" />
+            <p className="text-[11px] font-extralight leading-4 text-white/54">
+              Acesso de teste liberado apos criar a organizacao.
             </p>
           </div>
         </div>
-      ) : !checkoutToken ? (
-        <div className="space-y-3">
-          <div className="rounded-[6px] bg-[#FF4529]/15 px-4 py-3">
-            <p className="text-center text-sm font-extralight leading-5 text-white/74">
-              Clique em criar e pagar para aparecer as opcoes de Pix ou cartao de credito aqui mesmo, sem sair da tela.
-            </p>
-          </div>
-          <p className="text-center text-[11px] font-extralight leading-5 text-white/36">
-            O cartao sera enviado diretamente ao ASAAS. O Vimob guarda apenas os identificadores da assinatura.
-          </p>
+      ) : selectedPlan && !checkoutToken ? (
+        <div className="space-y-2">
+          <PlanSummary plan={selectedPlan} />
+          <AsaasDisclosure />
         </div>
       ) : paid || cardResult ? (
         <div className="space-y-5 text-center">
@@ -600,8 +716,8 @@ export function SignupPaymentPanel({
                     />
                   </label>
                 </div>
-                <p className="text-[11px] font-extralight leading-5 text-white/36">
-                  O Vimob nao armazena dados completos do cartao. A recorrencia fica tokenizada no ASAAS.
+                <p className="text-[10px] font-extralight leading-[1.25] text-white/36">
+                  O Vimob CRM nao armazena dados completos do cartao. A recorrencia fica tokenizada no Asaas.
                 </p>
               </>
             ) : null}

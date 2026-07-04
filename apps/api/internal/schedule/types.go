@@ -191,8 +191,8 @@ type AddAssigneeRequest struct {
 func ParseListFilter(values url.Values) (ListFilter, error) {
 	filter := ListFilter{
 		EventID: strings.TrimSpace(values.Get("eventId")),
-		UserID: strings.TrimSpace(values.Get("userId")),
-		LeadID: strings.TrimSpace(values.Get("leadId")),
+		UserID:  strings.TrimSpace(values.Get("userId")),
+		LeadID:  strings.TrimSpace(values.Get("leadId")),
 	}
 
 	for _, item := range []struct {

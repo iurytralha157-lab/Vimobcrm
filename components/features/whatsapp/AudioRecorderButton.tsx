@@ -125,12 +125,12 @@
      <Button
        variant="ghost"
        size="icon"
-       className={cn("h-10 w-10 shrink-0", className)}
+        className={cn("h-8 w-8 shrink-0", className)}
        onClick={handleStartRecording}
        disabled={disabled}
        title="Gravar áudio"
      >
-       <Mic className="h-5 w-5" />
+        <Mic className="h-4 w-4" />
      </Button>
    );
  }

@@ -513,6 +513,10 @@ body {
   box-shadow: none !important;
 }
 
+.lead-detail-dialog [data-lead-stage-stepper] {
+  gap: var(--lead-stage-step-gap, 0.375rem);
+}
+
 .lead-detail-dialog .rounded-xl {
   border-radius: 8px;
 }
@@ -521,22 +525,22 @@ body {
   display: flex;
   min-width: max-content;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--lead-stage-step-gap, 0.375rem);
   padding: 0.125rem 0.25rem 0.5rem;
 }
 
 .lead-detail-dialog .stage-tab-link {
   display: inline-flex;
-  height: 2rem;
-  width: 2rem;
+  height: var(--lead-stage-step-size, 2rem);
+  width: var(--lead-stage-step-size, 2rem);
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 8px;
+  border-radius: 7px;
   background: var(--app-surface-soft);
   color: var(--app-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--lead-stage-step-font-size, 0.75rem);
   line-height: 1;
   outline: none;
   transition: background-color 160ms ease, color 160ms ease, opacity 160ms ease;
@@ -562,7 +566,7 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .lead-detail-dialog .animated-tab-nav {
@@ -927,19 +931,32 @@ body {
 
 .contacts-table tr,
 .contacts-table th,
-.contacts-table td {
-  border-color: transparent !important;
+.contacts-table td,
+.crm-management-table tr,
+.crm-management-table th,
+.crm-management-table td {
+  border-color: transparent;
 }
 
-.contacts-table thead tr {
-  background: var(--app-surface);
+.contacts-table thead tr,
+.crm-management-table thead tr {
+  background: var(--app-surface-soft);
+  border-bottom-width: 1px !important;
+  border-bottom-style: solid !important;
+  border-bottom-color: transparent !important;
+  box-shadow: inset 0 -1px 0 var(--app-border);
 }
 
-.contacts-table tbody tr {
-  border-bottom: 0 !important;
+.contacts-table tbody tr,
+.crm-management-table tbody tr {
+  border-bottom-width: 1px !important;
+  border-bottom-style: solid !important;
+  border-bottom-color: transparent !important;
+  box-shadow: inset 0 -1px 0 var(--app-border);
 }
 
-.contacts-table th {
+.contacts-table th,
+.crm-management-table th {
   white-space: nowrap;
 }
 
@@ -1154,6 +1171,16 @@ body {
   background: transparent;
 }
 
+.lead-agenda-card {
+  container-type: inline-size;
+}
+
+@container (max-width: 170px) {
+  .lead-agenda-summary {
+    display: none;
+  }
+}
+
 .lead-detail-v2-scroll {
   scrollbar-width: none;
 }
@@ -1185,6 +1212,7 @@ body {
 .lead-stage-rail {
   position: relative;
   isolation: isolate;
+  gap: var(--lead-stage-step-gap, 0.375rem);
 }
 
 .lead-stage-rail::before {
@@ -1193,6 +1221,11 @@ body {
 
 .lead-stage-step {
   z-index: 1;
+  height: var(--lead-stage-step-size, 2rem);
+  width: var(--lead-stage-step-size, 2rem);
+  min-width: var(--lead-stage-step-size, 2rem);
+  font-size: var(--lead-stage-step-font-size, 0.75rem);
+  font-weight: 500;
 }
 
 .lead-stage-step:not(:last-child)::after {
@@ -1200,7 +1233,7 @@ body {
   left: 100%;
   top: 50%;
   z-index: -1;
-  width: 0.375rem;
+  width: var(--lead-stage-step-gap, 0.375rem);
   height: 1px;
   content: "";
   background: var(--app-border-strong);

@@ -9,9 +9,11 @@ export async function performFullCacheClear(options: {
   reload?: boolean;
   redirectTo?: string;
   clearBrowserCaches?: boolean;
+  preserveAuthContext?: boolean;
 } = {}): Promise<void> {
   const clearAuth = options.clearAuth ?? false;
   const clearBrowserCaches = options.clearBrowserCaches ?? !clearAuth;
+  const preserveAuthContext = options.preserveAuthContext ?? false;
   let reload = options.reload ?? false;
   let redirectTo = options.redirectTo;
 
@@ -53,7 +55,11 @@ export async function performFullCacheClear(options: {
 
   // 3. Clear localStorage
   const authKeysToKeep = clearAuth
-    ? ['remember_me', 'remembered_email']
+    ? [
+        'remember_me',
+        'remembered_email',
+        ...(preserveAuthContext ? ['vimob_active_organization_', 'vimob_auth_context_'] : []),
+      ]
     : [SUPABASE_AUTH_STORAGE_KEY_PREFIX, 'impersonating', 'remember_me', 'remembered_email'];
   const keysToRemove: string[] = [];
 

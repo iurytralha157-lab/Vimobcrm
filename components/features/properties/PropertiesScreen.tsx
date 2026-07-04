@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import { AppLayout } from '@/components/shared/layout/AppLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -30,6 +31,7 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useUsers } from '@/hooks/use-users';
 import { usePropertyTypes } from '@/hooks/use-property-types';
 import { cn } from '@/lib/utils';
+import { getPropertySiteInfo } from '@/lib/api/property-support';
 import { toast } from 'sonner';
 
 const formatPrice = (value: number | null, tipo: string | null) => {
@@ -52,6 +54,25 @@ type PropertyWithCreator = Property & {
   cadastrado_por?: string | null;
 };
 
+const normalizePropertyText = (value?: string | null) =>
+  (value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+const isRentalDeal = (dealType?: string | null) => {
+  const normalized = (dealType || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return normalized === 'aluguel' || normalized === 'locacao' || normalized === 'venda e aluguel' || normalized === 'venda e locacao' || normalized === 'temporada';
+};
+
+const isRentalProperty = (property: Property) => {
+  const title = normalizePropertyText(property.title);
+  return (
+    isRentalDeal(property.tipo_de_negocio) ||
+    title.includes('locacao') ||
+    title.includes('aluguel') ||
+    title.includes('alugar') ||
+    (Number(property.valor_locacao) > 0 && property.preco == null)
+  );
+};
+
 export default function Properties() {
   const router = useRouter();
   const [search, setSearch] = useState('');
@@ -61,10 +82,17 @@ export default function Properties() {
   const [gridCols, setGridCols] = useState('3');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const isMobile = useIsMobile();
-  const { profile, isSuperAdmin } = useAuth();
+  const { profile, organization, isSuperAdmin } = useAuth();
   const isAdmin = profile?.role === 'admin' || isSuperAdmin;
+  const organizationId = organization?.id || profile?.organization_id;
   const { data: users = [] } = useUsers();
   const { data: propertyTypes = [] } = usePropertyTypes();
+  const { data: siteInfo = null } = useQuery({
+    queryKey: ['org-site-info', organizationId],
+    queryFn: async () => getPropertySiteInfo(organizationId),
+    enabled: !!organizationId,
+    staleTime: 1000 * 60 * 5,
+  });
 
   const debouncedSearch = useDebouncedValue(search.trim(), 350);
   const debouncedFilters = useDebouncedValue(filters, 350);
@@ -101,9 +129,9 @@ export default function Properties() {
   const handleToggleVisibility = async (id: string, isPublic: boolean) => {
     await updateProperty.mutateAsync({
       id,
-      status: isPublic ? 'ativo' : 'privado'
+      anunciar: isPublic
     });
-    toast.success(isPublic ? 'Imóvel agora é público!' : 'Imóvel agora é privado!');
+    toast.success(isPublic ? 'Imovel publicado no site!' : 'Imovel removido do site!');
   };
 
   const stats = {
@@ -111,7 +139,7 @@ export default function Properties() {
     destaque: properties.filter(p => p.destaque).length,
     vendidos: properties.filter(p => p.status === 'vendido').length,
     venda: properties.filter(p => p.tipo_de_negocio === 'Venda' && p.status !== 'vendido').length,
-    aluguel: properties.filter(p => p.tipo_de_negocio === 'Aluguel').length,
+    aluguel: properties.filter(isRentalProperty).length,
   };
   const propertyListErrorMessage = error instanceof Error ? error.message : '';
   const isMissingPropertiesSchema =
@@ -167,6 +195,7 @@ export default function Properties() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <Button
+              data-tour="properties-filter-button"
               type="button"
               variant="ghost"
               onClick={() => setFiltersOpen((open) => !open)}
@@ -206,7 +235,7 @@ export default function Properties() {
                 </Select>
               </div>
             )}
-            <Button onClick={() => router.push('/properties/new')} className="flex-1 sm:flex-none">
+            <Button data-tour="properties-new-button" onClick={() => router.push('/properties/new')} className="flex-1 sm:flex-none">
               <Plus className="h-4 w-4 mr-2" />
               {isMobile ? 'Novo' : 'Novo Imóvel'}
             </Button>
@@ -214,7 +243,7 @@ export default function Properties() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 sm:gap-3">
+        <div data-tour="properties-stats" className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 sm:gap-3">
           <Card className="app-card">
             <CardContent className="min-h-[64px] p-2.5 sm:p-3 flex items-center gap-2.5">
               <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
@@ -273,7 +302,7 @@ export default function Properties() {
         </div>
 
         {filtersOpen && (
-          <section className="app-card p-4">
+          <section data-tour="properties-filters-panel" className="app-card p-4">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <h2 className="flex items-center gap-2 text-sm font-semibold">
@@ -348,6 +377,18 @@ export default function Properties() {
                 </div>
 
                 <div className="space-y-2">
+                  <Label>Permuta</Label>
+                  <Select value={filters.aceita_permuta || ALL_FILTER_VALUE} onValueChange={(value) => updateFilter('aceita_permuta', value)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL_FILTER_VALUE}>Todos</SelectItem>
+                      <SelectItem value="true">Aceita permuta</SelectItem>
+                      <SelectItem value="false">Não aceita permuta</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
                   <Label>Cidade</Label>
                   <Input value={filters.cidade || ''} onChange={(event) => updateFilter('cidade', event.target.value)} placeholder="Cidade" />
                 </div>
@@ -384,7 +425,7 @@ export default function Properties() {
           </section>
         )}
 
-        <div className="space-y-4">
+        <div data-tour="properties-list" className="space-y-4">
             {error && isMissingPropertiesSchema && (
               <div className="app-card-soft flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-start gap-3">
@@ -452,6 +493,7 @@ export default function Properties() {
                     }}
                     formatPrice={formatPrice}
                     canEdit={canEditProperty}
+                    siteInfo={siteInfo}
                   />
                 );
               })}

@@ -331,6 +331,119 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DashboardDealsEvolutionResponse"
+  /v1/contacts:
+    get:
+      summary: List visible contacts for CRM screens or exports
+      description: Use `mode=compact` for interactive screens and `mode=full` for exports that need all lead and Meta fields.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: mode
+          in: query
+          schema:
+            type: string
+            enum: [compact, full]
+            default: compact
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 25
+        - name: search
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+        - name: teamId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: pipelineId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: stageId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: assigneeId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: unassigned
+          in: query
+          schema:
+            type: boolean
+        - name: tagId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: source
+          in: query
+          schema:
+            type: string
+            maxLength: 80
+        - name: campaignId
+          in: query
+          schema:
+            type: string
+            maxLength: 120
+        - name: adSetId
+          in: query
+          schema:
+            type: string
+            maxLength: 120
+        - name: adId
+          in: query
+          schema:
+            type: string
+            maxLength: 120
+        - name: dealStatus
+          in: query
+          schema:
+            type: string
+            enum: [open, won, lost]
+        - name: createdFrom
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: createdTo
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: sortBy
+          in: query
+          schema:
+            type: string
+            enum: [created_at, name, last_interaction_at, stage]
+            default: created_at
+        - name: sortDir
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        "200":
+          description: Contact list with total count copied into each row for pagination compatibility.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactListResponse"
   /v1/leads:
     get:
       summary: List leads visible to the current user
@@ -1641,6 +1754,92 @@ components:
               type: string
             requestId:
               type: string
+    ContactTag:
+      type: object
+      required: [id, name, color]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        color:
+          type: string
+    Contact:
+      type: object
+      additionalProperties: true
+      required: [id, name, source, status, created_at, updated_at, tags, total_count]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        phone:
+          type: [string, "null"]
+        email:
+          type: [string, "null"]
+          format: email
+        whatsapp:
+          type: [string, "null"]
+        whatsapp_avatar_url:
+          type: [string, "null"]
+          format: uri
+        pipeline_id:
+          type: [string, "null"]
+          format: uuid
+        pipeline_name:
+          type: [string, "null"]
+        stage_id:
+          type: [string, "null"]
+          format: uuid
+        stage_name:
+          type: [string, "null"]
+        stage_color:
+          type: [string, "null"]
+        assigned_user_id:
+          type: [string, "null"]
+          format: uuid
+        assignee_name:
+          type: [string, "null"]
+        assignee_avatar:
+          type: [string, "null"]
+          format: uri
+        source:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        last_entry_at:
+          type: [string, "null"]
+          format: date-time
+        reentry_count:
+          type: integer
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContactTag"
+        total_count:
+          type: integer
+          format: int64
+        deal_status:
+          type: [string, "null"]
+          enum: [open, won, lost, null]
+        lost_reason:
+          type: [string, "null"]
+    ContactListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Contact"
     Property:
       type: object
       additionalProperties: true

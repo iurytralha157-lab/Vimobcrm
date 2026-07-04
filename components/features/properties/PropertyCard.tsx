@@ -24,12 +24,22 @@ import {
   CheckCircle,
   Globe,
   Lock,
-  Percent
+  Percent,
+  Share2,
+  ExternalLink
 } from 'lucide-react';
 import { Property } from '@/hooks/use-properties';
+import type { PropertySiteInfo } from '@/lib/api/property-support';
+import { buildPropertySiteUrl } from '@/lib/property-site-url';
+import { toast } from 'sonner';
 
 type PropertyWithCommission = Property & {
   commission_percentage?: number | null;
+};
+
+type PropertyWithPublication = Property & {
+  published_on_site?: boolean | null;
+  anunciar?: boolean | null;
 };
 
 interface PropertyCardProps {
@@ -41,6 +51,7 @@ interface PropertyCardProps {
   onToggleVisibility?: (id: string, isPublic: boolean) => void;
   formatPrice: (value: number | null, tipo: string | null) => string;
   canEdit?: boolean;
+  siteInfo?: PropertySiteInfo | null;
 }
 
 export function PropertyCard({
@@ -52,14 +63,29 @@ export function PropertyCard({
   onToggleVisibility,
   formatPrice,
   canEdit = false,
+  siteInfo,
 }: PropertyCardProps) {
   const isSold = property.status === 'vendido';
-  const isPublic = property.status !== 'privado';
+  const publication = property as PropertyWithPublication;
+  const normalizedStatus = (property.status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const isPrivate = ['privado', 'private', 'draft', 'rascunho', 'arquivado', 'archived'].includes(normalizedStatus);
+  const isSitePublished = Boolean(publication.published_on_site ?? publication.anunciar ?? true);
   const propertyType = (property.tipo_de_imovel || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const isLand = propertyType === 'terreno' || propertyType === 'lote';
   const displayArea = isLand ? property.area_total : (property.area_util || property.area_total);
   const dealType = (property.tipo_de_negocio || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  const displayPrice = dealType === 'aluguel' || dealType === 'locacao' || dealType === 'temporada'
+  const titleIntent = (property.title || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const isRentalIntent =
+    dealType === 'aluguel' ||
+    dealType === 'locacao' ||
+    dealType === 'venda e aluguel' ||
+    dealType === 'venda e locacao' ||
+    dealType === 'temporada' ||
+    titleIntent.includes('locacao') ||
+    titleIntent.includes('aluguel') ||
+    titleIntent.includes('alugar') ||
+    (Number(property.valor_locacao) > 0 && property.preco == null);
+  const displayPrice = isRentalIntent
     ? property.valor_locacao || property.preco
     : property.preco;
   const fallbackPhoto = Array.isArray(property.fotos) && typeof property.fotos[0] === 'string'
@@ -67,6 +93,51 @@ export function PropertyCard({
     : null;
   const imageSrc = property.imagem_principal || fallbackPhoto;
   const commissionPercentage = (property as PropertyWithCommission).commission_percentage;
+  const propertySiteUrl = !isPrivate ? buildPropertySiteUrl(property.code, siteInfo) : null;
+
+  const copyPropertyUrl = async () => {
+    if (!propertySiteUrl) return false;
+
+    try {
+      await navigator.clipboard.writeText(propertySiteUrl);
+      toast.success('Link do imovel copiado!');
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const handleShareProperty = async (event?: { stopPropagation: () => void }) => {
+    event?.stopPropagation();
+    if (!propertySiteUrl) {
+      toast.info('Publique o imovel no site para compartilhar o link.');
+      return;
+    }
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: property.title || property.code || 'Imovel',
+          url: propertySiteUrl,
+        });
+        return;
+      } catch {
+        // User cancelled or the platform refused the native sheet; fall back below.
+      }
+    }
+
+    const copied = await copyPropertyUrl();
+    if (!copied) {
+      window.open(propertySiteUrl, '_blank', 'noopener,noreferrer');
+      toast.info('Abrimos o link do imovel em uma nova aba.');
+    }
+  };
+
+  const openPropertySite = (event?: { stopPropagation: () => void }) => {
+    event?.stopPropagation();
+    if (!propertySiteUrl) return;
+    window.open(propertySiteUrl, '_blank', 'noopener,noreferrer');
+  };
 
   return (
     <Card
@@ -120,7 +191,7 @@ export function PropertyCard({
               Destaque
             </Badge>
           )}
-          {!isPublic && (
+          {isPrivate && (
             <Badge variant="secondary" className="ml-2 bg-black/70 text-muted-foreground">
               <Lock className="h-3 w-3 mr-1" />
               Privado
@@ -130,6 +201,16 @@ export function PropertyCard({
 
         {/* Top right badges */}
         <div className="absolute top-2 right-2 flex gap-1">
+          {propertySiteUrl && (
+            <button
+              type="button"
+              className="flex h-8 w-8 items-center justify-center rounded-md bg-black/65 text-white shadow-sm backdrop-blur-sm transition-colors hover:bg-black/80"
+              title="Compartilhar link do site"
+              onClick={handleShareProperty}
+            >
+              <Share2 className="h-4 w-4" />
+            </button>
+          )}
           {property.status === 'inativo' && (
             <Badge variant="outline" className="bg-background">Inativo</Badge>
           )}
@@ -166,6 +247,18 @@ export function PropertyCard({
                 <Eye className="h-4 w-4 mr-2" />
                 Visualizar
               </DropdownMenuItem>
+              {propertySiteUrl && (
+                <>
+                  <DropdownMenuItem onClick={handleShareProperty}>
+                    <Share2 className="h-4 w-4 mr-2" />
+                    Compartilhar link
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={openPropertySite}>
+                    <ExternalLink className="h-4 w-4 mr-2" />
+                    Abrir no site
+                  </DropdownMenuItem>
+                </>
+              )}
               {canEdit && (
                 <DropdownMenuItem onClick={() => onEdit(property)}>
                   <Pencil className="h-4 w-4 mr-2" />
@@ -180,16 +273,16 @@ export function PropertyCard({
                 </DropdownMenuItem>
               )}
               {canEdit && onToggleVisibility && (
-                <DropdownMenuItem onClick={() => onToggleVisibility(property.id, !isPublic)}>
-                  {isPublic ? (
+                <DropdownMenuItem onClick={() => onToggleVisibility(property.id, !isSitePublished)}>
+                  {isSitePublished ? (
                     <>
                       <Lock className="h-4 w-4 mr-2" />
-                      Tornar Privado
+                      Remover do site
                     </>
                   ) : (
                     <>
                       <Globe className="h-4 w-4 mr-2" />
-                      Tornar Público
+                      Publicar no site
                     </>
                   )}
                 </DropdownMenuItem>
@@ -249,7 +342,7 @@ export function PropertyCard({
         </div>
 
         <p className={`text-lg font-bold ${isSold ? 'text-muted-foreground line-through' : 'text-primary'}`}>
-          {formatPrice(displayPrice, property.tipo_de_negocio)}
+          {formatPrice(displayPrice, isRentalIntent ? 'Aluguel' : property.tipo_de_negocio)}
         </p>
       </CardContent>
     </Card>

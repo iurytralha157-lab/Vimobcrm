@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useCallback, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { SignupPaymentPanel } from "./signup-payment-panel";
 
@@ -46,11 +46,37 @@ type CheckoutPlanChangeResponse = {
 };
 
 type PlanOption = {
+  id?: string;
   slug: string;
   signupPath: "trial" | "paid";
   name: string;
   price: string;
   description: string;
+  billingCycle?: string | null;
+  trialEnabled?: boolean | null;
+  trialDays?: number | null;
+  maxUsers?: number | null;
+  maxWhatsappSessions?: number | null;
+  modules?: string[];
+  features?: string[];
+};
+
+type PublicPlan = {
+  id?: string;
+  slug?: string;
+  name?: string;
+  price?: number;
+  billing_cycle?: string | null;
+  description?: string | null;
+  trial_enabled?: boolean | null;
+  trial_days?: number | null;
+  max_users?: number | null;
+  max_whatsapp_sessions?: number | null;
+  modules?: string[] | null;
+};
+
+type PublicPlansResponse = {
+  data?: PublicPlan[];
 };
 
 const initialFormData: OnboardingData = {
@@ -86,29 +112,134 @@ const countryCodeOptions: CountryCodeOption[] = [
   { label: "PY +595", maxDigits: 9, placeholder: "000 000 000", value: "+595" },
 ];
 
-const planOptions: PlanOption[] = [
+const fallbackPlanOptions: PlanOption[] = [
   {
     slug: "starter-197",
     signupPath: "trial",
     name: "Starter",
     price: "R$ 197/mes",
-    description: "7 dias gratis. CRM, agenda, WhatsApp e Meta.",
+    description: "7 dias gratis. Kanban, dashboard, agenda, WhatsApp, Meta e imoveis.",
+    billingCycle: "monthly",
+    trialEnabled: true,
+    trialDays: 7,
+    maxUsers: 5,
+    maxWhatsappSessions: 5,
+    modules: ["crm", "agenda", "whatsapp", "meta"],
+    features: ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integracao Meta", "Imoveis"],
   },
   {
     slug: "intermediario-297",
     signupPath: "paid",
     name: "Pro",
     price: "R$ 297/mes",
-    description: "Tudo do Starter, com imoveis e site publico.",
+    description: "Tudo do Starter, com site publico.",
+    billingCycle: "monthly",
+    trialEnabled: false,
+    trialDays: null,
+    maxUsers: 10,
+    maxWhatsappSessions: 10,
+    modules: ["crm", "agenda", "whatsapp", "meta", "properties", "site"],
+    features: ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integracao Meta", "Imoveis", "Site"],
   },
   {
     slug: "master-497",
     signupPath: "paid",
     name: "Master",
     price: "R$ 497/mes",
-    description: "Tudo do Pro, com automacoes e integracoes com portais.",
+    description: "Tudo do Pro, com automacoes e mais usuarios.",
+    billingCycle: "monthly",
+    trialEnabled: false,
+    trialDays: null,
+    maxUsers: 20,
+    maxWhatsappSessions: 20,
+    modules: ["crm", "agenda", "whatsapp", "meta", "properties", "site", "automations", "webhooks", "api"],
+    features: ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integracao Meta", "Imoveis", "Site", "Automacoes"],
   },
 ];
+
+function normalizePlanName(name: string) {
+  return name.replace(/^Vimob\s+/i, "").trim() || name;
+}
+
+function formatBillingCycle(cycle?: string | null) {
+  const normalized = String(cycle || "").toLowerCase();
+  if (normalized === "monthly" || normalized === "mensal" || normalized === "month") return "/mes";
+  if (normalized === "yearly" || normalized === "annual" || normalized === "anual" || normalized === "year") return "/ano";
+  return "";
+}
+
+function formatPlanPrice(price?: number, cycle?: string | null) {
+  if (typeof price !== "number" || !Number.isFinite(price)) return "Sob consulta";
+  const formatted = price.toLocaleString("pt-BR", {
+    currency: "BRL",
+    maximumFractionDigits: 0,
+    style: "currency",
+  });
+  return `${formatted}${formatBillingCycle(cycle)}`;
+}
+
+function getPlanFeatures(slug: string, modules: string[]) {
+  const normalizedSlug = slug.toLowerCase();
+  const moduleSet = new Set(modules.map((moduleName) => moduleName.toLowerCase()));
+  const features = ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integracao Meta", "Imoveis"];
+
+  if (moduleSet.has("site") || normalizedSlug.includes("pro") || normalizedSlug.includes("intermediario") || normalizedSlug.includes("master")) {
+    features.push("Site");
+  }
+
+  if (moduleSet.has("automations") || normalizedSlug.includes("master")) {
+    features.push("Automacoes");
+  }
+
+  return features;
+}
+
+function getPlanDisplayDefaults(slug: string) {
+  const normalizedSlug = slug.toLowerCase();
+
+  if (normalizedSlug.includes("master")) {
+    return { maxUsers: 20, maxWhatsappSessions: 20 };
+  }
+
+  if (normalizedSlug.includes("pro") || normalizedSlug.includes("intermediario")) {
+    return { maxUsers: 10, maxWhatsappSessions: 10 };
+  }
+
+  return { maxUsers: 5, maxWhatsappSessions: 5 };
+}
+
+function getDisplayLimit(value: number | null | undefined, fallback: number) {
+  const numericValue = typeof value === "number" && Number.isFinite(value) ? value : 0;
+  return Math.max(numericValue, fallback);
+}
+
+function mapPublicPlan(plan: PublicPlan): PlanOption | null {
+  const slug = plan.slug?.trim();
+  const name = plan.name?.trim();
+
+  if (!slug || !name) return null;
+
+  const trialDays = plan.trial_days ?? null;
+  const isTrial = Boolean(plan.trial_enabled) && Number(trialDays || 0) > 0;
+  const modules = Array.isArray(plan.modules) ? plan.modules.filter(Boolean) : [];
+  const defaults = getPlanDisplayDefaults(slug);
+
+  return {
+    id: plan.id,
+    slug,
+    signupPath: isTrial ? "trial" : "paid",
+    name: normalizePlanName(name),
+    price: formatPlanPrice(plan.price, plan.billing_cycle),
+    description: plan.description?.trim() || "Plano Vimob CRM.",
+    billingCycle: plan.billing_cycle ?? null,
+    trialEnabled: Boolean(plan.trial_enabled),
+    trialDays,
+    maxUsers: getDisplayLimit(plan.max_users, defaults.maxUsers),
+    maxWhatsappSessions: getDisplayLimit(plan.max_whatsapp_sessions, defaults.maxWhatsappSessions),
+    modules,
+    features: getPlanFeatures(slug, modules),
+  };
+}
 
 function onlyDigits(value: string, maxLength = 14) {
   return value.replace(/\D/g, "").slice(0, maxLength);
@@ -354,6 +485,7 @@ export function OnboardingForm() {
   const [createdOrganizationId, setCreatedOrganizationId] = useState<string | null>(null);
   const [isChangingCheckoutPlan, setIsChangingCheckoutPlan] = useState(false);
   const [isUpdatingCheckoutPlan, setIsUpdatingCheckoutPlan] = useState(false);
+  const [planOptions, setPlanOptions] = useState<PlanOption[]>(fallbackPlanOptions);
   const selectedPlan = planOptions.find((plan) => plan.slug === formData.planSlug);
   const shouldShowPaymentPanel = step === 3 && !!selectedPlan;
   const isCheckoutPlanLocked = Boolean(checkoutToken) && !isChangingCheckoutPlan;
@@ -389,6 +521,35 @@ export function OnboardingForm() {
     hasRequiredAccessFields && isPasswordStrong && acceptedLegal && !isSubmitting;
   const canSubmitPlan =
     !!selectedPlan && !isSubmitting && !isUpdatingCheckoutPlan && !checkoutToken;
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadPlans() {
+      try {
+        const response = await fetch("/api/onboarding/plans", {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+        const payload = (await response.json()) as PublicPlansResponse;
+        const nextPlans = (payload.data || [])
+          .map(mapPublicPlan)
+          .filter((plan): plan is PlanOption => Boolean(plan));
+
+        if (isMounted && nextPlans.length > 0) {
+          setPlanOptions(nextPlans);
+        }
+      } catch {
+        if (isMounted) setPlanOptions(fallbackPlanOptions);
+      }
+    }
+
+    void loadPlans();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleAccessPlatform = useCallback(
     async (organizationId?: string | null) => {

@@ -2,6 +2,30 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 const sensitiveAuthParams = ['email', 'password', 'senha', 'pass', 'pwd']
+const protectedRoutes = [
+  '/dashboard',
+  '/pipeline',
+  '/crm',
+  '/agenda',
+  '/properties',
+  '/automations',
+  '/settings',
+  '/notifications',
+  '/help',
+  '/financeiro',
+  '/select-organization',
+  '/admin',
+  '/gamificacao',
+  '/docs',
+]
+const publicAuthRoutes = ['/login', '/cadastro', '/reset-password', '/onboarding']
+const publicAssetPrefixes = [
+  '/icons/',
+  '/images/',
+  '/manifest',
+  '/sw.js',
+  '/workbox-',
+]
 
 function stripSensitiveAuthParams(url: URL) {
   let changed = false
@@ -23,8 +47,23 @@ function getSafeRedirectPath(request: NextRequest) {
   return `${redirectUrl.pathname}${redirectUrl.search}`
 }
 
+function startsWithAny(pathname: string, routes: string[]) {
+  return routes.some((route) => pathname.startsWith(route))
+}
+
+function isPublicAssetPath(pathname: string) {
+  if (publicAssetPrefixes.some((prefix) => pathname.startsWith(prefix))) return true
+  return /\.(?:png|jpg|jpeg|gif|webp|avif|svg|ico|css|js|map|txt|xml|json|woff2?)$/i.test(pathname)
+}
+
 export async function proxy(request: NextRequest) {
-  if (request.nextUrl.pathname.startsWith('/login')) {
+  const pathname = request.nextUrl.pathname
+
+  if (isPublicAssetPath(pathname)) {
+    return NextResponse.next()
+  }
+
+  if (pathname.startsWith('/login')) {
     const cleanLoginUrl = request.nextUrl.clone()
 
     if (stripSensitiveAuthParams(cleanLoginUrl)) {
@@ -37,6 +76,13 @@ export async function proxy(request: NextRequest) {
       headers: request.headers,
     },
   })
+
+  const isProtectedRoute = startsWithAny(pathname, protectedRoutes)
+  const isPublicAuthRoute = startsWithAny(pathname, publicAuthRoutes)
+
+  if (!isProtectedRoute && !isPublicAuthRoute) {
+    return response
+  }
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -60,24 +106,7 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  // List of all protected routes within the (protected) group
-  const protectedRoutes = [
-    '/dashboard',
-    '/pipeline',
-    '/crm',
-    '/agenda',
-    '/properties',
-    '/automations',
-    '/settings',
-    '/notifications',
-    '/help',
-    '/financeiro',
-    '/select-organization',
-    '/admin',
-  ];
-
   // Protected routes - require authentication
-  const isProtectedRoute = protectedRoutes.some(route => request.nextUrl.pathname.startsWith(route));
   if (isProtectedRoute) {
     if (!user) {
       const loginUrl = new URL('/login', request.url)
@@ -88,17 +117,9 @@ export async function proxy(request: NextRequest) {
   }
 
   // Public auth routes - redirect to dashboard if already logged in
-  const publicAuthRoutes = ['/login', '/cadastro', '/reset-password', '/onboarding'];
-  const isPublicAuthRoute = publicAuthRoutes.some(route => request.nextUrl.pathname.startsWith(route));
   if (isPublicAuthRoute) {
     if (user) {
-      const { data: profile } = await supabase
-        .from('users')
-        .select('role')
-        .eq('id', user.id)
-        .maybeSingle()
-
-      return NextResponse.redirect(new URL(profile?.role === 'super_admin' ? '/admin' : '/dashboard', request.url))
+      return NextResponse.redirect(new URL('/dashboard', request.url))
     }
   }
 

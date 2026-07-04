@@ -843,7 +843,7 @@ func (repo Repository) getPublicProperty(ctx context.Context, organizationID str
 		from public.properties p
 		where p.organization_id = $1::uuid
 		  and p.published_on_site = true
-		  and p.status = 'active'
+		  and `+publicPropertyActiveSQL()+`
 		  and (p.code = $2 or p.id::text = $2)
 		limit 1
 	`, args...)
@@ -861,7 +861,7 @@ func (repo Repository) listPublicPropertyTypes(ctx context.Context, organization
 			from public.properties p
 			where p.organization_id = $1::uuid
 			  and p.published_on_site = true
-			  and p.status = 'active'
+			  and `+publicPropertyActiveSQL()+`
 		) items
 		where value is not null
 	`, organizationID)
@@ -875,7 +875,7 @@ func (repo Repository) listPublicCities(ctx context.Context, organizationID stri
 			from public.properties p
 			where p.organization_id = $1::uuid
 			  and p.published_on_site = true
-			  and p.status = 'active'
+			  and `+publicPropertyActiveSQL()+`
 		) items
 		where value is not null
 	`, organizationID)
@@ -896,7 +896,7 @@ func (repo Repository) listPublicNeighborhoods(ctx context.Context, organization
 			from public.properties p
 			where p.organization_id = $1::uuid
 			  and p.published_on_site = true
-			  and p.status = 'active'`+cityFilter+`
+			  and `+publicPropertyActiveSQL()+cityFilter+`
 		) items
 		where value is not null
 	`, args...)
@@ -952,7 +952,7 @@ func publicPropertyWhereClauses(values url.Values, mode string, args *[]any) []s
 	where := []string{
 		"p.organization_id = $1::uuid",
 		"p.published_on_site = true",
-		"p.status = 'active'",
+		publicPropertyActiveSQL(),
 	}
 	add := func(value any, clause string) {
 		*args = append(*args, value)
@@ -1011,6 +1011,10 @@ func publicPropertyWhereClauses(values url.Values, mode string, args *[]any) []s
 	}
 
 	return where
+}
+
+func publicPropertyActiveSQL() string {
+	return "lower(trim(coalesce(p.status, ''))) in ('active', 'ativo')"
 }
 
 func publicPropertyJSONSQL() string {

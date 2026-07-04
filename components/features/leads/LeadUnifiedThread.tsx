@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { format, isSameDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Bot, Loader2, MessageCircle, Mic, Paperclip } from 'lucide-react';
+import { Bot, ExternalLink, Loader2, MessageCircle, Mic, Paperclip } from 'lucide-react';
 import { MessageBox } from '@/components/ui/message-box';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
@@ -79,6 +79,20 @@ function metadataText(value: unknown): string | null {
   return String(value);
 }
 
+function getStageNameFromMetadata(metadata: Record<string, unknown> | null | undefined, direction: 'from' | 'to') {
+  const source: Record<string, unknown> = metadata || {};
+  const keys = direction === 'from'
+    ? ['old_stage_name', 'from_stage_name', 'from_stage', 'old_stage', 'previous_stage_name']
+    : ['new_stage_name', 'to_stage_name', 'to_stage', 'new_stage', 'next_stage_name'];
+
+  for (const key of keys) {
+    const value = metadataText(source[key]);
+    if (value) return value;
+  }
+
+  return '';
+}
+
 function getOutcomeLabel(event: UnifiedHistoryEvent) {
   const outcome = metadataText(event.metadata?.outcome);
   if (!outcome) return null;
@@ -123,7 +137,21 @@ function getLostReason(event: UnifiedHistoryEvent) {
 
 function getEventDetail(event: UnifiedHistoryEvent) {
   const metadata = event.metadata || {};
+  if (event.type === 'meta_form_answer') {
+    return metadataText(metadata.answer) || event.content || null;
+  }
+
   const toStatus = String(metadata.to_status || '').toLowerCase();
+  const isStageChangeEvent = event.type === 'stage_changed' || event.type === 'stage_change';
+  if (isStageChangeEvent) {
+    const from = getStageNameFromMetadata(metadata, 'from');
+    const to = getStageNameFromMetadata(metadata, 'to');
+    const isInitial = !from || ['desconhecido', 'unknown'].includes(from.toLowerCase());
+    if (!isInitial && from && to && !normalizeEventLabel(event).includes(from)) {
+      return `${from} -> ${to}`;
+    }
+  }
+
   const isLostStatusEvent =
     (event.type === 'status_change' && toStatus === 'lost') ||
     /marcado como perdido/i.test(`${event.label || ''} ${event.content || ''}`);
@@ -183,6 +211,11 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
   const metadata = event.metadata || {};
   const searchable = `${label} ${content || ''}`;
 
+  if (event.type === 'meta_form_answer') {
+    const question = metadataText(metadata.question) || label.replace(/^Meta:\s*/i, '');
+    return question ? `Meta: ${question}` : 'Resposta do formulario Meta';
+  }
+
   if (isAttachmentEvent(event)) {
     const fileName = getAttachmentFileName(event);
     return fileName ? `Documento anexado: ${fileName}` : 'Documento anexado';
@@ -239,11 +272,11 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
 
   if (event.type === 'lead_reentry') return 'Lead reentrou';
   if (/movido/i.test(label) || event.type === 'stage_changed' || event.type === 'stage_change') {
-    const from = String(metadata.old_stage_name || metadata.from_stage || '').trim();
-    const to = String(metadata.new_stage_name || metadata.to_stage || '').trim();
+    const from = getStageNameFromMetadata(metadata, 'from');
+    const to = getStageNameFromMetadata(metadata, 'to');
     const isInitial = !from || from.toLowerCase() === 'desconhecido' || from.toLowerCase() === 'unknown';
     if (!isInitial && from && to) {
-      return `Etapa: ${from} ➔ ${to}`;
+      return `Etapa: ${from} -> ${to}`;
     }
     if (to) {
       return `Iniciado no estágio ${to}`;
@@ -314,8 +347,16 @@ function getEventTone(event: UnifiedHistoryEvent) {
     return 'bg-[var(--app-surface-soft)] !text-[var(--app-text-secondary)] ring-1 ring-[var(--app-border)]';
   }
 
+  if (event.type === 'meta_form_answer') {
+    return 'bg-[#1877F2] !text-white';
+  }
+
   if (toStatus === 'lost' || text.includes('perdido') || text.includes('perda')) {
     return 'bg-red-600 !text-white ring-1 ring-red-700';
+  }
+
+  if (toStatus === 'open' || text.includes('reaberto')) {
+    return 'bg-[color-mix(in_srgb,#f59e0b_16%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#f59e0b_72%,var(--app-text-primary))] ring-1 ring-[#f59e0b]/25';
   }
 
   if (toStatus === 'won' || text.includes('ganho') || text.includes('venda conclu')) {
@@ -360,7 +401,7 @@ function EventActor({ event }: { event: UnifiedHistoryEvent }) {
   return (
     <Avatar className="h-5 w-5 shrink-0 border-0" title={event.actor.name}>
       <AvatarImage src={event.actor.avatar_url || undefined} />
-      <AvatarFallback className="bg-[var(--app-surface-soft)] text-[9px] text-[var(--app-text-secondary)]">
+      <AvatarFallback className="bg-[#FF4529] text-[9px] text-white">
         {event.actor.name?.[0]?.toUpperCase() || 'U'}
       </AvatarFallback>
     </Avatar>
@@ -378,6 +419,115 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
   const detail = getEventDetail(event);
   const toneClass = getEventTone(event);
   const isSolidTone = toneClass.includes('!text-white');
+
+  if (event.type === 'meta_form_answer') {
+    const metadata = event.metadata || {};
+    const question = metadataText(metadata.question) || normalizeEventLabel(event).replace(/^Meta:\s*/i, '');
+    const answer = detail || event.content || '';
+
+    return (
+      <div className="flex justify-end px-2">
+        <div className="max-w-[88%] rounded-[8px] bg-[#1877F2] px-3 py-2 text-right text-white shadow-sm">
+          <div className="text-[9px] font-medium uppercase tracking-wide text-white/70">
+            Meta Lead Ads
+          </div>
+          <div className="mt-0.5 text-[10px] font-medium uppercase leading-snug text-white/90">
+            {question}
+          </div>
+          {answer && (
+            <div className="mt-2 rounded-[6px] bg-white/[0.16] px-2.5 py-1.5 text-[12px] font-semibold leading-snug text-white">
+              {answer}
+            </div>
+          )}
+          <div className="mt-1.5 text-[9px] text-white/65">
+            {format(new Date(event.timestamp), 'HH:mm', { locale: ptBR })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (event.type === 'meta_creative') {
+    const metadata = event.metadata || {};
+    const imageUrl = metadataText(metadata.creative_url);
+    const videoUrl = metadataText(metadata.creative_video_url);
+    const sourceType = metadataText(metadata.source_type);
+    const isClickToWhatsApp = sourceType === 'whatsapp_click_to_message' || metadataText(metadata.channel) === 'whatsapp';
+    const linkUrl =
+      metadataText(metadata.creative_link_url) ||
+      metadataText(metadata.creative_instagram_url) ||
+      metadataText(metadata.creative_destination_url) ||
+      imageUrl ||
+      videoUrl;
+    const creativeName = metadataText(metadata.creative_name) || metadataText(metadata.ad_name) || 'Criativo do anuncio';
+    const destinationUrl = metadataText(metadata.creative_destination_url);
+
+    return (
+      <div className="flex justify-end px-2">
+        <div className="max-w-[88%] overflow-hidden rounded-[8px] bg-[#1877F2] text-right text-white shadow-sm">
+          <div className="px-3 pt-2">
+            <div className="text-[9px] font-medium uppercase tracking-wide text-white/70">
+              {isClickToWhatsApp ? 'Meta Click to WhatsApp' : 'Meta Lead Ads'}
+            </div>
+            <div className="mt-0.5 text-[10px] font-medium uppercase leading-snug text-white/90">
+              Criativo do anuncio
+            </div>
+          </div>
+
+          {(videoUrl || imageUrl) && (
+            <div className="mt-2 bg-black/15">
+              {videoUrl ? (
+                <video
+                  src={videoUrl}
+                  poster={imageUrl || undefined}
+                  controls
+                  preload="metadata"
+                  className="max-h-[190px] w-full bg-black object-contain"
+                />
+              ) : imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element -- Meta creative URLs are external, signed and not part of Next image config.
+                <img
+                  src={imageUrl}
+                  alt={creativeName}
+                  className="max-h-[190px] w-full object-cover"
+                />
+              ) : null}
+            </div>
+          )}
+
+          <div className="space-y-2 px-3 py-2">
+            <div className="flex flex-wrap justify-end gap-1.5">
+              {linkUrl && (
+                <a
+                  href={linkUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 rounded-[6px] bg-white/[0.16] px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-white/[0.24]"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  Ver criativo
+                </a>
+              )}
+              {destinationUrl && destinationUrl !== linkUrl && (
+                <a
+                  href={destinationUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 rounded-[6px] bg-white/[0.12] px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-white/[0.2]"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  Link do anuncio
+                </a>
+              )}
+            </div>
+            <div className="text-[9px] text-white/65">
+              {format(new Date(event.timestamp), 'HH:mm', { locale: ptBR })}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const bubble = (
     <div
@@ -435,7 +585,7 @@ function FeedbackBubble({ event }: { event: UnifiedHistoryEvent }) {
       </div>
       <Avatar className="h-6 w-6 shrink-0 border-0" title={actorName}>
         <AvatarImage src={event.actor?.avatar_url || undefined} />
-        <AvatarFallback className="bg-[var(--app-surface)] text-[10px] text-[var(--app-text-secondary)]">
+        <AvatarFallback className="bg-[#FF4529] text-[10px] text-white">
           {actorName[0]?.toUpperCase() || 'F'}
         </AvatarFallback>
       </Avatar>
@@ -531,7 +681,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     : leadHasNoWhatsApp
       ? 'Este lead nao tem WhatsApp'
       : !hasConnectedSession
-        ? 'Conecte uma conta de WhatsApp para enviar'
+        ? 'Conecte um WhatsApp para enviar'
         : !conversation
           ? 'Digite para iniciar a conversa com este lead'
           : !conversationSessionConnected
@@ -658,7 +808,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
           <div ref={bottomRef} />
         </div>
 
-        <div className="border-t border-[var(--app-border)] bg-[var(--app-surface-solid)] p-3">
+        <div className="bg-transparent px-3 pb-3 pt-2">
           <MessageBox
             value={text}
             onChange={setText}
@@ -676,7 +826,6 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
             inputRef={textareaRef}
             compact
             showRightActionsWhenEmpty
-            className="bg-[var(--app-surface-soft)] focus-within:bg-[var(--app-surface-hover)] dark:bg-[#242424] dark:focus-within:bg-[#292929]"
             leftActions={
               <button type="button" disabled title="Anexar midia">
                 <Paperclip className="h-4 w-4" />

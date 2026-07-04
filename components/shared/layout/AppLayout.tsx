@@ -1,4 +1,5 @@
-import { ReactNode } from 'react';
+import { ReactNode, useEffect } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { AppSidebar } from './AppSidebar';
 import { AppHeader } from './AppHeader';
@@ -13,6 +14,7 @@ import { LeadRealtimeBus } from '@/contexts/LeadRealtimeBus';
 import { BackendRealtimeBus } from '@/contexts/BackendRealtimeBus';
 import { InstallPrompt } from '@/components/features/pwa/InstallPrompt';
 import { WebPushPrompt } from '@/components/features/pwa/WebPushPrompt';
+import { SetupGuideDialog, SetupGuideTour } from '@/components/features/setup-guide';
 import { useWhatsAppHealthMonitor } from '@/hooks/use-whatsapp-health-monitor';
 import { usePushNotifications } from '@/hooks/use-push-notifications';
 import { usePhoneReminder } from '@/hooks/use-phone-reminder';
@@ -103,13 +105,48 @@ function AppLayoutContent({ children, title, disableMainScroll = false, borderle
 
       <InstallPrompt />
       <WebPushPrompt />
+      <SetupGuideDialog />
+      <SetupGuideTour />
     </div>
   );
 }
 
 export function AppLayout({ children, title, disableMainScroll = false, borderless = false }: AppLayoutProps) {
-  const { organization, isSuperAdmin, impersonating } = useAuth();
-  const allowRender = !!organization || isSuperAdmin || !!impersonating;
+  const {
+    organization,
+    user,
+    isSuperAdmin,
+    impersonating,
+    loading,
+    authInitialized,
+    organizationsLoaded,
+    isInitializingOrg,
+    userOrganizations,
+  } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const allowDashboardShell = Boolean(user && authInitialized && !loading && pathname?.startsWith('/dashboard'));
+  const allowRender = !!organization || isSuperAdmin || !!impersonating || allowDashboardShell;
+
+  useEffect(() => {
+    if (allowRender || loading || !authInitialized || !organizationsLoaded || isInitializingOrg) return;
+
+    const hasSelectableOrganization = userOrganizations.some((org) => org.is_active);
+    if (!hasSelectableOrganization) return;
+
+    const redirectTo = pathname || '/dashboard';
+    const params = new URLSearchParams({ redirectTo });
+    router.replace(`/select-organization?${params.toString()}`);
+  }, [
+    allowRender,
+    authInitialized,
+    isInitializingOrg,
+    loading,
+    organizationsLoaded,
+    pathname,
+    router,
+    userOrganizations,
+  ]);
 
   if (!allowRender) {
     return (

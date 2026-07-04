@@ -39,14 +39,14 @@ type Automation struct {
 }
 
 type AutomationNode struct {
-	ID         string          `json:"id"`
-	AutomationID string       `json:"automation_id"`
-	NodeType   string          `json:"node_type"`
-	ActionType *string         `json:"action_type"`
-	Config     json.RawMessage `json:"config"`
-	PositionX  float64         `json:"position_x"`
-	PositionY  float64         `json:"position_y"`
-	CreatedAt  string          `json:"created_at"`
+	ID           string          `json:"id"`
+	AutomationID string          `json:"automation_id"`
+	NodeType     string          `json:"node_type"`
+	ActionType   *string         `json:"action_type"`
+	Config       json.RawMessage `json:"config"`
+	PositionX    float64         `json:"position_x"`
+	PositionY    float64         `json:"position_y"`
+	CreatedAt    string          `json:"created_at"`
 }
 
 type AutomationConnection struct {
@@ -66,9 +66,9 @@ type AutomationWithNodes struct {
 
 type AutomationTemplate struct {
 	ID             string  `json:"id"`
-	OrganizationID string `json:"organization_id"`
-	Name           string `json:"name"`
-	Content        string `json:"content"`
+	OrganizationID string  `json:"organization_id"`
+	Name           string  `json:"name"`
+	Content        string  `json:"content"`
 	MediaURL       *string `json:"media_url"`
 	MediaType      *string `json:"media_type"`
 	CreatedBy      *string `json:"created_by"`
@@ -150,13 +150,13 @@ type UpdateRequest struct {
 }
 
 type UpdateInput struct {
-	Name             *string
-	Description      *string
-	DescriptionSet   bool
-	IsActive         *bool
-	TriggerType      *string
-	TriggerConfig    *json.RawMessage
-	FlowDefinition   *json.RawMessage
+	Name           *string
+	Description    *string
+	DescriptionSet bool
+	IsActive       *bool
+	TriggerType    *string
+	TriggerConfig  *json.RawMessage
+	FlowDefinition *json.RawMessage
 }
 
 type SaveFlowRequest struct {

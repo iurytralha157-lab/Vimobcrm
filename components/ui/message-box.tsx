@@ -83,15 +83,14 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
       <div
         ref={ref}
         className={cn(
-          "flex min-h-[48px] w-full items-end gap-2 rounded-[8px] bg-[rgb(15_23_42/0.065)] px-2 py-2 text-sm shadow-none transition-colors focus-within:bg-[rgb(15_23_42/0.085)]",
-          "dark:bg-[#242424] dark:focus-within:bg-[#292929]",
-          compact && "min-h-[40px] px-1.5 py-1.5",
-          disabled && "opacity-70",
+          "flex min-h-[46px] w-full items-center gap-2 rounded-[8px] bg-[var(--app-surface-hover)] px-2 py-2 text-sm text-[var(--app-text-primary)] shadow-none outline-none transition-colors focus-within:bg-[var(--app-surface-hover)] focus-within:outline-none",
+          compact && "min-h-[42px] px-2 py-1.5",
+          disabled && "!bg-[var(--app-surface-hover)] !text-[var(--app-text-tertiary)]",
           className
         )}
       >
         {leftActions && (
-          <div className="flex h-9 shrink-0 items-center gap-1 [&_button]:inline-flex [&_button]:h-9 [&_button]:w-9 [&_button]:items-center [&_button]:justify-center [&_button]:rounded-[6px] [&_button]:text-muted-foreground [&_button]:transition-colors [&_button]:hover:bg-white/5 [&_button]:disabled:pointer-events-none [&_button]:disabled:opacity-40">
+          <div className="flex h-8 shrink-0 items-center gap-1 [&_button]:inline-flex [&_button]:h-8 [&_button]:w-8 [&_button]:items-center [&_button]:justify-center [&_button]:rounded-[6px] [&_button]:text-[var(--app-text-tertiary)] [&_button]:transition-colors [&_button]:hover:bg-[var(--app-surface-muted)] [&_button]:hover:text-[var(--app-text-primary)] [&_button]:disabled:pointer-events-none [&_button]:disabled:opacity-45">
             {leftActions}
           </div>
         )}
@@ -109,8 +108,9 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
             onKeyDown={handleKeyDown}
             disabled={disabled}
             className={cn(
-              "min-h-8 max-h-40 flex-1 resize-none bg-transparent px-1 py-1.5 text-sm font-light leading-5 text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed",
-              compact && "py-1 text-xs"
+              "min-h-8 max-h-32 flex-1 resize-none overflow-y-auto !bg-transparent px-1 py-1.5 text-[13px] font-light leading-5 text-current outline-none [scrollbar-width:none] [-ms-overflow-style:none] placeholder:text-[11px] placeholder:leading-5 placeholder:text-[var(--app-text-tertiary)] disabled:cursor-not-allowed disabled:text-current disabled:opacity-100 [&::-webkit-scrollbar]:hidden",
+              compact && "min-h-8 py-1.5 text-xs leading-5 placeholder:text-[10.5px]",
+              disabled && "overflow-hidden"
             )}
             rows={1}
             autoComplete="off"
@@ -125,8 +125,8 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
             onKeyDown={handleKeyDown}
             disabled={disabled}
             className={cn(
-              "h-8 flex-1 bg-transparent px-1 text-sm font-light text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed",
-              compact && "text-xs"
+              "h-8 flex-1 !bg-transparent px-1 text-[13px] font-light leading-8 text-current outline-none placeholder:text-[11px] placeholder:text-[var(--app-text-tertiary)] disabled:cursor-not-allowed disabled:text-current disabled:opacity-100",
+              compact && "h-8 text-xs placeholder:text-[10.5px]"
             )}
             autoComplete="off"
           />
@@ -135,7 +135,7 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
         {showSendButton ? (
           <button
             className={cn(
-              "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[7px] bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-45",
+              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[7px] bg-[#FF4529] text-white transition-colors hover:bg-[#ff5a42] disabled:pointer-events-none disabled:opacity-40",
               compact && "h-8 w-8"
             )}
             onClick={onSend}
@@ -149,7 +149,7 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
             )}
           </button>
         ) : (
-          <div className="flex h-9 shrink-0 items-center gap-1 [&_button]:inline-flex [&_button]:h-9 [&_button]:w-9 [&_button]:items-center [&_button]:justify-center [&_button]:rounded-[6px] [&_button]:text-muted-foreground [&_button]:transition-colors [&_button]:hover:bg-white/5 [&_button]:disabled:pointer-events-none [&_button]:disabled:opacity-40">
+          <div className="flex h-8 shrink-0 items-center gap-1 [&_button]:inline-flex [&_button]:h-8 [&_button]:w-8 [&_button]:items-center [&_button]:justify-center [&_button]:rounded-[6px] [&_button]:text-[var(--app-text-tertiary)] [&_button]:transition-colors [&_button]:hover:bg-[var(--app-surface-muted)] [&_button]:hover:text-[var(--app-text-primary)] [&_button]:disabled:pointer-events-none [&_button]:disabled:opacity-45">
             {rightActions}
           </div>
         )}

@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -17,6 +17,7 @@ import {
   type GamificationSeason,
   type GamificationManualEntry,
 } from '@/lib/api/gamification';
+import { createClient } from '@/lib/supabase/client';
 
 export type {
   GamificationAdminSnapshot,
@@ -34,6 +35,7 @@ export type {
 export function useGamificationOverview() {
   const { organization } = useAuth();
   const organizationId = organization?.id;
+  const queryClient = useQueryClient();
 
   const query = useQuery({
     queryKey: ['gamification-overview', organizationId],
@@ -66,8 +68,42 @@ export function useGamificationOverview() {
       return gamificationAPI.getOverview(organizationId);
     },
     enabled: !!organizationId,
-    staleTime: 1000 * 60 * 2,
+    staleTime: 1000 * 3,
+    refetchInterval: 1000 * 5,
+    refetchIntervalInBackground: false,
   });
+
+  useEffect(() => {
+    if (!organizationId) return;
+
+    const supabase = createClient();
+    const invalidateOverview = () => {
+      void queryClient.invalidateQueries({ queryKey: ['gamification-overview', organizationId] });
+    };
+
+    const channel = supabase
+      .channel(`gamification-live:${organizationId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'gamification_events', filter: `organization_id=eq.${organizationId}` },
+        invalidateOverview,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'user_gamification_stats', filter: `organization_id=eq.${organizationId}` },
+        invalidateOverview,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'gamification_participants', filter: `organization_id=eq.${organizationId}` },
+        invalidateOverview,
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [organizationId, queryClient]);
 
   return useMemo(
     () => ({

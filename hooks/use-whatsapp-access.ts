@@ -2,8 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { whatsappAPI } from "@/lib/api/whatsapp";
 
-export function useHasWhatsAppAccess() {
+export function useHasWhatsAppAccess(options?: { enabled?: boolean }) {
   const { profile } = useAuth();
+  const shouldFetch = options?.enabled ?? true;
 
   return useQuery({
     queryKey: ["whatsapp-access-check", profile?.id, profile?.organization_id, profile?.role],
@@ -12,7 +13,9 @@ export function useHasWhatsAppAccess() {
       const response = await whatsappAPI.getSessions(profile.organization_id);
       return response.data.length > 0;
     },
-    enabled: !!profile?.id && !!profile?.organization_id,
+    enabled: shouldFetch && !!profile?.id && !!profile?.organization_id,
     staleTime: 1000 * 60 * 2,
+    gcTime: 1000 * 60 * 10,
+    refetchOnWindowFocus: false,
   });
 }

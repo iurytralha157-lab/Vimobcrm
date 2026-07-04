@@ -30,6 +30,7 @@ type scanner interface {
 type destination struct {
 	PipelineID *string
 	StageID    *string
+	StageName  *string
 }
 
 type CreateResult struct {
@@ -58,6 +59,7 @@ type leadSnapshot struct {
 	AssignedUserID string
 	PipelineID     string
 	StageID        string
+	StageName      string
 	DealStatus     string
 	LostReason     string
 	InterestValue  string
@@ -515,6 +517,8 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 		if err := repo.insertActivity(ctx, tx, tenantContext.OrganizationID, updatedID, tenantContext.UserID, "stage_change", fmt.Sprintf(`Lead "%s" movido de etapa`, current.Name), map[string]any{
 			"from_stage_id": nullableString(current.StageID),
 			"to_stage_id":   *resolvedDestination.StageID,
+			"from_stage":    nullableString(current.StageName),
+			"to_stage":      nullable(resolvedDestination.StageName),
 			"from_pipeline": nullableString(current.PipelineID),
 			"to_pipeline":   *resolvedDestination.PipelineID,
 		}); err != nil {
@@ -1178,9 +1182,10 @@ func (repo Repository) resolveDestination(ctx context.Context, organizationID st
 	if stageID != nil {
 		var resolvedStageID string
 		var resolvedPipelineID string
+		var resolvedStageName string
 
 		err := repo.db.Pool().QueryRow(ctx, `
-			select s.id::text, s.pipeline_id::text
+			select s.id::text, s.pipeline_id::text, s.name
 			from public.stages s
 			join public.pipelines p on p.id = s.pipeline_id
 			where s.id = $1::uuid
@@ -1189,7 +1194,7 @@ func (repo Repository) resolveDestination(ctx context.Context, organizationID st
 			  and s.is_active = true
 			  and p.is_active = true
 			limit 1
-		`, *stageID, organizationID).Scan(&resolvedStageID, &resolvedPipelineID)
+		`, *stageID, organizationID).Scan(&resolvedStageID, &resolvedPipelineID, &resolvedStageName)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return destination{}, ErrInvalidReference
 		}
@@ -1201,16 +1206,25 @@ func (repo Repository) resolveDestination(ctx context.Context, organizationID st
 			return destination{}, ErrInvalidReference
 		}
 
-		return destination{PipelineID: &resolvedPipelineID, StageID: &resolvedStageID}, nil
+		return destination{PipelineID: &resolvedPipelineID, StageID: &resolvedStageID, StageName: &resolvedStageName}, nil
 	}
 
 	if pipelineID != nil {
 		var resolvedPipelineID string
 		var resolvedStageID pgtype.Text
+		var resolvedStageName pgtype.Text
 
 		err := repo.db.Pool().QueryRow(ctx, `
 			select p.id::text, (
 				select s.id::text
+				from public.stages s
+				where s.pipeline_id = p.id
+				  and s.organization_id = p.organization_id
+				  and s.is_active = true
+				order by s.position asc, s.created_at asc
+				limit 1
+			), (
+				select s.name
 				from public.stages s
 				where s.pipeline_id = p.id
 				  and s.organization_id = p.organization_id
@@ -1223,7 +1237,7 @@ func (repo Repository) resolveDestination(ctx context.Context, organizationID st
 			  and p.organization_id = $2::uuid
 			  and p.is_active = true
 			limit 1
-		`, *pipelineID, organizationID).Scan(&resolvedPipelineID, &resolvedStageID)
+		`, *pipelineID, organizationID).Scan(&resolvedPipelineID, &resolvedStageID, &resolvedStageName)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return destination{}, ErrInvalidReference
 		}
@@ -1232,7 +1246,7 @@ func (repo Repository) resolveDestination(ctx context.Context, organizationID st
 		}
 
 		if resolvedStageID.Valid {
-			return destination{PipelineID: &resolvedPipelineID, StageID: &resolvedStageID.String}, nil
+			return destination{PipelineID: &resolvedPipelineID, StageID: &resolvedStageID.String, StageName: textPointer(resolvedStageName)}, nil
 		}
 
 		return destination{PipelineID: &resolvedPipelineID}, nil
@@ -1240,10 +1254,19 @@ func (repo Repository) resolveDestination(ctx context.Context, organizationID st
 
 	var resolvedPipelineID pgtype.Text
 	var resolvedStageID pgtype.Text
+	var resolvedStageName pgtype.Text
 
 	err := repo.db.Pool().QueryRow(ctx, `
 		select p.id::text, (
 			select s.id::text
+			from public.stages s
+			where s.pipeline_id = p.id
+			  and s.organization_id = p.organization_id
+			  and s.is_active = true
+			order by s.position asc, s.created_at asc
+			limit 1
+		), (
+			select s.name
 			from public.stages s
 			where s.pipeline_id = p.id
 			  and s.organization_id = p.organization_id
@@ -1256,7 +1279,7 @@ func (repo Repository) resolveDestination(ctx context.Context, organizationID st
 		  and p.is_active = true
 		order by p.is_default desc, p.position asc, p.created_at asc
 		limit 1
-	`, organizationID).Scan(&resolvedPipelineID, &resolvedStageID)
+	`, organizationID).Scan(&resolvedPipelineID, &resolvedStageID, &resolvedStageName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return destination{}, nil
 	}
@@ -1270,6 +1293,9 @@ func (repo Repository) resolveDestination(ctx context.Context, organizationID st
 	}
 	if resolvedStageID.Valid {
 		out.StageID = &resolvedStageID.String
+	}
+	if resolvedStageName.Valid && strings.TrimSpace(resolvedStageName.String) != "" {
+		out.StageName = &resolvedStageName.String
 	}
 
 	return out, nil
@@ -1362,14 +1388,40 @@ func (repo Repository) transferLeadAssignee(ctx context.Context, tx pgx.Tx, tena
 		return err
 	}
 
+	usesCanonicalLog, err := repo.assignmentLogUsesCanonicalSchema(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if usesCanonicalLog {
+		_, err = tx.Exec(ctx, `
+			insert into public.assignments_log (
+				organization_id,
+				lead_id,
+				old_user_id,
+				new_user_id,
+				reason,
+				created_by
+			)
+			values (
+				$1::uuid,
+				$2::uuid,
+				$3::uuid,
+				$4::uuid,
+				$5,
+				$6::uuid
+			)
+		`, tenantContext.OrganizationID, current.ID, nullableString(current.AssignedUserID), nullable(assignedUserID), reason, tenantContext.UserID)
+		return err
+	}
+
 	_, err = tx.Exec(ctx, `
 		insert into public.assignments_log (
 			organization_id,
 			lead_id,
-			old_user_id,
-			new_user_id,
+			assigned_user_id,
+			user_id,
 			reason,
-			created_by
+			assigned_at
 		)
 		values (
 			$1::uuid,
@@ -1377,10 +1429,44 @@ func (repo Repository) transferLeadAssignee(ctx context.Context, tx pgx.Tx, tena
 			$3::uuid,
 			$4::uuid,
 			$5,
-			$6::uuid
+			now()
 		)
-	`, tenantContext.OrganizationID, current.ID, nullableString(current.AssignedUserID), nullable(assignedUserID), reason, tenantContext.UserID)
+	`, tenantContext.OrganizationID, current.ID, nullable(assignedUserID), nullableString(tenantContext.UserID), reason)
 	return err
+}
+
+func (repo Repository) assignmentLogUsesCanonicalSchema(ctx context.Context, tx pgx.Tx) (bool, error) {
+	var hasOldUser bool
+	var hasNewUser bool
+	var hasCreatedBy bool
+	err := tx.QueryRow(ctx, `
+		select
+			exists (
+				select 1
+				from information_schema.columns
+				where table_schema = 'public'
+				  and table_name = 'assignments_log'
+				  and column_name = 'old_user_id'
+			),
+			exists (
+				select 1
+				from information_schema.columns
+				where table_schema = 'public'
+				  and table_name = 'assignments_log'
+				  and column_name = 'new_user_id'
+			),
+			exists (
+				select 1
+				from information_schema.columns
+				where table_schema = 'public'
+				  and table_name = 'assignments_log'
+				  and column_name = 'created_by'
+			)
+	`).Scan(&hasOldUser, &hasNewUser, &hasCreatedBy)
+	if err != nil {
+		return false, err
+	}
+	return hasOldUser && hasNewUser && hasCreatedBy, nil
 }
 
 func (repo Repository) validateProperty(ctx context.Context, tx pgx.Tx, organizationID string, propertyID *string) error {
@@ -1409,24 +1495,28 @@ func (repo Repository) validateProperty(ctx context.Context, tx pgx.Tx, organiza
 
 func (repo Repository) getLeadSnapshotForUpdate(ctx context.Context, tx pgx.Tx, organizationID string, leadID string) (leadSnapshot, error) {
 	var snapshot leadSnapshot
-	var phone, assignedUserID, pipelineID, stageID, lostReason, interestValue pgtype.Text
+	var phone, assignedUserID, pipelineID, stageID, stageName, lostReason, interestValue pgtype.Text
 
 	err := tx.QueryRow(ctx, `
 		select
-			id::text,
-			name,
-			phone,
-			assigned_user_id::text,
-			pipeline_id::text,
-			stage_id::text,
-			deal_status,
-			lost_reason,
-			valor_interesse::text
-		from public.leads
-		where organization_id = $1::uuid
-		  and id = $2::uuid
+			l.id::text,
+			l.name,
+			l.phone,
+			l.assigned_user_id::text,
+			l.pipeline_id::text,
+			l.stage_id::text,
+			s.name,
+			l.deal_status,
+			l.lost_reason,
+			l.valor_interesse::text
+		from public.leads l
+		left join public.stages s
+		  on s.id = l.stage_id
+		 and s.organization_id = l.organization_id
+		where l.organization_id = $1::uuid
+		  and l.id = $2::uuid
 		limit 1
-	`, organizationID, leadID).Scan(&snapshot.ID, &snapshot.Name, &phone, &assignedUserID, &pipelineID, &stageID, &snapshot.DealStatus, &lostReason, &interestValue)
+	`, organizationID, leadID).Scan(&snapshot.ID, &snapshot.Name, &phone, &assignedUserID, &pipelineID, &stageID, &stageName, &snapshot.DealStatus, &lostReason, &interestValue)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return leadSnapshot{}, ErrLeadNotFound
 	}
@@ -1438,6 +1528,7 @@ func (repo Repository) getLeadSnapshotForUpdate(ctx context.Context, tx pgx.Tx, 
 	snapshot.AssignedUserID = textValue(assignedUserID)
 	snapshot.PipelineID = textValue(pipelineID)
 	snapshot.StageID = textValue(stageID)
+	snapshot.StageName = textValue(stageName)
 	snapshot.LostReason = textValue(lostReason)
 	snapshot.InterestValue = textValue(interestValue)
 
@@ -2077,6 +2168,14 @@ func textValue(value pgtype.Text) string {
 	}
 
 	return value.String
+}
+
+func textPointer(value pgtype.Text) *string {
+	if !value.Valid || strings.TrimSpace(value.String) == "" {
+		return nil
+	}
+
+	return &value.String
 }
 
 func textValueWithDefault(value pgtype.Text, fallback string) string {

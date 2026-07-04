@@ -32,6 +32,8 @@ const SIDEBAR_ICON_STROKE = 1.32;
 const SIDEBAR_CHEVRON_STROKE = 1.4;
 const SIDEBAR_NAV_RESET =
   "border-0 shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0";
+const SIDEBAR_NAV_TEXT = "font-sans text-sm font-extralight leading-none tracking-wide";
+const SIDEBAR_NAV_CHILD_TEXT = "font-sans text-sm font-extralight leading-none tracking-wide";
 
 interface NavItem {
   icon: React.ElementType;
@@ -131,6 +133,10 @@ const allNavItems: NavItem[] = [
       icon: MapPin,
       labelKey: 'propertiesLocations',
       path: '/properties/locations'
+    }, {
+      icon: Users,
+      labelKey: 'propertiesOwners',
+      path: '/properties/owners'
     }]
   }, {
     icon: Calendar,
@@ -211,6 +217,11 @@ const allNavItems: NavItem[] = [
       icon: History,
       labelKey: 'history',
       path: '/gamificacao#history'
+    }, {
+      icon: Settings,
+      labelKey: 'arenaSettings',
+      path: '/gamificacao#config',
+      adminOnly: true
     }]
   }
 ];
@@ -238,6 +249,11 @@ const bottomItems: NavItem[] = [
       icon: Plug,
       labelKey: 'settingsIntegrations',
       path: '/settings?tab=integrations'
+    }, {
+      icon: Building2,
+      labelKey: 'settingsProperties',
+      path: '/settings?tab=properties',
+      adminOnly: true
     }, {
       icon: Globe,
       labelKey: 'site',
@@ -412,7 +428,8 @@ export const AppSidebar = React.memo(function AppSidebar() {
           <DropdownMenuTrigger asChild>
             <button
               className={cn(
-                "flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-sm font-extralight tracking-wide transition-colors",
+                "flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 transition-colors",
+                SIDEBAR_NAV_TEXT,
                 SIDEBAR_NAV_RESET,
                 "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
                 isActive && "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal",
@@ -453,10 +470,10 @@ export const AppSidebar = React.memo(function AppSidebar() {
                   <Link
                     href={child.path}
                     onPointerDown={() => setPendingPath(child.path)}
-                    className={cn("flex w-full items-center gap-3 px-3 py-2.5", SIDEBAR_NAV_RESET)}
+                    className={cn("flex w-full items-center gap-3 px-3 py-2.5", SIDEBAR_NAV_CHILD_TEXT, SIDEBAR_NAV_RESET)}
                   >
                     <ChildIcon className="h-4 w-4 flex-shrink-0" strokeWidth={SIDEBAR_ICON_STROKE} />
-                    <span className="text-sm font-extralight tracking-wide">{getLabel(child.labelKey)}</span>
+                    <span>{getLabel(child.labelKey)}</span>
                   </Link>
                 </DropdownMenuItem>
               );
@@ -471,7 +488,8 @@ export const AppSidebar = React.memo(function AppSidebar() {
         href={item.path}
         onPointerDown={() => setPendingPath(item.path)}
         className={cn(
-          "flex items-center gap-3 rounded-[6px] px-3 py-2.5 text-sm font-extralight tracking-wide transition-colors",
+          "flex items-center gap-3 rounded-[6px] px-3 py-2.5 transition-colors",
+          SIDEBAR_NAV_TEXT,
           SIDEBAR_NAV_RESET,
           "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
           isActive && "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal",

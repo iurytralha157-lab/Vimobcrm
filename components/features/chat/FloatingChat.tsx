@@ -243,6 +243,7 @@ export function FloatingChat() {
   const activeConversationIsGroup = activeConversation?.is_group;
   const pathname = usePathname();
   const shouldSyncFloatingChat = isOpen && pathname !== "/crm/conversas";
+  const shouldLoadFloatingChatData = isOpen || Boolean(pendingPhone) || Boolean(activeConversation);
   const activeConversationReadTarget = useMemo(() => (
     activeConversationId && activeConversationSessionId && activeConversationRemoteJid
       ? {
@@ -263,7 +264,7 @@ export function FloatingChat() {
   const {
     data: sessions,
     isLoading: loadingSessions
-  } = useAccessibleSessions();
+  } = useAccessibleSessions({ enabled: shouldLoadFloatingChatData });
   const {
     data: conversations,
     isLoading: loadingConversations
@@ -313,7 +314,7 @@ export function FloatingChat() {
   const { mutate: markConversationAsRead } = useMarkConversationAsRead();
   const startConversation = useStartConversation();
   const findConversation = useFindConversationByPhone();
-  const { data: hasWhatsAppAccess } = useHasWhatsAppAccess();
+  const { data: hasWhatsAppAccess } = useHasWhatsAppAccess({ enabled: shouldLoadFloatingChatData });
   const router = useRouter();
 
   useWhatsAppRealtimeConversations(shouldSyncFloatingChat);
@@ -1104,7 +1105,6 @@ export function FloatingChat() {
         isSending={sendMessage.isPending}
         multiline
         inputRef={messageInputRef}
-        className="bg-[var(--app-surface-soft)] focus-within:bg-[var(--app-surface-hover)] dark:bg-[#242424] dark:focus-within:bg-[#292929]"
         showRightActionsWhenEmpty
         leftActions={
           <>

@@ -37,7 +37,7 @@ export default function ProtectedError({
 
   return (
     <main className="min-h-screen bg-background text-foreground flex items-center justify-center px-4 py-10">
-      <section className="w-full max-w-lg rounded-lg border border-white/10 bg-[var(--app-surface)] p-6 text-center shadow-2xl">
+      <section className="w-full max-w-lg rounded-lg border-0 bg-[var(--app-surface)] p-6 text-center shadow-none">
         <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
           <AlertCircle className="h-6 w-6" aria-hidden="true" />
         </div>

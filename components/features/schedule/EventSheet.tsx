@@ -65,6 +65,14 @@ const visibilityOptions: { value: ScheduleEventVisibility; label: string }[] = [
 
 type RecurrenceRule = (typeof recurrenceOptions)[number]["value"];
 
+const agendaFieldClass =
+  "rounded-[8px] border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] shadow-none outline-none ring-0 placeholder:text-[var(--app-text-tertiary)] focus-visible:ring-1 focus-visible:ring-primary/30 focus-visible:ring-offset-0";
+const agendaControlClass =
+  "border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] shadow-none outline-none ring-0 transition-colors hover:bg-[var(--app-surface-hover)] focus:ring-0 focus-visible:ring-1 focus-visible:ring-primary/30";
+const agendaMutedTextClass = "text-[var(--app-text-tertiary)]";
+const agendaPopoverClass =
+  "border-0 bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] shadow-none";
+
 function isRecurrenceRule(value: string | null | undefined): value is RecurrenceRule {
   return value === "none" || value === "weekly" || value === "monthly" || value === "yearly";
 }
@@ -357,9 +365,10 @@ export function EventSheet({
     <>
       <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
+        data-tour="agenda-event-sheet"
         side="right"
         overlayClassName="bg-black/35"
-        className="!h-auto !w-[calc(100vw-24px)] !max-w-[560px] flex max-h-[78vh] flex-col overflow-hidden rounded-[24px] border-0 bg-[#090909]/78 p-0 text-white shadow-[0_24px_80px_rgba(0,0,0,0.62)] backdrop-blur-2xl [&>button.absolute.right-4.top-4]:hidden sm:inset-y-auto sm:right-auto sm:left-1/2 sm:top-1/2 sm:!w-[min(560px,calc(100vw-40px))] sm:!-translate-x-1/2 sm:!-translate-y-1/2 sm:!max-w-[560px]"
+        className="!h-auto !w-[calc(100vw-24px)] !max-w-[560px] flex max-h-[78vh] flex-col overflow-hidden rounded-[12px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none backdrop-blur-xl [&>button.absolute.right-4.top-4]:hidden sm:inset-y-auto sm:right-auto sm:left-1/2 sm:top-1/2 sm:!w-[min(560px,calc(100vw-40px))] sm:!-translate-x-1/2 sm:!-translate-y-1/2 sm:!max-w-[560px]"
         onEscapeKeyDown={(event) => event.preventDefault()}
         onInteractOutside={(event) => {
           const target = event.target as HTMLElement | null;
@@ -374,13 +383,14 @@ export function EventSheet({
 
         <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-6 pb-1 pt-4 sm:grid-cols-[minmax(0,1fr)_158px_auto] sm:px-8">
           {locked ? (
-            <h2 className="min-h-9 rounded-lg bg-[#202020] px-4 py-2 text-sm font-medium leading-tight text-zinc-100">{title || "Sem titulo"}</h2>
+            <h2 className={cn("min-h-9 px-4 py-2 text-sm font-medium leading-tight", agendaFieldClass)}>{title || "Sem titulo"}</h2>
           ) : (
             <Input
+              data-tour="agenda-event-title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Adicionar titulo"
-              className="h-9 rounded-lg border-0 bg-[#202020] px-4 text-sm font-medium text-white shadow-none focus-visible:ring-0 placeholder:text-zinc-500"
+              className={cn("h-9 px-4 text-sm font-medium", agendaFieldClass)}
             />
           )}
           <div className="col-span-2 min-w-0 sm:col-span-1">
@@ -391,13 +401,13 @@ export function EventSheet({
               </FieldPill>
             ) : (
               <Select value={selectedType} onValueChange={(value: EventType) => setSelectedType(value)}>
-                <SelectTrigger className="h-9 w-full border-0 bg-[#202020] px-3 text-xs font-semibold leading-none text-zinc-100 shadow-none focus:ring-0 [&>span]:!flex [&>span]:items-center [&>span]:gap-2 [&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:text-zinc-400">
+                <SelectTrigger data-tour="agenda-event-type" className={cn("h-9 w-full px-3 text-xs font-semibold leading-none [&>span]:!flex [&>span]:items-center [&>span]:gap-2 [&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:text-[var(--app-text-tertiary)]", agendaControlClass)}>
                   <span className="min-w-0">
-                    <TypeIcon className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                    <TypeIcon className="h-3.5 w-3.5 shrink-0 text-[var(--app-text-tertiary)]" />
                     <span className="truncate">{typeConf.label}</span>
                   </span>
                 </SelectTrigger>
-                <SelectContent className="border-white/10 bg-[#202020] text-zinc-100">
+                <SelectContent className={agendaPopoverClass}>
                   {eventTypes.map(({ type, label, icon: Icon }) => (
                     <SelectItem key={type} value={type}>
                       <span className="inline-flex items-center gap-2">
@@ -413,7 +423,7 @@ export function EventSheet({
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            className="row-start-1 shrink-0 rounded-full p-1.5 text-zinc-400 transition hover:bg-white/10 hover:text-white sm:col-start-3"
+            className="row-start-1 shrink-0 rounded-[6px] p-1.5 text-[var(--app-text-tertiary)] transition hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] sm:col-start-3"
             aria-label="Fechar"
           >
             <X size={22} strokeWidth={1.7} />
@@ -429,7 +439,7 @@ export function EventSheet({
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Adicionar título"
-                className="h-10 rounded-lg border-0 bg-[#202020] px-4 text-base font-medium text-white shadow-none focus-visible:ring-1 focus-visible:ring-primary/70 placeholder:text-zinc-500"
+                className={cn("h-10 px-4 text-base font-medium", agendaFieldClass)}
               />
             )}
           </div>
@@ -489,13 +499,13 @@ export function EventSheet({
 
           {isMasked && (
             <AgendaRow icon={<Lock size={18} />} align="center">
-              <span className="inline-flex h-8 items-center rounded-lg bg-white/10 px-3 text-sm font-semibold text-zinc-300">Informacoes privadas</span>
+              <span className="inline-flex h-8 items-center rounded-[8px] bg-[var(--app-surface-soft)] px-3 text-sm font-semibold text-[var(--app-text-secondary)]">Informacoes privadas</span>
             </AgendaRow>
           )}
 
-          <AgendaRow icon={<Clock size={19} />} align={locked ? "center" : "start"}>
+          <AgendaRow dataTour="agenda-event-date" icon={<Clock size={19} />} align={locked ? "center" : "start"}>
             {locked ? (
-              <div className="text-sm font-semibold text-zinc-100">
+              <div className="text-sm font-semibold text-[var(--app-text-primary)]">
                 {date ? format(date, "EEEE, dd 'de' MMMM", { locale: ptBR }) : "-"} · {time} - {endTimePreview || "-"}
               </div>
             ) : (
@@ -505,22 +515,22 @@ export function EventSheet({
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        className="min-h-10 rounded-none bg-transparent px-0 text-left text-base font-medium leading-tight text-zinc-200 transition hover:text-primary focus-visible:text-primary active:text-primary"
+                        className="min-h-10 rounded-none bg-transparent px-0 text-left text-base font-medium leading-tight text-[var(--app-text-secondary)] transition hover:text-primary focus-visible:text-primary active:text-primary"
                       >
                         {date ? format(date, "EEEE, dd 'de' MMMM", { locale: ptBR }) : "Selecionar data"}
                       </button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
+                    <PopoverContent className={cn("w-auto p-0", agendaPopoverClass)} align="start">
                       <Calendar mode="single" selected={date} onSelect={setDate} locale={ptBR} />
                     </PopoverContent>
                   </Popover>
                   <TimePicker value={time} onChange={setTime} disabled={isAllDay} />
-                  <span className="hidden text-center text-zinc-400 sm:block">-</span>
+                  <span className="hidden text-center text-[var(--app-text-tertiary)] sm:block">-</span>
                   <TimePicker value={endTimePreview || time} onChange={handleEndTimeChange} disabled={isAllDay} />
                 </div>
 
-                <div className="flex flex-wrap items-center gap-3 pl-0.5 text-xs text-zinc-500">
-                  <label className="inline-flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-3 pl-0.5 text-xs text-[var(--app-text-tertiary)]">
+                  <label data-tour="agenda-event-all-day" className="inline-flex items-center gap-1.5">
                     <input
                       type="checkbox"
                       checked={isAllDay}
@@ -535,7 +545,7 @@ export function EventSheet({
                       if (isRecurrenceRule(value)) setRecurrenceRule(value);
                     }}
                   >
-                    <SelectTrigger className="h-6 w-[126px] border-0 bg-transparent px-0 text-xs text-zinc-500 shadow-none hover:text-zinc-300 focus:ring-0">
+                    <SelectTrigger data-tour="agenda-event-recurrence" className="h-6 w-[126px] border-0 bg-transparent px-0 text-xs text-[var(--app-text-tertiary)] shadow-none hover:text-[var(--app-text-primary)] focus:ring-0">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -549,10 +559,10 @@ export function EventSheet({
             )}
           </AgendaRow>
 
-          <AgendaRow icon={<Users size={18} />} label="Responsáveis" inline>
+          <AgendaRow dataTour="agenda-event-assignees" icon={<Users size={18} />} label="Responsáveis" inline>
             <div className="flex min-h-10 flex-wrap items-center gap-2">
               {isMasked ? (
-                <span className="text-sm text-zinc-400">Informacao privada</span>
+                <span className="text-sm text-[var(--app-text-tertiary)]">Informacao privada</span>
               ) : allAssignees.length > 0 ? (
                 allAssignees.map((a) => (
                   <div key={a.id} className="group relative">
@@ -577,17 +587,17 @@ export function EventSheet({
                   </div>
                 ))
               ) : (
-                <span className="text-sm text-zinc-400">Adicionar convidados</span>
+                <span className="text-sm text-[var(--app-text-tertiary)]">Adicionar convidados</span>
               )}
               {!locked && availableUsers.length > 0 && (
                 <Popover open={showAssigneePicker} onOpenChange={setShowAssigneePicker}>
                   <PopoverTrigger asChild>
-                      <button type="button" className="flex h-8 w-8 items-center justify-center rounded-full bg-[#202020] text-zinc-300 transition hover:bg-[#2a2a2a] hover:text-primary">
+                      <button type="button" className={cn("flex h-8 w-8 items-center justify-center rounded-[6px] text-[var(--app-text-secondary)] hover:text-primary", agendaControlClass)}>
                       <Plus size={14} />
                     </button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-[260px] p-0" align="start">
-                    <Command>
+                  <PopoverContent className={cn("w-[260px] p-0", agendaPopoverClass)} align="start">
+                    <Command className="bg-transparent">
                       <CommandInput placeholder="Adicionar responsável..." />
                       <CommandList>
                         <CommandEmpty>Sem usuários disponíveis.</CommandEmpty>
@@ -617,10 +627,10 @@ export function EventSheet({
               )}
               {!locked && teams.length > 0 && (
                 <Select value={selectedTeamId} onValueChange={handleTeamSelect}>
-                  <SelectTrigger className="h-8 w-[132px] border-0 bg-[#202020] px-3 text-xs text-zinc-300 shadow-none focus:ring-0">
+                  <SelectTrigger className={cn("h-8 w-[132px] px-3 text-xs", agendaControlClass)}>
                     <SelectValue placeholder="Equipe" />
                   </SelectTrigger>
-                  <SelectContent className="border-white/10 bg-[#202020] text-zinc-100">
+                  <SelectContent className={agendaPopoverClass}>
                     {teams.map((team) => (
                       <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>
                     ))}
@@ -630,21 +640,21 @@ export function EventSheet({
             </div>
             {!locked && !primaryUserId && (
               <Select value={primaryUserId} onValueChange={setPrimaryUserId}>
-                <SelectTrigger className="mt-2 h-10 border-0 bg-[#202020] text-sm text-white">
+                <SelectTrigger className={cn("mt-2 h-10 text-sm", agendaControlClass)}>
                   <SelectValue placeholder="Responsável principal..." />
                 </SelectTrigger>
-              <SelectContent>{users.map((u) => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}</SelectContent>
+              <SelectContent className={agendaPopoverClass}>{users.map((u) => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}</SelectContent>
             </Select>
           )}
         </AgendaRow>
 
-          <AgendaRow icon={<Lock size={18} />} label="Visibilidade" inline>
+          <AgendaRow dataTour="agenda-event-visibility" icon={<Lock size={18} />} label="Visibilidade" inline>
             {locked ? (
               <FieldPill className="h-9 px-3 text-xs">
                 {visibilityOptions.find((option) => option.value === visibility)?.label || "Padrão"}
               </FieldPill>
             ) : (
-              <div className="inline-flex h-9 rounded-lg bg-[#202020] p-1">
+              <div className="inline-flex h-9 rounded-[8px] bg-[var(--app-surface-soft)] p-1">
                 {visibilityOptions.map((option) => (
                   <button
                     key={option.value}
@@ -654,7 +664,7 @@ export function EventSheet({
                       "rounded-md px-3 text-xs font-semibold transition",
                       visibility === option.value
                         ? "bg-primary text-primary-foreground"
-                        : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100",
+                        : "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
                     )}
                   >
                     {option.label}
@@ -672,7 +682,7 @@ export function EventSheet({
                     {selectedLeadName || "Lead vinculado"}
                   </Link>
                 ) : (
-                  <span className="truncate text-sm text-zinc-100">{selectedLeadName}</span>
+                  <span className="truncate text-sm text-[var(--app-text-primary)]">{selectedLeadName}</span>
                 )}
                 {!locked && (
                   <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => { setSelectedLeadId(null); setSelectedLeadName(null); }}>
@@ -683,13 +693,13 @@ export function EventSheet({
             ) : !locked ? (
               <Popover open={showLeadSelector} onOpenChange={setShowLeadSelector}>
                 <PopoverTrigger asChild>
-                  <button type="button" className="inline-flex h-10 w-full items-center gap-2 rounded-lg bg-[#202020] px-4 text-left text-sm text-zinc-400 hover:text-white">
+                  <button type="button" className={cn("inline-flex h-10 w-full items-center gap-2 px-4 text-left text-sm", agendaControlClass, agendaMutedTextClass)}>
                     <Search className="h-4 w-4" />
                     Buscar por nome, tel...
                   </button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[360px] p-0" align="start">
-                  <Command shouldFilter={false}>
+                <PopoverContent className={cn("w-[360px] p-0", agendaPopoverClass)} align="start">
+                  <Command shouldFilter={false} className="bg-transparent">
                     <CommandInput placeholder="Buscar por nome, telefone ou e-mail..." value={leadSearch} onValueChange={setLeadSearch} />
                     <CommandList>
                       <CommandEmpty>Nenhum lead encontrado.</CommandEmpty>
@@ -718,11 +728,11 @@ export function EventSheet({
                 </PopoverContent>
               </Popover>
             ) : (
-              <span className="text-sm text-zinc-400">{isMasked ? "Informacao privada" : "Sem lead"}</span>
+              <span className="text-sm text-[var(--app-text-tertiary)]">{isMasked ? "Informacao privada" : "Sem lead"}</span>
             )}
           </AgendaRow>
 
-          <AgendaRow icon={<Building2 size={18} />} label="Imóvel vinculado" inline>
+          <AgendaRow dataTour="agenda-event-property" icon={<Building2 size={18} />} label="Imóvel vinculado" inline>
             {selectedPropertyId ? (
               <div className="flex items-center justify-between gap-2">
                 <button type="button" onClick={() => setPropertyPreviewOpen(true)} className="truncate text-left text-sm font-medium text-primary hover:text-primary/80">
@@ -743,27 +753,27 @@ export function EventSheet({
                   setSelectedPropertyLabel(`${p.code ? `${p.code} · ` : ""}${p.title || "Imóvel"}`);
                 }}
                 trigger={(
-                  <button type="button" className="inline-flex h-10 w-full items-center gap-2 rounded-lg bg-[#202020] px-4 text-left text-sm text-zinc-400 hover:text-white">
+                  <button type="button" className={cn("inline-flex h-10 w-full items-center gap-2 px-4 text-left text-sm", agendaControlClass, agendaMutedTextClass)}>
                     <Search className="h-4 w-4" />
                     Buscar imóvel
                   </button>
                 )}
               />
             ) : (
-              <span className="text-sm text-zinc-400">{isMasked ? "Informacao privada" : "Sem imóvel"}</span>
+              <span className="text-sm text-[var(--app-text-tertiary)]">{isMasked ? "Informacao privada" : "Sem imóvel"}</span>
             )}
           </AgendaRow>
 
-          <AgendaRow icon={<MessageSquare size={19} />}>
+          <AgendaRow dataTour="agenda-event-notes" icon={<MessageSquare size={19} />}>
             {locked ? (
-              <p className="text-sm text-zinc-300">{description || (isMasked ? "Informacao privada" : "Sem descrição")}</p>
+              <p className="text-sm text-[var(--app-text-secondary)]">{description || (isMasked ? "Informacao privada" : "Sem descrição")}</p>
             ) : (
               <Textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Adicione observações"
                 rows={4}
-                className="min-h-[132px] resize-none rounded-lg border-0 bg-[#202020] px-4 py-3 text-sm text-white shadow-none focus-visible:ring-0 placeholder:text-zinc-500"
+                className={cn("min-h-[132px] resize-none px-4 py-3 text-sm", agendaFieldClass)}
               />
             )}
           </AgendaRow>
@@ -794,10 +804,10 @@ export function EventSheet({
             <AgendaRow icon={<MessageSquare size={19} />}>
               <div className="space-y-3">
                 {isMasked ? (
-                  <p className="text-sm text-zinc-400">Comentarios privados</p>
+                  <p className="text-sm text-[var(--app-text-tertiary)]">Comentarios privados</p>
                 ) : (
                   <>
-                    {comments.length === 0 && <p className="text-sm text-zinc-400">Nenhum comentário</p>}
+                    {comments.length === 0 && <p className="text-sm text-[var(--app-text-tertiary)]">Nenhum comentário</p>}
                     {comments.map((c) => (
                       <div key={c.id} className="flex gap-2">
                         <Avatar className="h-6 w-6 shrink-0">
@@ -805,11 +815,11 @@ export function EventSheet({
                           <AvatarFallback className="text-[10px]">{(c.user?.name || "U").split(" ").slice(0, 2).map((p) => p[0]).join("")}</AvatarFallback>
                         </Avatar>
                         <div className="min-w-0 flex-1">
-                          <div className="mb-0.5 text-[10px] text-zinc-400">
-                            <span className="font-medium text-zinc-100">{c.user?.name || "Usuário"}</span>
+                          <div className="mb-0.5 text-[10px] text-[var(--app-text-tertiary)]">
+                            <span className="font-medium text-[var(--app-text-primary)]">{c.user?.name || "Usuário"}</span>
                             {" · "}{format(new Date(c.created_at), "dd/MM HH:mm", { locale: ptBR })}
                           </div>
-                          <div className="rounded-lg bg-white/10 px-2.5 py-1.5 text-xs text-zinc-100">{c.content}</div>
+                          <div className="rounded-[8px] bg-[var(--app-surface-soft)] px-2.5 py-1.5 text-xs text-[var(--app-text-primary)]">{c.content}</div>
                         </div>
                       </div>
                     ))}
@@ -819,7 +829,7 @@ export function EventSheet({
                         onChange={(e) => setCommentText(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && handleSendComment()}
                         placeholder="Comentário..."
-                        className="h-9 border-0 bg-white/10 text-xs text-white"
+                        className={cn("h-9 text-xs", agendaFieldClass)}
                         disabled={isAdding}
                       />
                       <Button size="icon" onClick={handleSendComment} disabled={isAdding || !commentText.trim()} className="h-9 w-9 shrink-0">
@@ -862,14 +872,14 @@ export function EventSheet({
                 <CheckCircle size={13} /> Concluir
               </Button>
             )}
-            <Button variant="ghost" size="sm" onClick={() => (isExisting && !isMasked ? setIsEditing((value) => !value) : onOpenChange(false))} disabled={isLoading || isCompleted} className={cn("rounded-lg font-semibold", !locked ? "order-1 h-11 flex-[3] bg-[#202020] text-zinc-100 hover:bg-[#2a2a2a] hover:text-white" : "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground")}>
+            <Button variant="ghost" size="sm" onClick={() => (isExisting && !isMasked ? setIsEditing((value) => !value) : onOpenChange(false))} disabled={isLoading || isCompleted} className={cn("rounded-[8px] border-0 font-semibold shadow-none", !locked ? "order-1 h-11 flex-[3] bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]" : "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground")}>
               {isExisting && !isMasked && !isEditing ? "Editar" : "Cancelar"}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => (isExisting ? setIsEditing(true) : onOpenChange(false))} disabled={isLoading || isCompleted} className="hidden">
               Mais opções
             </Button>
             {!locked && (
-              <Button size="sm" onClick={handleSubmit} disabled={!canSubmit || isLoading} className="order-2 h-11 flex-[7] rounded-lg bg-primary px-7 text-sm font-semibold text-primary-foreground hover:bg-primary/90">
+              <Button size="sm" onClick={handleSubmit} disabled={!canSubmit || isLoading} className="order-2 h-11 flex-[7] rounded-[8px] border-0 bg-primary px-7 text-sm font-semibold text-primary-foreground shadow-none hover:bg-primary/90">
                 {isLoading ? "Salvando..." : isExisting ? "Salvar" : "Adicionar"}
               </Button>
             )}
@@ -892,6 +902,7 @@ function AgendaRow({
   label,
   children,
   className,
+  dataTour,
   inline = false,
   align = "start",
 }: {
@@ -899,24 +910,25 @@ function AgendaRow({
   label?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
+  dataTour?: string;
   inline?: boolean;
   align?: "start" | "center";
 }) {
   if (inline) {
     return (
-      <div className={cn("grid grid-cols-[28px_104px_minmax(0,1fr)] items-center gap-2 py-1.5 sm:grid-cols-[30px_124px_minmax(0,1fr)]", className)}>
-        <div className="flex justify-center text-zinc-400">{icon}</div>
-        <div className="min-w-0 text-sm font-medium text-zinc-400">{label}</div>
+      <div data-tour={dataTour} className={cn("grid grid-cols-[28px_104px_minmax(0,1fr)] items-center gap-2 py-1.5 sm:grid-cols-[30px_124px_minmax(0,1fr)]", className)}>
+        <div className="flex justify-center text-[var(--app-text-tertiary)]">{icon}</div>
+        <div className="min-w-0 text-sm font-medium text-[var(--app-text-secondary)]">{label}</div>
         <div className="min-w-0">{children}</div>
       </div>
     );
   }
 
   return (
-    <div className={cn("grid grid-cols-[30px_1fr] gap-3", align === "center" ? "items-center py-1.5" : "items-start py-2", className)}>
-      <div className={cn("flex justify-center text-zinc-400", align === "start" && "pt-2")}>{icon}</div>
+    <div data-tour={dataTour} className={cn("grid grid-cols-[30px_1fr] gap-3", align === "center" ? "items-center py-1.5" : "items-start py-2", className)}>
+      <div className={cn("flex justify-center text-[var(--app-text-tertiary)]", align === "start" && "pt-2")}>{icon}</div>
       <div className="min-w-0">
-        {label && <div className="mb-1.5 text-sm font-medium text-zinc-400">{label}</div>}
+        {label && <div className="mb-1.5 text-sm font-medium text-[var(--app-text-secondary)]">{label}</div>}
         {children}
       </div>
     </div>
@@ -925,7 +937,7 @@ function AgendaRow({
 
 function FieldPill({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={cn("inline-flex h-10 items-center gap-2 rounded-lg bg-[#202020] px-4 text-sm text-zinc-200", className)}>
+    <div className={cn("inline-flex h-10 items-center gap-2 rounded-[8px] bg-[var(--app-surface-soft)] px-4 text-sm text-[var(--app-text-primary)]", className)}>
       {children}
     </div>
   );
@@ -946,17 +958,17 @@ function TimePicker({
         <button
           type="button"
           disabled={disabled}
-          className="inline-flex h-10 min-w-[76px] items-center justify-center rounded-lg bg-[#202020] px-3 text-sm font-semibold text-zinc-100 transition hover:bg-[#2a2a2a] disabled:opacity-50"
+          className="inline-flex h-10 min-w-[76px] items-center justify-center rounded-[8px] border-0 bg-[var(--app-surface-soft)] px-3 text-sm font-semibold text-[var(--app-text-primary)] shadow-none transition hover:bg-[var(--app-surface-hover)] disabled:opacity-50"
         >
           {value || "--:--"}
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[190px] border-0 bg-[#202020] p-2 text-zinc-100 shadow-2xl" align="center">
+      <PopoverContent className={cn("w-[190px] p-2", agendaPopoverClass)} align="center">
         <Input
           type="time"
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          className="mb-2 h-9 border-0 bg-[#303030] text-sm text-white focus-visible:ring-0"
+          className={cn("mb-2 h-9 text-sm", agendaFieldClass)}
         />
         <div className="grid max-h-[190px] grid-cols-2 gap-1 overflow-y-auto pr-1">
           {timeOptions.map((option) => (
@@ -966,7 +978,7 @@ function TimePicker({
               onClick={() => onChange(option)}
               className={cn(
                 "rounded-md px-2 py-1.5 text-sm transition hover:bg-primary/80 hover:text-primary-foreground",
-                option === value ? "bg-primary text-primary-foreground" : "bg-white/5 text-zinc-200",
+                option === value ? "bg-primary text-primary-foreground" : "bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]",
               )}
             >
               {option}

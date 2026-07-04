@@ -467,8 +467,8 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
           </div> :
 
         <div className={embedded ? "grid gap-3 sm:grid-cols-2" : "grid gap-3 sm:grid-cols-2 lg:grid-cols-3 px-[10px]"}>
-            {sessions?.map((session) =>
-          <Card key={session.id} className="border">
+            {sessions?.map((session, index) =>
+          <Card key={session.id} data-tour={index === 0 ? "whatsapp-session-card" : undefined} className="border">
                 <CardContent className="p-3 space-y-2.5">
                   {/* Row 1: Avatar + name + status badge */}
                   <div className="flex items-center gap-2.5">
@@ -506,7 +506,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                 <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <div className="flex items-center gap-1.5 shrink-0">
+                            <div data-tour={index === 0 ? "whatsapp-notification-toggle" : undefined} className="flex items-center gap-1.5 shrink-0">
                               <Bell className="w-3.5 h-3.5 text-muted-foreground" />
                               <Switch
                           checked={session.is_notification_session || false}
@@ -526,11 +526,12 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                   </div>
                   {/* Row 3: Action buttons */}
                   <div className="flex items-center justify-end gap-2">
-                    <Button variant="outline" size="sm" className="h-8 gap-1.5 px-3 text-xs" onClick={() => handleOpenAccessDialog(session)}>
+                    <Button data-tour={index === 0 ? "whatsapp-users-button" : undefined} variant="outline" size="sm" className="h-8 gap-1.5 px-3 text-xs" onClick={() => handleOpenAccessDialog(session)}>
                       <Users className="w-3.5 h-3.5" />
                       Usuários
                     </Button>
                     <Button
+                      data-tour={index === 0 ? "whatsapp-verify-button" : undefined}
                       variant="outline"
                       size="sm"
                       className="h-8 gap-1.5 px-3 text-xs"
@@ -542,11 +543,12 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                     </Button>
                     {session.status !== "connected" ? (
                       <>
-                        <Button variant="outline" size="sm" className="h-8 gap-1.5 px-3 text-xs" onClick={() => handleOpenQRDialog(session)}>
+                        <Button data-tour={index === 0 ? "whatsapp-qr-button" : undefined} variant="outline" size="sm" className="h-8 gap-1.5 px-3 text-xs" onClick={() => handleOpenQRDialog(session)}>
                           <QrCode className="w-3.5 h-3.5" />
                           QR Code
                         </Button>
                         <Button
+                          data-tour={index === 0 ? "whatsapp-delete-button" : undefined}
                           variant="destructive"
                           size="sm"
                           className="h-8 w-8 p-0"
@@ -558,11 +560,12 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                       </>
                     ) : (
                       <>
-                        <Button variant="destructive" size="sm" className="h-8 gap-1.5 px-3 text-xs" onClick={() => handleLogout(session)}>
+                        <Button data-tour={index === 0 ? "whatsapp-disconnect-button" : undefined} variant="destructive" size="sm" className="h-8 gap-1.5 px-3 text-xs" onClick={() => handleLogout(session)}>
                           <LogOut className="w-3.5 h-3.5" />
                           Desconectar
                         </Button>
                         <Button
+                          data-tour={index === 0 ? "whatsapp-delete-button" : undefined}
                           variant="destructive"
                           size="sm"
                           className="h-8 w-8 p-0"
@@ -581,7 +584,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
 
         {/* Create Session Dialog */}
         <Dialog open={createDialogOpen} onOpenChange={handleCreateDialogOpenChange}>
-          <DialogContent className="w-[calc(100vw-2rem)] max-w-md rounded-[8px] p-5">
+          <DialogContent data-tour="whatsapp-create-dialog" className="w-[calc(100vw-2rem)] max-w-md rounded-[8px] p-5">
             <DialogHeader>
               <DialogTitle>Nova conexão WhatsApp</DialogTitle>
             </DialogHeader>
@@ -589,6 +592,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
               <div className="space-y-2">
                 <Label>Nome da conexão</Label>
                 <Input
+                  data-tour="whatsapp-instance-name"
                   value={instanceName}
                   onChange={(e) => setInstanceName(e.target.value)}
                   placeholder="Ex: Vendas" />
@@ -610,7 +614,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
 
         {/* QR Code Dialog */}
         <Dialog open={qrDialogOpen} onOpenChange={setQrDialogOpen}>
-          <DialogContent className="w-[92vw] max-w-[92vw] rounded-lg md:max-w-3xl">
+          <DialogContent data-tour="whatsapp-qr-dialog" className="w-[92vw] max-w-[92vw] rounded-lg md:max-w-3xl">
             <DialogHeader>
               <DialogTitle>Escanear QR Code</DialogTitle>
               <DialogDescription>

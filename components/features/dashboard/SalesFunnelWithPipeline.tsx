@@ -13,6 +13,7 @@ import { TrendingDown } from 'lucide-react';
 import { usePipelines } from '@/hooks/use-stages';
 import { useFunnelData } from '@/hooks/use-dashboard-stats';
 import { DashboardFilters } from '@/hooks/use-dashboard-filters';
+import { useAuth } from '@/contexts/AuthContext';
 
 const funnelGradients = [
   'from-primary to-primary/80',
@@ -47,6 +48,7 @@ function FunnelSkeleton() {
 }
 
 export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProps) {
+  const { organization } = useAuth();
   const { data: pipelines = [], isLoading: pipelinesLoading } = usePipelines();
   const [manualPipelineId, setManualPipelineId] = useState<string | null>(null);
 
@@ -57,7 +59,7 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
 
   const { data: funnelData = [], isLoading: funnelLoading } = useFunnelData(filters, selectedPipelineId);
 
-  const isLoading = pipelinesLoading || funnelLoading;
+  const isLoading = !organization?.id || pipelinesLoading || funnelLoading;
   const total = funnelData.reduce((sum, d) => sum + d.value, 0);
   const maxStages = Math.max(funnelData.length, 1);
 
@@ -122,17 +124,17 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
                           className={cn(
                             'w-full rounded flex items-center justify-between px-4 py-2',
                             'bg-gradient-to-r text-white text-sm',
-                            'shadow-sm transition-all duration-200',
-                            'group-hover:shadow-md group-hover:brightness-110',
+                            'shadow-none transition-all duration-200',
+                            'group-hover:brightness-110',
                             funnelGradients[index % funnelGradients.length]
                           )}
                         >
-                          <span className="text-[11px] font-bold truncate max-w-[60%] drop-shadow-sm uppercase tracking-tight">
+                          <span className="text-[11px] font-bold truncate max-w-[60%] uppercase tracking-tight">
                             {item.name}
                           </span>
 
                           <div className="flex items-center gap-2">
-                            <span className="text-sm font-black drop-shadow-sm">{item.value}</span>
+                            <span className="text-sm font-black">{item.value}</span>
                             <span className="text-[9px] font-bold bg-black/10 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
                               {item.percentage}%
                             </span>

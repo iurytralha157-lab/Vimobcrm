@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Crown, Pencil, Plus, Trash2, Users } from 'lucide-react';
@@ -70,6 +70,17 @@ export function TeamsTab() {
     setSelectedTeam(null);
     setTeamDialogOpen(true);
   };
+
+  useEffect(() => {
+    const handleMobileCreate = () => {
+      if (!accessScope.isAdmin) return;
+      setSelectedTeam(null);
+      setTeamDialogOpen(true);
+    };
+
+    window.addEventListener('vimob:mobile-create-team', handleMobileCreate);
+    return () => window.removeEventListener('vimob:mobile-create-team', handleMobileCreate);
+  }, [accessScope.isAdmin]);
 
   const openAvailability = (member: NonNullable<Team['members']>[number]) => {
     setAvailabilityMember({
@@ -144,9 +155,9 @@ export function TeamsTab() {
           </div>
         ) : (
           <div className="overflow-hidden rounded-lg border-0 bg-[var(--app-surface)] [&_td:nth-child(n+3)]:hidden [&_th:nth-child(n+3)]:hidden md:[&_td:nth-child(n+3)]:table-cell md:[&_th:nth-child(n+3)]:table-cell">
-            <Table className="table-fixed md:table-auto">
-              <TableHeader className="[&_tr]:border-0">
-                <TableRow className="border-0 bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-soft)]">
+            <Table className="crm-management-table table-fixed md:table-auto">
+              <TableHeader>
+                <TableRow className="border-b border-[var(--app-border-strong)] bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-soft)]">
                   <TableHead className="w-[64px] px-3 md:w-[72px] md:px-4">Status</TableHead>
                   <TableHead className="w-auto">Nome da equipe</TableHead>
                   <TableHead>Membros</TableHead>
@@ -163,7 +174,7 @@ export function TeamsTab() {
                   return (
                     <TableRow
                       key={team.id}
-                      className="cursor-pointer border-0 bg-[var(--app-surface)] hover:bg-[var(--app-surface-hover)]"
+                      className="cursor-pointer border-b border-[var(--app-border-strong)] bg-[var(--app-surface)] hover:bg-[var(--app-surface-hover)] last:border-b-0"
                       onClick={() => handleEdit(team)}
                     >
                       <TableCell className="px-3 md:px-4" onClick={(event) => event.stopPropagation()}>

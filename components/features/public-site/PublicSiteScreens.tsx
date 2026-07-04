@@ -1,3 +1,5 @@
+/* eslint-disable @next/next/no-img-element */
+
 import Link from "next/link";
 import { Award, Bath, BedDouble, Building2, Car, CheckCircle2, Home, Mail, MapPin, Maximize2, Phone, Search, ShieldCheck, Users } from "lucide-react";
 
@@ -9,6 +11,7 @@ import type {
   SiteSearchFilter,
 } from "@/lib/api/public-site-server";
 import { PublicContactForm } from "./PublicContactForm";
+import { PublicPropertyCarousel } from "./PublicPropertyCarousel";
 import { PublicPropertyCard } from "./PublicPropertyCard";
 import {
   DEFAULT_HERO_IMAGE,
@@ -21,7 +24,6 @@ import {
   getSiteDescription,
   getSiteTitle,
   getThemeTokens,
-  getWhatsAppHref,
 } from "./public-site-utils";
 
 const defaultStats = [
@@ -255,7 +257,6 @@ export function PublicPropertiesScreen({
 }
 
 export function PublicPropertyDetailScreen({
-  basePath,
   property,
   site,
 }: Readonly<{
@@ -266,37 +267,22 @@ export function PublicPropertyDetailScreen({
   const tokens = getThemeTokens(site);
   const title = getPropertyTitle(property);
   const images = Array.from(new Set([property.imagem_principal, ...(property.fotos || [])].filter(Boolean))) as string[];
-  const mainImage = images[0] || DEFAULT_HERO_IMAGE;
-  const whatsappHref = getWhatsAppHref(site, `Ola, tenho interesse no imovel ${getPropertyCode(property)}.`);
 
   return (
     <article>
-      <section className="bg-black">
-        <div className="mx-auto grid w-full max-w-7xl gap-2 px-4 py-4 sm:px-6 lg:grid-cols-[2fr_1fr] lg:px-8">
-          <img src={mainImage} alt={title} className="h-[360px] w-full rounded-lg object-cover lg:h-[560px]" />
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-            {(images.length > 1 ? images.slice(1, 3) : [mainImage, mainImage]).map((image, index) => (
-              <img key={`${image}-${index}`} src={image} alt="" className="h-44 w-full rounded-lg object-cover lg:h-[274px]" />
-            ))}
-          </div>
-        </div>
-      </section>
+      <PublicPropertyCarousel backgroundColor={tokens.background} images={images} title={title} />
 
-      <section className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-10 sm:px-6 lg:grid-cols-[1fr_380px] lg:px-8">
+      <section className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-9 sm:px-6 lg:grid-cols-[1fr_380px] lg:px-8">
         <div className="space-y-6">
-          <Link href={buildSiteHref(basePath, "/imoveis")} className="text-sm font-semibold" style={{ color: tokens.primary }}>
-            Voltar para imoveis
-          </Link>
-
-          <div className="rounded-lg border p-6" style={{ backgroundColor: tokens.card, borderColor: `${tokens.foreground}18` }}>
-            <p className="text-sm font-semibold uppercase tracking-wide opacity-60" style={{ color: tokens.foreground }}>
+          <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card }}>
+            <p className="inline-flex rounded-[8px] bg-blue-600 px-3 py-1 text-xs font-medium uppercase tracking-wide text-white">
               Ref: {getPropertyCode(property)}
             </p>
-            <h1 className="mt-2 text-3xl font-semibold leading-tight sm:text-4xl" style={{ color: tokens.foreground }}>
+            <h1 className="mt-4 text-3xl font-normal leading-tight sm:text-4xl" style={{ color: tokens.foreground }}>
               {title}
             </h1>
             {getPropertyLocation(property) ? (
-              <p className="mt-3 flex items-center gap-2 opacity-70" style={{ color: tokens.foreground }}>
+              <p className="mt-3 flex items-center gap-2 text-sm opacity-68" style={{ color: tokens.foreground }}>
                 <MapPin className="h-5 w-5" />
                 {getPropertyLocation(property)}
               </p>
@@ -310,8 +296,8 @@ export function PublicPropertyDetailScreen({
             <FeatureStat icon={<Maximize2 className="h-5 w-5" />} label="Area" value={property.area_construida || property.area_total} suffix="m2" site={site} />
           </div>
 
-          <div className="rounded-lg border p-6" style={{ backgroundColor: tokens.card, borderColor: `${tokens.foreground}18` }}>
-            <h2 className="text-xl font-semibold" style={{ color: tokens.foreground }}>
+          <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card }}>
+            <h2 className="text-xl font-normal" style={{ color: tokens.foreground }}>
               Descricao
             </h2>
             <p className="mt-4 whitespace-pre-wrap leading-7 opacity-75" style={{ color: tokens.foreground }}>
@@ -320,33 +306,14 @@ export function PublicPropertyDetailScreen({
           </div>
         </div>
 
-        <aside className="h-fit rounded-lg border p-6 lg:sticky lg:top-28" style={{ backgroundColor: tokens.card, borderColor: `${tokens.foreground}18` }}>
+        <aside className="h-fit rounded-[14px] p-6 lg:sticky lg:top-28" style={{ backgroundColor: tokens.card }}>
           <p className="text-sm font-medium opacity-70" style={{ color: tokens.foreground }}>
             Valor
           </p>
-          <p className="mt-1 text-3xl font-bold" style={{ color: tokens.primary }}>
+          <p className="mt-1 text-3xl font-normal" style={{ color: tokens.primary }}>
             {formatPrice(getPropertyPrice(property))}
           </p>
-          <div className="mt-6 space-y-3">
-            {whatsappHref ? (
-              <a
-                href={whatsappHref}
-                target="_blank"
-                rel="noreferrer"
-                className="flex h-11 items-center justify-center rounded-lg bg-[#25D366] text-sm font-semibold text-white"
-              >
-                Chamar no WhatsApp
-              </a>
-            ) : null}
-            <Link
-              href={buildSiteHref(basePath, `/contato?imovel=${getPropertyCode(property)}`)}
-              className="flex h-11 items-center justify-center rounded-lg border text-sm font-semibold"
-              style={{ borderColor: tokens.primary, color: tokens.primary }}
-            >
-              Enviar interesse
-            </Link>
-          </div>
-          <div className="mt-6 border-t pt-5" style={{ borderColor: `${tokens.foreground}18` }}>
+          <div className="mt-6">
             <PublicContactForm
               organizationId={site.organization_id}
               primaryColor={tokens.primary}
@@ -726,9 +693,9 @@ function FeatureStat({
   const tokens = getThemeTokens(site);
 
   return (
-    <div className="rounded-lg border p-4" style={{ backgroundColor: tokens.card, borderColor: `${tokens.foreground}18`, color: tokens.foreground }}>
+    <div className="rounded-[14px] p-4" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
       <div style={{ color: tokens.primary }}>{icon}</div>
-      <p className="mt-3 text-2xl font-semibold">{value ? `${value}${suffix}` : "-"}</p>
+      <p className="mt-3 text-2xl font-normal">{value ? `${value}${suffix}` : "-"}</p>
       <p className="text-sm opacity-65">{label}</p>
     </div>
   );

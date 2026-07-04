@@ -106,7 +106,7 @@ export default function Automations() {
     <AppLayout title="Automações">
       <div className="space-y-6 animate-in">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="hidden items-center rounded-[8px] bg-[var(--app-surface)] p-1 sm:flex">
+          <div data-tour="automations-tabs" className="hidden items-center rounded-[8px] bg-[var(--app-surface)] p-1 sm:flex">
             {([
               ["automations", "Automações"],
               ["templates", "Modelos"],
@@ -119,7 +119,7 @@ export default function Automations() {
                 disabled={value === "templates" && !canEditAutomations}
                 className={cn(
                   "h-9 px-4 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
-                  activeTab === value && "bg-[var(--app-background)] text-foreground shadow-sm",
+                  activeTab === value && "bg-[var(--app-background)] text-foreground shadow-none",
                 )}
               >
                 {label}
@@ -128,7 +128,7 @@ export default function Automations() {
           </div>
 
           {canEditAutomations && !isMobile && (
-            <Button className="gap-2 self-start sm:self-auto" onClick={() => handleSelectTemplate(null)}>
+            <Button data-tour="automations-new" className="gap-2 self-start sm:self-auto" onClick={() => handleSelectTemplate(null)}>
               <Plus className="h-4 w-4" />
               Nova automação
             </Button>
@@ -136,7 +136,7 @@ export default function Automations() {
         </div>
 
         <Tabs value={activeTab} className="w-full">
-          <TabsContent value="automations" className="mt-0">
+          <TabsContent data-tour="automations-list" value="automations" className="mt-0">
             <AutomationList
               onEdit={handleEditAutomation}
               onCreate={() => handleSelectTemplate(null)}
@@ -147,11 +147,11 @@ export default function Automations() {
             />
           </TabsContent>
 
-          <TabsContent value="templates" className="mt-0">
+          <TabsContent data-tour="automations-templates" value="templates" className="mt-0">
             <FollowUpTemplates onSelectTemplate={handleSelectTemplate} canCreate={canEditAutomations} />
           </TabsContent>
 
-          <TabsContent value="history" className="mt-0">
+          <TabsContent data-tour="automations-history" value="history" className="mt-0">
             <ExecutionHistory automationId={historyAutomationId} />
           </TabsContent>
         </Tabs>

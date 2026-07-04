@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { notificationsAPI } from '@/lib/api/notifications';
 
@@ -7,6 +7,7 @@ export type { Notification } from '@/lib/api/notifications';
 
 let globalAudioContext: AudioContext | null = null;
 let audioInitialized = false;
+const NOTIFICATIONS_INITIAL_LOAD_DELAY_MS = 2500;
 
 type WebkitAudioWindow = Window & typeof globalThis & {
   webkitAudioContext?: typeof AudioContext;
@@ -67,9 +68,25 @@ async function requestNotificationPermission(): Promise<boolean> {
   return false;
 }
 
+function useDelayedQueryEnabled(enabledKey: string | null, delayMs = NOTIFICATIONS_INITIAL_LOAD_DELAY_MS) {
+  const [readyKey, setReadyKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!enabledKey) return undefined;
+
+    const timeout = setTimeout(() => setReadyKey(enabledKey), delayMs);
+    return () => clearTimeout(timeout);
+  }, [delayMs, enabledKey]);
+
+  return enabledKey !== null && readyKey === enabledKey;
+}
+
 export function useNotifications() {
   const { profile, organization } = useAuth();
   const audioSetupDone = useRef(false);
+  const queryEnabled = useDelayedQueryEnabled(
+    profile?.id && organization?.id ? `${profile.id}:${organization.id}` : null,
+  );
 
   useEffect(() => {
     if (audioSetupDone.current) return;
@@ -112,8 +129,13 @@ export function useNotifications() {
   const query = useQuery({
     queryKey: ['notifications', profile?.id, organization?.id],
     queryFn: () => notificationsAPI.list({ userId: profile!.id, limit: 50 }),
-    enabled: !!profile?.id && !!organization?.id,
-    refetchInterval: 15000,
+    enabled: queryEnabled,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    staleTime: 30_000,
+    gcTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
+    placeholderData: (previous) => previous ?? [],
   });
 
   return {
@@ -124,6 +146,9 @@ export function useNotifications() {
 
 export function useUnreadNotificationsCount() {
   const { profile, organization } = useAuth();
+  const queryEnabled = useDelayedQueryEnabled(
+    profile?.id && organization?.id ? `${profile.id}:${organization.id}` : null,
+  );
 
   return useQuery({
     queryKey: ['unread-notifications-count', profile?.id, organization?.id],
@@ -131,8 +156,13 @@ export function useUnreadNotificationsCount() {
       const response = await notificationsAPI.unreadCount(profile!.id);
       return response.count || 0;
     },
-    enabled: !!profile?.id && !!organization?.id,
-    refetchInterval: 15000,
+    enabled: queryEnabled,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    staleTime: 30_000,
+    gcTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
+    placeholderData: (previous) => previous ?? 0,
   });
 }
 

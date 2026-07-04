@@ -34,19 +34,20 @@ type ListResponse struct {
 type propertyRequest map[string]any
 
 type ListFilter struct {
-	Limit         int
-	Offset        int
-	Search        string
-	DealType      string
-	PropertyType  string
-	City          string
-	Neighborhood  string
-	ResponsibleID string
-	BedroomsMin   int
-	SuitesMin     int
-	BathroomsMin  int
-	PriceMin      float64
-	PriceMax      float64
+	Limit           int
+	Offset          int
+	Search          string
+	DealType        string
+	PropertyType    string
+	City            string
+	Neighborhood    string
+	ResponsibleID   string
+	BedroomsMin     int
+	SuitesMin       int
+	BathroomsMin    int
+	PriceMin        float64
+	PriceMax        float64
+	AcceptsExchange *bool
 }
 
 type fieldKind string
@@ -137,6 +138,7 @@ var writableFields = map[string]fieldDef{
 	"owner_cellphone":            {column: "owner_cellphone", kind: fieldText},
 	"owner_email":                {column: "owner_email", kind: fieldText},
 	"owner_media_source":         {column: "origin_media", kind: fieldText},
+	"owner_id":                   {column: "owner_id", kind: fieldUUID},
 	"owner_name":                 {column: "owner_name", kind: fieldText},
 	"owner_notify_email":         {column: "owner_notify_email", kind: fieldBool},
 	"owner_phone_commercial":     {column: "owner_phone_commercial", kind: fieldText},
@@ -238,6 +240,9 @@ func ParseListFilter(values url.Values) (ListFilter, error) {
 	filter.BathroomsMin = parseOptionalPositiveInt(values.Get("banheiros_min"))
 	filter.PriceMin = parseOptionalPositiveFloat(values.Get("valor_min"))
 	filter.PriceMax = parseOptionalPositiveFloat(values.Get("valor_max"))
+	if acceptsExchange, ok := parseOptionalBool(values.Get("aceita_permuta")); ok {
+		filter.AcceptsExchange = &acceptsExchange
+	}
 
 	return filter, nil
 }
@@ -552,6 +557,17 @@ func parseOptionalPositiveFloat(raw string) float64 {
 		return 0
 	}
 	return value
+}
+
+func parseOptionalBool(raw string) (bool, bool) {
+	switch normalizeASCII(raw) {
+	case "true", "1", "sim", "yes", "aceita":
+		return true, true
+	case "false", "0", "nao", "no", "nao aceita":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func trimMax(value string, maxLength int) string {

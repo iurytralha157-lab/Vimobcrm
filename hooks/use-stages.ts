@@ -11,6 +11,7 @@ import {
   getPipelineStageLeads,
   type PipelineBoardFilters,
 } from '@/lib/api/pipeline-board';
+import { VimobAPIError } from '@/lib/api/vimob-client';
 import type { Tables } from '@/integrations/supabase/types';
 
 export type Stage = Tables<'stages'> & {
@@ -73,8 +74,8 @@ interface FilteredStageCountsParams extends PipelineQueryFilters {
 
 const LEADS_PER_STAGE = 12;
 const PIPELINE_REFERENCE_STALE_TIME_MS = 1000 * 60 * 10;
-const PIPELINE_BOARD_STALE_TIME_MS = 1000 * 60 * 2;
-const PIPELINE_CACHE_TIME_MS = 1000 * 60 * 30;
+const PIPELINE_BOARD_STALE_TIME_MS = 1000 * 60 * 10;
+const PIPELINE_CACHE_TIME_MS = 1000 * 60 * 60;
 
 export async function buildPipelineLeadQueryFilters(): Promise<{
   filteredLeadIds: string[] | null;
@@ -123,21 +124,24 @@ export function useStagesWithLeads(
     gcTime: PIPELINE_CACHE_TIME_MS,
     placeholderData: keepPreviousData,
     enabled: Boolean(organizationId && pipelineId && (options?.enabled ?? true)),
-    refetchOnMount: false,
+    refetchOnMount: true,
     queryFn: async () => {
-      try {
-        return (await getPipelineBoard({
-          organizationId,
-          pipelineId,
-          filterUserId,
-          filters: filters as PipelineBoardFilters,
-          limit: LEADS_PER_STAGE,
-        })) as StageWithLeads[];
-      } catch (err) {
-        console.error('[Pipeline filters] useStagesWithLeads error:', err);
-        return [] as StageWithLeads[];
-      }
+      return (await getPipelineBoard({
+        organizationId,
+        pipelineId,
+        filterUserId,
+        filters: filters as PipelineBoardFilters,
+        limit: LEADS_PER_STAGE,
+      })) as StageWithLeads[];
     },
+    retry: (failureCount, error) => {
+      if (error instanceof VimobAPIError && ['api_timeout', 'api_unavailable'].includes(error.code)) {
+        return failureCount < 5;
+      }
+
+      return failureCount < 2;
+    },
+    retryDelay: (attemptIndex) => Math.min(800 * 2 ** attemptIndex, 8000),
   });
 }
 

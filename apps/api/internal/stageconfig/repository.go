@@ -37,8 +37,13 @@ func (repo Repository) ListAutomations(ctx context.Context, tenantContext tenant
 		where += " and stage_id = $2::uuid"
 	}
 
+	hasConfigSchema, err := repo.hasStageAutomationConfigSchema(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := repo.db.Pool().Query(ctx, `
-		select `+stageAutomationSelectFields()+`
+		select `+stageAutomationSelectFields(hasConfigSchema)+`
 		from public.stage_automations
 		where `+where+`
 		order by created_at desc
@@ -69,6 +74,49 @@ func (repo Repository) CreateAutomation(ctx context.Context, tenantContext tenan
 	}
 	configJSON := jsonb(input.Config)
 
+	hasConfigSchema, err := repo.hasStageAutomationConfigSchema(ctx)
+	if err != nil {
+		return StageAutomation{}, err
+	}
+	if !hasConfigSchema {
+		automationType, actionConfig, triggerDays, targetStageID, whatsappTemplate, alertMessage := legacyStageAutomationValues(input.Config)
+		automation, err := scanStageAutomation(repo.db.Pool().QueryRow(ctx, `
+			insert into public.stage_automations (
+				organization_id,
+				stage_id,
+				trigger_type,
+				action_type,
+				action_config,
+				is_active,
+				automation_type,
+				trigger_days,
+				target_stage_id,
+				whatsapp_template,
+				alert_message
+			)
+			select
+				s.organization_id,
+				s.id,
+				$3,
+				$4,
+				$5::jsonb,
+				$6,
+				$4,
+				$7::integer,
+				$8::uuid,
+				$9,
+				$10
+			from public.stages s
+			where s.organization_id = $1::uuid
+			  and s.id = $2::uuid
+			returning `+stageAutomationSelectFields(false)+`
+		`, tenantContext.OrganizationID, stageID, input.TriggerType, automationType, actionConfig, input.IsActive, triggerDays, targetStageID, whatsappTemplate, alertMessage))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return StageAutomation{}, ErrNotFound
+		}
+		return automation, err
+	}
+
 	automation, err := scanStageAutomation(repo.db.Pool().QueryRow(ctx, `
 		insert into public.stage_automations (
 			organization_id,
@@ -86,7 +134,7 @@ func (repo Repository) CreateAutomation(ctx context.Context, tenantContext tenan
 		from public.stages s
 		where s.organization_id = $1::uuid
 		  and s.id = $2::uuid
-		returning `+stageAutomationSelectFields()+`
+		returning `+stageAutomationSelectFields(true)+`
 	`, tenantContext.OrganizationID, stageID, input.TriggerType, configJSON, input.IsActive))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StageAutomation{}, ErrNotFound
@@ -103,6 +151,33 @@ func (repo Repository) UpdateAutomation(ctx context.Context, tenantContext tenan
 		return StageAutomation{}, ErrInvalidInput
 	}
 
+	hasConfigSchema, err := repo.hasStageAutomationConfigSchema(ctx)
+	if err != nil {
+		return StageAutomation{}, err
+	}
+	if !hasConfigSchema {
+		automationType, actionConfig, triggerDays, targetStageID, whatsappTemplate, alertMessage := legacyStageAutomationValues(input.Config)
+		automation, err := scanStageAutomation(repo.db.Pool().QueryRow(ctx, `
+			update public.stage_automations
+			set trigger_type = $3,
+			    action_type = $4,
+			    action_config = $5::jsonb,
+			    automation_type = $4,
+			    trigger_days = $6::integer,
+			    target_stage_id = $7::uuid,
+			    whatsapp_template = $8,
+			    alert_message = $9,
+			    updated_at = now()
+			where organization_id = $1::uuid
+			  and id = $2::uuid
+			returning `+stageAutomationSelectFields(false)+`
+		`, tenantContext.OrganizationID, automationID, input.TriggerType, automationType, actionConfig, triggerDays, targetStageID, whatsappTemplate, alertMessage))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return StageAutomation{}, ErrNotFound
+		}
+		return automation, err
+	}
+
 	automation, err := scanStageAutomation(repo.db.Pool().QueryRow(ctx, `
 		update public.stage_automations
 		set trigger_type = $3,
@@ -110,7 +185,7 @@ func (repo Repository) UpdateAutomation(ctx context.Context, tenantContext tenan
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
-		returning `+stageAutomationSelectFields()+`
+		returning `+stageAutomationSelectFields(true)+`
 	`, tenantContext.OrganizationID, automationID, input.TriggerType, jsonb(input.Config)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StageAutomation{}, ErrNotFound
@@ -148,13 +223,17 @@ func (repo Repository) ToggleAutomation(ctx context.Context, tenantContext tenan
 	if !ok {
 		return StageAutomation{}, ErrInvalidInput
 	}
+	hasConfigSchema, err := repo.hasStageAutomationConfigSchema(ctx)
+	if err != nil {
+		return StageAutomation{}, err
+	}
 	automation, err := scanStageAutomation(repo.db.Pool().QueryRow(ctx, `
 		update public.stage_automations
 		set is_active = $3,
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
-		returning `+stageAutomationSelectFields()+`
+		returning `+stageAutomationSelectFields(hasConfigSchema)+`
 	`, tenantContext.OrganizationID, automationID, isActive))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StageAutomation{}, ErrNotFound
@@ -656,8 +735,9 @@ func scanOperationalConfig(row scanner) (StageOperationalConfig, error) {
 	return item, nil
 }
 
-func stageAutomationSelectFields() string {
-	return `
+func stageAutomationSelectFields(hasConfigSchema bool) string {
+	if hasConfigSchema {
+		return `
 		id::text,
 		organization_id::text,
 		stage_id::text,
@@ -667,6 +747,104 @@ func stageAutomationSelectFields() string {
 		created_at::text,
 		updated_at::text
 	`
+	}
+	return `
+		id::text,
+		organization_id::text,
+		stage_id::text,
+		trigger_type,
+		jsonb_build_object(
+			'automation_type', coalesce(automation_type, action_type, trigger_type),
+			'action_type', coalesce(action_type, automation_type, trigger_type),
+			'trigger_days', trigger_days,
+			'target_stage_id', target_stage_id::text,
+			'whatsapp_template', whatsapp_template,
+			'alert_message', alert_message,
+			'action_config', coalesce(action_config, '{}'::jsonb)
+		)::text,
+		coalesce(is_active, true),
+		created_at::text,
+		updated_at::text
+	`
+}
+
+func (repo Repository) hasStageAutomationConfigSchema(ctx context.Context) (bool, error) {
+	var hasConfig bool
+	var hasActionConfig bool
+	err := repo.db.Pool().QueryRow(ctx, `
+		select
+			coalesce(bool_or(column_name = 'config'), false) as has_config,
+			coalesce(bool_or(column_name = 'action_config'), false) as has_action_config
+		from information_schema.columns
+		where table_schema = 'public'
+		  and table_name = 'stage_automations'
+		  and column_name in ('config', 'action_config')
+	`).Scan(&hasConfig, &hasActionConfig)
+	if err != nil {
+		return false, err
+	}
+	return hasConfig && !hasActionConfig, nil
+}
+
+func legacyStageAutomationValues(config map[string]any) (string, string, any, any, any, any) {
+	automationType := legacyStringConfig(config, "automation_type")
+	if automationType == "" {
+		automationType = legacyStringConfig(config, "action_type")
+	}
+	actionConfig := "{}"
+	if value, ok := config["action_config"]; ok && value != nil {
+		actionConfig = jsonb(value)
+	}
+	return automationType,
+		actionConfig,
+		legacyIntConfig(config, "trigger_days"),
+		legacyStringConfigOrNil(config, "target_stage_id"),
+		legacyStringConfigOrNil(config, "whatsapp_template"),
+		legacyStringConfigOrNil(config, "alert_message")
+}
+
+func legacyStringConfig(config map[string]any, key string) string {
+	value := config[key]
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case *string:
+		if typed == nil {
+			return ""
+		}
+		return strings.TrimSpace(*typed)
+	default:
+		return ""
+	}
+}
+
+func legacyStringConfigOrNil(config map[string]any, key string) any {
+	value := legacyStringConfig(config, key)
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func legacyIntConfig(config map[string]any, key string) any {
+	value := config[key]
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int32:
+		return int(typed)
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case *int:
+		if typed == nil {
+			return nil
+		}
+		return *typed
+	default:
+		return nil
+	}
 }
 
 func operationalSelectDetailed() string {

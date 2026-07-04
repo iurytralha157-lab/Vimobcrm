@@ -526,14 +526,14 @@ ${getWorkerCode()}`;
     <AppLayout title="Configurações do Site">
       <div className="space-y-6">
         {!site && (
-          <Card className="app-card mb-6">
+          <Card data-tour="site-create-card" className="app-card mb-6">
             <CardContent className="p-6 text-center">
               <AnimatedIcon icon={GLOBE_JSON} size={48} trigger="loop" className="mx-auto mb-4" />
               <h2 className="text-xl font-semibold mb-2">Crie seu site imobiliário</h2>
               <p className="text-muted-foreground mb-4">
                 Configure seu site público para exibir seus imóveis e captar leads automaticamente.
               </p>
-              <Button onClick={() => createSite.mutateAsync({ is_active: false })}>
+              <Button data-tour="site-create-button" onClick={() => createSite.mutateAsync({ is_active: false })}>
                 Começar Configuração
               </Button>
             </CardContent>
@@ -541,9 +541,9 @@ ${getWorkerCode()}`;
         )}
 
         {site && (
-          <Tabs value={siteActiveTab} onValueChange={setSiteActiveTab} className="space-y-6">
+          <Tabs data-tour="site-settings" value={siteActiveTab} onValueChange={setSiteActiveTab} className="space-y-6">
             <div className="grid gap-6 xl:grid-cols-[300px_minmax(0,1fr)]">
-              <aside className="app-card h-fit overflow-hidden xl:sticky xl:top-24">
+              <aside data-tour="site-settings-menu" className="app-card h-fit overflow-hidden xl:sticky xl:top-24">
                 <div className="space-y-3 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
@@ -643,14 +643,14 @@ ${getWorkerCode()}`;
                     <h2 className="text-2xl font-semibold">{selectedSection.description}</h2>
                   </div>
                   {isAdmin && (
-                    <Button onClick={handleSave} disabled={isSaving}>
+                    <Button data-tour="site-save-button" onClick={handleSave} disabled={isSaving}>
                       {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                       Salvar alterações
                     </Button>
                   )}
                 </div>
 
-            <TabsContent value="general" className="mt-0 space-y-6">
+            <TabsContent data-tour="site-general-settings" value="general" className="mt-0 space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
               <Card className="app-card h-full">
                 <CardHeader>

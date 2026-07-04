@@ -5298,6 +5298,8 @@ export type Database = {
           nome_fantasia: string | null
           numero: string | null
           plan_id: string | null
+          property_edit_policy: "everyone" | "responsible_or_admin"
+          property_owner_contact_visibility: "visible" | "hidden"
           razao_social: string | null
           segment: string | null
           subscription_status: string
@@ -5343,6 +5345,8 @@ export type Database = {
           nome_fantasia?: string | null
           numero?: string | null
           plan_id?: string | null
+          property_edit_policy?: "everyone" | "responsible_or_admin"
+          property_owner_contact_visibility?: "visible" | "hidden"
           razao_social?: string | null
           segment?: string | null
           subscription_status?: string
@@ -5388,6 +5392,8 @@ export type Database = {
           nome_fantasia?: string | null
           numero?: string | null
           plan_id?: string | null
+          property_edit_policy?: "everyone" | "responsible_or_admin"
+          property_owner_contact_visibility?: "visible" | "hidden"
           razao_social?: string | null
           segment?: string | null
           subscription_status?: string
@@ -5580,6 +5586,7 @@ export type Database = {
       properties: {
         Row: {
           aceita_financiamento: boolean | null
+          aceita_permuta: boolean | null
           andar: number | null
           ano_construcao: number | null
           ano_reforma: number | null
@@ -5635,6 +5642,7 @@ export type Database = {
           observacoes_documentacao: string | null
           ocupacao: string | null
           organization_id: string
+          owner_id: string | null
           owner_cellphone: string | null
           owner_email: string | null
           owner_media_source: string | null
@@ -5680,6 +5688,7 @@ export type Database = {
         }
         Insert: {
           aceita_financiamento?: boolean | null
+          aceita_permuta?: boolean | null
           andar?: number | null
           ano_construcao?: number | null
           ano_reforma?: number | null
@@ -5735,6 +5744,7 @@ export type Database = {
           observacoes_documentacao?: string | null
           ocupacao?: string | null
           organization_id: string
+          owner_id?: string | null
           owner_cellphone?: string | null
           owner_email?: string | null
           owner_media_source?: string | null
@@ -5780,6 +5790,7 @@ export type Database = {
         }
         Update: {
           aceita_financiamento?: boolean | null
+          aceita_permuta?: boolean | null
           andar?: number | null
           ano_construcao?: number | null
           ano_reforma?: number | null
@@ -5835,6 +5846,7 @@ export type Database = {
           observacoes_documentacao?: string | null
           ocupacao?: string | null
           organization_id?: string
+          owner_id?: string | null
           owner_cellphone?: string | null
           owner_email?: string | null
           owner_media_source?: string | null
@@ -5914,6 +5926,13 @@ export type Database = {
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "properties_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "property_owners"
+            referencedColumns: ["id"]
+          },
         ]
       }
       property_cities: {
@@ -5954,39 +5973,66 @@ export type Database = {
       property_condominiums: {
         Row: {
           address: string | null
+          cep: string | null
           city_id: string | null
+          complement: string | null
+          concierge_type: string | null
           created_at: string | null
+          default_condominium_fee: number | null
+          has_concierge: boolean | null
           id: string
           is_active: boolean | null
           latitude: number | null
           longitude: number | null
           name: string
           neighborhood_id: string | null
+          notes: string | null
+          number: string | null
           organization_id: string
+          photo_url: string | null
+          updated_at: string | null
         }
         Insert: {
           address?: string | null
+          cep?: string | null
           city_id?: string | null
+          complement?: string | null
+          concierge_type?: string | null
           created_at?: string | null
+          default_condominium_fee?: number | null
+          has_concierge?: boolean | null
           id?: string
           is_active?: boolean | null
           latitude?: number | null
           longitude?: number | null
           name: string
           neighborhood_id?: string | null
+          notes?: string | null
+          number?: string | null
           organization_id: string
+          photo_url?: string | null
+          updated_at?: string | null
         }
         Update: {
           address?: string | null
+          cep?: string | null
           city_id?: string | null
+          complement?: string | null
+          concierge_type?: string | null
           created_at?: string | null
+          default_condominium_fee?: number | null
+          has_concierge?: boolean | null
           id?: string
           is_active?: boolean | null
           latitude?: number | null
           longitude?: number | null
           name?: string
           neighborhood_id?: string | null
+          notes?: string | null
+          number?: string | null
           organization_id?: string
+          photo_url?: string | null
+          updated_at?: string | null
         }
         Relationships: [
           {
@@ -6005,6 +6051,62 @@ export type Database = {
           },
           {
             foreignKeyName: "property_condominiums_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      property_owners: {
+        Row: {
+          cellphone: string | null
+          created_at: string
+          email: string | null
+          id: string
+          is_active: boolean
+          media_source: string | null
+          name: string
+          notes: string | null
+          notify_email: boolean
+          organization_id: string
+          phone_commercial: string | null
+          phone_residential: string | null
+          updated_at: string
+        }
+        Insert: {
+          cellphone?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_active?: boolean
+          media_source?: string | null
+          name: string
+          notes?: string | null
+          notify_email?: boolean
+          organization_id: string
+          phone_commercial?: string | null
+          phone_residential?: string | null
+          updated_at?: string
+        }
+        Update: {
+          cellphone?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_active?: boolean
+          media_source?: string | null
+          name?: string
+          notes?: string | null
+          notify_email?: boolean
+          organization_id?: string
+          phone_commercial?: string | null
+          phone_residential?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_owners_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"

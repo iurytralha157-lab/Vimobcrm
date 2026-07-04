@@ -202,6 +202,16 @@ export function DistributionTab() {
     setEditorOpen(true);
   };
 
+  useEffect(() => {
+    const handleMobileCreate = () => {
+      setEditingQueue(null);
+      setEditorOpen(true);
+    };
+
+    window.addEventListener('vimob:mobile-create-distribution', handleMobileCreate);
+    return () => window.removeEventListener('vimob:mobile-create-distribution', handleMobileCreate);
+  }, []);
+
   const formatRule = (rule: RoundRobinType['rules'][number]) => {
     if (rule.match_type === 'tag') {
       const tag = tags.find(t => t.id === rule.match_value);
@@ -294,9 +304,9 @@ export function DistributionTab() {
           </div>
         ) : (
           <div className="overflow-hidden rounded-lg border-0 bg-[var(--app-surface)] [&_td:nth-child(n+4)]:hidden [&_th:nth-child(n+4)]:hidden md:[&_td:nth-child(n+4)]:table-cell md:[&_th:nth-child(n+4)]:table-cell">
-            <Table className="table-fixed md:table-auto">
+            <Table className="crm-management-table table-fixed md:table-auto">
               <TableHeader>
-                <TableRow className="hover:bg-transparent">
+                <TableRow className="border-b border-[var(--app-border-strong)] bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-soft)]">
                   <TableHead className="w-[62px] px-3 md:w-[72px] md:px-4">Status</TableHead>
                   <TableHead className="w-[34%] md:w-auto">Nome da fila</TableHead>
                   <TableHead>Critério</TableHead>
@@ -322,7 +332,7 @@ export function DistributionTab() {
                   return (
                     <TableRow
                       key={queue.id}
-                      className="cursor-pointer"
+                      className="cursor-pointer border-b border-[var(--app-border-strong)] bg-[var(--app-surface)] hover:bg-[var(--app-surface-hover)] last:border-b-0"
                       onClick={() => openEditor(queue)}
                     >
                       <TableCell className="px-3 md:px-4" onClick={(event) => event.stopPropagation()}>

@@ -32,7 +32,7 @@ type RecordFirstResponseRequest struct {
 type recordFirstResponseInput struct {
 	LeadID       string
 	Channel      string
-	ActorUserID   string
+	ActorUserID  string
 	IsAutomation bool
 }
 
@@ -112,7 +112,7 @@ func (request RecordFirstResponseRequest) Validate(defaultUserID string) (record
 	return recordFirstResponseInput{
 		LeadID:       leadID,
 		Channel:      channel,
-		ActorUserID:   actorUserID,
+		ActorUserID:  actorUserID,
 		IsAutomation: request.IsAutomation,
 	}, nil
 }
@@ -214,12 +214,24 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 					'organization_id', e.organization_id::text,
 					'lead_id', e.lead_id::text,
 					'user_id', e.user_id::text,
-					'actor_user_id', e.actor_user_id::text
+					'actor_user_id', e.actor_user_id::text,
+					'metadata', coalesce(e.metadata, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object(
+						'from_stage', coalesce(e.metadata->>'from_stage', e.metadata->>'old_stage_name', old_stage.name),
+						'to_stage', coalesce(e.metadata->>'to_stage', e.metadata->>'new_stage_name', new_stage.name),
+						'old_stage_name', coalesce(e.metadata->>'old_stage_name', e.metadata->>'from_stage', old_stage.name),
+						'new_stage_name', coalesce(e.metadata->>'new_stage_name', e.metadata->>'to_stage', new_stage.name)
+					))
 				)
 			)
 			order by e.created_at asc, e.id asc
 		), '[]'::jsonb)
 		from public.lead_timeline_events e
+		left join public.stages old_stage
+		  on old_stage.organization_id = e.organization_id
+		 and old_stage.id::text = coalesce(e.metadata->>'old_stage_id', e.metadata->>'from_stage_id')
+		left join public.stages new_stage
+		  on new_stage.organization_id = e.organization_id
+		 and new_stage.id::text = coalesce(e.metadata->>'new_stage_id', e.metadata->>'to_stage_id')
 		where e.organization_id = $1::uuid
 		  and e.lead_id = $2::uuid
 	`, tenantContext.OrganizationID, leadID)
@@ -241,13 +253,25 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 							'id', u.id::text,
 							'name', u.name,
 							'avatar_url', u.avatar_url
-						) end
+						) end,
+					'metadata', coalesce(a.metadata, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object(
+						'from_stage', coalesce(a.metadata->>'from_stage', a.metadata->>'old_stage_name', old_stage.name),
+						'to_stage', coalesce(a.metadata->>'to_stage', a.metadata->>'new_stage_name', new_stage.name),
+						'old_stage_name', coalesce(a.metadata->>'old_stage_name', a.metadata->>'from_stage', old_stage.name),
+						'new_stage_name', coalesce(a.metadata->>'new_stage_name', a.metadata->>'to_stage', new_stage.name)
+					))
 				)
 			)
 			order by a.created_at asc, a.id asc
 		), '[]'::jsonb)
 		from public.activities a
 		left join public.users u on u.id = a.user_id
+		left join public.stages old_stage
+		  on old_stage.organization_id = a.organization_id
+		 and old_stage.id::text = coalesce(a.metadata->>'old_stage_id', a.metadata->>'from_stage_id')
+		left join public.stages new_stage
+		  on new_stage.organization_id = a.organization_id
+		 and new_stage.id::text = coalesce(a.metadata->>'new_stage_id', a.metadata->>'to_stage_id')
 		where a.organization_id = $1::uuid
 		  and a.lead_id = $2::uuid
 	`, tenantContext.OrganizationID, leadID)
@@ -296,6 +320,39 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		where l.organization_id = $1::uuid
 		  and l.id = $2::uuid
 		limit 1
+	`, tenantContext.OrganizationID, leadID)
+	if err != nil {
+		return nil, err
+	}
+
+	leadMeta, err := repo.queryJSONObject(ctx, `
+		select coalesce((
+			select jsonb_strip_nulls(jsonb_build_object(
+				'id', lm.id::text,
+				'lead_id', lm.lead_id::text,
+				'page_id', lm.page_id,
+				'form_id', lm.form_id,
+				'form_name', lm.form_name,
+				'ad_id', lm.ad_id,
+				'ad_name', lm.ad_name,
+				'adset_id', lm.adset_id,
+				'adset_name', lm.adset_name,
+				'campaign_id', lm.campaign_id,
+				'campaign_name', lm.campaign_name,
+				'platform', lm.platform,
+				'source_type', lm.source_type,
+				'creative_url', lm.creative_url,
+				'creative_video_url', lm.creative_video_url,
+				'creative_instagram_url', lm.creative_instagram_url,
+				'raw_payload', coalesce(lm.raw_payload, lm.payload, '{}'::jsonb),
+				'created_at', lm.created_at
+			))
+			from public.lead_meta lm
+			where lm.organization_id = $1::uuid
+			  and lm.lead_id = $2::uuid
+			order by lm.updated_at desc nulls last, lm.created_at desc nulls last
+			limit 1
+		), '{}'::jsonb)
 	`, tenantContext.OrganizationID, leadID)
 	if err != nil {
 		return nil, err
@@ -361,6 +418,7 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		"activityEvents":   activityEvents,
 		"entryEvents":      entryEvents,
 		"lead":             lead,
+		"leadMeta":         leadMeta,
 		"distributionLogs": distributionLogs,
 		"users":            users,
 	}, nil

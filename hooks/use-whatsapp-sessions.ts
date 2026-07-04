@@ -89,10 +89,10 @@ export function useWhatsAppSessions() {
       return sessions;
     },
     enabled: !!profile?.organization_id && !!profile?.id,
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
     refetchIntervalInBackground: false,
-    staleTime: 15_000,
-    gcTime: 1000 * 60 * 5,
+    staleTime: 60_000,
+    gcTime: 1000 * 60 * 10,
   });
 }
 

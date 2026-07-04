@@ -18,6 +18,7 @@ export interface PropertyFilters {
   banheiros_min?: string
   valor_min?: string
   valor_max?: string
+  aceita_permuta?: string
 }
 
 const sanitizeSearchTerm = (value?: string) => value?.trim() || undefined
@@ -40,12 +41,15 @@ function normalizeFilters(filters: PropertyFilters = {}) {
     banheiros_min: parseNumericFilter(filters.banheiros_min),
     valor_min: parseNumericFilter(filters.valor_min),
     valor_max: parseNumericFilter(filters.valor_max),
+    aceita_permuta: filters.aceita_permuta === 'true' ? true : filters.aceita_permuta === 'false' ? false : undefined,
   }
 }
 
 function useOrganizationId() {
-  const { profile, organization } = useAuth()
-  return organization?.id || profile?.organization_id || undefined
+  const { profile, organization, organizationsLoaded, isInitializingOrg } = useAuth()
+  if (organization?.id) return organization.id
+  if (!organizationsLoaded || isInitializingOrg) return undefined
+  return profile?.organization_id || undefined
 }
 
 const getErrorMessage = (error: unknown) => {

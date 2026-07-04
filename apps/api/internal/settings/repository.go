@@ -113,6 +113,15 @@ func (repo Repository) UpdateOrganization(ctx context.Context, tenantContext ten
 		return ErrInvalidInput
 	}
 
+	propertyEditPolicy := cleanStringPointer(request.PropertyEditPolicy)
+	if propertyEditPolicy != nil && *propertyEditPolicy != "everyone" && *propertyEditPolicy != "responsible_or_admin" {
+		return ErrInvalidInput
+	}
+	propertyOwnerContactVisibility := cleanStringPointer(request.PropertyOwnerContactVisibility)
+	if propertyOwnerContactVisibility != nil && *propertyOwnerContactVisibility != "visible" && *propertyOwnerContactVisibility != "hidden" {
+		return ErrInvalidInput
+	}
+
 	_, err := repo.db.Pool().Exec(ctx, `
 		update public.organizations
 		set
@@ -134,6 +143,8 @@ func (repo Repository) UpdateOrganization(ctx context.Context, tenantContext ten
 			email = $17,
 			website = $18,
 			default_commission_percentage = coalesce($19, default_commission_percentage),
+			property_edit_policy = coalesce($20, property_edit_policy),
+			property_owner_contact_visibility = coalesce($21, property_owner_contact_visibility),
 			updated_at = now()
 		where id = $1::uuid
 	`, tenantContext.OrganizationID,
@@ -155,6 +166,8 @@ func (repo Repository) UpdateOrganization(ctx context.Context, tenantContext ten
 		cleanStringPointer(request.Email),
 		cleanStringPointer(request.Website),
 		request.DefaultCommissionPercentage,
+		propertyEditPolicy,
+		propertyOwnerContactVisibility,
 	)
 
 	return err
@@ -461,7 +474,31 @@ func (repo Repository) SavePushToken(ctx context.Context, tenantContext tenant.C
 		return ErrInvalidInput
 	}
 
-	_, err := repo.db.Pool().Exec(ctx, `
+	result, err := repo.db.Pool().Exec(ctx, `
+		update public.push_tokens
+		set organization_id = $1::uuid,
+		    p256dh = $4,
+		    auth = $5,
+		    user_agent = $6,
+		    is_active = true,
+		    updated_at = now()
+		where user_id = $2::uuid
+		  and endpoint = $3
+	`, tenantContext.OrganizationID, tenantContext.UserID, endpoint, cleanStringPointer(request.P256DH), cleanStringPointer(request.Auth), cleanStringPointer(request.UserAgent))
+	if isUndefinedTableError(err) {
+		return nil
+	}
+	if isUndefinedColumnError(err) {
+		return repo.saveLegacyPushToken(ctx, tenantContext, endpoint, request)
+	}
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() > 0 {
+		return nil
+	}
+
+	_, err = repo.db.Pool().Exec(ctx, `
 		insert into public.push_tokens (
 			organization_id,
 			user_id,
@@ -472,17 +509,22 @@ func (repo Repository) SavePushToken(ctx context.Context, tenantContext tenant.C
 			is_active
 		)
 		values ($1::uuid, $2::uuid, $3, $4, $5, $6, true)
-		on conflict (user_id, endpoint)
-		do update set
-			organization_id = excluded.organization_id,
-			p256dh = excluded.p256dh,
-			auth = excluded.auth,
-			user_agent = excluded.user_agent,
-			is_active = true,
-			updated_at = now()
 	`, tenantContext.OrganizationID, tenantContext.UserID, endpoint, cleanStringPointer(request.P256DH), cleanStringPointer(request.Auth), cleanStringPointer(request.UserAgent))
-	if isUndefinedTableError(err) {
-		return nil
+	if isUniqueViolation(err) {
+		_, err = repo.db.Pool().Exec(ctx, `
+			update public.push_tokens
+			set organization_id = $1::uuid,
+			    p256dh = $4,
+			    auth = $5,
+			    user_agent = $6,
+			    is_active = true,
+			    updated_at = now()
+			where user_id = $2::uuid
+			  and endpoint = $3
+		`, tenantContext.OrganizationID, tenantContext.UserID, endpoint, cleanStringPointer(request.P256DH), cleanStringPointer(request.Auth), cleanStringPointer(request.UserAgent))
+	}
+	if isUndefinedColumnError(err) {
+		return repo.saveLegacyPushToken(ctx, tenantContext, endpoint, request)
 	}
 	return err
 }
@@ -509,6 +551,88 @@ func (repo Repository) DeactivatePushToken(ctx context.Context, tenantContext te
 			where user_id = $1::uuid
 			  and endpoint = $2
 		`, tenantContext.UserID, *endpoint)
+	}
+	if isUndefinedTableError(err) {
+		return nil
+	}
+	if isUndefinedColumnError(err) {
+		return repo.deactivateLegacyPushToken(ctx, tenantContext.UserID, endpoint)
+	}
+	return err
+}
+
+func (repo Repository) saveLegacyPushToken(ctx context.Context, tenantContext tenant.Context, endpoint string, request PushTokenRequest) error {
+	token := legacyPushTokenValue(endpoint)
+	platform := legacyPushPlatform(endpoint)
+	deviceInfo, err := legacyPushDeviceInfo(endpoint, request)
+	if err != nil {
+		return err
+	}
+
+	result, err := repo.db.Pool().Exec(ctx, `
+		update public.push_tokens
+		set organization_id = $1::uuid,
+		    platform = $4,
+		    device_info = $5::jsonb,
+		    is_active = true,
+		    updated_at = now()
+		where user_id = $2::uuid
+		  and token = $3
+	`, tenantContext.OrganizationID, tenantContext.UserID, token, platform, string(deviceInfo))
+	if isUndefinedTableError(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() > 0 {
+		return nil
+	}
+
+	_, err = repo.db.Pool().Exec(ctx, `
+		insert into public.push_tokens (
+			organization_id,
+			user_id,
+			token,
+			platform,
+			device_info,
+			is_active
+		)
+		values ($1::uuid, $2::uuid, $3, $4, $5::jsonb, true)
+	`, tenantContext.OrganizationID, tenantContext.UserID, token, platform, string(deviceInfo))
+	if isUniqueViolation(err) {
+		_, err = repo.db.Pool().Exec(ctx, `
+			update public.push_tokens
+			set organization_id = $1::uuid,
+			    platform = $4,
+			    device_info = $5::jsonb,
+			    is_active = true,
+			    updated_at = now()
+			where user_id = $2::uuid
+			  and token = $3
+		`, tenantContext.OrganizationID, tenantContext.UserID, token, platform, string(deviceInfo))
+	}
+	return err
+}
+
+func (repo Repository) deactivateLegacyPushToken(ctx context.Context, userID string, endpoint *string) error {
+	var err error
+	if endpoint == nil {
+		_, err = repo.db.Pool().Exec(ctx, `
+			update public.push_tokens
+			set is_active = false,
+			    updated_at = now()
+			where user_id = $1::uuid
+		`, userID)
+	} else {
+		token := legacyPushTokenValue(*endpoint)
+		_, err = repo.db.Pool().Exec(ctx, `
+			update public.push_tokens
+			set is_active = false,
+			    updated_at = now()
+			where user_id = $1::uuid
+			  and (token = $2 or token = $3)
+		`, userID, token, *endpoint)
 	}
 	if isUndefinedTableError(err) {
 		return nil
@@ -915,6 +1039,54 @@ func cleanUpperStringPointer(value *string) *string {
 func isUndefinedTableError(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "42P01"
+}
+
+func isUndefinedColumnError(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42703"
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+func legacyPushTokenValue(endpoint string) string {
+	endpoint = strings.TrimSpace(endpoint)
+	if strings.HasPrefix(endpoint, "native:") {
+		parts := strings.SplitN(endpoint, ":", 3)
+		if len(parts) == 3 && strings.TrimSpace(parts[2]) != "" {
+			return strings.TrimSpace(parts[2])
+		}
+	}
+	return endpoint
+}
+
+func legacyPushPlatform(endpoint string) string {
+	endpoint = strings.TrimSpace(endpoint)
+	if strings.HasPrefix(endpoint, "native:") {
+		parts := strings.SplitN(endpoint, ":", 3)
+		if len(parts) >= 2 && strings.TrimSpace(parts[1]) != "" {
+			return strings.ToLower(strings.TrimSpace(parts[1]))
+		}
+	}
+	return "web"
+}
+
+func legacyPushDeviceInfo(endpoint string, request PushTokenRequest) ([]byte, error) {
+	deviceInfo := map[string]any{
+		"endpoint": endpoint,
+	}
+	if value := cleanStringPointer(request.P256DH); value != nil {
+		deviceInfo["p256dh"] = *value
+	}
+	if value := cleanStringPointer(request.Auth); value != nil {
+		deviceInfo["auth"] = *value
+	}
+	if value := cleanStringPointer(request.UserAgent); value != nil {
+		deviceInfo["userAgent"] = *value
+	}
+	return json.Marshal(deviceInfo)
 }
 
 func cleanThemeMode(value *string) *string {

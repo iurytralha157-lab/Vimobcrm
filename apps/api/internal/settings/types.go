@@ -69,24 +69,26 @@ type UpdateProfileRequest struct {
 }
 
 type UpdateOrganizationRequest struct {
-	Name                        *string  `json:"name"`
-	CNPJ                        *string  `json:"cnpj"`
-	Creci                       *string  `json:"creci"`
-	InscricaoEstadual           *string  `json:"inscricao_estadual"`
-	RazaoSocial                 *string  `json:"razao_social"`
-	NomeFantasia                *string  `json:"nome_fantasia"`
-	CEP                         *string  `json:"cep"`
-	Endereco                    *string  `json:"endereco"`
-	Numero                      *string  `json:"numero"`
-	Complemento                 *string  `json:"complemento"`
-	Bairro                      *string  `json:"bairro"`
-	Cidade                      *string  `json:"cidade"`
-	UF                          *string  `json:"uf"`
-	Telefone                    *string  `json:"telefone"`
-	Whatsapp                    *string  `json:"whatsapp"`
-	Email                       *string  `json:"email"`
-	Website                     *string  `json:"website"`
-	DefaultCommissionPercentage *float64 `json:"default_commission_percentage"`
+	Name                           *string  `json:"name"`
+	CNPJ                           *string  `json:"cnpj"`
+	Creci                          *string  `json:"creci"`
+	InscricaoEstadual              *string  `json:"inscricao_estadual"`
+	RazaoSocial                    *string  `json:"razao_social"`
+	NomeFantasia                   *string  `json:"nome_fantasia"`
+	CEP                            *string  `json:"cep"`
+	Endereco                       *string  `json:"endereco"`
+	Numero                         *string  `json:"numero"`
+	Complemento                    *string  `json:"complemento"`
+	Bairro                         *string  `json:"bairro"`
+	Cidade                         *string  `json:"cidade"`
+	UF                             *string  `json:"uf"`
+	Telefone                       *string  `json:"telefone"`
+	Whatsapp                       *string  `json:"whatsapp"`
+	Email                          *string  `json:"email"`
+	Website                        *string  `json:"website"`
+	DefaultCommissionPercentage    *float64 `json:"default_commission_percentage"`
+	PropertyEditPolicy             *string  `json:"property_edit_policy"`
+	PropertyOwnerContactVisibility *string  `json:"property_owner_contact_visibility"`
 }
 
 type AssetUpload struct {

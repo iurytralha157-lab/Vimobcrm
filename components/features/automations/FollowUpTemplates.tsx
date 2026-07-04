@@ -1,5 +1,5 @@
 import { Badge } from '@/components/ui/badge';
-import { Clock, Calendar, Plus, Building2, Zap } from 'lucide-react';
+import { Clock, Calendar, Zap } from 'lucide-react';
 
 export interface FollowUpTemplate {
   id: string;
@@ -86,7 +86,7 @@ export function FollowUpTemplates({ onSelectTemplate, canCreate = true }: Follow
         {FOLLOW_UP_TEMPLATES.map((template) => (
           <div
             key={template.id}
-            className="group relative flex min-h-[184px] flex-col justify-between overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] p-4 shadow-[0_14px_32px_rgb(0_0_0/0.08)] transition-all duration-200 cursor-pointer hover:bg-[var(--app-surface-hover)]"
+            className="group relative flex min-h-[184px] flex-col justify-between overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] p-4 shadow-none transition-all duration-200 cursor-pointer hover:bg-[var(--app-surface-hover)]"
             onClick={() => onSelectTemplate(template)}
           >
             <div className="flex items-start justify-between gap-3">

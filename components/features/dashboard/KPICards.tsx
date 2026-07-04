@@ -141,11 +141,12 @@ function KPICardItem({
   };
 
   return (
-    <div data-tour={tourTarget} className={cn("h-full", className)}>
+    <div className={cn("h-full", className)}>
       <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
           <Card
+            data-tour={tourTarget}
             className={cn(
               "app-card card-hover overflow-hidden border-0 transition-colors",
               interactive

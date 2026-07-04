@@ -19,6 +19,7 @@ type PropertyAPIOptions = {
   banheiros_min?: string | number
   valor_min?: string | number
   valor_max?: string | number
+  aceita_permuta?: boolean
 }
 
 type PropertyListResponse = {
@@ -51,6 +52,7 @@ export const propertiesAPI = {
         banheiros_min: options?.banheiros_min,
         valor_min: options?.valor_min,
         valor_max: options?.valor_max,
+        aceita_permuta: options?.aceita_permuta,
       },
     })
 

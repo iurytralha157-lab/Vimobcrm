@@ -95,10 +95,20 @@ func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrga
 	}
 
 	if organizationID == "" {
-		return Context{}, ErrOrganizationRequired
+		resolvedOrganizationID, err := repo.defaultActiveOrganizationID(ctx, userID)
+		if err != nil {
+			return Context{}, err
+		}
+		organizationID = resolvedOrganizationID
 	}
 
 	resolved, err := repo.getActiveMembership(ctx, userID, organizationID)
+	if errors.Is(err, ErrOrganizationAccessDenied) && requestedOrganizationID == "" && profile.OrganizationID != "" {
+		if resolvedOrganizationID, fallbackErr := repo.defaultActiveOrganizationID(ctx, userID); fallbackErr == nil && resolvedOrganizationID != organizationID {
+			organizationID = resolvedOrganizationID
+			resolved, err = repo.getActiveMembership(ctx, userID, organizationID)
+		}
+	}
 	if err != nil {
 		return Context{}, err
 	}
@@ -167,7 +177,9 @@ func (repo Repository) getUserProfile(ctx context.Context, userID string) (userP
 		return userProfile{}, fmt.Errorf("%w: %v", ErrTenantResolutionUnhealthy, err)
 	}
 
-	profile.OrganizationID = organizationID.String()
+	if organizationID.Valid {
+		profile.OrganizationID = organizationID.String()
+	}
 
 	return profile, nil
 }
@@ -232,16 +244,24 @@ func (repo Repository) getActiveMembership(ctx context.Context, userID string, o
 
 	err := repo.db.Pool().QueryRow(ctx, `
 		select
-			om.user_id::text,
-			om.organization_id::text,
+			u.id::text,
+			o.id::text,
 			o.name,
 			o.logo_url,
-			om.role
-		from public.organization_members om
-		join public.organizations o on o.id = om.organization_id
-		where om.user_id = $1::uuid
-		  and om.organization_id = $2::uuid
-		  and om.is_active = true
+			coalesce(nullif(om.role, ''), nullif(u.role, ''), 'user')
+		from public.users u
+		join public.organizations o on o.id = $2::uuid
+		left join public.organization_members om
+		  on om.user_id = u.id
+		 and om.organization_id = o.id
+		 and coalesce(om.is_active, false) = true
+		where u.id = $1::uuid
+		  and coalesce(u.is_active, false) = true
+		  and coalesce(o.is_active, true) = true
+		  and (
+		    om.id is not null
+		    or u.organization_id = o.id
+		  )
 		limit 1
 	`, userID, organizationID).Scan(
 		&resolved.UserID,
@@ -262,6 +282,51 @@ func (repo Repository) getActiveMembership(ctx context.Context, userID string, o
 	}
 
 	return resolved, nil
+}
+
+func (repo Repository) defaultActiveOrganizationID(ctx context.Context, userID string) (string, error) {
+	var organizationID string
+
+	err := repo.db.Pool().QueryRow(ctx, `
+		with memberships as (
+			select
+				om.organization_id,
+				1 as priority,
+				om.updated_at,
+				om.joined_at
+			from public.organization_members om
+			where om.user_id = $1::uuid
+			  and coalesce(om.is_active, false) = true
+			union all
+			select
+				u.organization_id,
+				2 as priority,
+				u.updated_at,
+				u.created_at
+			from public.users u
+			where u.id = $1::uuid
+			  and u.organization_id is not null
+			  and coalesce(u.is_active, false) = true
+		)
+		select m.organization_id::text
+		from memberships m
+		join public.organizations o on o.id = m.organization_id
+		where coalesce(o.is_active, true) = true
+		order by
+		  m.priority asc,
+		  m.updated_at desc nulls last,
+		  m.joined_at desc nulls last,
+		  m.organization_id asc
+		limit 1
+	`, userID).Scan(&organizationID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrOrganizationRequired
+	}
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrTenantResolutionUnhealthy, err)
+	}
+
+	return organizationID, nil
 }
 
 func (repo Repository) getPermissions(ctx context.Context, userID string, organizationID string) ([]string, error) {

@@ -15,6 +15,7 @@ interface DateFilterPopoverProps {
   customDateRange?: { from: Date; to: Date } | null;
   onCustomDateRangeChange?: (range: { from: Date; to: Date } | null) => void;
   triggerClassName?: string;
+  triggerDataTour?: string;
   align?: "start" | "center" | "end";
   defaultPreset?: DatePreset;
   showCalendar?: boolean;
@@ -26,6 +27,7 @@ export function DateFilterPopover({
   customDateRange,
   onCustomDateRangeChange,
   triggerClassName,
+  triggerDataTour,
   align = "start",
   defaultPreset = "last30days",
   showCalendar = true,
@@ -109,6 +111,7 @@ export function DateFilterPopover({
         <Button
           variant="outline"
           size="sm"
+          data-tour={triggerDataTour}
           className={cn("h-9 gap-2 text-sm", isActive && "border-primary text-primary", triggerClassName)}
         >
           <CalendarIcon className="h-4 w-4 shrink-0" />

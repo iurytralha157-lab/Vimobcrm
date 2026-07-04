@@ -216,7 +216,7 @@ async function fetchGroupParticipantName(digits: string, context?: LookupContext
       ),
     );
     if (phoneDigits && phoneDigits !== digits) {
-      return fetchKnownContactName(phoneDigits, context);
+      return (await fetchKnownContactName(phoneDigits, context)) || formatPhone(phoneDigits);
     }
   } catch {
     return null;

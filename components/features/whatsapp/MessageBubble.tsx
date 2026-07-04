@@ -44,6 +44,8 @@ interface MessageBubbleProps {
   }>;
 }
 
+type MediaKind = "text" | "image" | "video" | "audio" | "document" | "sticker" | "reaction";
+
 // Generate pseudo-random waveform bars based on a seed
 const generateWaveform = (seed: string, count: number = 40): number[] => {
   const bars: number[] = [];
@@ -71,10 +73,11 @@ const checkOggOpusSupport = (): boolean => {
 };
 
 // Fetch audio as blob URL to bypass format detection issues
-const fetchAsBlobUrl = async (url: string): Promise<string> => {
+const fetchAsBlobUrl = async (url: string, mimeType?: string): Promise<string> => {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Media request failed: ${response.status}`);
-  const blob = await response.blob();
+  const sourceBlob = await response.blob();
+  const blob = mimeType ? sourceBlob.slice(0, sourceBlob.size, mimeType) : sourceBlob;
   return URL.createObjectURL(blob);
 };
 
@@ -90,6 +93,53 @@ const toSafeText = (value: unknown): string => {
     return JSON.stringify(value);
   } catch {
     return "[conteúdo indisponível]";
+  }
+};
+
+const cleanMimeType = (value: string | null | undefined) => {
+  const mimeType = String(value || "").split(";")[0]?.trim().toLowerCase();
+  return mimeType || "";
+};
+
+const getEffectiveMediaKind = (
+  messageType: string,
+  mediaMimeType: string | null,
+  mediaUrl: string | null,
+): MediaKind => {
+  const type = String(messageType || "text").toLowerCase();
+  const mimeType = cleanMimeType(mediaMimeType);
+
+  if (type === "reaction") return "reaction";
+  if (type === "sticker") return "sticker";
+  if (type === "audio" || type === "video" || type === "image") return type;
+
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType === "image/webp") return "sticker";
+  if (mimeType.startsWith("image/")) return "image";
+
+  if (type === "document") return "document";
+  if (mediaUrl && type !== "text") return "document";
+  return "text";
+};
+
+const normalizeMediaMimeType = (mediaMimeType: string | null, mediaKind: MediaKind) => {
+  const mimeType = cleanMimeType(mediaMimeType);
+  if (mimeType && mimeType !== "application/octet-stream") return mimeType;
+
+  switch (mediaKind) {
+    case "audio":
+      return "audio/ogg";
+    case "video":
+      return "video/mp4";
+    case "sticker":
+      return "image/webp";
+    case "image":
+      return "image/jpeg";
+    case "document":
+      return "application/octet-stream";
+    default:
+      return undefined;
   }
 };
 
@@ -131,6 +181,8 @@ export function MessageBubble({
   const [blobAttempted, setBlobAttempted] = useState(false);
   const [mediaPendingNowMs, setMediaPendingNowMs] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const mediaKind = getEffectiveMediaKind(messageType, mediaMimeType, mediaUrl);
+  const normalizedMediaMimeType = normalizeMediaMimeType(mediaMimeType, mediaKind);
 
   // Waveform bars generated from mediaUrl or sentAt as seed
   const waveformBars = generateWaveform(mediaUrl || sentAt, 28);
@@ -161,7 +213,7 @@ export function MessageBubble({
         setCurrentTime(0);
         setIsPlaying(false);
 
-        if (messageType === "image" || messageType === "sticker") {
+        if (mediaKind === "image" || mediaKind === "sticker") {
           setImageError(false);
           setImageLoading(!!mediaUrl);
         }
@@ -171,7 +223,7 @@ export function MessageBubble({
         cancelled = true;
       };
     }
-  }, [mediaUrl, messageType, messageId, blobUrl]);
+  }, [mediaUrl, mediaKind, messageId, blobUrl]);
 
   useEffect(() => {
     const handlePlaybackRateChange = (event: Event) => {
@@ -253,7 +305,7 @@ export function MessageBubble({
 
   const isValidMediaUrl = (url: string | null | undefined): boolean => {
     if (!url) return false;
-    if (messageType === "sticker" && url.includes("a.whatsapp.net")) return false;
+    if (mediaKind === "sticker" && url.includes("a.whatsapp.net")) return false;
     if (url.includes("mmg.whatsapp.net")) return false;
     if (url.includes("pps.whatsapp.net")) return false;
     // Extract path without query parameters to avoid false matches on signed URL token strings
@@ -316,7 +368,7 @@ export function MessageBubble({
     if (!blobAttempted && mediaUrl && isValidMediaUrl(mediaUrl)) {
       setBlobAttempted(true);
       try {
-        const blob = await fetchAsBlobUrl(mediaUrl);
+        const blob = await fetchAsBlobUrl(mediaUrl, normalizedMediaMimeType);
         setBlobUrl(blob);
         setAudioError(null);
         // The audio element will re-render with the new blob src
@@ -327,7 +379,7 @@ export function MessageBubble({
     }
 
     // Check if it's a format issue
-    if (mediaMimeType?.includes('ogg') && !checkOggOpusSupport()) {
+    if (normalizedMediaMimeType?.includes('ogg') && !checkOggOpusSupport()) {
       setAudioError('Formato não suportado neste navegador');
     } else if (errorCode === 4) {
       setAudioError('Formato não suportado');
@@ -387,9 +439,9 @@ export function MessageBubble({
     if (safeContent) return safeContent;
     const parsed = new Date(sentAt);
     const timestamp = Number.isNaN(parsed.getTime()) ? "sem-data" : format(parsed, 'yyyyMMdd-HHmm');
-    if (messageType === 'audio') return `Audio-${timestamp}`;
-    if (messageType === 'image') return `Imagem-${timestamp}`;
-    if (messageType === 'video') return `Video-${timestamp}`;
+    if (mediaKind === 'audio') return `Audio-${timestamp}`;
+    if (mediaKind === 'image' || mediaKind === 'sticker') return `Imagem-${timestamp}`;
+    if (mediaKind === 'video') return `Video-${timestamp}`;
     return `Documento-${timestamp}`;
   };
 
@@ -635,8 +687,8 @@ export function MessageBubble({
           </div>
 
           <audio
+            key={blobUrl || mediaUrl}
             ref={audioRef}
-            src={blobUrl || mediaUrl!}
             preload="metadata"
             onEnded={() => {
               setIsPlaying(false);
@@ -649,7 +701,9 @@ export function MessageBubble({
             onCanPlay={() => setAudioReady(true)}
             onError={handleAudioError}
             className="hidden"
-          />
+          >
+            <source src={blobUrl || mediaUrl!} type={normalizedMediaMimeType} />
+          </audio>
         </div>
       );
     }
@@ -686,12 +740,12 @@ export function MessageBubble({
 
     // For 'ready' status or legacy messages (null status), check URL validity
     // If no valid URL but status is null (legacy), show as failed for retry
-    if (!hasValidMedia && mediaStatus === null && messageType !== 'text' && messageType !== 'sticker') {
+    if (!hasValidMedia && mediaStatus === null && mediaKind !== 'text' && mediaKind !== 'sticker') {
       // Legacy message with expired/invalid URL - treat as failed
       return renderMediaFailed();
     }
 
-    switch (messageType) {
+    switch (mediaKind) {
       case "image":
         if (hasValidMedia && !imageError) {
           return (
@@ -759,8 +813,10 @@ export function MessageBubble({
                   src={mediaUrl!}
                   className="w-full h-auto max-h-[400px] object-cover"
                   preload="metadata"
+                  controls
+                  playsInline
                 />
-                <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 transition-opacity group-hover:opacity-100">
                   <div className="w-12 h-12 rounded-full bg-white/90 flex items-center justify-center">
                     <Play className="w-6 h-6 text-black ml-1" />
                   </div>
@@ -820,9 +876,9 @@ export function MessageBubble({
               >
                 {safeContent || "Documento"}
               </p>
-              {mediaMimeType && (
+              {normalizedMediaMimeType && (
                 <span className="text-[10px] opacity-50 block">
-                  {mediaMimeType.split("/")[1]?.toUpperCase().replace("OCTET-STREAM", "DOC") || "DOC"}
+                  {normalizedMediaMimeType.split("/")[1]?.toUpperCase().replace("OCTET-STREAM", "DOC") || "DOC"}
                   {mediaSize ? ` · ${formatFileSize(mediaSize)}` : ""}
                 </span>
               )}
@@ -880,9 +936,9 @@ export function MessageBubble({
     }
   };
 
-  const isMediaMessage = messageType !== "text" && messageType !== "reaction";
-  const isMediaWithOverlayTimestamp = (messageType === "image" || messageType === "video") && isValidMediaUrl(mediaUrl) && !imageError;
-  const isAudioMessage = messageType === "audio";
+  const isMediaMessage = mediaKind !== "text" && mediaKind !== "reaction";
+  const isMediaWithOverlayTimestamp = (mediaKind === "image" || mediaKind === "video") && isValidMediaUrl(mediaUrl) && !imageError;
+  const isAudioMessage = mediaKind === "audio";
   const hasReactions = reactions.length > 0;
 
   const renderReactions = () => {
@@ -928,7 +984,7 @@ export function MessageBubble({
           fromMe
             ? "bg-primary text-primary-foreground rounded-tr-none"
             : "bg-[#242424] text-white rounded-tl-none",
-          (messageType === "image" || messageType === "video") && !content ? "p-[3px]" : "px-3 py-2"
+          (mediaKind === "image" || mediaKind === "video") && !content ? "p-[3px]" : "px-3 py-2"
         )}>
           {/* Sender name for groups or sent messages with sender info */}
           {!fromMe && senderName && (
@@ -942,7 +998,7 @@ export function MessageBubble({
           {isMediaMessage && renderMedia()}
 
           {/* Text content */}
-          {safeContent && messageType === "text" && (
+          {safeContent && mediaKind === "text" && (
             <MessageText
               content={safeContent}
               fromMe={fromMe}
@@ -982,7 +1038,7 @@ export function MessageBubble({
                       lead_id: leadId,
                       file_name: fileName,
                       file_url: mediaUrl,
-                      file_type: messageType,
+                      file_type: mediaKind,
                       file_size: mediaSize || undefined,
                       message_id: messageId,
                     });

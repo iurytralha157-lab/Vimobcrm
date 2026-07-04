@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type ReactNode } from 'react';
+import { useState, useEffect, useRef, type CSSProperties, type ReactNode } from 'react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { PropertyPickerDialog } from '@/components/features/properties/PropertyPickerDialog';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -21,7 +21,7 @@ import { AnimatedTabNav } from '@/components/ui/animated-tab-nav';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { useIsMobile } from '@/hooks/use-mobile';
 import {
-  Phone, Mail, MessageCircle, Building2, Loader2, CheckCircle, X, Plus, Save, User,
+  Phone, Mail, MessageCircle, Building2, Loader2, X, Plus, Save, User,
   Briefcase, MapPin, DollarSign, Clock, ChevronRight, Calendar, Target,
   Lightbulb, FileEdit, Zap, Bot, Check, Activity, ListTodo, Contact,
   Handshake, History, ChevronDown, Trophy, XCircle, CircleDot, UserCheck,
@@ -455,6 +455,65 @@ function getDealStatusTriggerClass(status?: string | null) {
   return '!border-0 !bg-[var(--app-surface-soft)] !text-[var(--app-text-primary)] !shadow-none !ring-0 !ring-offset-0 transition-colors hover:!bg-[var(--app-surface-hover)] data-[state=open]:!bg-[var(--app-surface-hover)] focus:!ring-0 focus-visible:!ring-1 focus-visible:!ring-[var(--app-border-strong)] focus-visible:!ring-offset-0';
 }
 
+function formatCadenceStageLabel(name?: string | null) {
+  const trimmed = name?.trim();
+  if (!trimmed) return '';
+
+  const words = trimmed.split(/\s+/);
+  const firstWord = words[0]
+    ?.normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  const secondWord = words[1]
+    ?.normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  if (firstWord === 'cadencia') {
+    const start = secondWord === 'de' ? 2 : 1;
+    const label = words.slice(start).join(' ').trim();
+    return normalizeCadenceLabel(label);
+  }
+
+  return normalizeCadenceLabel(trimmed);
+}
+
+function normalizeCadenceLabel(label: string) {
+  const normalized = label
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  if (normalized === 'contactados') return 'Contatados';
+  return label;
+}
+
+function getStageStepperStyle(stageCount: number): CSSProperties {
+  if (stageCount > 32) {
+    return {
+      '--lead-stage-step-size': '1.35rem',
+      '--lead-stage-step-font-size': '0.625rem',
+      '--lead-stage-step-gap': '0.25rem',
+    } as CSSProperties;
+  }
+
+  if (stageCount > 20) {
+    return {
+      '--lead-stage-step-size': '1.55rem',
+      '--lead-stage-step-font-size': '0.6875rem',
+      '--lead-stage-step-gap': '0.25rem',
+    } as CSSProperties;
+  }
+
+  return {
+    '--lead-stage-step-size': '2rem',
+    '--lead-stage-step-font-size': '0.75rem',
+    '--lead-stage-step-gap': '0.375rem',
+  } as CSSProperties;
+}
+
+const stageTooltipClassName = 'max-w-[18rem] text-[11px] font-normal leading-snug tracking-normal';
+
 export function LeadDetailDialog({
   lead: leadProp,
   stages,
@@ -495,6 +554,7 @@ export function LeadDetailDialog({
   const [selectedAttachment, setSelectedAttachment] = useState<LeadAttachment | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const reopenStatusConfirmationRef = useRef<{ leadId: string; fromStatus: string; expiresAt: number } | null>(null);
   const v2LeadInfoScrollRef = useRef<HTMLDivElement>(null);
   const v2LeadWorkScrollRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
@@ -778,6 +838,7 @@ export function LeadDetailDialog({
 
   const currentStage = localLead.stage || stages.find(s => s.id === localLead.stage_id);
   const currentStageIndex = stages.findIndex(s => s.id === localLead.stage_id);
+  const stageStepperStyle = getStageStepperStyle(stages.length);
   const assigneeName = localLead.assignee?.name || '';
   const assigneeEmail = localLead.assignee?.email || '';
   const interestValue = Number(lead.valor_interesse || 0);
@@ -807,6 +868,8 @@ export function LeadDetailDialog({
   // Find cadence template for this lead's stage
   const stageTemplate = safeCadenceTemplates.find(t => t.stage_key === currentStage?.stage_key);
   const templateTasks = Array.isArray(stageTemplate?.tasks) ? stageTemplate.tasks.filter(Boolean) : [];
+  const cadenceStageLabel = formatCadenceStageLabel(stageTemplate?.name);
+  const cadenceTitle = cadenceStageLabel ? `Cadencia / ${cadenceStageLabel}` : 'Cadencia';
 
   // Map lead tasks by a key to check if completed
   const leadTasksMap = new Map(safeLeadTasks.map(t => [`${t.title || ''}-${t.day_offset || 0}-${t.type || ''}`, t]));
@@ -1306,8 +1369,34 @@ export function LeadDetailDialog({
 
     // Intercept "lost" -> ask for reason via dialog
     if (newStatus === 'lost') {
+      reopenStatusConfirmationRef.current = null;
       setLostReasonDialogOpen(true);
       return;
+    }
+
+    if (newStatus === 'open' && previousStatus !== 'open') {
+      const pending = reopenStatusConfirmationRef.current;
+      const isConfirmed =
+        pending?.leadId === lead.id &&
+        pending.fromStatus === previousStatus &&
+        pending.expiresAt > Date.now();
+
+      if (!isConfirmed) {
+        reopenStatusConfirmationRef.current = {
+          leadId: lead.id,
+          fromStatus: previousStatus,
+          expiresAt: Date.now() + 8000,
+        };
+        toast.warning('Confirme a reabertura do lead', {
+          description: 'Selecione Aberto novamente para tirar este lead de ganho/perdido.',
+          duration: 6000,
+        });
+        return;
+      }
+
+      reopenStatusConfirmationRef.current = null;
+    } else {
+      reopenStatusConfirmationRef.current = null;
     }
 
     // Validation when marking as "won"
@@ -1689,31 +1778,22 @@ export function LeadDetailDialog({
 
               {/* Feedback Section */}
               <div className="rounded-xl bg-white/[0.035] border border-white/[0.055] p-4 shadow-sm space-y-4">
-                <div className="flex items-center gap-2">
-                  <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center">
-                    <MessageCircle className="h-3.5 w-3.5 text-primary" />
-                  </div>
-                  <h3 className="font-medium text-sm">Feedback do Lead</h3>
-                </div>
                 <Textarea
                   placeholder="Feedback sobre o lead..."
                   className="min-h-[120px] rounded-xl resize-none text-sm"
                   value={feedback}
                   onChange={(e) => setFeedback(e.target.value)}
                 />
-                <Button
-                  className="w-full rounded-xl"
-                  size="sm"
-                  disabled={!feedback.trim() || createActivityMutation.isPending}
-                  onClick={handleSaveFeedback}
-                >
-                  {createActivityMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  ) : (
-                    <Save className="h-4 w-4 mr-2" />
-                  )}
-                  Registrar Feedback
-                </Button>
+                <div className="flex justify-end">
+                  <Button
+                    className="rounded-xl px-4"
+                    size="sm"
+                    disabled={!feedback.trim() || createActivityMutation.isPending}
+                    onClick={handleSaveFeedback}
+                  >
+                    Registrar feedback
+                  </Button>
+                </div>
               </div>
 
             </div>
@@ -2330,7 +2410,11 @@ export function LeadDetailDialog({
       <div className="lead-detail-dialog lead-detail-v2 flex h-full min-h-0 flex-col bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]">
         <div className="lead-mobile-drawer-header shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-3 pb-3">
           <div className="mb-3 flex items-center gap-2">
-            <div className="lead-detail-v2-scroll flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pb-0.5">
+            <div
+              data-lead-stage-stepper
+              className="lead-detail-v2-scroll flex min-w-0 flex-1 items-center overflow-x-auto pb-0.5"
+              style={stageStepperStyle}
+            >
               {stages.map((stage, idx) => {
                 const isActive = stage.id === localLead.stage_id;
                 const isPast = idx < currentStageIndex;
@@ -2339,7 +2423,8 @@ export function LeadDetailDialog({
                   <button
                     key={stage.id}
                     type="button"
-                    title={stage.name}
+                    aria-label={`Mover para ${stage.name}`}
+                    data-lead-stage-step
                     onClick={() => handleMoveToStage(stage.id)}
                     className={cn(
                       'lead-stage-step relative flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-[11px] font-medium',
@@ -2582,11 +2667,9 @@ export function LeadDetailDialog({
                       </>
                     )}
                   </div>
-                  <div className="space-y-2">
-                    {attachments.length === 0 ? (
-                      <p className="text-xs text-[var(--app-text-tertiary)]">Nenhum documento anexado</p>
-                    ) : (
-                      attachments.map((doc) => (
+                  {attachments.length > 0 && (
+                    <div className="space-y-2">
+                      {attachments.map((doc) => (
                         <button
                           key={doc.id}
                           type="button"
@@ -2596,9 +2679,9 @@ export function LeadDetailDialog({
                           <FileText className="h-3.5 w-3.5 text-primary" />
                           <span className="truncate">{doc.file_name}</span>
                         </button>
-                      ))
-                    )}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </section>
               </div>
             </div>
@@ -2609,15 +2692,15 @@ export function LeadDetailDialog({
               <div className="space-y-3 pb-4">
 
 
-                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                <section className="lead-agenda-card rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="flex items-center justify-between">
-                    <div>
+                    <div className="lead-agenda-summary min-w-0">
                       <h3 className="text-xs font-semibold">Agenda</h3>
                       <p className="text-[10px] text-[var(--app-text-tertiary)]">{scheduleEvents.length} compromisso(s)</p>
                     </div>
                     <Button
                       size="sm"
-                      className="h-8 rounded-[6px]"
+                      className="lead-agenda-action h-8 shrink-0 rounded-[6px]"
                       onClick={() => {
                         setEditingScheduleEvent(null);
                         setScheduleDefaultType('visit');
@@ -2632,10 +2715,7 @@ export function LeadDetailDialog({
 
                 <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-2 flex items-center justify-between">
-                    <div>
-                      <h3 className="text-xs font-semibold">Cadência</h3>
-                      <p className="text-[10px] text-[var(--app-text-tertiary)]">{stageTemplate?.name || 'Sem cadência configurada'}</p>
-                    </div>
+                    <h3 className="text-xs font-semibold">{cadenceTitle}</h3>
                     {totalTasksCount > 0 && (
                       <Badge variant="outline" className="rounded-[5px] border-0 bg-[var(--app-surface-solid)] text-[10px]">
                         {completedTasksCount}/{totalTasksCount}
@@ -2687,22 +2767,17 @@ export function LeadDetailDialog({
                 </section>
 
                 <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
-                  <div className="mb-3 flex items-center gap-2">
-                    <div className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-primary/12 text-primary">
-                      <MessageCircle className="h-3.5 w-3.5" />
-                    </div>
-                    <h3 className="text-xs font-semibold">Feedback do lead</h3>
-                  </div>
                   <Textarea
                     placeholder="Registre o feedback sobre atendimento, perfil ou proximos passos..."
                     value={feedback}
                     onChange={(event) => setFeedback(event.target.value)}
                     className="min-h-[92px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"
                   />
-                  <Button className="mt-2 h-8 w-full rounded-[6px]" disabled={!feedback.trim() || createActivityMutation.isPending} onClick={handleSaveFeedback}>
-                    <Save className="mr-1.5 h-3.5 w-3.5" />
-                    Registrar feedback
-                  </Button>
+                  <div className="mt-2 flex justify-end">
+                    <Button className="h-8 rounded-[6px] px-3" disabled={!feedback.trim() || createActivityMutation.isPending} onClick={handleSaveFeedback}>
+                      Registrar feedback
+                    </Button>
+                  </div>
                 </section>
               </div>
             </div>
@@ -2752,7 +2827,12 @@ export function LeadDetailDialog({
 
           <ScrollArea className="w-full" type="scroll">
             <TooltipProvider delayDuration={0}>
-              <nav className="lead-stage-rail flex min-w-max items-center gap-1.5 pb-3">
+              <nav
+                data-tour="lead-detail-stages"
+                data-lead-stage-stepper
+                className="lead-stage-rail flex min-w-max items-center pb-3"
+                style={stageStepperStyle}
+              >
                 {stages.map((stage, idx) => {
                   const isActive = stage.id === localLead.stage_id;
                   const isPast = idx < currentStageIndex;
@@ -2762,6 +2842,8 @@ export function LeadDetailDialog({
                       <TooltipTrigger asChild>
                         <button
                           type="button"
+                          aria-label={`Mover para ${stage.name}`}
+                          data-lead-stage-step
                           onClick={() => handleMoveToStage(stage.id)}
                           className={cn(
                             'lead-stage-step group relative flex h-8 w-8 items-center justify-center rounded-[6px] text-xs font-medium transition-colors',
@@ -2775,7 +2857,7 @@ export function LeadDetailDialog({
                           {idx + 1}
                         </button>
                       </TooltipTrigger>
-                      <TooltipContent side="bottom" className="text-xs">
+                      <TooltipContent side="top" align="center" sideOffset={8} className={stageTooltipClassName}>
                         {stage.name}
                       </TooltipContent>
                     </Tooltip>
@@ -2803,7 +2885,7 @@ export function LeadDetailDialog({
                       <h2 className="truncate text-base font-semibold leading-tight">{leadName}</h2>
                       <ReentryBadge count={lead.reentry_count} lastEntryAt={lead.last_entry_at} />
                     </div>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
+                    <div data-tour="lead-detail-tags" className="mt-2 flex flex-wrap gap-1.5">
                       {leadTags.map((tag) => {
                         const tagColor = getTagColor(tag);
                         return (
@@ -2912,7 +2994,7 @@ export function LeadDetailDialog({
                   )}
                 </div>
 
-                <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                <div data-tour="lead-detail-contact" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-xs font-semibold">Dados do contato</h3>
                     <Button variant="ghost" size="sm" className="h-7 rounded-[5px] px-2 text-[10px]" onClick={() => setIsEditingContact((value) => !value)}>
@@ -2968,7 +3050,7 @@ export function LeadDetailDialog({
                   }}
                 />
 
-                <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                <div data-tour="lead-detail-documents" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-xs font-semibold">Documentacao</h3>
                     {(profile?.role === 'admin' || profile?.id === lead.assigned_user_id) && (
@@ -2981,11 +3063,9 @@ export function LeadDetailDialog({
                       </>
                     )}
                   </div>
-                  <div className="max-h-44 space-y-2 overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    {attachments.length === 0 ? (
-                      <p className="text-xs text-[var(--app-text-tertiary)]">Nenhum documento anexado</p>
-                    ) : (
-                      attachments.map((doc) => (
+                  {attachments.length > 0 && (
+                    <div className="max-h-44 space-y-2 overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                      {attachments.map((doc) => (
                         <button
                           key={doc.id}
                           type="button"
@@ -2995,9 +3075,9 @@ export function LeadDetailDialog({
                           <FileText className="h-3.5 w-3.5 text-primary" />
                           <span className="truncate">{doc.file_name}</span>
                         </button>
-                      ))
-                    )}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
               </section>
@@ -3009,15 +3089,15 @@ export function LeadDetailDialog({
               <div className="space-y-4">
 
 
-                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                <section data-tour="lead-detail-agenda" className="lead-agenda-card rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="flex items-center justify-between">
-                    <div>
+                    <div className="lead-agenda-summary min-w-0">
                       <h3 className="text-xs font-semibold">Agenda</h3>
                       <p className="text-[10px] text-[var(--app-text-tertiary)]">{scheduleEvents.length} compromisso(s)</p>
                     </div>
                     <Button
                       size="sm"
-                      className="h-8 rounded-[6px]"
+                      className="lead-agenda-action h-8 shrink-0 rounded-[6px]"
                       onClick={() => {
                         setEditingScheduleEvent(null);
                         setScheduleDefaultType('visit');
@@ -3030,12 +3110,9 @@ export function LeadDetailDialog({
                   </div>
                 </section>
 
-                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                <section data-tour="lead-detail-cadence" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-2 flex items-center justify-between">
-                    <div>
-                      <h3 className="text-xs font-semibold">Cadencia</h3>
-                      <p className="text-[10px] text-[var(--app-text-tertiary)]">{stageTemplate?.name || 'Sem cadencia configurada'}</p>
-                    </div>
+                    <h3 className="text-xs font-semibold">{cadenceTitle}</h3>
                     {totalTasksCount > 0 && (
                       <Badge variant="outline" className="rounded-[5px] border-0 bg-[var(--app-surface-solid)] text-[10px]">
                         {completedTasksCount}/{totalTasksCount}
@@ -3086,33 +3163,28 @@ export function LeadDetailDialog({
                   )}
                 </section>
 
-                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
-                  <div className="mb-3 flex items-center gap-2">
-                    <div className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-primary/12 text-primary">
-                      <MessageCircle className="h-3.5 w-3.5" />
-                    </div>
-                    <h3 className="text-xs font-semibold">Feedback do lead</h3>
-                  </div>
+                <section data-tour="lead-detail-feedback" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <Textarea
                     placeholder="Registre o feedback sobre atendimento, perfil ou proximos passos..."
                     value={feedback}
                     onChange={(event) => setFeedback(event.target.value)}
                     className="min-h-[74px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"
                   />
-                  <Button
-                    className="mt-2 h-8 w-full rounded-[6px]"
-                    disabled={!feedback.trim() || createActivityMutation.isPending}
-                    onClick={handleSaveFeedback}
-                  >
-                    <Save className="mr-1.5 h-3.5 w-3.5" />
-                    Registrar feedback
-                  </Button>
+                  <div className="mt-2 flex justify-end">
+                    <Button
+                      className="h-8 rounded-[6px] px-3"
+                      disabled={!feedback.trim() || createActivityMutation.isPending}
+                      onClick={handleSaveFeedback}
+                    >
+                      Registrar feedback
+                    </Button>
+                  </div>
                 </section>
               </div>
             </div>
           </main>
 
-          <aside className="lead-detail-v2-column border-l border-[var(--app-border)]">
+          <aside data-tour="lead-detail-history" className="lead-detail-v2-column border-l border-[var(--app-border)]">
             <LeadUnifiedThread
               leadId={lead.id}
               leadName={leadName}
@@ -3352,7 +3424,7 @@ export function LeadDetailDialog({
         <div className="mt-3 overflow-hidden">
           <ScrollArea className="w-full" type="scroll">
             <TooltipProvider delayDuration={0}>
-              <nav className="stage-tab-nav">
+              <nav data-lead-stage-stepper className="stage-tab-nav" style={stageStepperStyle}>
                 {stages.map((stage, idx) => {
                   const isActive = stage.id === lead.stage_id;
                   const isPast = idx < currentStageIndex;
@@ -3362,7 +3434,7 @@ export function LeadDetailDialog({
                         <button
                           onClick={() => handleMoveToStage(stage.id)}
                           aria-label={`Mover para ${stage.name}`}
-                          title={stage.name}
+                          data-lead-stage-step
                           className={cn(
                             "stage-tab-link",
                             isActive && "active",
@@ -3382,7 +3454,7 @@ export function LeadDetailDialog({
                           </span>
                         </button>
                       </TooltipTrigger>
-                      <TooltipContent side="bottom" className="text-xs font-medium">
+                      <TooltipContent side="top" align="center" sideOffset={8} className={stageTooltipClassName}>
                         {stage.name}
                       </TooltipContent>
                     </Tooltip>
@@ -3423,7 +3495,7 @@ export function LeadDetailDialog({
                   <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
                     <ListTodo className="h-4 w-4 text-primary" />
                   </div>
-                  <h3 className="font-semibold">Cadência de atividades</h3>
+                  <h3 className="font-semibold">{cadenceTitle}</h3>
                   {totalTasksCount > 0 && (
                     <Badge variant="outline" className="font-normal ml-auto">
                       {completedTasksCount}/{totalTasksCount}
@@ -3437,10 +3509,6 @@ export function LeadDetailDialog({
                   </div>
                 ) : templateTasks.length > 0 ? (
                   <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground mb-3 flex items-center gap-1.5">
-                      <CheckCircle className="h-3 w-3" />
-                      Cadência atual: <span className="font-medium text-foreground">{stageTemplate?.name}</span>
-                    </p>
                     {templateTasks.map((task) => {
                       const taskType = getCadenceTaskType(task.type);
                       const existingTask = leadTasksMap.get(`${task.title}-${task.day_offset}-${task.type}`);
@@ -3485,13 +3553,6 @@ export function LeadDetailDialog({
 
               {/* Coluna Direita: Feedback */}
               <div className="space-y-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                    <MessageCircle className="h-4 w-4 text-primary" />
-                  </div>
-                  <h3 className="font-semibold">Feedback do Lead</h3>
-                </div>
-
                 <div className="space-y-3">
                   <Textarea
                     placeholder="Digite aqui o feedback sobre o atendimento ou perfil do lead..."
@@ -3499,18 +3560,15 @@ export function LeadDetailDialog({
                     value={feedback}
                     onChange={(e) => setFeedback(e.target.value)}
                   />
-                  <Button
-                    className="w-full rounded-xl"
-                    disabled={!feedback.trim() || createActivityMutation.isPending}
-                    onClick={handleSaveFeedback}
-                  >
-                    {createActivityMutation.isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    ) : (
-                      <Save className="h-4 w-4 mr-2" />
-                    )}
-                    Registrar Feedback
-                  </Button>
+                  <div className="flex justify-end">
+                    <Button
+                      className="rounded-xl px-4"
+                      disabled={!feedback.trim() || createActivityMutation.isPending}
+                      onClick={handleSaveFeedback}
+                    >
+                      Registrar feedback
+                    </Button>
+                  </div>
                 </div>
 
               </div>
@@ -3805,13 +3863,8 @@ export function LeadDetailDialog({
                         )}
                       </div>
 
-                      <div className="rounded-xl bg-white/[0.035] border border-white/[0.055] p-3 min-h-[100px] flex flex-col">
-                        {attachments.length === 0 ? (
-                          <div className="flex-1 flex flex-col items-center justify-center py-4 text-muted-foreground gap-2">
-                            <FileText className="h-8 w-8 opacity-20" />
-                            <p className="text-xs">Nenhum documento anexado</p>
-                          </div>
-                        ) : (
+                      {attachments.length > 0 && (
+                        <div className="rounded-xl bg-white/[0.035] border border-white/[0.055] p-3 flex flex-col">
                           <div className="grid gap-2">
                             {attachments.map((doc) => {
                               const truncateFileName = (name: string, maxLength: number = 20) => {
@@ -3870,8 +3923,8 @@ export function LeadDetailDialog({
                               );
                             })}
                           </div>
-                        )}
-                      </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -4234,17 +4287,24 @@ export function LeadDetailDialog({
 
   return (
     <>
-      <Dialog open={!!lead} onOpenChange={() => onClose()}>
+      <Dialog
+        open={!!lead}
+        onOpenChange={(open) => {
+          if (!open && document.documentElement.dataset.setupGuideActiveStep === 'pipeline') return;
+          if (!open) onClose();
+        }}
+      >
         <DialogContent
+          data-tour="lead-detail-dialog"
           className="lead-detail-dialog-content h-[92vh] lg:h-[min(720px,84vh)] w-[96vw] lg:w-[92vw] xl:w-[min(1180px,92vw)] max-w-[1180px] max-h-[92vh] lg:max-h-[84vh] overflow-hidden rounded-[8px] border-none bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none animate-scale-in flex flex-col gap-0"
           style={{ border: 'none', outline: 'none' }}
           onOpenAutoFocus={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => event.preventDefault()}
           onInteractOutside={(event) => {
-            const target = event.target as HTMLElement | null;
-            const isInsideAnotherDialog = target?.closest('.vimob-dialog-content') && !target?.closest('.lead-detail-dialog-content');
+            const target = event.target as Element | null;
+            const isInsideAnotherDialog = target?.closest?.('.vimob-dialog-content') && !target?.closest?.('.lead-detail-dialog-content');
             if (
-              target?.closest('[data-radix-popper-content-wrapper], [role="listbox"]') ||
+              target?.closest?.('[data-radix-popper-content-wrapper], [role="listbox"]') ||
               isInsideAnotherDialog
             ) {
               event.preventDefault();

@@ -110,6 +110,18 @@ const getLeadTagsSignature = (lead?: Pick<PipelineLead, 'tags'> | null) => {
     .join('|');
 };
 
+const mergeMovedLeadResponse = (currentLead: PipelineLead, movedLead: Partial<PipelineLead>): PipelineLead => {
+  const responseHasTags = Array.isArray(movedLead.tags);
+  const shouldPreserveTags = !responseHasTags || (movedLead.tags?.length === 0 && (currentLead.tags?.length || 0) > 0);
+
+  return {
+    ...currentLead,
+    ...movedLead,
+    tags: shouldPreserveTags ? currentLead.tags : movedLead.tags,
+    stage: currentLead.stage,
+  };
+};
+
 const NO_VISIBLE_USER_ID = '00000000-0000-0000-0000-000000000000';
 const PIPELINE_AUTO_SCROLLER_OPTIONS = {
   startFromPercentage: 0.2,
@@ -368,7 +380,14 @@ export default function Pipelines() {
   const shouldLoadPipelineLeads = !!selectedPipelineId && filterUser !== null && !permissionLoading && !leadVisibilityLoading && !!leadVisibility;
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
-  const { data: stagesWithLeads = [], isLoading: leadsLoading, refetch } = useStagesWithLeads(
+  const {
+    data: stagesWithLeads = [],
+    isLoading: leadsLoading,
+    isFetching: leadsFetching,
+    isError: leadsError,
+    isPlaceholderData: leadsPlaceholderData,
+    refetch,
+  } = useStagesWithLeads(
     selectedPipelineId || undefined,
     effectivePipelineFilterUser,
     {
@@ -390,6 +409,16 @@ export default function Pipelines() {
     return baseStages.map(s => ({ ...s, leads: [] as PipelineLead[], total_lead_count: s.lead_count || 0, has_more: false }));
   }, [baseStages, stagesWithLeads]);
 
+  useEffect(() => {
+    if (!leadsError || !shouldLoadPipelineLeads) return;
+
+    const retryTimer = window.setTimeout(() => {
+      void refetch();
+    }, 2500);
+
+    return () => window.clearTimeout(retryTimer);
+  }, [leadsError, refetch, shouldLoadPipelineLeads]);
+
   const { data: users = [] } = useOrganizationUsers();
   const visibleUsers = hasUserScope
     ? users.filter((candidate) => scopedVisibleUserIds.includes(candidate.id))
@@ -403,6 +432,8 @@ export default function Pipelines() {
   const currentPipeline = pipelines.find(p => p.id === selectedPipelineId);
   const isLoading = pipelinesLoading || baseStagesLoading;
   const isInitialLeadsLoading = leadsLoading && stagesWithLeads.length === 0;
+  const isPipelineBoardTransitioning = shouldLoadPipelineLeads && (isInitialLeadsLoading || leadsPlaceholderData);
+  const isPipelineBoardRetrying = leadsError && !isPipelineBoardTransitioning && !leadsFetching;
   const canShowColumnActions = canEditPipeline && Boolean(selectedPipelineId) && !isMobile && !isLoading;
 
   const handleDragStart = useCallback(() => {
@@ -680,11 +711,7 @@ export default function Pipelines() {
             ...stage,
             leads: (stage.leads || []).map((lead) =>
               lead.id === draggableId
-                ? {
-                    ...lead,
-                    ...movedLeadFromRpc,
-                    stage: lead.stage,
-                  }
+                ? mergeMovedLeadResponse(lead, movedLeadFromRpc)
                 : lead
             ),
           }));
@@ -1160,11 +1187,13 @@ export default function Pipelines() {
                   onFiltersOpenChange={(open) => {
                     if (open) setShouldLoadFilterOptions(true);
                   }}
+                  tourPrefix="pipeline"
                 />
               </div>
 
               {!isMobile && (
                 <Button
+                  data-tour="pipeline-new-lead"
                   size="sm"
                   className="h-8 px-4 bg-[#FF4529] text-[11px] font-extralight uppercase tracking-[0.08em] text-white outline-none transition-opacity hover:opacity-90 rounded-[6px]"
                   onClick={() => openNewLeadDialog()}
@@ -1199,6 +1228,22 @@ export default function Pipelines() {
         )}
 
         <div className="relative flex min-h-0 flex-1 flex-col">
+          {isPipelineBoardTransitioning && (
+            <div className="absolute inset-0 z-30 flex items-center justify-center bg-[var(--app-bg)]/70 backdrop-blur-[2px]">
+              <div className="flex items-center gap-2 rounded-[8px] bg-[var(--app-surface-solid)] px-4 py-3 text-xs font-extralight tracking-wide text-[var(--app-text-primary)] shadow-[0_18px_40px_rgb(0_0_0_/_0.18)]">
+                <Loader2 className="h-4 w-4 animate-spin text-[#FF4529]" />
+                <span>{leadsPlaceholderData ? 'Trocando pipeline...' : 'Carregando leads...'}</span>
+              </div>
+            </div>
+          )}
+
+          {isPipelineBoardRetrying && (
+            <div className="absolute right-3 top-2 z-30 flex items-center gap-2 rounded-[8px] bg-amber-500/12 px-3 py-2 text-[11px] font-extralight tracking-wide text-amber-700 ring-1 ring-amber-500/25 dark:text-amber-200">
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              <span>API demorou. Tentando atualizar novamente...</span>
+            </div>
+          )}
+
           {isMobile && filteredStages.length > 1 && hasPreviousMobileStage && (
             <button
               type="button"
@@ -1344,7 +1389,7 @@ export default function Pipelines() {
                               stage.leads.map((lead, index) => (
                                 <LeadCard
                                   key={lead.id}
-                                  tourTarget={stageIndex === 0 && index === 0 ? "pipeline-card" : undefined}
+                                  tourTarget={stageIndex === 0 && index === 0 ? "pipeline-lead-card" : undefined}
                                   lead={lead}
                                   index={index}
                                   onClick={() => setSelectedLead(lead)}

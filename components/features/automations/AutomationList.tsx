@@ -184,7 +184,7 @@ export function AutomationList({
         return (
           <div
             key={automation.id}
-            className={`group relative flex min-h-[184px] overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-[0_14px_32px_rgb(0_0_0/0.08)] transition-all duration-200 ${
+            className={`group relative flex min-h-[184px] overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-none transition-all duration-200 ${
               isClickable ? 'cursor-pointer hover:bg-[var(--app-surface-hover)]' : ''
             } ${
               !automation.is_active ? 'opacity-50' : ''

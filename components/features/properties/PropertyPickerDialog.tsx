@@ -9,6 +9,7 @@ import { Building2, Search, SlidersHorizontal, ChevronRight, ExternalLink } from
 import { useAuth } from '@/contexts/AuthContext';
 import { useQuery } from '@tanstack/react-query';
 import { getPropertySiteInfo } from '@/lib/api/property-support';
+import { buildPropertySiteUrl } from '@/lib/property-site-url';
 
 interface Property {
   id: string;
@@ -47,16 +48,6 @@ export function PropertyPickerDialog({ properties, selectedPropertyId, onSelect,
     },
     enabled: !!profile?.organization_id && open,
   });
-
-  const getPropertySiteUrl = (code: string) => {
-    if (siteInfo?.custom_domain && siteInfo?.domain_verified) {
-      return `https://${siteInfo.custom_domain}/imovel/${code}`;
-    }
-    if (siteInfo?.subdomain) {
-      return `https://vimob.vettercompany.com.br/sites/${siteInfo.subdomain}/imovel/${code}`;
-    }
-    return null;
-  };
 
   const selectedProperty = (properties || []).find(p => p.id === selectedPropertyId);
 
@@ -99,7 +90,7 @@ export function PropertyPickerDialog({ properties, selectedPropertyId, onSelect,
       ) : (
         <Button
           variant="ghost"
-          className="h-10 w-full justify-between rounded-[8px] border-0 bg-zinc-100 px-3 text-xs text-zinc-700 shadow-none hover:bg-zinc-200 dark:bg-white/[0.06] dark:text-zinc-200 dark:hover:bg-white/[0.09]"
+          className="h-10 w-full justify-between rounded-[8px] border-0 bg-[var(--app-surface-soft)] px-3 text-xs text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
           onClick={handleOpen}
         >
           <div className="flex items-center gap-2 min-w-0">
@@ -213,7 +204,7 @@ export function PropertyPickerDialog({ properties, selectedPropertyId, onSelect,
                         </Badge>
                       )}
                       {p.code && (() => {
-                        const url = getPropertySiteUrl(p.code!);
+                        const url = buildPropertySiteUrl(p.code, siteInfo);
                         return url ? (
                           <button
                             className="absolute top-1.5 right-1.5 w-6 h-6 bg-black/60 hover:bg-black/80 backdrop-blur-sm rounded-full flex items-center justify-center transition-colors"

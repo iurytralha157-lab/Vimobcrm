@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   format,
@@ -46,6 +46,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 // --- helpers ----------------------------------------------------------------
 
@@ -71,6 +72,7 @@ export default function Agenda() {
   const { profile } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const isMobile = useIsMobile();
   const searchParamsString = searchParams.toString();
   const focusedEventId = searchParams.get("event") || searchParams.get("task");
 
@@ -101,9 +103,10 @@ export default function Agenda() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetEvent, setSheetEvent] = useState<ScheduleEvent | null>(null);
   const updateEventMutation = useUpdateScheduleEvent();
+  const effectiveViewMode: AgendaViewMode = isMobile ? "day" : viewMode;
 
   const dateRange = useMemo(() => {
-    switch (viewMode) {
+    switch (effectiveViewMode) {
       case "day":
         return { startDate: startOfDay(pivotDate), endDate: endOfDay(pivotDate) };
       case "week":
@@ -121,7 +124,7 @@ export default function Agenda() {
       default:
         return { startDate: startOfDay(new Date()), endDate: addDays(new Date(), 30) };
     }
-  }, [pivotDate, viewMode]);
+  }, [pivotDate, effectiveViewMode]);
 
   const { data: events = [] } = useScheduleEvents({
     userId: selectedUserId || undefined,
@@ -144,10 +147,10 @@ export default function Agenda() {
       .slice(0, 10);
   }, [events]);
 
-  const openCreateSheet = () => {
+  const openCreateSheet = useCallback(() => {
     setSheetEvent(null);
     setSheetOpen(true);
-  };
+  }, []);
 
   const openEventSheet = (event: ScheduleEvent) => {
     setSheetEvent(event);
@@ -183,6 +186,12 @@ export default function Agenda() {
     };
   }, [events, focusedEventId, focusedEvents, router, searchParamsString]);
 
+  useEffect(() => {
+    const handleMobileCreate = () => openCreateSheet();
+    window.addEventListener("vimob:mobile-create-agenda", handleMobileCreate);
+    return () => window.removeEventListener("vimob:mobile-create-agenda", handleMobileCreate);
+  }, [openCreateSheet]);
+
 
   const canFilterUsers = profile?.role === "admin" || Boolean(scheduleCapabilities?.isTeamLeader);
 
@@ -203,10 +212,21 @@ export default function Agenda() {
   ];
 
   const activeFiltersCount = (selectedUserId ? 1 : 0);
+  const navigationStep =
+    effectiveViewMode === "week" ? 7 : effectiveViewMode === "month" ? 30 : effectiveViewMode === "year" ? 365 : 1;
+  const periodLabel =
+    effectiveViewMode === "day"
+      ? format(pivotDate, "EEEE, d 'de' MMMM", { locale: ptBR })
+      : effectiveViewMode === "week"
+        ? `${format(startOfWeek(pivotDate, { weekStartsOn: 0 }), "d", { locale: ptBR })} a ${format(endOfWeek(pivotDate, { weekStartsOn: 0 }), "d 'de' MMMM, yyyy", { locale: ptBR })}`
+        : effectiveViewMode === "year"
+          ? format(pivotDate, "yyyy", { locale: ptBR })
+          : format(pivotDate, "MMMM yyyy", { locale: ptBR });
 
   return (
     <AppLayout title="Agenda" disableMainScroll={true}>
       <div
+        data-tour="agenda-overview"
         style={{
           display: "flex",
           height: "100%",
@@ -219,87 +239,53 @@ export default function Agenda() {
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
           {/* Header da agenda */}
           <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              padding: "12px 18px",
-              borderBottom: "1px solid var(--app-border)",
-            }}
+            data-tour="agenda-period"
+            className="flex items-center gap-2 border-b border-[var(--app-border)] px-3 py-2 md:px-[18px] md:py-3"
           >
-            <button
-              style={{
-                background: "rgba(255,78,26,0.15)",
-                color: "#ff4e1a",
-                border: "none",
-                borderRadius: 8,
-                padding: "5px 12px",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-              onClick={() => setPivotDate(new Date())}
-            >
-              Hoje
-            </button>
-            <div style={{ display: "flex", gap: 2 }}>
+            {!isMobile && (
               <button
-                style={{
-                  background: "var(--app-surface-soft)",
-                  border: "1px solid var(--app-border)",
-                  borderRadius: 6,
-                  color: "var(--color-text-secondary)",
-                  width: 28,
-                  height: 28,
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-                onClick={() =>
-                  setPivotDate((d) => addDays(d, viewMode === "week" ? -7 : viewMode === "month" ? -30 : -1))
-                }
+                className="h-8 rounded-[6px] border-0 bg-primary/10 px-3 text-xs font-medium text-primary transition-colors hover:bg-primary/15"
+                onClick={() => setPivotDate(new Date())}
+              >
+                Hoje
+              </button>
+            )}
+            <div className="flex gap-1">
+              <button
+                className="flex h-8 w-8 items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)]"
+                onClick={() => setPivotDate((d) => addDays(d, -navigationStep))}
+                aria-label="Periodo anterior"
               >
                 <ChevronLeft size={14} />
               </button>
               <button
-                style={{
-                  background: "var(--app-surface-soft)",
-                  border: "1px solid var(--app-border)",
-                  borderRadius: 6,
-                  color: "var(--color-text-secondary)",
-                  width: 28,
-                  height: 28,
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-                onClick={() => setPivotDate((d) => addDays(d, viewMode === "week" ? 7 : viewMode === "month" ? 30 : 1))}
+                className="flex h-8 w-8 items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)]"
+                onClick={() => setPivotDate((d) => addDays(d, navigationStep))}
+                aria-label="Proximo periodo"
               >
                 <ChevronRight size={14} />
               </button>
             </div>
-            <span style={{ fontSize: 14, fontWeight: 600, color: "var(--color-text-primary)", flex: 1 }}>
-              {viewMode === "week"
-                ? `${format(startOfWeek(pivotDate, { weekStartsOn: 0 }), "d", { locale: ptBR })} a ${format(endOfWeek(pivotDate, { weekStartsOn: 0 }), "d 'de' MMMM, yyyy", { locale: ptBR })}`
-                : format(pivotDate, "MMMM yyyy", { locale: ptBR })}
+            <span className="min-w-0 flex-1 truncate text-sm font-medium capitalize text-[var(--color-text-primary)]">
+              {periodLabel}
             </span>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div className="flex items-center gap-2">
               {/* Novo Botão de Filtros */}
               <Popover>
                 <PopoverTrigger asChild>
                   <Button
+                    data-tour="agenda-filters"
                     variant="ghost"
                     size="sm"
                     className={cn(
-                      "h-9 gap-2 border border-white/[0.055] bg-white/[0.025] hover:bg-white/[0.055] text-[var(--color-text-secondary)]",
-                      activeFiltersCount > 0 && "text-[#ff4e1a] border-[#ff4e1a]/30 bg-[#ff4e1a]/10"
+                      "h-9 gap-2 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[var(--color-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)]",
+                      isMobile && "w-9 px-0",
+                      activeFiltersCount > 0 && "bg-primary/10 text-primary hover:bg-primary/15"
                     )}
                   >
                     <SlidersHorizontal size={14} />
-                    <span>Filtros</span>
+                    {!isMobile && <span>Filtros</span>}
                     {activeFiltersCount > 0 && (
                       <Badge variant="secondary" className="h-5 px-1.5 min-w-[20px] bg-[#ff4e1a] text-white hover:bg-[#ff4e1a]">
                         {activeFiltersCount}
@@ -307,9 +293,10 @@ export default function Agenda() {
                     )}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="app-card w-80 p-0 shadow-xl z-50" align="end">
+                <PopoverContent className="w-80 rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 shadow-none z-50" align="end">
                   <div className="p-4 flex flex-col gap-6">
                     {/* Visualização */}
+                    {!isMobile && (
                     <div className="flex flex-col gap-3">
                       <SideLabel>Visualização</SideLabel>
                       <div className="grid grid-cols-2 gap-2">
@@ -321,10 +308,10 @@ export default function Agenda() {
                               key={m.value}
                               onClick={() => setViewMode(m.value)}
                               className={cn(
-                                "flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all border",
+                                "flex items-center gap-2 rounded-[6px] border-0 px-3 py-2 text-xs font-medium transition-colors",
                                 active
-                                  ? "border-[#ff4e1a] bg-[#ff4e1a]/15 text-[#ff4e1a]"
-                                  : "border-white/[0.055] bg-white/[0.025] text-[var(--color-text-secondary)] hover:bg-white/[0.055]"
+                                  ? "bg-primary/15 text-primary"
+                                  : "bg-[var(--app-surface-soft)] text-[var(--color-text-secondary)] hover:bg-[var(--app-surface-hover)]"
                               )}
                             >
                               <Icon size={14} />
@@ -334,6 +321,7 @@ export default function Agenda() {
                         })}
                       </div>
                     </div>
+                    )}
 
                     {/* Configurações de Grade */}
                     <div className="flex flex-col gap-3">
@@ -363,7 +351,7 @@ export default function Agenda() {
                     )}
 
                     {(activeFiltersCount > 0) && (
-                      <div className="pt-4 border-t border-white/[0.055]">
+                      <div className="pt-4">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -381,38 +369,28 @@ export default function Agenda() {
                 </PopoverContent>
               </Popover>
 
-              <button
-                onClick={openCreateSheet}
-                style={{
-                  background: "#ff4e1a",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: 10,
-                  padding: "7px 16px",
-                  fontSize: 12,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  letterSpacing: "0.04em",
-                }}
-              >
-                <Plus size={15} /> Novo
-              </button>
+              {!isMobile && (
+                <Button
+                  data-tour="agenda-new"
+                  onClick={openCreateSheet}
+                  className="h-9 gap-2 rounded-[6px] border-0 bg-primary px-3 text-xs font-medium text-primary-foreground shadow-none hover:bg-primary/90"
+                >
+                  <Plus size={15} /> Novo agendamento
+                </Button>
+              )}
             </div>
           </div>
 
           {/* Calendário / lista */}
-          <div style={{ flex: 1, overflow: "hidden" }}>
-            {viewMode !== "list" ? (
+          <div data-tour="agenda-calendar" style={{ flex: 1, overflow: "hidden" }}>
+            {effectiveViewMode !== "list" ? (
               <CalendarView
                 events={events}
                 selectedDate={selectedDate}
                 onDateSelect={setSelectedDate}
                 pivotDate={pivotDate}
                 onPivotChange={setPivotDate}
-                viewMode={viewMode}
+                viewMode={effectiveViewMode}
                 onEditEvent={openEventSheet}
                 onEventUpdate={(id, updates) =>
                   updateEventMutation.mutate({

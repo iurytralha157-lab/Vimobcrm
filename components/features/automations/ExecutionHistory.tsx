@@ -195,7 +195,7 @@ export function ExecutionHistory({ automationId: initialAutomationId }: Executio
                 className={cn(
                   "h-8 rounded-[6px] px-3 text-xs font-medium transition-all",
                   isActive
-                    ? "bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] shadow-sm"
+                    ? "bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] shadow-none"
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
@@ -208,19 +208,19 @@ export function ExecutionHistory({ automationId: initialAutomationId }: Executio
 
       {/* Stats */}
       <div className="grid gap-3 grid-cols-3">
-        <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-[0_14px_32px_rgb(0_0_0/0.08)]">
+        <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-none">
           <CardContent className="p-4 text-center">
             <p className="text-2xl font-bold text-foreground">{runningExecutions.length}</p>
             <p className="text-xs text-muted-foreground">Em andamento</p>
           </CardContent>
         </Card>
-        <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-[0_14px_32px_rgb(0_0_0/0.08)]">
+        <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-none">
           <CardContent className="p-4 text-center">
             <p className="text-2xl font-bold text-primary">{completedExecutions.length}</p>
             <p className="text-xs text-muted-foreground">Concluídas</p>
           </CardContent>
         </Card>
-        <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-[0_14px_32px_rgb(0_0_0/0.08)]">
+        <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-none">
           <CardContent className="p-4 text-center">
             <p className="text-2xl font-bold text-destructive">{failedExecutions.length}</p>
             <p className="text-xs text-muted-foreground">Com erro</p>
@@ -229,7 +229,7 @@ export function ExecutionHistory({ automationId: initialAutomationId }: Executio
       </div>
 
       {/* Timeline */}
-      <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-[0_14px_32px_rgb(0_0_0/0.08)]">
+      <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-none">
         <CardHeader>
           <CardTitle className="text-base">Histórico de Execuções</CardTitle>
           <CardDescription>Últimas 100 execuções • Atualiza automaticamente</CardDescription>

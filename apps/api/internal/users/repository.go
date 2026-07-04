@@ -617,10 +617,10 @@ func normalizeCreateUserInput(request CreateUserRequest) (CreateUserInput, error
 
 func normalizeUpdateUserInput(request UpdateUserRequest) (UpdateUserInput, error) {
 	input := UpdateUserInput{
-		Name:     cleanStringPointer(request.Updates.Name),
-		IsActive: request.Updates.IsActive,
+		Name:      cleanStringPointer(request.Updates.Name),
+		IsActive:  request.Updates.IsActive,
 		AvatarURL: cleanStringPointer(request.Updates.AvatarURL),
-		Whatsapp: cleanStringPointer(request.Updates.Whatsapp),
+		Whatsapp:  cleanStringPointer(request.Updates.Whatsapp),
 	}
 	if request.Updates.Role != nil {
 		role := normalizeRole(*request.Updates.Role)

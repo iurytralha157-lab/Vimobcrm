@@ -157,7 +157,9 @@ func (repo Repository) organizationByID(ctx context.Context, organizationID stri
 			'whatsapp', o.whatsapp,
 			'email', o.email,
 			'website', o.website,
-			'default_commission_percentage', o.default_commission_percentage
+			'default_commission_percentage', o.default_commission_percentage,
+			'property_edit_policy', coalesce(o.property_edit_policy, 'responsible_or_admin'),
+			'property_owner_contact_visibility', coalesce(o.property_owner_contact_visibility, 'visible')
 		)
 		from public.organizations o
 		where o.id = $1::uuid

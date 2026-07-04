@@ -4,29 +4,42 @@ import { MessageCircle } from "lucide-react";
 import { useWhatsAppConversations, useWhatsAppRealtimeConversations } from "@/hooks/use-whatsapp-conversations";
 import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
 import { usePathname } from 'next/navigation';
-import { useHasWhatsAppAccess } from "@/hooks/use-whatsapp-access";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
+
+const FLOATING_CHAT_INITIAL_LOAD_DELAY_MS = 12000;
 
 export function FloatingChatButton() {
   const { state, toggleChat } = useFloatingChat();
-  const { data: sessions, isLoading: loadingSessions } = useAccessibleSessions();
-  const accessibleSessionIds = sessions?.map((s) => s.id) || [];
   const pathname = usePathname();
   const isOnConversationsPage = pathname === "/crm/conversas";
+  const floatingChatReadyKey = isOnConversationsPage ? null : pathname || "app";
+  const [readyPathKey, setReadyPathKey] = useState<string | null>(null);
+  const shouldLoadFloatingChatData = !!floatingChatReadyKey && readyPathKey === floatingChatReadyKey;
+  const { data: sessions, isLoading: loadingSessions } = useAccessibleSessions({
+    enabled: shouldLoadFloatingChatData,
+  });
+  const accessibleSessionIds = sessions?.map((s) => s.id) || [];
+  const conversationSessionIds = shouldLoadFloatingChatData && !loadingSessions ? accessibleSessionIds : [];
   const { data: conversations } = useWhatsAppConversations(
     undefined,
     { hideGroups: true },
-    isOnConversationsPage ? [] : (loadingSessions ? undefined : accessibleSessionIds),
+    conversationSessionIds,
   );
-  const { data: hasWhatsAppAccess, isLoading: loadingWhatsAppAccess } = useHasWhatsAppAccess();
 
-  useWhatsAppRealtimeConversations(!isOnConversationsPage);
+  useWhatsAppRealtimeConversations(shouldLoadFloatingChatData && !isOnConversationsPage);
 
   const [side, setSide] = useState<'right' | 'left'>('right');
   const [offsetX, setOffsetX] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const dragState = useRef({ startX: 0, startY: 0, moved: false, pointerId: -1 });
+
+  useEffect(() => {
+    if (!floatingChatReadyKey) return undefined;
+
+    const timeout = setTimeout(() => setReadyPathKey(floatingChatReadyKey), FLOATING_CHAT_INITIAL_LOAD_DELAY_MS);
+    return () => clearTimeout(timeout);
+  }, [floatingChatReadyKey]);
 
   const hasConnectedSession = sessions?.some((s) => s.status === "connected");
 
@@ -75,7 +88,7 @@ export function FloatingChatButton() {
     toggleChat();
   }, [toggleChat]);
 
-  if (state.isOpen || !hasConnectedSession || isOnConversationsPage || (!loadingWhatsAppAccess && !hasWhatsAppAccess)) return null;
+  if (state.isOpen || !shouldLoadFloatingChatData || !hasConnectedSession || isOnConversationsPage) return null;
 
   return (
     <div

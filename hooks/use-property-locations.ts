@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   propertyLocationsAPI,
+  type CreatePropertyCondominiumInput,
   type PropertyCity,
   type PropertyCondominium,
   type PropertyNeighborhood,
@@ -167,14 +168,7 @@ export function useCreateCondominium() {
   const organizationId = useOrganizationId()
 
   return useMutation({
-    mutationFn: async (condominium: {
-      name: string
-      city_id?: string
-      neighborhood_id?: string
-      address?: string
-      latitude?: number
-      longitude?: number
-    }) => {
+    mutationFn: async (condominium: CreatePropertyCondominiumInput) => {
       if (!user?.id) throw new Error('Usuario nao autenticado')
       if (!organizationId) throw new Error('Usuario nao possui organizacao')
 

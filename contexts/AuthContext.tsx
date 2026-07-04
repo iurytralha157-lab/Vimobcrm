@@ -8,6 +8,7 @@ import { performanceTracker } from '@/lib/performance';
 import { performFullCacheClear } from '@/lib/cache-utils';
 import { meAPI } from '@/lib/api/me';
 import { usersAPI } from '@/lib/api/users';
+import { setVimobAPIAccessToken } from '@/lib/api/vimob-client';
 import { ROUTES, getPublicAppUrl } from '@/config/constants';
 
 interface UserProfile {
@@ -50,6 +51,8 @@ interface Organization {
   email?: string | null;
   website?: string | null;
   default_commission_percentage?: number | null;
+  property_edit_policy?: 'everyone' | 'responsible_or_admin' | null;
+  property_owner_contact_visibility?: 'visible' | 'hidden' | null;
 }
 
 const normalizeProfileRole = (role: string | null | undefined): UserProfile['role'] => {
@@ -76,8 +79,17 @@ const IMPERSONATING_STORAGE_KEY = 'impersonating';
 const AUTH_CONTEXT_CACHE_KEY_PREFIX = 'vimob_auth_context_';
 const AUTH_CONTEXT_CACHE_VERSION = 1;
 const AUTH_CONTEXT_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
-const AUTH_BOOTSTRAP_TIMEOUT_MS = 12000;
-const SIGN_IN_ROLE_TIMEOUT_MS = 3500;
+const AUTH_BOOTSTRAP_TIMEOUT_MS = 8000;
+const PUBLIC_AUTH_ROUTE_PREFIXES = [
+  '/login',
+  '/cadastro',
+  '/reset-password',
+  '/onboarding',
+  '/convite',
+  '/checkout',
+  '/termos-de-uso',
+  '/politica-de-privacidade',
+] as const;
 
 interface CachedAuthContext {
   version: number;
@@ -94,7 +106,29 @@ function isInvalidSessionError(error: unknown) {
   const code = typeof candidate?.code === 'string' ? candidate.code : '';
   const status = typeof candidate?.status === 'number' ? candidate.status : 0;
 
-  return status === 401 && /bearer|token|session|sessao|expir/i.test(`${code} ${message}`);
+  if (status !== 401) return false;
+
+  const normalized = `${code} ${message}`
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  return [
+    'invalid_session',
+    'session_not_found',
+    'invalid refresh token',
+    'invalid_refresh_token',
+    'refresh token not found',
+    'refresh_token_not_found',
+    'invalid_grant',
+    'jwt expired',
+    'jwt malformed',
+  ].some((marker) => normalized.includes(marker));
+}
+
+function isPublicAuthRoute() {
+  if (typeof window === 'undefined') return false;
+  return PUBLIC_AUTH_ROUTE_PREFIXES.some((route) => window.location.pathname.startsWith(route));
 }
 
 function withSoftTimeout<T>(
@@ -282,6 +316,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const userRef = useRef<User | null>(null);
   const isLoggingOutRef = useRef(false);
+  const isProviderMountedRef = useRef(false);
 
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -298,6 +333,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     authInitialized: false,
     organizationsLoaded: false,
   });
+  const profileFetchPromiseRef = useRef<Promise<boolean> | null>(null);
+  const profileFetchKeyRef = useRef<string | null>(null);
+  const lastProfileFetchAtRef = useRef(0);
+  const lastProfileFetchResultRef = useRef<boolean | null>(null);
+
+  const applySession = (nextSession: Session | null) => {
+    setSession(nextSession);
+    setVimobAPIAccessToken(nextSession?.access_token ?? null);
+  };
+
+  const resetAuthRequestState = () => {
+    profileFetchPromiseRef.current = null;
+    profileFetchKeyRef.current = null;
+    lastProfileFetchAtRef.current = 0;
+    lastProfileFetchResultRef.current = null;
+  };
 
   const setActiveOrganization = (nextOrganization: Organization | null) => {
     organizationRef.current = nextOrganization;
@@ -362,7 +413,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       clearCachedAuthContext(currentUserId);
     }
 
-    setSession(null);
+    resetAuthRequestState();
+    applySession(null);
     setUser(null);
     userRef.current = null;
     setProfile(null);
@@ -378,8 +430,77 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(false);
   };
 
+  const restoreSessionFromSupabase = async (label: string) => {
+    try {
+      const { data: { session: currentSession }, error } = await supabase.auth.getSession();
+      if (error || !currentSession?.user) {
+        if (error) {
+          console.warn(`[AuthContext] ${label}: Supabase session check failed`, error.message);
+        }
+        return false;
+      }
+
+      if (!isProviderMountedRef.current) return false;
+
+      console.log(`[AuthContext] ${label}: restored existing Supabase session`);
+      applySession(currentSession);
+      setUser(currentSession.user);
+      userRef.current = currentSession.user;
+
+      const hydratedFromCache = hydrateCachedAuthContextRef.current(currentSession.user.id);
+      const resolvedContext = hasResolvedOrganizationContext(hydratedFromCache);
+      setAuthInitialized(true);
+
+      if (resolvedContext) {
+        setLoading(false);
+        setOrganizationsLoaded(true);
+        setIsInitializingOrg(false);
+      } else {
+        setLoading(true);
+        setOrganizationsLoaded(false);
+        setIsInitializingOrg(true);
+
+        window.setTimeout(() => {
+          if (!isProviderMountedRef.current) return;
+          void (async () => {
+            await withSoftTimeout(
+              fetchProfileRef.current(currentSession.user.id),
+              false,
+              `${label} fetchProfile`,
+            );
+            return withSoftTimeout(
+              checkMultiOrgRef.current(currentSession.user.id),
+              false,
+              `${label} checkMultiOrg`,
+            );
+          })()
+            .catch((recoveryError) => {
+              console.error(`[AuthContext] ${label}: deferred session restore failed`, recoveryError);
+              return false;
+            })
+            .then((organizationListLoaded) => {
+              if (!isProviderMountedRef.current) return;
+              const restoredContext = hasResolvedOrganizationContext(organizationListLoaded);
+              setLoading(false);
+              setAuthInitialized(true);
+              setOrganizationsLoaded(restoredContext);
+              setIsInitializingOrg(!restoredContext);
+            });
+        }, 0);
+      }
+
+      return true;
+    } catch (error) {
+      console.warn(`[AuthContext] ${label}: could not restore Supabase session`, error);
+      return false;
+    }
+  };
+
   const recoverFromInvalidSession = async () => {
     if (isLoggingOutRef.current) return;
+
+    const restored = await restoreSessionFromSupabase('invalid session recovery');
+    if (restored) return;
 
     isLoggingOutRef.current = true;
 
@@ -391,18 +512,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     resetClientAuthState();
 
-    const isPublicRoute = typeof window !== 'undefined' && [
-      '/login',
-      '/cadastro',
-      '/reset-password',
-      '/onboarding',
-      '/convite',
-      '/checkout',
-      '/termos-de-uso',
-      '/politica-de-privacidade'
-    ].some(route => window.location.pathname.startsWith(route));
-
-    if (!isPublicRoute) {
+    if (!isPublicAuthRoute()) {
       await performFullCacheClear({
         clearAuth: true,
         redirectTo: '/login',
@@ -429,18 +539,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [organization, user]);
   const [impersonating, setImpersonating] = useState<ImpersonateSession | null>(() => readStoredImpersonation());
 
-  const checkSuperAdmin = async (userId: string): Promise<boolean> => {
-    void userId;
-    return performanceTracker.trackTimed('checkSuperAdmin', async () => {
-      const response = await meAPI.getMe();
-      return response.context.isSuperAdmin;
-    });
-  };
-
   const fetchProfile = async (userId: string, organizationId?: string | null): Promise<boolean> => {
-    return performanceTracker.trackTimed('fetchProfile', async () => {
+    const activeImpersonation = readStoredImpersonation();
+    const effectiveOrganizationId = activeImpersonation?.orgId || organizationId || organizationRef.current?.id || '';
+    const fetchKey = `${userId}:${effectiveOrganizationId}`;
+    const now = Date.now();
+
+    if (profileFetchPromiseRef.current && profileFetchKeyRef.current === fetchKey) {
+      return profileFetchPromiseRef.current;
+    }
+
+    if (
+      profileFetchKeyRef.current === fetchKey &&
+      lastProfileFetchResultRef.current !== null &&
+      now - lastProfileFetchAtRef.current < 3000
+    ) {
+      return lastProfileFetchResultRef.current;
+    }
+
+    const fetchPromise = performanceTracker.trackTimed('fetchProfile', async () => {
       try {
-        const activeImpersonation = readStoredImpersonation();
         const response = await meAPI.getProfile(activeImpersonation?.orgId || organizationId || undefined);
         const profileData = response.profile;
         const superAdmin = response.context.isSuperAdmin;
@@ -498,7 +616,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         return false;
       }
+    }).then((result) => {
+      if (profileFetchKeyRef.current === fetchKey) {
+        lastProfileFetchAtRef.current = Date.now();
+        lastProfileFetchResultRef.current = result;
+      }
+
+      return result;
+    }).finally(() => {
+      if (profileFetchKeyRef.current === fetchKey) {
+        profileFetchPromiseRef.current = null;
+      }
     });
+
+    profileFetchKeyRef.current = fetchKey;
+    profileFetchPromiseRef.current = fetchPromise;
+
+    return fetchPromise;
   };
 
   const startImpersonate = async (orgId: string, orgName: string) => {
@@ -642,26 +776,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const fetchProfileRef = useRef(fetchProfile);
   const checkMultiOrgRef = useRef(checkMultiOrg);
   const hydrateCachedAuthContextRef = useRef(hydrateCachedAuthContext);
+  const restoreSessionFromSupabaseRef = useRef(restoreSessionFromSupabase);
 
   useEffect(() => {
     fetchProfileRef.current = fetchProfile;
     checkMultiOrgRef.current = checkMultiOrg;
     hydrateCachedAuthContextRef.current = hydrateCachedAuthContext;
+    restoreSessionFromSupabaseRef.current = restoreSessionFromSupabase;
   });
 
   useEffect(() => {
     let isMounted = true;
+    isProviderMountedRef.current = true;
     console.log('AuthProvider mounted');
 
     const clearAllStates = () => {
       console.log('Cleaning auth states');
       const currentUserId = userRef.current?.id;
-      if (currentUserId) {
+      if (currentUserId && !isLoggingOutRef.current) {
         localStorage.removeItem(`vimob_active_organization_${currentUserId}`);
         clearCachedAuthContext(currentUserId);
       }
 
-      setSession(null);
+      resetAuthRequestState();
+        applySession(null);
       setUser(null);
       setProfile(null);
       setActiveOrganization(null);
@@ -706,30 +844,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      setSession(session);
+      applySession(session);
       setUser(session.user);
       userRef.current = session.user;
       const hydratedFromCache = hydrateCachedAuthContextRef.current(session.user.id);
       if (hydratedFromCache) {
         setLoading(false);
         setAuthInitialized(true);
+      } else {
+        setLoading(false);
+        setAuthInitialized(true);
+        setIsInitializingOrg(true);
       }
       console.log('[AuthContext] login user loaded:', session.user.id);
 
       let initialOrganizationListLoaded = hydratedFromCache;
       try {
-        // Sequencial to ensure organizations are loaded before setting initialized.
-        // These calls depend on our backend, so they must not leave a valid Supabase
-        // session stuck if a secondary module/API is slow or temporarily unavailable.
-        await withSoftTimeout(fetchProfileRef.current(session.user.id), false, 'initial fetchProfile');
-        if (userRef.current) {
-          const fetchedOrganizationListLoaded = await withSoftTimeout(
-            checkMultiOrgRef.current(session.user.id),
-            false,
-            'initial checkMultiOrg',
-          );
-          initialOrganizationListLoaded = initialOrganizationListLoaded || fetchedOrganizationListLoaded;
-        }
+        const [profileLoaded, fetchedOrganizationListLoaded] = await Promise.all([
+          withSoftTimeout(fetchProfileRef.current(session.user.id), false, 'initial fetchProfile'),
+          userRef.current
+            ? withSoftTimeout(checkMultiOrgRef.current(session.user.id), false, 'initial checkMultiOrg')
+            : Promise.resolve(false),
+        ]);
+        initialOrganizationListLoaded = initialOrganizationListLoaded || profileLoaded || fetchedOrganizationListLoaded;
         const resolvedContext = hasResolvedOrganizationContext(initialOrganizationListLoaded);
         if (resolvedContext) {
           setOrganizationsLoaded(true);
@@ -770,35 +907,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (authEvent === 'SIGNED_OUT') {
-          clearAllStates();
-          setLoading(false);
-          setAuthInitialized(true);
-          setOrganizationsLoaded(true);
-
           if (isLoggingOutRef.current) {
             console.log('[AuthContext] SIGNED_OUT event ignored (explicit signOut in progress)');
-            return;
-          }
-
-          // Don't redirect from public routes - just clear state
-          const isPublicRoute = typeof window !== 'undefined' && [
-            '/login',
-            '/cadastro',
-            '/reset-password',
-            '/onboarding',
-            '/convite',
-            '/checkout',
-            '/termos-de-uso',
-            '/politica-de-privacidade'
-          ].some(route => window.location.pathname.startsWith(route));
-
-          if (isPublicRoute) {
-            console.log('[AuthContext] SIGNED_OUT on public route, skipping redirect');
+            clearAllStates();
+            setLoading(false);
+            setAuthInitialized(true);
+            setOrganizationsLoaded(true);
             return;
           }
 
           setTimeout(() => {
-            performFullCacheClear({ clearAuth: true, redirectTo: '/login' });
+            if (!isMounted) return;
+            void restoreSessionFromSupabaseRef.current('SIGNED_OUT recheck').then((restored) => {
+              if (!isMounted || restored) return;
+
+              clearAllStates();
+              setLoading(false);
+              setAuthInitialized(true);
+              setOrganizationsLoaded(true);
+
+              if (isPublicAuthRoute()) {
+                console.log('[AuthContext] SIGNED_OUT on public route, skipping redirect');
+                return;
+              }
+
+              void performFullCacheClear({ clearAuth: true, redirectTo: '/login' });
+            });
           }, 0);
           return;
         }
@@ -811,7 +945,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               userRef.current?.id === session.user.id;
 
             if (isSameInitializedUser) {
-              setSession(session);
+              applySession(session);
               setUser(session.user);
               userRef.current = session.user;
 
@@ -822,26 +956,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               return;
             }
 
-            setSession(session);
+            applySession(session);
             setUser(session.user);
             userRef.current = session.user;
-            const cachedContext = readCachedAuthContext(session.user.id);
-            const hydratedFromCache = hydrateCachedAuthContextRef.current(session.user.id, {
-              includeActiveOrganization: authEvent !== 'SIGNED_IN' || (cachedContext?.userOrganizations.length || 0) <= 1,
-            });
-            setLoading(!hydratedFromCache);
+            const hydratedFromCache = hydrateCachedAuthContextRef.current(session.user.id);
+            setLoading(false);
+            setAuthInitialized(true);
             setOrganizationsLoaded(hydratedFromCache);
-            setIsInitializingOrg(true);
+            setIsInitializingOrg(!hydratedFromCache);
 
             // Defer Supabase calls to avoid deadlock with the auth listener
             setTimeout(() => {
               if (!isMounted) return;
               void (async () => {
-                await withSoftTimeout(fetchProfileRef.current(session.user.id), false, 'signIn fetchProfile');
-                const organizationListLoaded = await withSoftTimeout(checkMultiOrgRef.current(session.user.id, {
-                  forceSelectorForMultiOrg: authEvent === 'SIGNED_IN',
-                }), false, 'signIn checkMultiOrg');
-                return organizationListLoaded;
+                const [profileLoaded, organizationListLoaded] = await Promise.all([
+                  withSoftTimeout(fetchProfileRef.current(session.user.id), false, 'signIn fetchProfile'),
+                  withSoftTimeout(checkMultiOrgRef.current(session.user.id), false, 'signIn checkMultiOrg'),
+                ]);
+                return profileLoaded || organizationListLoaded;
               })().catch((error) => {
                 console.error('[AuthContext] Deferred auth bootstrap failed:', error);
                 return false;
@@ -867,7 +999,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (authEvent === 'TOKEN_REFRESHED') {
           // Just update session/user, never refetch profile here
           if (session) {
-            setSession(session);
+            applySession(session);
             setUser(session.user);
             userRef.current = session.user;
           }
@@ -875,33 +1007,75 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (!session) {
-          clearAllStates();
-          setLoading(false);
-          setAuthInitialized(true);
-          setOrganizationsLoaded(true);
+          setTimeout(() => {
+            if (!isMounted) return;
+            void restoreSessionFromSupabaseRef.current('empty auth event recheck').then((restored) => {
+              if (!isMounted || restored) return;
+              clearAllStates();
+              setLoading(false);
+              setAuthInitialized(true);
+              setOrganizationsLoaded(true);
+            });
+          }, 0);
         }
       }
     );
 
     return () => {
       isMounted = false;
+      isProviderMountedRef.current = false;
       clearTimeout(safetyTimeout);
       subscription.unsubscribe();
     };
   }, []);
 
   const signIn = async (email: string, password: string) => {
+    resetAuthRequestState();
     const { error, data } = await supabase.auth.signInWithPassword({ email, password });
-    let signedInIsSuperAdmin = false;
+
+    if (!error && data.session?.user) {
+      const signedInUserId = data.session.user.id;
+      applySession(data.session);
+      setUser(data.session.user);
+      userRef.current = data.session.user;
+
+      const hydratedFromCache = hydrateCachedAuthContext(signedInUserId);
+      if (hydratedFromCache) {
+        setLoading(false);
+        setAuthInitialized(true);
+        setIsInitializingOrg(false);
+      } else {
+        setLoading(false);
+        setAuthInitialized(true);
+        setOrganizationsLoaded(false);
+        setIsInitializingOrg(true);
+      }
+
+      void Promise.all([
+          withSoftTimeout(fetchProfileRef.current(signedInUserId), false, 'direct signIn fetchProfile'),
+          withSoftTimeout(checkMultiOrgRef.current(signedInUserId), false, 'direct signIn checkMultiOrg'),
+        ]).then(([profileLoaded, organizationListLoaded]) => {
+          if (!isProviderMountedRef.current || userRef.current?.id !== signedInUserId) return;
+
+          const resolvedContext = hasResolvedOrganizationContext(
+            hydratedFromCache || profileLoaded || organizationListLoaded,
+          );
+          setLoading(false);
+          setAuthInitialized(true);
+          setIsInitializingOrg(!resolvedContext);
+          if (resolvedContext) {
+            setOrganizationsLoaded(true);
+          }
+        }).catch((bootstrapError) => {
+          console.error('[AuthContext] direct signIn bootstrap failed:', bootstrapError);
+          if (!isProviderMountedRef.current || userRef.current?.id !== signedInUserId) return;
+          setLoading(false);
+          setAuthInitialized(true);
+          setIsInitializingOrg(!hasResolvedOrganizationContext(hydratedFromCache));
+        });
+    }
 
     if (!error && data.user) {
-      signedInIsSuperAdmin = await withSoftTimeout(
-        checkSuperAdmin(data.user.id),
-        false,
-        'signIn checkSuperAdmin',
-        SIGN_IN_ROLE_TIMEOUT_MS,
-      );
-
       setTimeout(() => {
         logAuditAction('login', 'session', data.user.id, undefined, {
           email,
@@ -910,7 +1084,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }, 0);
     }
 
-    return { error, isSuperAdmin: signedInIsSuperAdmin };
+    return { error, isSuperAdmin: false };
   };
 
   const signUp = async (email: string, password: string, name: string) => {
@@ -960,7 +1134,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const currentUserId = user?.id;
     if (currentUserId) {
       logAuditAction('logout', 'session', currentUserId).catch(console.error);
-      clearCachedAuthContext(currentUserId);
     }
 
     // Tentar signOut global (invalida refresh token no servidor)
@@ -974,7 +1147,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await performFullCacheClear({
       clearAuth: true,
       redirectTo: '/login',
-      clearBrowserCaches: false
+      clearBrowserCaches: false,
+      preserveAuthContext: true
     });
   };
 

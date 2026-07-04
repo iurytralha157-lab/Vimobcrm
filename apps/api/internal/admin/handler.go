@@ -248,6 +248,15 @@ func (handler Handler) PublicCheckoutPlan(w http.ResponseWriter, r *http.Request
 	httpserver.WriteJSON(w, http.StatusOK, item)
 }
 
+func (handler Handler) PublicSubscriptionPlans(w http.ResponseWriter, r *http.Request) {
+	items, err := handler.repo.ListPublicSubscriptionPlans(r.Context())
+	if err != nil {
+		writeAdminError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]map[string]any]{Data: items})
+}
+
 func (handler Handler) ShowMyOnboardingRequest(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := tenant.FromContext(r.Context())
 	if !ok || tenantContext.UserID == "" {
