@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -778,6 +779,9 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 		if err := repo.insertRoundRobinLog(ctx, tx, integration.OrganizationID, leadID, destination, change); err != nil {
 			return "", false, err
 		}
+		if err := repo.insertLeadRedistributionJob(ctx, tx, integration.OrganizationID, leadID, destination, change); err != nil {
+			return "", false, err
+		}
 	}
 	if err := repo.insertActivity(ctx, tx, integration.OrganizationID, leadID, lead.Name, reentry, metadata); err != nil {
 		return "", false, err
@@ -897,6 +901,8 @@ func (repo Repository) resolveRoundRobin(ctx context.Context, tx pgx.Tx, organiz
 		PipelineID:   firstUUID(uuidPointer(item["target_pipeline_id"]), uuidPointer(item["pipeline_id"])),
 		StageID:      firstUUID(uuidPointer(item["target_stage_id"]), uuidPointer(objectMap(item["rules"])["target_stage_id"])),
 	}
+	rules := objectMap(item["rules"])
+	destination.RedistributionSettings = objectMap(rules["settings"])
 	if destination.StageID != nil {
 		pipelineID, stageID, err := repo.resolveStage(ctx, tx, organizationID, *destination.StageID)
 		if err != nil {
@@ -1296,6 +1302,72 @@ func (repo Repository) insertRoundRobinLog(ctx context.Context, tx pgx.Tx, organ
 		  and id = $2::uuid
 	`, organizationID, nullablePointer(destination.RoundRobinID))
 	return nil
+}
+
+func (repo Repository) insertLeadRedistributionJob(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, destination resolvedDestination, change leadgenChange) error {
+	if destination.RoundRobinID == nil || destination.AssignedUserID == nil {
+		return nil
+	}
+
+	settings := destination.RedistributionSettings
+	if !boolSetting(settings, "enable_redistribution") {
+		return nil
+	}
+
+	timeoutMinutes := intSetting(settings, "redistribution_timeout_minutes", 0)
+	if timeoutMinutes <= 0 {
+		return nil
+	}
+	warningMinutes := intSetting(settings, "redistribution_warning_minutes", 5)
+	if warningMinutes < 0 {
+		warningMinutes = 0
+	}
+	maxAttempts := intSetting(settings, "redistribution_max_attempts", 1)
+	if maxAttempts <= 0 {
+		maxAttempts = 1
+	}
+
+	_, err := tx.Exec(ctx, `
+		insert into public.lead_redistribution_jobs (
+			organization_id,
+			lead_id,
+			round_robin_id,
+			original_assigned_user_id,
+			current_assigned_user_id,
+			max_attempts,
+			timeout_minutes,
+			warning_minutes,
+			enrolled_at,
+			due_at,
+			warning_due_at,
+			metadata
+		)
+		values (
+			$1::uuid,
+			$2::uuid,
+			$3::uuid,
+			$4::uuid,
+			$4::uuid,
+			$5,
+			$6,
+			$7,
+			now(),
+			now() + ($6 * interval '1 minute'),
+			case
+				when $7 > 0 and $7 < $6 then now() + (($6 - $7) * interval '1 minute')
+				else null
+			end,
+			$8::jsonb
+		)
+		on conflict do nothing
+	`, organizationID, leadID, *destination.RoundRobinID, *destination.AssignedUserID, maxAttempts, timeoutMinutes, warningMinutes, jsonb(map[string]any{
+		"source":     "meta_lead_ads",
+		"leadgen_id": change.LeadgenID,
+		"form_id":    change.FormID,
+		"page_id":    change.PageID,
+		"member_id":  nullablePointer(destination.RoundRobinMemberID),
+	}))
+	return err
 }
 
 func (repo Repository) insertActivity(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, leadName string, reentry bool, metadata map[string]any) error {
@@ -1808,6 +1880,48 @@ func textFromAny(value any) string {
 	default:
 		return ""
 	}
+}
+
+func boolSetting(settings map[string]any, key string) bool {
+	value, ok := settings[key]
+	if !ok {
+		return false
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		text := strings.ToLower(strings.TrimSpace(typed))
+		return text == "true" || text == "1" || text == "yes" || text == "sim"
+	default:
+		return false
+	}
+}
+
+func intSetting(settings map[string]any, key string, fallback int) int {
+	value, ok := settings[key]
+	if !ok {
+		return fallback
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err == nil {
+			return int(parsed)
+		}
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err == nil {
+			return parsed
+		}
+	}
+	return fallback
 }
 
 func uuidPointer(value any) *string {

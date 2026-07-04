@@ -351,7 +351,7 @@ export function DistributionQueueEditor({
     settings: {
       enable_redistribution: false,
       redistribution_timeout_minutes: 20,
-      redistribution_warning_minutes: 2,
+      redistribution_warning_minutes: 5,
       redistribution_max_attempts: 10,
       preserve_position: true,
       require_checkin: false,
@@ -436,7 +436,7 @@ export function DistributionQueueEditor({
         settings: {
           enable_redistribution: false,
           redistribution_timeout_minutes: 20,
-          redistribution_warning_minutes: 2,
+          redistribution_warning_minutes: 5,
           redistribution_max_attempts: 10,
           preserve_position: true,
           require_checkin: false,
@@ -456,7 +456,7 @@ export function DistributionQueueEditor({
         settings: {
           enable_redistribution: false,
           redistribution_timeout_minutes: 20,
-          redistribution_warning_minutes: 2,
+          redistribution_warning_minutes: 5,
           redistribution_max_attempts: 10,
           preserve_position: true,
           require_checkin: false,
@@ -1021,7 +1021,7 @@ export function DistributionQueueEditor({
                             ...prev.settings,
                             enable_redistribution: checked,
                             redistribution_timeout_minutes: prev.settings.redistribution_timeout_minutes ?? 20,
-                            redistribution_warning_minutes: prev.settings.redistribution_warning_minutes ?? 2,
+                            redistribution_warning_minutes: prev.settings.redistribution_warning_minutes ?? 5,
                             redistribution_max_attempts: prev.settings.redistribution_max_attempts ?? 10,
                           },
                         }))}
@@ -1052,7 +1052,7 @@ export function DistributionQueueEditor({
                           <Input
                             type="number"
                             min={0}
-                            value={formData.settings.redistribution_warning_minutes ?? 2}
+                            value={formData.settings.redistribution_warning_minutes ?? 5}
                             onChange={e => setFormData(prev => ({
                               ...prev,
                               settings: {

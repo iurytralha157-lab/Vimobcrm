@@ -96,11 +96,12 @@ type metaFormConfig struct {
 }
 
 type resolvedDestination struct {
-	PipelineID         *string
-	StageID            *string
-	AssignedUserID     *string
-	RoundRobinID       *string
-	RoundRobinMemberID *string
+	PipelineID             *string
+	StageID                *string
+	AssignedUserID         *string
+	RoundRobinID           *string
+	RoundRobinMemberID     *string
+	RedistributionSettings map[string]any
 }
 
 type leadData struct {

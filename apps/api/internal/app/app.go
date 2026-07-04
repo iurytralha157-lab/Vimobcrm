@@ -88,14 +88,16 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	meHandler := me.NewHandler(me.NewRepository(postgres))
 	tenantRepository := tenant.NewRepository(postgres)
 	auditHandler := audit.NewHandler(audit.NewRepository(postgres))
-	leadsHandler := leads.NewHandler(leads.NewRepository(postgres, leads.StorageConfig{
+	leadsRepository := leads.NewRepository(postgres, leads.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 		EvolutionGo: leads.EvolutionGoConfig{
 			APIURL: cfg.EvolutionGo.APIURL,
 			APIKey: cfg.EvolutionGo.APIKey,
 		},
-	}), realtimeHub)
+	})
+	leadsRepository.StartRedistributionWorker(ctx, logger)
+	leadsHandler := leads.NewHandler(leadsRepository, realtimeHub)
 	pipelinesHandler := pipelines.NewHandler(pipelines.NewRepository(postgres))
 	propertiesHandler := properties.NewHandler(properties.NewRepository(postgres, properties.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,

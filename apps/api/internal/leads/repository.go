@@ -1410,7 +1410,7 @@ func (repo Repository) transferLeadAssignee(ctx context.Context, tx pgx.Tx, tena
 				$5,
 				$6::uuid
 			)
-		`, tenantContext.OrganizationID, current.ID, nullableString(current.AssignedUserID), nullable(assignedUserID), reason, tenantContext.UserID)
+		`, tenantContext.OrganizationID, current.ID, nullableString(current.AssignedUserID), nullable(assignedUserID), reason, nullableString(tenantContext.UserID))
 		return err
 	}
 
@@ -1516,6 +1516,7 @@ func (repo Repository) getLeadSnapshotForUpdate(ctx context.Context, tx pgx.Tx, 
 		where l.organization_id = $1::uuid
 		  and l.id = $2::uuid
 		limit 1
+		for update of l
 	`, organizationID, leadID).Scan(&snapshot.ID, &snapshot.Name, &phone, &assignedUserID, &pipelineID, &stageID, &stageName, &snapshot.DealStatus, &lostReason, &interestValue)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return leadSnapshot{}, ErrLeadNotFound
@@ -1896,7 +1897,7 @@ func (repo Repository) insertActivity(ctx context.Context, tx pgx.Tx, organizati
 			$5,
 			$6::jsonb
 		)
-	`, organizationID, leadID, userID, activityType, content, jsonb(metadata))
+	`, organizationID, leadID, nullableString(userID), activityType, content, jsonb(metadata))
 	return err
 }
 
