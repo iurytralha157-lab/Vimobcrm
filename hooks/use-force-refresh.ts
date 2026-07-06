@@ -1,9 +1,9 @@
 import { useEffect, useCallback } from 'react';
+import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { performFullCacheClear } from '@/lib/cache-utils';
 
 const CHANNEL_NAME = 'system-updates-v4'; // Bumped version to v4
-const STORAGE_KEY = `${CHANNEL_NAME}:force-refresh`;
 
 /**
  * Hook that listens for force refresh broadcasts and reloads the page
@@ -31,42 +31,28 @@ export function useForceRefreshListener(enabled: boolean = true, userId?: string
     }
 
     console.log('[ForceRefresh] Initializing for user:', userId);
-    const channel = typeof BroadcastChannel !== 'undefined'
-      ? new BroadcastChannel(CHANNEL_NAME)
-      : null;
+    const channel = supabase.channel(`${CHANNEL_NAME}-${userId.substring(0, 8)}`);
 
-    const handleRefresh = async (payload: unknown) => {
-      console.log('[ForceRefresh] Received refresh signal:', payload);
-      toast.info('Atualizando sistema... Por favor aguarde.', {
-        duration: 3000,
+    channel
+      .on('broadcast', { event: 'force-refresh' }, async (payload) => {
+        console.log('[ForceRefresh] Received refresh signal:', payload);
+        
+        toast.info('Atualizando sistema... Por favor aguarde.', {
+          duration: 3000,
+        });
+
+        await performFullCacheClear({ 
+          clearAuth: false, 
+          reload: true 
+        });
+      })
+      .subscribe((status) => {
+        console.log('[ForceRefresh] Channel status:', status);
       });
-
-      await performFullCacheClear({
-        clearAuth: false,
-        reload: true,
-      });
-    };
-
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.event === 'force-refresh') {
-        void handleRefresh(event.data);
-      }
-    };
-
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === STORAGE_KEY && event.newValue) {
-        void handleRefresh(event.newValue);
-      }
-    };
-
-    channel?.addEventListener('message', handleMessage);
-    window.addEventListener('storage', handleStorage);
 
     return () => {
-      console.log('[ForceRefresh] Removing local channel');
-      channel?.removeEventListener('message', handleMessage);
-      channel?.close();
-      window.removeEventListener('storage', handleStorage);
+      console.log('[ForceRefresh] Removing channel');
+      supabase.removeChannel(channel);
     };
   }, [enabled, userId]);
 }
@@ -78,21 +64,31 @@ export function useForceRefreshListener(enabled: boolean = true, userId?: string
  */
 export function useForceRefreshBroadcast() {
   const broadcastRefresh = useCallback(async () => {
-    const payload = {
+    const channel = supabase.channel(CHANNEL_NAME);
+    
+    // Subscribe first to be able to send
+    await new Promise<void>((resolve) => {
+      channel.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          resolve();
+        }
+      });
+    });
+
+    // Send the broadcast
+    await channel.send({
+      type: 'broadcast',
       event: 'force-refresh',
-      timestamp: new Date().toISOString(),
-      message: 'Admin triggered force refresh',
-    };
-
-    if (typeof BroadcastChannel !== 'undefined') {
-      const channel = new BroadcastChannel(CHANNEL_NAME);
-      channel.postMessage(payload);
-      channel.close();
-    }
-
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      payload: {
+        timestamp: new Date().toISOString(),
+        message: 'Admin triggered force refresh',
+      },
+    });
 
     console.log('[ForceRefresh] Broadcast sent');
+    
+    // Clean up
+    await supabase.removeChannel(channel);
 
     return true;
   }, []);

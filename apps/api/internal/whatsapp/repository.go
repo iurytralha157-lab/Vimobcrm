@@ -25,21 +25,27 @@ type cachedWhatsAppMediaSignedURL struct {
 
 var whatsappMediaSignedURLCache sync.Map
 
+type GamificationRecorder interface {
+	RecordAction(ctx context.Context, tenantContext tenant.Context, actionType string, quantity int, referenceID string) error
+}
+
 type Repository struct {
-	db        *dbpkg.Postgres
-	storage   storageClient
-	functions functionsClient
+	db                   *dbpkg.Postgres
+	storage              storageClient
+	functions            functionsClient
+	gamificationRecorder GamificationRecorder
 }
 
 type scanner interface {
 	Scan(dest ...any) error
 }
 
-func NewRepository(db *dbpkg.Postgres, storageConfig StorageConfig) Repository {
+func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder, storageConfig StorageConfig) Repository {
 	return Repository{
-		db:        db,
-		storage:   newStorageClient(storageConfig),
-		functions: newFunctionsClient(storageConfig, db),
+		db:                   db,
+		storage:              newStorageClient(storageConfig),
+		functions:            newFunctionsClient(storageConfig, db),
+		gamificationRecorder: gamificationRecorder,
 	}
 }
 
@@ -279,6 +285,13 @@ func (repo Repository) ListConversations(ctx context.Context, tenantContext tena
 		if err != nil {
 			return nil, err
 		}
+		if conversation.LeadID == nil && !conversation.IsGroup {
+			resolved, err := repo.resolveConversationLead(ctx, tenantContext, conversation)
+			if err != nil {
+				return nil, err
+			}
+			conversation = resolved
+		}
 		conversations = append(conversations, conversation)
 	}
 	if err := rows.Err(); err != nil {
@@ -315,7 +328,7 @@ func (repo Repository) GetConversation(ctx context.Context, tenantContext tenant
 		return Conversation{}, err
 	}
 
-	return conversation, nil
+	return repo.resolveConversationLead(ctx, tenantContext, conversation)
 }
 
 func (repo Repository) ListMessages(ctx context.Context, tenantContext tenant.Context, conversationID string, filter MessageFilter) (MessagePage, error) {
@@ -713,6 +726,19 @@ func conversationSelectFields() string {
 		l.whatsapp_avatar_url,
 		l.pipeline_id::text,
 		l.stage_id::text,
+		l.assigned_user_id::text,
+		(
+			select u.name
+			from public.users u
+			where u.id = l.assigned_user_id
+			limit 1
+		),
+		(
+			select u.avatar_url
+			from public.users u
+			where u.id = l.assigned_user_id
+			limit 1
+		),
 		pipeline.id::text,
 		pipeline.name,
 		stage.id::text,
@@ -842,6 +868,7 @@ func scanConversation(row scanner) (Conversation, error) {
 	var presenceUpdatedAt, lastMessageAt, archivedAt, deletedAt pgtype.Timestamptz
 	var sessionID, sessionInstanceName, sessionPhone, sessionStatus, sessionOrgID, sessionProvider pgtype.Text
 	var leadRefID, leadName, leadAvatar, leadPipelineID, leadStageID pgtype.Text
+	var leadAssigneeID, leadAssigneeName, leadAssigneeAvatar pgtype.Text
 	var pipelineID, pipelineName, stageID, stageName, stageColor pgtype.Text
 	var tagsJSON string
 
@@ -874,6 +901,9 @@ func scanConversation(row scanner) (Conversation, error) {
 		&leadAvatar,
 		&leadPipelineID,
 		&leadStageID,
+		&leadAssigneeID,
+		&leadAssigneeName,
+		&leadAssigneeAvatar,
 		&pipelineID,
 		&pipelineName,
 		&stageID,
@@ -914,6 +944,9 @@ func scanConversation(row scanner) (Conversation, error) {
 			PipelineID:        textPtr(leadPipelineID),
 			StageID:           textPtr(leadStageID),
 			Tags:              decodeLeadTags(tagsJSON),
+		}
+		if leadAssigneeID.Valid {
+			lead.Assignee = &LeadAssigneeRef{ID: leadAssigneeID.String, Name: textValue(leadAssigneeName), AvatarURL: textPtr(leadAssigneeAvatar)}
 		}
 		if pipelineID.Valid {
 			lead.Pipeline = &NameRef{ID: pipelineID.String, Name: textValue(pipelineName)}

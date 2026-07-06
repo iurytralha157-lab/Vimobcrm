@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import {
   Activity,
   Award,
@@ -18,6 +18,7 @@ import {
   Home,
   Loader2,
   MessageSquare,
+  Pencil,
   Phone,
   Plus,
   RotateCcw,
@@ -25,17 +26,15 @@ import {
   Settings,
   ShieldOff,
   Target,
-  TrendingUp,
   Trash2,
   Trophy,
   UserCheck,
   UserPlus,
   Users,
   Volume2,
-  Zap,
   type LucideIcon,
 } from 'lucide-react';
-import { format, formatDistanceToNow } from 'date-fns';
+import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
   Area,
@@ -90,6 +89,7 @@ const ACTION_LABELS: Record<string, string> = {
   proposal_sent: 'Proposta enviada',
   sale_closed: 'Venda concluida',
   contract_signed: 'Contrato assinado',
+  lost_lead_recovered: 'Lead recuperado',
   lead_created: 'Novo lead recebido',
   lead_created_manual: 'Lead criado manualmente',
   property_created: 'Imovel captado',
@@ -117,6 +117,7 @@ const RULE_ICONS: Record<string, LucideIcon> = {
   proposal_sent: FileText,
   sale_closed: Award,
   contract_signed: FileCheck,
+  lost_lead_recovered: RotateCcw,
   lead_created: UserPlus,
   lead_created_manual: UserPlus,
   property_created: Home,
@@ -125,15 +126,44 @@ const RULE_ICONS: Record<string, LucideIcon> = {
 const ACTION_OPTIONS = [
   'call_made',
   'message_sent',
+  'contact_made',
   'visit_scheduled',
   'visit_confirmed',
   'meeting_scheduled',
   'meeting_held',
   'proposal_sent',
+  'sale_closed',
   'contract_signed',
+  'lost_lead_recovered',
   'property_created',
   'lead_created_manual',
+  'prospecting_report',
 ];
+
+const ACTION_ALIASES: Record<string, string> = {
+  ligacao_realizada: 'call_made',
+  ligacao: 'call_made',
+  mensagem: 'message_sent',
+  mensagem_enviada: 'message_sent',
+  contato_efetivo: 'contact_made',
+  visita_agendada: 'visit_scheduled',
+  visita_realizada: 'visit_confirmed',
+  visita_confirmada: 'visit_confirmed',
+  reuniao_agendada: 'meeting_scheduled',
+  reuniao_realizada: 'meeting_held',
+  proposta_enviada: 'proposal_sent',
+  venda_concluida: 'sale_closed',
+  lead_ganho: 'sale_closed',
+  ganho: 'sale_closed',
+  contrato_assinado: 'contract_signed',
+  lead_criado: 'lead_created',
+  lead_manual: 'lead_created_manual',
+  lead_criado_manual: 'lead_created_manual',
+  imovel_captado: 'property_created',
+  imovel_criado: 'property_created',
+  lead_recuperado: 'lost_lead_recovered',
+  recuperar_lead_perdido: 'lost_lead_recovered',
+};
 
 const EMPTY_GAMIFICATION_OVERVIEW: GamificationOverview = {
   ranking: [],
@@ -169,11 +199,11 @@ const EMPTY_ADMIN_SNAPSHOT: GamificationAdminSnapshot = {
   canManage: false,
 };
 
-type GamificationTab = 'arena' | 'dashboard' | 'rankings' | 'history' | 'config';
+type GamificationTab = 'arena' | 'dashboard' | 'history' | 'config';
 
 function tabFromHash(hash: string): GamificationTab {
   const clean = hash.replace('#', '');
-  if (clean === 'dashboard' || clean === 'rankings' || clean === 'history' || clean === 'config') return clean;
+  if (clean === 'dashboard' || clean === 'history' || clean === 'config') return clean;
   if (clean === 'admin') return 'config';
   return 'arena';
 }
@@ -192,13 +222,14 @@ function getInitials(name: string) {
     .slice(0, 2);
 }
 
-function getEventLabel(type: string) {
-  return ACTION_LABELS[type] || type.replaceAll('_', ' ');
+function normalizeActionKey(type: string | null | undefined) {
+  const key = String(type || '').trim().toLowerCase().replaceAll(' ', '_').replaceAll('-', '_');
+  return ACTION_ALIASES[key] || key;
 }
 
-function formatRelativeDate(value: string | null) {
-  if (!value) return 'Sem data';
-  return formatDistanceToNow(new Date(value), { addSuffix: true, locale: ptBR });
+function getEventLabel(type: string) {
+  const key = normalizeActionKey(type);
+  return ACTION_LABELS[key] || key.replaceAll('_', ' ');
 }
 
 function formatDateTime(value: string | null) {
@@ -218,7 +249,7 @@ export default function GamificationScreen() {
   const previousRankingRef = useRef<Record<string, number>>({});
   const { overview, isLoading, error } = useGamificationOverview();
   const isAdmin = isSuperAdmin || profile?.role === 'admin' || profile?.role === 'super_admin';
-  const admin = useGamificationAdmin(activeTab === 'config' && isAdmin);
+  const admin = useGamificationAdmin(activeTab === 'dashboard' || (activeTab === 'config' && isAdmin));
 
   const data = overview ?? EMPTY_GAMIFICATION_OVERVIEW;
   const snapshot = admin.snapshot ?? EMPTY_ADMIN_SNAPSHOT;
@@ -290,15 +321,11 @@ export default function GamificationScreen() {
           </TabsContent>
 
           <TabsContent data-tour="gamification-dashboard" value="dashboard" className="mt-0">
-            <DashboardView data={data} />
-          </TabsContent>
-
-          <TabsContent data-tour="gamification-rankings" value="rankings" className="mt-0">
-            <PerformanceView data={data} />
+            <DashboardView data={data} admin={admin} snapshot={snapshot} />
           </TabsContent>
 
           <TabsContent data-tour="gamification-history" value="history" className="mt-0">
-            <HistoryView events={data.history} />
+            <HistoryView events={data.history} currentUserId={profile?.id ?? null} canSeeAll={isAdmin} />
           </TabsContent>
 
           <TabsContent data-tour="gamification-config" value="config" className="mt-0">
@@ -314,7 +341,7 @@ function ConfigTab({ value, icon: Icon, label }: { value: string; icon: LucideIc
   return (
     <TabsTrigger
       value={value}
-      className="h-10 rounded-md border-0 px-3 text-muted-foreground shadow-none transition-colors data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+      className="h-10 rounded-md border-0 px-3 text-muted-foreground shadow-none transition-colors data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-none"
     >
       <Icon className="h-4 w-4" />
       {label}
@@ -372,7 +399,7 @@ const eventTypesMap: Record<string, string[]> = {
   ligacoes: ['call_made'],
   mensagens: ['message_sent'],
   propostas: ['proposal_sent'],
-  vendas: ['sale_closed', 'contract_signed'],
+  vendas: ['sale_closed', 'contract_signed', 'lost_lead_recovered'],
   reunioes: ['meeting_held', 'meeting_scheduled'],
   visitas: ['visit_confirmed', 'visit_scheduled'],
   vgv: ['sale_closed'],
@@ -385,20 +412,28 @@ const getFilteredRanking = (
   datePreset: DatePreset | null,
   customDateRange: { from: Date; to: Date } | null
 ): GamificationRankingEntry[] => {
-  const range = getDateRangeFromPreset(datePreset || 'thisMonth');
-  const fromDate = datePreset === 'custom' && customDateRange ? customDateRange.from : range.from;
-  const toDate = datePreset === 'custom' && customDateRange ? customDateRange.to : range.to;
+  // Determine the date range for filtering
+  let fromDate: Date | null = null;
+  let toDate: Date | null = null;
+
+  if (datePreset === 'custom' && customDateRange) {
+    fromDate = customDateRange.from;
+    toDate = customDateRange.to;
+  } else if (datePreset && datePreset !== 'custom') {
+    const range = getDateRangeFromPreset(datePreset);
+    fromDate = range.from;
+    toDate = range.to;
+  }
+  // If datePreset is null, show all history (no filter)
 
   const periodEvents = history.filter(event => {
     if (!event.createdAt) return false;
+    if (!fromDate || !toDate) return true; // no filter = all events
     const date = new Date(event.createdAt);
     return date >= fromDate && date <= toDate;
   });
 
   if (rankType === 'geral') {
-    if (datePreset === 'thisMonth') {
-      return baseRanking;
-    }
     const pointsByUser: Record<string, number> = {};
     periodEvents.forEach(event => {
       if (!event.userId) return;
@@ -408,7 +443,7 @@ const getFilteredRanking = (
     return baseRanking
       .map(entry => ({
         ...entry,
-        points: pointsByUser[entry.userId] !== undefined ? pointsByUser[entry.userId] : entry.points,
+        points: pointsByUser[entry.userId] || 0,
       }))
       .sort((a, b) => b.points - a.points)
       .map((entry, idx) => ({ ...entry, position: idx + 1 }));
@@ -417,7 +452,7 @@ const getFilteredRanking = (
   const targetTypes = eventTypesMap[rankType] || [];
   const pointsByUser: Record<string, number> = {};
   periodEvents.forEach(event => {
-    if (!event.userId || !targetTypes.includes(event.eventType)) return;
+    if (!event.userId || !targetTypes.includes(normalizeActionKey(event.eventType))) return;
     pointsByUser[event.userId] = (pointsByUser[event.userId] || 0) + event.points;
   });
 
@@ -455,77 +490,30 @@ function ArenaView({ data }: { data: GamificationOverview }) {
   );
 }
 
-function DashboardView({ data }: { data: GamificationOverview }) {
+function DashboardView({
+  data,
+  admin,
+  snapshot,
+}: {
+  data: GamificationOverview;
+  admin: AdminHook;
+  snapshot: GamificationAdminSnapshot;
+}) {
   const currentUser = data.ranking.find((entry) => entry.isCurrentUser) ?? data.ranking[0];
   const metrics = data.performance.metrics;
   const totalActions = Math.max(metrics.totalActions, 1);
 
   return (
     <div className="space-y-5">
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard icon={Target} label="Eficiencia" value={metrics.efficiency ? `${metrics.efficiency}%` : '--'} />
-        <MetricCard icon={Zap} label="Acoes por dia" value={String(metrics.avgActionsPerDay || 0)} />
-        <MetricCard icon={BarChart3} label="Pontos no mes" value={formatNumber(metrics.points)} />
-        <MetricCard icon={Calendar} label="Consistencia" value={metrics.consistency ? `${metrics.consistency}%` : '--'} />
-      </section>
-
       <div className="grid gap-4 lg:grid-cols-[minmax(260px,0.75fr)_minmax(0,1.25fr)]">
         <StatsWidget entry={currentUser} myPosition={data.myPosition} />
         <MissionsPanel missions={data.missions} />
       </div>
 
       <PerformanceCharts data={data} />
+      <ManualEntrySubmitCard admin={admin} entries={snapshot.myManualEntries} />
       <DistributionPanel data={data} totalActions={totalActions} />
       <HistoryView events={data.recentEvents} compact />
-    </div>
-  );
-}
-
-function PerformanceView({ data }: { data: GamificationOverview }) {
-  return (
-    <div className="space-y-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">Ranking</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">Classificacao da equipe</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Pontuacao, nivel e sequencia dos participantes ativos.</p>
-        </div>
-        <Badge variant="secondary">{data.ranking.length} participantes</Badge>
-      </div>
-
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard icon={Trophy} label="Total em disputa" value={formatNumber(data.totalPoints)} />
-        <MetricCard icon={Users} label="Participantes" value={formatNumber(data.activeUsers)} />
-        <MetricCard icon={Activity} label="Eventos" value={formatNumber(data.totalEvents)} />
-        <MetricCard icon={Award} label="Minha posicao" value={data.myPosition ? `${data.myPosition} lugar` : '--'} />
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="app-card overflow-hidden">
-          <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <PanelTitle icon={TrendingUp} eyebrow="Equipe" title="Tabela de classificacao" />
-            {data.ranking[0] && (
-              <div className="app-card-soft flex items-center gap-2 px-3 py-2 text-sm">
-                <Crown className="h-4 w-4 text-amber-400" />
-                <span className="text-muted-foreground">Lider:</span>
-                <span className="max-w-[220px] truncate font-semibold">{data.ranking[0].name}</span>
-              </div>
-            )}
-          </div>
-
-          {data.ranking.length === 0 ? (
-            <EmptyPanel title="Nenhum participante encontrado" />
-          ) : (
-            <div className="divide-y divide-white/[0.025]">
-              {data.ranking.map((entry) => (
-                <RankingRow key={entry.userId} entry={entry} />
-              ))}
-            </div>
-          )}
-        </div>
-
-        <RecentEventsPanel events={data.recentEvents} />
-      </section>
     </div>
   );
 }
@@ -595,14 +583,96 @@ function DistributionPanel({ data, totalActions }: { data: GamificationOverview;
   );
 }
 
+function ManualEntrySubmitCard({ admin, entries }: { admin: AdminHook; entries: GamificationManualEntry[] }) {
+  const [form, setForm] = useState({ actionKey: '', quantity: 1, notes: '' });
+  const recentEntries = entries.slice(0, 3);
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    admin.createManualEntry.mutate(form, {
+      onSuccess: () => setForm({ actionKey: '', quantity: 1, notes: '' }),
+    });
+  };
+
+  return (
+    <section className="app-card p-4">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <form onSubmit={submit} className="space-y-4">
+          <PanelTitle icon={ClipboardCheck} eyebrow="Lancamento" title="Registrar atividade externa" showIcon={false} />
+          <p className="text-sm text-muted-foreground">
+            Use quando uma atividade pontuavel aconteceu fora do CRM. O administrador aprova antes de somar pontos.
+          </p>
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+            <Field label="Atividade">
+              <Select value={form.actionKey} onValueChange={(value) => setForm({ ...form, actionKey: value })}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ACTION_OPTIONS.map((action) => (
+                    <SelectItem key={action} value={action}>
+                      {getEventLabel(action)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Quantidade">
+              <Input
+                type="number"
+                min={1}
+                max={100}
+                value={form.quantity}
+                onChange={(event) => setForm({ ...form, quantity: Number(event.target.value) || 1 })}
+              />
+            </Field>
+          </div>
+          <Field label="Observacao">
+            <Textarea
+              value={form.notes}
+              onChange={(event) => setForm({ ...form, notes: event.target.value })}
+              rows={3}
+              placeholder="Ex.: ligacoes feitas no stand, planilha de prospeccao, visita externa..."
+            />
+          </Field>
+          <Button type="submit" disabled={admin.createManualEntry.isPending || !form.actionKey}>
+            {admin.createManualEntry.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardCheck className="h-4 w-4" />}
+            Enviar para aprovacao
+          </Button>
+        </form>
+
+        <div className="rounded-md bg-[var(--app-surface-soft)] p-3">
+          <p className="text-sm font-semibold">Minhas solicitacoes</p>
+          <div className="mt-3 space-y-2">
+            {recentEntries.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Nenhum lancamento manual enviado ainda.</p>
+            ) : (
+              recentEntries.map((entry) => (
+                <div key={entry.id} className="flex items-center justify-between gap-3 rounded-md bg-background/60 px-3 py-2 text-xs">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{getEventLabel(entry.actionKey)}</p>
+                    <p className="text-muted-foreground">{entry.quantity}x - {formatDateTime(entry.createdAt)}</p>
+                  </div>
+                  <Badge variant={entry.status === 'approved' ? 'default' : entry.status === 'rejected' ? 'destructive' : 'secondary'}>
+                    {entry.status === 'approved' ? 'Aprovado' : entry.status === 'rejected' ? 'Rejeitado' : 'Pendente'}
+                  </Badge>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function PodiumStage({ ranking }: { ranking: GamificationRankingEntry[] }) {
   const first = ranking.find((entry) => entry.position === 1) ?? ranking[0];
   const second = ranking.find((entry) => entry.position === 2) ?? ranking[1];
   const third = ranking.find((entry) => entry.position === 3) ?? ranking[2];
 
   return (
-    <section className="relative flex h-full flex-col overflow-hidden rounded-xl bg-[var(--app-surface-solid)] p-5 sm:p-6 shadow-xl min-h-[580px] lg:min-h-0">
-      <div className="absolute inset-x-8 bottom-10 h-16 rounded-full bg-primary/10 blur-3xl pointer-events-none" />
+    <section className="relative flex h-full flex-col overflow-hidden rounded-xl bg-[var(--app-surface-solid)] p-5 sm:p-6 shadow-none min-h-[500px] lg:min-h-0">
       
       {/* Title / Header */}
       <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-border/5 pb-4 shrink-0">
@@ -628,7 +698,7 @@ function PodiumStage({ ranking }: { ranking: GamificationRankingEntry[] }) {
           <EmptyPanel title="Sem pontuação registrada" />
         </div>
       ) : (
-        <div className="relative mt-8 flex flex-1 items-end justify-center gap-4 sm:gap-6 md:gap-10 pb-4 w-full shrink-0 min-h-[380px]">
+        <div className="relative mt-4 flex flex-1 items-end justify-center gap-4 sm:gap-6 md:gap-10 pb-8 w-full shrink-0 min-h-[320px]">
           <PodiumSpot entry={second} place={2} tone="silver" className="w-[140px] sm:w-[170px] md:w-[200px] shrink-0" />
           <PodiumSpot entry={first} place={1} tone="gold" featured className="w-[160px] sm:w-[195px] md:w-[230px] shrink-0" />
           <PodiumSpot entry={third} place={3} tone="bronze" className="w-[125px] sm:w-[155px] md:w-[185px] shrink-0" />
@@ -699,7 +769,7 @@ function PodiumSpot({
       <div className="relative z-10">
         {featured && (
           <div className="absolute -top-7.5 left-1/2 -translate-x-1/2 w-full flex justify-center z-20 pointer-events-none">
-            <Crown className="h-9 w-9 fill-amber-400 text-amber-400 drop-shadow-[0_0_10px_rgba(251,191,36,0.5)] animate-pulse" />
+            <Crown className="h-9 w-9 fill-amber-400 text-amber-400 animate-pulse" />
           </div>
         )}
         <Avatar className={cn('border-4 bg-background', avatarSizes[tone], toneClasses[tone])}>
@@ -711,17 +781,17 @@ function PodiumSpot({
 
         {/* Badge Medal / Overlay */}
         {place === 1 && (
-          <div className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 bg-amber-400 text-amber-950 text-[9px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider shadow-md">
+          <div className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 bg-amber-400 text-amber-950 text-[9px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider shadow-none">
             TOP 1
           </div>
         )}
         {place === 2 && (
-          <div className="absolute -top-1 -right-1 flex h-7.5 w-7.5 items-center justify-center rounded-full bg-white text-slate-700 shadow-md border-2 border-slate-300">
+          <div className="absolute -top-1 -right-1 flex h-7.5 w-7.5 items-center justify-center rounded-full bg-white text-slate-700 shadow-none border-2 border-slate-300">
             <Award className="h-4 w-4" />
           </div>
         )}
         {place === 3 && (
-          <div className="absolute -top-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full bg-orange-100 text-orange-850 shadow-md border-2 border-orange-300">
+          <div className="absolute -top-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full bg-orange-100 text-orange-850 shadow-none border-2 border-orange-300">
             <Award className="h-3.5 w-3.5" />
           </div>
         )}
@@ -775,7 +845,7 @@ function ClassificationPanel({
   setRankType,
 }: ClassificationPanelProps) {
   return (
-    <section className="flex h-full flex-col overflow-hidden rounded-xl bg-[var(--app-surface-solid)] p-5 shadow-xl min-h-[580px] lg:min-h-0">
+    <section className="flex h-full flex-col overflow-hidden rounded-xl bg-[var(--app-surface-solid)] p-5 shadow-none min-h-[500px] lg:min-h-0">
       {/* Header */}
       <div className="border-b border-border/5 pb-4 shrink-0">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -789,7 +859,7 @@ function ClassificationPanel({
               onDatePresetChange={setDatePreset}
               customDateRange={customDateRange}
               onCustomDateRangeChange={setCustomDateRange}
-              triggerClassName="h-9 gap-2 rounded-lg border border-primary text-primary hover:bg-primary/5 hover:text-primary transition-colors bg-transparent text-xs px-3"
+              triggerClassName="h-9 gap-2 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors border-0 text-xs px-3"
               align="end"
             />
 
@@ -799,8 +869,8 @@ function ClassificationPanel({
                 <Button
                   type="button"
                   size="sm"
-                  variant="outline"
-                  className="h-9 rounded-lg text-xs px-3 border border-border/20 text-foreground hover:bg-black/5 dark:hover:bg-white/5 flex items-center gap-1.5 bg-transparent"
+                  variant="ghost"
+                  className="h-9 rounded-lg text-xs px-3 bg-secondary text-secondary-foreground hover:bg-secondary/80 flex items-center gap-1.5 border-0 select-none outline-none focus:outline-none focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0"
                 >
                   {(() => {
                     const active = rankLabels[rankType] || rankLabels.geral;
@@ -866,8 +936,8 @@ function ClassificationRow({ entry }: { entry: GamificationRankingEntry }) {
   return (
     <div
       className={cn(
-        'group flex min-h-[64px] items-center gap-3 border-b border-border/30 py-3 px-2 transition-all duration-300 hover:bg-black/[0.02] dark:hover:bg-white/[0.02] hover:-translate-y-0.5 hover:shadow-sm rounded-lg',
-        entry.isCurrentUser && 'bg-primary/5 border-l-2 border-l-primary pl-3',
+        'group flex min-h-[64px] items-center gap-3 border-b border-border/30 py-3 px-2 transition-all duration-300 hover:bg-black/[0.02] dark:hover:bg-white/[0.02] hover:-translate-y-0.5 rounded-lg',
+        entry.isCurrentUser && 'bg-secondary/60 dark:bg-white/5',
       )}
     >
       {/* Position badge */}
@@ -895,7 +965,7 @@ function ClassificationRow({ entry }: { entry: GamificationRankingEntry }) {
             {entry.name}
           </p>
           {entry.position === 1 && (
-            <Crown className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-400 drop-shadow-[0_0_4px_rgba(251,191,36,0.35)]" />
+            <Crown className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-400" />
           )}
         </div>
         <p className="mt-0.5 flex items-center gap-1.5 truncate text-[10px] font-semibold uppercase text-emerald-400">
@@ -915,15 +985,53 @@ function ClassificationRow({ entry }: { entry: GamificationRankingEntry }) {
   );
 }
 
-function HistoryView({ events, compact = false }: { events: GamificationEvent[]; compact?: boolean }) {
+function HistoryView({
+  events,
+  compact = false,
+  currentUserId = null,
+  canSeeAll = true,
+}: {
+  events: GamificationEvent[];
+  compact?: boolean;
+  currentUserId?: string | null;
+  canSeeAll?: boolean;
+}) {
+  const [period, setPeriod] = useState('30');
+  const filteredEvents = useMemo(() => {
+    const now = new Date();
+    const cutoff = period === 'all' ? null : new Date(now.getTime() - Number(period) * 24 * 60 * 60 * 1000);
+    return events.filter((event) => {
+      if (!canSeeAll && currentUserId && event.userId !== currentUserId) return false;
+      if (!cutoff || !event.createdAt) return true;
+      return new Date(event.createdAt) >= cutoff;
+    });
+  }, [canSeeAll, currentUserId, events, period]);
+
+  const visibleEvents = compact ? events.slice(0, 8) : filteredEvents;
+
   return (
     <section className="app-card overflow-hidden">
       <div className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <PanelTitle icon={History} eyebrow="Transparencia" title={compact ? 'Atividades recentes' : 'Historico de pontuacao'} />
-        <Badge variant="secondary">{events.length} registros</Badge>
+        <PanelTitle icon={History} eyebrow="Transparencia" title={compact ? 'Atividades recentes' : 'Historico de pontuacao'} showIcon={false} />
+        <div className="flex items-center gap-2">
+          {!compact && (
+            <Select value={period} onValueChange={setPeriod}>
+              <SelectTrigger className="h-9 w-[150px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="7">Ultimos 7 dias</SelectItem>
+                <SelectItem value="30">Ultimos 30 dias</SelectItem>
+                <SelectItem value="90">Ultimos 90 dias</SelectItem>
+                <SelectItem value="all">Todo periodo</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+          <Badge variant="secondary">{visibleEvents.length} registros</Badge>
+        </div>
       </div>
 
-      {events.length === 0 ? (
+      {visibleEvents.length === 0 ? (
         <EmptyPanel title="Nenhuma atividade registrada ainda" />
       ) : (
         <div className="overflow-x-auto">
@@ -938,7 +1046,7 @@ function HistoryView({ events, compact = false }: { events: GamificationEvent[];
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {events.map((event) => (
+              {visibleEvents.map((event) => (
                 <tr key={event.id}>
                   <td className="px-4 py-3 text-muted-foreground">{formatDateTime(event.createdAt)}</td>
                   <td className="px-4 py-3">
@@ -1039,13 +1147,13 @@ function RulesAdmin({ rules, admin }: { rules: GamificationRule[]; admin: AdminH
 
   return (
     <section className="app-card p-4">
-      <PanelTitle icon={Settings} eyebrow="Admin" title="Regras de pontuacao" />
+      <PanelTitle icon={Settings} eyebrow="Configuracao" title="Regras de pontuacao" showIcon={false} />
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         {rules.map((rule) => {
           const Icon = RULE_ICONS[rule.actionType] || Trophy;
           const points = editing[rule.actionType] ?? rule.points;
           return (
-            <div key={rule.actionType} className="flex items-center justify-between gap-3 rounded-md border border-border/60 p-3">
+            <div key={rule.actionType} className="flex items-center justify-between gap-3 rounded-md bg-[var(--app-surface-soft)] p-3">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
                   <Icon className="h-4 w-4" />
@@ -1107,10 +1215,39 @@ function MissionsAdmin({
     targetScope: 'organization' as 'organization' | 'user',
     targetUserId: '',
   });
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const resetForm = () => {
+    setEditingId(null);
+    setForm({
+      title: '',
+      description: '',
+      actionType: 'call_made',
+      targetCount: 10,
+      bonusPoints: 100,
+      period: 'daily',
+      targetScope: 'organization',
+      targetUserId: '',
+    });
+  };
+
+  const startEdit = (mission: GamificationMission) => {
+    setEditingId(mission.id);
+    setForm({
+      title: mission.title,
+      description: mission.description || '',
+      actionType: mission.actionType || 'call_made',
+      targetCount: mission.targetCount || 1,
+      bonusPoints: mission.bonusPoints || 0,
+      period: mission.period || 'daily',
+      targetScope: mission.targetScope === 'user' ? 'user' : 'organization',
+      targetUserId: mission.targetUserId || '',
+    });
+  };
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    admin.createMission.mutate({
+    const payload = {
       title: form.title,
       description: form.description || null,
       actionType: form.actionType,
@@ -1120,14 +1257,18 @@ function MissionsAdmin({
       targetScope: form.targetScope,
       targetUserId: form.targetScope === 'user' ? form.targetUserId : null,
       isActive: true,
-    });
-    setForm((current) => ({ ...current, title: '', description: '' }));
+    };
+    if (editingId) {
+      admin.updateMission.mutate({ id: editingId, mission: payload }, { onSuccess: resetForm });
+      return;
+    }
+    admin.createMission.mutate(payload, { onSuccess: resetForm });
   };
 
   return (
     <div className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
       <form onSubmit={submit} className="app-card space-y-4 p-4">
-        <PanelTitle icon={Plus} eyebrow="Missoes" title="Nova missao" />
+        <PanelTitle icon={Plus} eyebrow="Missoes" title={editingId ? 'Editar missao' : 'Nova missao'} showIcon={false} />
         <Field label="Titulo">
           <Input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required />
         </Field>
@@ -1208,10 +1349,21 @@ function MissionsAdmin({
             </Select>
           </Field>
         )}
-        <Button type="submit" className="w-full" disabled={admin.createMission.isPending || !form.title.trim()}>
-          {admin.createMission.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-          Criar missao
-        </Button>
+        <div className="flex gap-2">
+          {editingId && (
+            <Button type="button" variant="secondary" className="flex-1" onClick={resetForm}>
+              Cancelar
+            </Button>
+          )}
+          <Button
+            type="submit"
+            className="flex-1"
+            disabled={admin.createMission.isPending || admin.updateMission.isPending || !form.title.trim()}
+          >
+            {admin.createMission.isPending || admin.updateMission.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            {editingId ? 'Salvar missao' : 'Criar missao'}
+          </Button>
+        </div>
       </form>
 
       <section className="app-card p-4">
@@ -1221,7 +1373,7 @@ function MissionsAdmin({
             <EmptyPanel title="Nenhuma missao criada ainda" compact />
           ) : (
             missions.map((mission) => (
-              <div key={mission.id} className="rounded-md border border-border/60 p-3">
+              <div key={mission.id} className="rounded-md bg-[var(--app-surface-soft)] p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold">{mission.title}</p>
@@ -1229,6 +1381,28 @@ function MissionsAdmin({
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     <Badge variant={mission.isActive ? 'default' : 'secondary'}>{mission.isActive ? 'Ativa' : 'Inativa'}</Badge>
+                    <Switch
+                      checked={mission.isActive}
+                      onCheckedChange={(checked) =>
+                        admin.updateMission.mutate({
+                          id: mission.id,
+                          mission: {
+                            title: mission.title,
+                            description: mission.description || null,
+                            actionType: mission.actionType || 'call_made',
+                            targetCount: mission.targetCount,
+                            bonusPoints: mission.bonusPoints,
+                            period: mission.period || 'daily',
+                            targetScope: mission.targetScope === 'user' ? 'user' : 'organization',
+                            targetUserId: mission.targetScope === 'user' ? mission.targetUserId : null,
+                            isActive: checked,
+                          },
+                        })
+                      }
+                    />
+                    <Button type="button" size="icon" variant="ghost" onClick={() => startEdit(mission)}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
                     <Button type="button" size="icon" variant="ghost" onClick={() => admin.deleteMission.mutate(mission.id)}>
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
@@ -1255,7 +1429,7 @@ function ParticipantsAdmin({ participants, admin }: { participants: Gamification
       <PanelTitle icon={Users} eyebrow="Admin" title="Participantes da competicao" />
       <div className="mt-4 space-y-3">
         {participants.map((participant) => (
-          <div key={participant.userId} className="flex items-center justify-between gap-3 rounded-md border border-border/60 p-3">
+          <div key={participant.userId} className="flex items-center justify-between gap-3 rounded-md bg-[var(--app-surface-soft)] p-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <p className="truncate text-sm font-semibold">{participant.name}</p>
@@ -1299,7 +1473,7 @@ function SeasonsAdmin({ seasons, admin }: { seasons: GamificationSeason[]; admin
       <form onSubmit={submit} className="app-card space-y-4 p-4">
         <PanelTitle icon={RotateCcw} eyebrow="Temporada" title="Iniciar nova temporada" />
         {active && (
-          <div className="rounded-md border border-primary/30 bg-primary/10 p-3">
+          <div className="rounded-md bg-primary/10 p-3">
             <p className="text-xs uppercase text-muted-foreground">Em andamento</p>
             <p className="font-semibold">{active.name}</p>
             <p className="text-xs text-muted-foreground">Inicio: {formatDateTime(active.startedAt)}</p>
@@ -1324,7 +1498,7 @@ function SeasonsAdmin({ seasons, admin }: { seasons: GamificationSeason[]; admin
             <EmptyPanel title="Nenhuma temporada registrada" compact />
           ) : (
             seasons.map((season) => (
-              <div key={season.id} className="flex items-center justify-between gap-3 rounded-md border border-border/60 p-3">
+              <div key={season.id} className={cn("flex items-center justify-between gap-3 rounded-md p-3", season.isActive ? "bg-primary/10" : "bg-[var(--app-surface-soft)]")}>
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold">{season.name}</p>
                   <p className="text-xs text-muted-foreground">
@@ -1354,7 +1528,10 @@ function ManualEntriesAdmin({ snapshot, admin }: { snapshot: GamificationAdminSn
   return (
     <div className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
       <form onSubmit={submit} className="app-card space-y-4 p-4">
-        <PanelTitle icon={ClipboardCheck} eyebrow="Manual" title="Novo lancamento" />
+        <PanelTitle icon={ClipboardCheck} eyebrow="Manual" title="Novo lancamento" showIcon={false} />
+        <p className="text-sm text-muted-foreground">
+          Aprovacoes sao atividades enviadas pela equipe para validar pontos feitos fora do CRM.
+        </p>
         <Field label="Tipo de atividade">
           <Select value={form.actionKey} onValueChange={(value) => setForm({ ...form, actionKey: value })}>
             <SelectTrigger>
@@ -1415,7 +1592,7 @@ function ManualEntryList({
           <EmptyPanel title="Nenhum lancamento encontrado" compact />
         ) : (
           entries.map((entry) => (
-            <div key={entry.id} className="rounded-md border border-border/60 p-3">
+            <div key={entry.id} className="rounded-md bg-[var(--app-surface-soft)] p-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold">{entry.userName}</p>
@@ -1460,32 +1637,6 @@ function ManualEntryList({
         )}
       </div>
     </div>
-  );
-}
-
-function RecentEventsPanel({ events }: { events: GamificationEvent[] }) {
-  return (
-    <section className="app-card p-4">
-      <PanelTitle icon={Activity} eyebrow="Atividades" title="Pontuacoes recentes" />
-      <div className="mt-4 space-y-2">
-        {events.length === 0 ? (
-          <EmptyPanel title="Nenhum evento registrado" compact />
-        ) : (
-          events.map((event) => (
-            <div key={event.id} className="app-card-soft p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">{getEventLabel(event.eventType)}</p>
-                  <p className="mt-1 truncate text-xs text-muted-foreground">{event.userName}</p>
-                </div>
-                <span className="rounded-md bg-primary/15 px-2 py-1 text-xs font-semibold text-primary">+{event.points}</span>
-              </div>
-              <p className="mt-3 text-xs text-muted-foreground">{formatRelativeDate(event.createdAt)}</p>
-            </div>
-          ))
-        )}
-      </div>
-    </section>
   );
 }
 
@@ -1566,86 +1717,33 @@ function StatsWidget({ entry, myPosition }: { entry?: GamificationRankingEntry; 
   );
 }
 
-function RankingRow({ entry }: { entry: GamificationRankingEntry }) {
-  const progress = getProgress(entry);
-
-  return (
-    <div className={cn('grid gap-3 p-4 md:grid-cols-[64px_minmax(0,1fr)_180px_120px]', entry.isCurrentUser && 'bg-primary/[0.06]')}>
-      <div className="flex items-center gap-3 md:justify-center">
-        <span
-          className={cn(
-            'flex h-9 w-9 items-center justify-center rounded-md text-sm font-bold',
-            entry.position <= 3 ? 'bg-primary text-white' : 'bg-black/10 dark:bg-white/10 text-muted-foreground',
-          )}
-        >
-          {entry.position}
-        </span>
-      </div>
-
-      <div className="flex min-w-0 items-center gap-3">
-        <Avatar className="h-10 w-10">
-          <AvatarImage src={entry.avatarUrl || undefined} />
-          <AvatarFallback>{getInitials(entry.name)}</AvatarFallback>
-        </Avatar>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold">{entry.name}</p>
-          <p className="text-xs text-muted-foreground">
-            Nivel {entry.level} - {entry.rank}
-          </p>
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        <div className="flex justify-between text-xs">
-          <span className="text-muted-foreground">XP</span>
-          <span className="font-semibold">
-            {formatNumber(entry.xpCurrentLevel)} / {formatNumber(entry.xpNextLevel)}
-          </span>
-        </div>
-        <Progress value={progress} className="h-2 bg-black/10 dark:bg-white/10" />
-      </div>
-
-      <div className="flex items-center justify-between gap-3 md:justify-end">
-        <div className="text-left md:text-right">
-          <p className="text-sm font-bold text-primary">{formatNumber(entry.points)} pts</p>
-          <p className="text-xs text-muted-foreground">{entry.streakDays} dias de sequencia</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function MetricCard({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
-  return (
-    <div className="app-card flex items-center justify-between gap-3 p-4">
-      <div className="min-w-0">
-        <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
-        <p className="mt-2 truncate text-2xl font-bold tracking-tight">{value}</p>
-      </div>
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/15 text-primary">
-        <Icon className="h-5 w-5" />
-      </div>
-    </div>
-  );
-}
-
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-border/60 p-3">
+    <div className="rounded-md bg-[var(--app-surface-soft)] p-3">
       <p className="text-xs uppercase text-muted-foreground">{label}</p>
       <p className="mt-1 text-lg font-bold">{value}</p>
     </div>
   );
 }
 
-function PanelTitle({ icon: Icon, eyebrow, title }: { icon: LucideIcon; eyebrow: string; title: string }) {
+function PanelTitle({
+  icon: Icon,
+  eyebrow,
+  title,
+  showIcon = true,
+}: {
+  icon: LucideIcon;
+  eyebrow: string;
+  title: string;
+  showIcon?: boolean;
+}) {
   return (
     <div className="flex items-center justify-between gap-3">
       <div>
         <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">{eyebrow}</p>
         <h2 className="mt-1 text-lg font-semibold">{title}</h2>
       </div>
-      <Icon className="h-5 w-5 shrink-0 text-primary" />
+      {showIcon && <Icon className="h-5 w-5 shrink-0 text-primary" />}
     </div>
   );
 }

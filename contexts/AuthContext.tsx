@@ -3,13 +3,10 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
+import type { Tables } from '@/integrations/supabase/types';
 import { logAuditAction } from '@/hooks/use-audit-logs';
 import { performanceTracker } from '@/lib/performance';
 import { performFullCacheClear } from '@/lib/cache-utils';
-import { meAPI } from '@/lib/api/me';
-import { usersAPI } from '@/lib/api/users';
-import { setVimobAPIAccessToken } from '@/lib/api/vimob-client';
-import { ROUTES, getPublicAppUrl } from '@/config/constants';
 
 interface UserProfile {
   id: string;
@@ -21,16 +18,24 @@ interface UserProfile {
   is_active: boolean;
   language?: string | null;
   theme_mode?: 'light' | 'dark' | 'system' | null;
+  phone?: string | null;
   whatsapp?: string | null;
   cpf?: string | null;
+  cep?: string | null;
+  endereco?: string | null;
+  numero?: string | null;
+  complemento?: string | null;
+  bairro?: string | null;
+  cidade?: string | null;
+  uf?: string | null;
 }
 
 interface Organization {
   id: string;
   name: string;
   logo_url: string | null;
-  theme_mode: string;
-  accent_color: string;
+  theme_mode?: string | null;
+  accent_color?: string | null;
   is_active?: boolean;
   subscription_status?: string;
   segment?: 'imobiliario' | 'telecom' | 'servicos' | null;
@@ -55,6 +60,14 @@ interface Organization {
   property_owner_contact_visibility?: 'visible' | 'hidden' | null;
 }
 
+type OrganizationSummary = Pick<Tables<'organizations'>, 'id' | 'name' | 'logo_url'>;
+type OrganizationMemberWithOrganization = Pick<
+  Tables<'organization_members'>,
+  'organization_id' | 'role' | 'is_active' | 'joined_at' | 'updated_at'
+> & {
+  organizations: OrganizationSummary | OrganizationSummary[] | null;
+};
+
 const normalizeProfileRole = (role: string | null | undefined): UserProfile['role'] => {
   if (role === 'admin' || role === 'super_admin') return role;
   return 'user';
@@ -73,219 +86,6 @@ export interface UserOrganization {
 interface ImpersonateSession {
   orgId: string;
   orgName: string;
-}
-
-const IMPERSONATING_STORAGE_KEY = 'impersonating';
-const AUTH_CONTEXT_CACHE_KEY_PREFIX = 'vimob_auth_context_';
-const AUTH_CONTEXT_CACHE_VERSION = 1;
-const AUTH_CONTEXT_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
-const AUTH_BOOTSTRAP_TIMEOUT_MS = 8000;
-const PUBLIC_AUTH_ROUTE_PREFIXES = [
-  '/login',
-  '/cadastro',
-  '/reset-password',
-  '/onboarding',
-  '/convite',
-  '/checkout',
-  '/termos-de-uso',
-  '/politica-de-privacidade',
-] as const;
-
-interface CachedAuthContext {
-  version: number;
-  cachedAt: string;
-  profile: UserProfile | null;
-  organization: Organization | null;
-  userOrganizations: UserOrganization[];
-  isSuperAdmin: boolean;
-}
-
-function isInvalidSessionError(error: unknown) {
-  const candidate = error as { code?: unknown; message?: unknown; status?: unknown } | null;
-  const message = typeof candidate?.message === 'string' ? candidate.message : '';
-  const code = typeof candidate?.code === 'string' ? candidate.code : '';
-  const status = typeof candidate?.status === 'number' ? candidate.status : 0;
-
-  if (status !== 401) return false;
-
-  const normalized = `${code} ${message}`
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
-
-  return [
-    'invalid_session',
-    'session_not_found',
-    'invalid refresh token',
-    'invalid_refresh_token',
-    'refresh token not found',
-    'refresh_token_not_found',
-    'invalid_grant',
-    'jwt expired',
-    'jwt malformed',
-  ].some((marker) => normalized.includes(marker));
-}
-
-function isPublicAuthRoute() {
-  if (typeof window === 'undefined') return false;
-  return PUBLIC_AUTH_ROUTE_PREFIXES.some((route) => window.location.pathname.startsWith(route));
-}
-
-function withSoftTimeout<T>(
-  task: Promise<T>,
-  fallback: T,
-  label: string,
-  timeoutMs = AUTH_BOOTSTRAP_TIMEOUT_MS,
-): Promise<T> {
-  let settled = false;
-
-  return new Promise((resolve) => {
-    const timer = window.setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      console.warn(`[AuthContext] ${label} timed out; continuing with degraded auth state.`);
-      resolve(fallback);
-    }, timeoutMs);
-
-    task
-      .then((value) => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timer);
-        resolve(value);
-      })
-      .catch((error) => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timer);
-        console.error(`[AuthContext] ${label} failed:`, error);
-        resolve(fallback);
-      });
-  });
-}
-
-function readStoredImpersonation(): ImpersonateSession | null {
-  if (typeof window === 'undefined') return null;
-
-  try {
-    const stored = window.localStorage?.getItem(IMPERSONATING_STORAGE_KEY);
-    if (!stored) return null;
-
-    const parsed = JSON.parse(stored) as Partial<ImpersonateSession>;
-    if (typeof parsed.orgId === 'string' && typeof parsed.orgName === 'string') {
-      return { orgId: parsed.orgId, orgName: parsed.orgName };
-    }
-  } catch {
-    // Ignore corrupted browser state and reset it below.
-  }
-
-  try {
-    window.localStorage?.removeItem(IMPERSONATING_STORAGE_KEY);
-  } catch {
-    // Browser storage may be unavailable in restricted contexts.
-  }
-
-  return null;
-}
-
-function persistStoredImpersonation(session: ImpersonateSession) {
-  try {
-    window.localStorage?.setItem(IMPERSONATING_STORAGE_KEY, JSON.stringify(session));
-  } catch {
-    // Browser storage may be unavailable in restricted contexts.
-  }
-}
-
-function clearStoredImpersonation() {
-  try {
-    window.localStorage?.removeItem(IMPERSONATING_STORAGE_KEY);
-  } catch {
-    // Browser storage may be unavailable in restricted contexts.
-  }
-}
-
-function getAuthContextCacheKey(userId: string) {
-  return `${AUTH_CONTEXT_CACHE_KEY_PREFIX}${userId}`;
-}
-
-function readCachedAuthContext(userId: string): CachedAuthContext | null {
-  if (typeof window === 'undefined') return null;
-
-  const cacheKey = getAuthContextCacheKey(userId);
-
-  try {
-    const stored = window.localStorage?.getItem(cacheKey);
-    if (!stored) return null;
-
-    const parsed = JSON.parse(stored) as Partial<CachedAuthContext>;
-    if (parsed.version !== AUTH_CONTEXT_CACHE_VERSION || typeof parsed.cachedAt !== 'string') {
-      window.localStorage?.removeItem(cacheKey);
-      return null;
-    }
-
-    const cachedAt = new Date(parsed.cachedAt).getTime();
-    if (!Number.isFinite(cachedAt) || Date.now() - cachedAt > AUTH_CONTEXT_CACHE_TTL_MS) {
-      window.localStorage?.removeItem(cacheKey);
-      return null;
-    }
-
-    const cachedContext: CachedAuthContext = {
-      version: AUTH_CONTEXT_CACHE_VERSION,
-      cachedAt: parsed.cachedAt,
-      profile: parsed.profile || null,
-      organization: parsed.organization || null,
-      userOrganizations: Array.isArray(parsed.userOrganizations) ? parsed.userOrganizations : [],
-      isSuperAdmin: Boolean(parsed.isSuperAdmin),
-    };
-
-    if (
-      !cachedContext.profile &&
-      !cachedContext.organization &&
-      cachedContext.userOrganizations.length === 0 &&
-      !cachedContext.isSuperAdmin
-    ) {
-      return null;
-    }
-
-    return cachedContext;
-  } catch {
-    try {
-      window.localStorage?.removeItem(cacheKey);
-    } catch {
-      // Browser storage may be unavailable in restricted contexts.
-    }
-    return null;
-  }
-}
-
-function persistCachedAuthContext(
-  userId: string,
-  context: Omit<CachedAuthContext, 'version' | 'cachedAt'>,
-) {
-  if (typeof window === 'undefined') return;
-
-  try {
-    window.localStorage?.setItem(
-      getAuthContextCacheKey(userId),
-      JSON.stringify({
-        version: AUTH_CONTEXT_CACHE_VERSION,
-        cachedAt: new Date().toISOString(),
-        ...context,
-      }),
-    );
-  } catch {
-    // Browser storage may be unavailable in restricted contexts.
-  }
-}
-
-function clearCachedAuthContext(userId: string) {
-  if (typeof window === 'undefined') return;
-
-  try {
-    window.localStorage?.removeItem(getAuthContextCacheKey(userId));
-  } catch {
-    // Browser storage may be unavailable in restricted contexts.
-  }
 }
 
 interface AuthContextType {
@@ -316,7 +116,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const userRef = useRef<User | null>(null);
   const isLoggingOutRef = useRef(false);
-  const isProviderMountedRef = useRef(false);
 
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -327,199 +126,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [organizationsLoaded, setOrganizationsLoaded] = useState(false);
   const [isInitializingOrg, setIsInitializingOrg] = useState(false);
   const [userOrganizations, setUserOrganizations] = useState<UserOrganization[]>([]);
-  const organizationRef = useRef<Organization | null>(null);
-  const lastSuperAdminRef = useRef(false);
   const authStateRef = useRef({
     authInitialized: false,
     organizationsLoaded: false,
   });
-  const profileFetchPromiseRef = useRef<Promise<boolean> | null>(null);
-  const profileFetchKeyRef = useRef<string | null>(null);
-  const lastProfileFetchAtRef = useRef(0);
-  const lastProfileFetchResultRef = useRef<boolean | null>(null);
-
-  const applySession = (nextSession: Session | null) => {
-    setSession(nextSession);
-    setVimobAPIAccessToken(nextSession?.access_token ?? null);
-  };
-
-  const resetAuthRequestState = () => {
-    profileFetchPromiseRef.current = null;
-    profileFetchKeyRef.current = null;
-    lastProfileFetchAtRef.current = 0;
-    lastProfileFetchResultRef.current = null;
-  };
-
-  const setActiveOrganization = (nextOrganization: Organization | null) => {
-    organizationRef.current = nextOrganization;
-    setOrganization(nextOrganization);
-  };
-
-  const persistCurrentAuthContext = (
-    userId: string,
-    overrides?: Partial<Omit<CachedAuthContext, 'version' | 'cachedAt'>>,
-  ) => {
-    persistCachedAuthContext(userId, {
-      profile: overrides?.profile ?? profile,
-      organization: overrides?.organization ?? organizationRef.current,
-      userOrganizations: overrides?.userOrganizations ?? userOrganizations,
-      isSuperAdmin: overrides?.isSuperAdmin ?? lastSuperAdminRef.current,
-    });
-  };
-
-  const hydrateCachedAuthContext = (
-    userId: string,
-    options?: { includeActiveOrganization?: boolean },
-  ) => {
-    const cachedContext = readCachedAuthContext(userId);
-    if (!cachedContext) return false;
-    const includeActiveOrganization = options?.includeActiveOrganization ?? true;
-    const cachedOrganization = includeActiveOrganization ? cachedContext.organization : null;
-    const cachedProfile = includeActiveOrganization || !cachedContext.profile
-      ? cachedContext.profile
-      : { ...cachedContext.profile, organization_id: null };
-
-    setProfile(cachedProfile);
-    setActiveOrganization(cachedOrganization);
-    setUserOrganizations(cachedContext.userOrganizations);
-    setIsSuperAdmin(cachedContext.isSuperAdmin);
-    lastSuperAdminRef.current = cachedContext.isSuperAdmin;
-
-    const hasResolvedContext = Boolean(
-      cachedOrganization ||
-      cachedContext.userOrganizations.length > 0 ||
-      cachedContext.isSuperAdmin,
-    );
-
-    if (hasResolvedContext) {
-      setOrganizationsLoaded(true);
-    }
-
-    return hasResolvedContext;
-  };
-
-  const hasResolvedOrganizationContext = (organizationListLoaded = false) => Boolean(
-    organizationListLoaded ||
-    organizationRef.current ||
-    lastSuperAdminRef.current ||
-    readStoredImpersonation() ||
-    !userRef.current,
-  );
-
-  const resetClientAuthState = () => {
-    const currentUserId = userRef.current?.id;
-    if (currentUserId) {
-      localStorage.removeItem(`vimob_active_organization_${currentUserId}`);
-      clearCachedAuthContext(currentUserId);
-    }
-
-    resetAuthRequestState();
-    applySession(null);
-    setUser(null);
-    userRef.current = null;
-    setProfile(null);
-    setActiveOrganization(null);
-    setIsSuperAdmin(false);
-    lastSuperAdminRef.current = false;
-    setImpersonating(null);
-    clearStoredImpersonation();
-    setUserOrganizations([]);
-    setIsInitializingOrg(false);
-    setOrganizationsLoaded(true);
-    setAuthInitialized(true);
-    setLoading(false);
-  };
-
-  const restoreSessionFromSupabase = async (label: string) => {
-    try {
-      const { data: { session: currentSession }, error } = await supabase.auth.getSession();
-      if (error || !currentSession?.user) {
-        if (error) {
-          console.warn(`[AuthContext] ${label}: Supabase session check failed`, error.message);
-        }
-        return false;
-      }
-
-      if (!isProviderMountedRef.current) return false;
-
-      console.log(`[AuthContext] ${label}: restored existing Supabase session`);
-      applySession(currentSession);
-      setUser(currentSession.user);
-      userRef.current = currentSession.user;
-
-      const hydratedFromCache = hydrateCachedAuthContextRef.current(currentSession.user.id);
-      const resolvedContext = hasResolvedOrganizationContext(hydratedFromCache);
-      setAuthInitialized(true);
-
-      if (resolvedContext) {
-        setLoading(false);
-        setOrganizationsLoaded(true);
-        setIsInitializingOrg(false);
-      } else {
-        setLoading(true);
-        setOrganizationsLoaded(false);
-        setIsInitializingOrg(true);
-
-        window.setTimeout(() => {
-          if (!isProviderMountedRef.current) return;
-          void (async () => {
-            await withSoftTimeout(
-              fetchProfileRef.current(currentSession.user.id),
-              false,
-              `${label} fetchProfile`,
-            );
-            return withSoftTimeout(
-              checkMultiOrgRef.current(currentSession.user.id),
-              false,
-              `${label} checkMultiOrg`,
-            );
-          })()
-            .catch((recoveryError) => {
-              console.error(`[AuthContext] ${label}: deferred session restore failed`, recoveryError);
-              return false;
-            })
-            .then((organizationListLoaded) => {
-              if (!isProviderMountedRef.current) return;
-              const restoredContext = hasResolvedOrganizationContext(organizationListLoaded);
-              setLoading(false);
-              setAuthInitialized(true);
-              setOrganizationsLoaded(restoredContext);
-              setIsInitializingOrg(!restoredContext);
-            });
-        }, 0);
-      }
-
-      return true;
-    } catch (error) {
-      console.warn(`[AuthContext] ${label}: could not restore Supabase session`, error);
-      return false;
-    }
-  };
-
-  const recoverFromInvalidSession = async () => {
-    if (isLoggingOutRef.current) return;
-
-    const restored = await restoreSessionFromSupabase('invalid session recovery');
-    if (restored) return;
-
-    isLoggingOutRef.current = true;
-
-    try {
-      await supabase.auth.signOut({ scope: 'local' });
-    } catch {
-      // A sessao ja pode estar invalida no Supabase; a limpeza local ainda resolve o app.
-    }
-
-    resetClientAuthState();
-
-    if (!isPublicAuthRoute()) {
-      await performFullCacheClear({
-        clearAuth: true,
-        redirectTo: '/login',
-        clearBrowserCaches: false
-      });
-    }
-  };
 
   useEffect(() => {
     authStateRef.current = {
@@ -537,102 +147,120 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
   }, [organization, user]);
-  const [impersonating, setImpersonating] = useState<ImpersonateSession | null>(() => readStoredImpersonation());
-
-  const fetchProfile = async (userId: string, organizationId?: string | null): Promise<boolean> => {
-    const activeImpersonation = readStoredImpersonation();
-    const effectiveOrganizationId = activeImpersonation?.orgId || organizationId || organizationRef.current?.id || '';
-    const fetchKey = `${userId}:${effectiveOrganizationId}`;
-    const now = Date.now();
-
-    if (profileFetchPromiseRef.current && profileFetchKeyRef.current === fetchKey) {
-      return profileFetchPromiseRef.current;
+  const [impersonating, setImpersonating] = useState<ImpersonateSession | null>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('impersonating');
+      return stored ? JSON.parse(stored) : null;
     }
+    return null;
+  });
 
-    if (
-      profileFetchKeyRef.current === fetchKey &&
-      lastProfileFetchResultRef.current !== null &&
-      now - lastProfileFetchAtRef.current < 3000
-    ) {
-      return lastProfileFetchResultRef.current;
-    }
+  const checkSuperAdmin = async (userId: string): Promise<boolean> => {
+    return performanceTracker.trackTimed('checkSuperAdmin', async () => {
+      // Check both user_roles table AND users.role field for super_admin
+      const [rolesResult, usersResult] = await Promise.all([
+        supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', userId)
+          .eq('role', 'super_admin')
+          .maybeSingle(),
+        supabase
+          .from('users')
+          .select('role')
+          .eq('id', userId)
+          .eq('role', 'super_admin')
+          .maybeSingle()
+      ]);
 
-    const fetchPromise = performanceTracker.trackTimed('fetchProfile', async () => {
+      return !!(rolesResult.data || usersResult.data);
+    });
+  };
+
+  const fetchProfile = async (userId: string): Promise<boolean> => {
+    return performanceTracker.trackTimed('fetchProfile', async () => {
       try {
-        const response = await meAPI.getProfile(activeImpersonation?.orgId || organizationId || undefined);
-        const profileData = response.profile;
-        const superAdmin = response.context.isSuperAdmin;
+        // Fetch profile and check super admin status in parallel
+        // Optimized: Select only required fields
+        const [userResult, superAdmin] = await Promise.all([
+          supabase
+            .from('users')
+            .select('id, organization_id, name, email, role, avatar_url, is_active, language, theme_mode, whatsapp, cpf')
+            .eq('id', userId)
+            .single(),
+          checkSuperAdmin(userId)
+        ]);
+
+        const profileData = userResult.data;
 
         if (profileData) {
           setIsSuperAdmin(superAdmin);
-          lastSuperAdminRef.current = superAdmin;
 
+          // Block inactive users (super_admins bypass this check)
           if (!profileData.is_active && !superAdmin) {
             console.warn('User is deactivated, signing out');
             await supabase.auth.signOut();
+            // Removed intrusive alert to prevent blocking the UI
+            // toast handles this in the UI
 
             return false;
           }
 
-          const nextProfile = {
-            ...profileData,
-            role: normalizeProfileRole(profileData.role),
-          } as UserProfile;
+          setProfile(profileData as UserProfile);
 
-          setProfile(nextProfile);
+          const storedImpersonating = localStorage.getItem('impersonating');
+          const activeImpersonation: ImpersonateSession | null = storedImpersonating
+            ? JSON.parse(storedImpersonating)
+            : null;
 
-          const orgData = response.organization;
-          let nextOrganization: Organization | null = null;
-          if (orgData) {
-            if (!orgData.is_active && !superAdmin && !activeImpersonation) {
-              console.warn('Organization is deactivated, signing out');
-              await supabase.auth.signOut();
-              return false;
+          const orgIdToFetch = activeImpersonation?.orgId || profileData.organization_id;
+
+          if (orgIdToFetch) {
+            // Optimized: Select only required fields
+            const { data: orgData } = await supabase
+              .from('organizations')
+              .select('id, name, logo_url, is_active, subscription_status, segment, cnpj, creci, inscricao_estadual, razao_social, nome_fantasia, cep, endereco, numero, complemento, bairro, cidade, uf, telefone, whatsapp, email, website, default_commission_percentage, property_edit_policy, property_owner_contact_visibility')
+              .eq('id', orgIdToFetch)
+              .single();
+
+            if (orgData) {
+              if (!orgData.is_active && !superAdmin && !activeImpersonation) {
+                console.warn('Organization is deactivated, signing out');
+                await supabase.auth.signOut();
+                // Removed intrusive alert
+                return false;
+              }
+              setOrganization(orgData as Organization);
             }
-            nextOrganization = {
-              ...orgData,
-              theme_mode: orgData.theme_mode || 'system',
-              accent_color: orgData.accent_color || '#FF4529',
-            } as Organization;
           }
-
-          setActiveOrganization(nextOrganization);
-          persistCurrentAuthContext(userId, {
-            profile: nextProfile,
-            organization: nextOrganization,
-            isSuperAdmin: superAdmin,
-          });
-          if (nextOrganization || superAdmin || activeImpersonation) {
-            setOrganizationsLoaded(true);
-          }
-
+          
+          // Fetch full profile data in background after critical data is loaded
+          fetchFullProfile(userId);
+          
           return true;
         }
         return false;
       } catch (error) {
         console.error('Error fetching profile:', error);
-        if (isInvalidSessionError(error)) {
-          await recoverFromInvalidSession();
-        }
         return false;
       }
-    }).then((result) => {
-      if (profileFetchKeyRef.current === fetchKey) {
-        lastProfileFetchAtRef.current = Date.now();
-        lastProfileFetchResultRef.current = result;
-      }
-
-      return result;
-    }).finally(() => {
-      if (profileFetchKeyRef.current === fetchKey) {
-        profileFetchPromiseRef.current = null;
-      }
     });
+  };
 
-    profileFetchKeyRef.current = fetchKey;
-    profileFetchPromiseRef.current = fetchPromise;
-
-    return fetchPromise;
+  const fetchFullProfile = async (userId: string) => {
+    try {
+      const { data } = await supabase
+        .from('users')
+        .select('theme_mode, whatsapp, cpf')
+        .eq('id', userId)
+        .single();
+      
+      if (data) {
+        setProfile(prev => prev ? { ...prev, ...data } : null);
+      }
+    } catch (error) {
+      console.error('Error fetching full profile:', error);
+    }
   };
 
   const startImpersonate = async (orgId: string, orgName: string) => {
@@ -647,19 +275,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const impersonateSession: ImpersonateSession = { orgId, orgName };
 
     // Persistir no localStorage ANTES de setar o estado para que fetchProfile já leia corretamente
-    persistStoredImpersonation(impersonateSession);
+    localStorage.setItem('impersonating', JSON.stringify(impersonateSession));
     setImpersonating(impersonateSession);
 
-    const data = await meAPI.getProfile(orgId);
-    setIsSuperAdmin(data.context.isSuperAdmin);
-    lastSuperAdminRef.current = data.context.isSuperAdmin;
-    if (data.organization) {
-      setActiveOrganization({
-        ...data.organization,
-        theme_mode: data.organization.theme_mode || 'system',
-        accent_color: data.organization.accent_color || '#FF4529',
-      } as Organization);
-    }
+    // Buscar e setar a org impersonada em memória (sem tocar o banco)
+    const { data: orgData } = await supabase
+      .from('organizations')
+      .select('*')
+      .eq('id', orgId)
+      .single();
+
+    if (orgData) setOrganization(orgData as Organization);
   };
 
   const stopImpersonate = async () => {
@@ -672,8 +298,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     setImpersonating(null);
-    clearStoredImpersonation();
-    setActiveOrganization(null); // Limpa org impersonada imediatamente
+    localStorage.removeItem('impersonating');
+    setOrganization(null); // Limpa org impersonada imediatamente
 
     // Recarregar org original do super admin (usando organization_id real do banco)
     if (user) {
@@ -688,32 +314,104 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem(`vimob_active_organization_${activeUser.id}`, orgId);
     console.log('[AuthContext] switching organization to:', orgId);
 
-    await meAPI.switchOrganization(orgId);
-    await fetchProfile(activeUser.id, orgId);
+    await supabase
+      .from('users')
+      .update({ organization_id: orgId })
+      .eq('id', activeUser.id);
+
+    await supabase
+      .from('organization_members')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('user_id', activeUser.id)
+      .eq('organization_id', orgId);
+
+    const { data: orgData } = await supabase
+      .from('organizations')
+      .select('*')
+      .eq('id', orgId)
+      .single();
+
+    if (orgData) {
+      setOrganization(orgData as Organization);
+    }
+
+    const { data: memberData } = await supabase
+      .from('organization_members')
+      .select('role')
+      .eq('user_id', activeUser.id)
+      .eq('organization_id', orgId)
+      .single();
+
+    if (memberData) {
+      const memberRole = memberData.role;
+      const newRole = normalizeProfileRole(memberRole);
+      await supabase
+        .from('users')
+        .update({ role: memberRole })
+        .eq('id', activeUser.id);
+
+      setProfile(prev => prev ? { ...prev, organization_id: orgId, role: newRole } : prev);
+    } else {
+      setProfile(prev => prev ? { ...prev, organization_id: orgId } : prev);
+    }
   };
 
   const checkMultiOrg = async (
     userId: string,
     options?: { forceSelectorForMultiOrg?: boolean }
-  ): Promise<boolean> => {
+  ) => {
     return performanceTracker.trackTimed('checkMultiOrg', async () => {
-      let organizationListLoaded = false;
-      let uniqueOrgs: UserOrganization[] = [];
-
       try {
         console.log('[AuthContext] checking organizations for userId:', userId);
 
-        uniqueOrgs = await usersAPI.listUserOrganizations();
+        const { data, error } = await supabase
+          .from('organization_members')
+          .select(`
+            organization_id,
+            role,
+            is_active,
+            joined_at,
+            updated_at,
+            organizations:organization_id (
+              id,
+              name,
+              logo_url
+            )
+          `)
+          .eq('user_id', userId)
+          .eq('is_active', true);
+
+        if (error) {
+          console.error('[AuthContext] Error fetching accessible organizations:', error);
+          setOrganizationsLoaded(true);
+          return;
+        }
+
+        const orgsMap = new Map<string, UserOrganization>();
+        ((data || []) as OrganizationMemberWithOrganization[]).forEach((item) => {
+          const orgData = Array.isArray(item.organizations) ? item.organizations[0] : item.organizations;
+          if (orgData && !orgsMap.has(item.organization_id)) {
+            orgsMap.set(item.organization_id, {
+              organization_id: item.organization_id,
+              organization_name: orgData.name || 'Organização',
+              organization_logo: orgData.logo_url || null,
+              member_role: item.role,
+              is_active: item.is_active,
+              joined_at: item.joined_at,
+              last_accessed_at: item.updated_at || null,
+            });
+          }
+        });
+
+        const uniqueOrgs = Array.from(orgsMap.values());
         setUserOrganizations(uniqueOrgs);
         const count = uniqueOrgs.length;
         console.log('[AuthContext] found', count, 'active organizations');
 
         if (count === 1) {
           const onlyOrgId = uniqueOrgs[0].organization_id;
-
-          const currentOrganization = organizationRef.current;
-
-          if (!currentOrganization || currentOrganization.id !== onlyOrgId) {
+          
+          if (!organization || organization.id !== onlyOrgId) {
             console.log('[AuthContext] auto-selecting single org:', onlyOrgId);
             setIsInitializingOrg(true);
             try {
@@ -725,19 +423,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } else if (count > 1) {
           if (options?.forceSelectorForMultiOrg) {
             console.log('[AuthContext] multiple organizations found; forcing organization selector');
-            setActiveOrganization(null);
+            setOrganization(null);
             setProfile(prev => prev ? { ...prev, organization_id: null } : prev);
-            organizationListLoaded = true;
-            return true;
+            return;
           }
 
           const savedOrgId = localStorage.getItem(`vimob_active_organization_${userId}`);
-
-          const currentOrganization = organizationRef.current;
-
-          if (savedOrgId && (!currentOrganization || currentOrganization.id !== savedOrgId)) {
+          
+          if (savedOrgId && (!organization || organization.id !== savedOrgId)) {
             const isValid = uniqueOrgs.some(o => o.organization_id === savedOrgId);
-
+            
             if (isValid) {
               console.log('[AuthContext] loading last used org for multi-org user:', savedOrgId);
               setIsInitializingOrg(true);
@@ -754,59 +449,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.log('[AuthContext] multiple organizations found but none active/saved');
           }
         }
-
-        organizationListLoaded = true;
-        return true;
       } catch (err) {
         console.error('[AuthContext] Error in checkMultiOrg:', err);
-        if (isInvalidSessionError(err)) {
-          await recoverFromInvalidSession();
-          return false;
-        }
-        return false;
       } finally {
-        if (organizationListLoaded) {
-          persistCurrentAuthContext(userId, { userOrganizations: uniqueOrgs });
-          setOrganizationsLoaded(true);
-        }
+        setOrganizationsLoaded(true);
       }
     });
   };
 
   const fetchProfileRef = useRef(fetchProfile);
   const checkMultiOrgRef = useRef(checkMultiOrg);
-  const hydrateCachedAuthContextRef = useRef(hydrateCachedAuthContext);
-  const restoreSessionFromSupabaseRef = useRef(restoreSessionFromSupabase);
 
   useEffect(() => {
     fetchProfileRef.current = fetchProfile;
     checkMultiOrgRef.current = checkMultiOrg;
-    hydrateCachedAuthContextRef.current = hydrateCachedAuthContext;
-    restoreSessionFromSupabaseRef.current = restoreSessionFromSupabase;
   });
 
   useEffect(() => {
     let isMounted = true;
-    isProviderMountedRef.current = true;
     console.log('AuthProvider mounted');
 
     const clearAllStates = () => {
       console.log('Cleaning auth states');
       const currentUserId = userRef.current?.id;
-      if (currentUserId && !isLoggingOutRef.current) {
+      if (currentUserId) {
         localStorage.removeItem(`vimob_active_organization_${currentUserId}`);
-        clearCachedAuthContext(currentUserId);
       }
 
-      resetAuthRequestState();
-        applySession(null);
+      setSession(null);
       setUser(null);
       setProfile(null);
-      setActiveOrganization(null);
+      setOrganization(null);
       setIsSuperAdmin(false);
-      lastSuperAdminRef.current = false;
       setImpersonating(null);
-      clearStoredImpersonation();
+      localStorage.removeItem('impersonating');
       setOrganizationsLoaded(false);
       setUserOrganizations([]);
       setIsInitializingOrg(false);
@@ -816,19 +492,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const safetyTimeout = setTimeout(() => {
       const state = authStateRef.current;
       if (isMounted && (!state.authInitialized || !state.organizationsLoaded)) {
-        const hasSignedInUser = Boolean(userRef.current);
-        const hasUsableContext = hasResolvedOrganizationContext(state.organizationsLoaded);
-        console.warn('Auth safety timeout reached while waiting for auth context');
+        console.warn('Auth safety timeout reached - forcing all loading states to complete');
         setLoading(false);
         setAuthInitialized(true);
-        if (!hasSignedInUser || hasUsableContext) {
-          setOrganizationsLoaded(true);
-          setIsInitializingOrg(false);
-        } else {
-          setIsInitializingOrg(true);
-        }
+        setOrganizationsLoaded(true);
+        setIsInitializingOrg(false);
       }
-    }, 20000);
+    }, 15000);
 
     console.log('getSession started');
     supabase.auth.getSession().then(async ({ data: { session }, error }) => {
@@ -844,46 +514,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      applySession(session);
+      setSession(session);
       setUser(session.user);
       userRef.current = session.user;
-      const hydratedFromCache = hydrateCachedAuthContextRef.current(session.user.id);
-      if (hydratedFromCache) {
-        setLoading(false);
-        setAuthInitialized(true);
-      } else {
-        setLoading(false);
-        setAuthInitialized(true);
-        setIsInitializingOrg(true);
-      }
       console.log('[AuthContext] login user loaded:', session.user.id);
 
-      let initialOrganizationListLoaded = hydratedFromCache;
       try {
-        const [profileLoaded, fetchedOrganizationListLoaded] = await Promise.all([
-          withSoftTimeout(fetchProfileRef.current(session.user.id), false, 'initial fetchProfile'),
-          userRef.current
-            ? withSoftTimeout(checkMultiOrgRef.current(session.user.id), false, 'initial checkMultiOrg')
-            : Promise.resolve(false),
-        ]);
-        initialOrganizationListLoaded = initialOrganizationListLoaded || profileLoaded || fetchedOrganizationListLoaded;
-        const resolvedContext = hasResolvedOrganizationContext(initialOrganizationListLoaded);
-        if (resolvedContext) {
-          setOrganizationsLoaded(true);
-        }
+        // Sequencial to ensure organizations are loaded before setting initialized
+        await fetchProfileRef.current(session.user.id);
+        await checkMultiOrgRef.current(session.user.id);
       } catch (err) {
         console.error('[AuthContext] Error during initial auth data fetch:', err);
       } finally {
         if (isMounted) {
-          const resolvedContext = hasResolvedOrganizationContext(initialOrganizationListLoaded);
           setLoading(false);
           setAuthInitialized(true);
-          if (resolvedContext) {
-            setOrganizationsLoaded(true);
-            setIsInitializingOrg(false);
-          } else {
-            setIsInitializingOrg(true);
-          }
           console.log('[AuthContext] Auth initialization complete naturally');
         }
       }
@@ -907,32 +552,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (authEvent === 'SIGNED_OUT') {
+          clearAllStates();
+          setLoading(false);
+          setAuthInitialized(true);
+          setOrganizationsLoaded(true);
+
           if (isLoggingOutRef.current) {
             console.log('[AuthContext] SIGNED_OUT event ignored (explicit signOut in progress)');
-            clearAllStates();
-            setLoading(false);
-            setAuthInitialized(true);
-            setOrganizationsLoaded(true);
+            return;
+          }
+
+          // Don't redirect from public routes - just clear state
+          const isPublicRoute = typeof window !== 'undefined' && [
+            '/login',
+            '/cadastro',
+            '/reset-password',
+            '/onboarding',
+            '/checkout',
+            '/termos-de-uso',
+            '/politica-de-privacidade'
+          ].some(route => window.location.pathname.startsWith(route));
+
+          if (isPublicRoute) {
+            console.log('[AuthContext] SIGNED_OUT on public route, skipping redirect');
             return;
           }
 
           setTimeout(() => {
-            if (!isMounted) return;
-            void restoreSessionFromSupabaseRef.current('SIGNED_OUT recheck').then((restored) => {
-              if (!isMounted || restored) return;
-
-              clearAllStates();
-              setLoading(false);
-              setAuthInitialized(true);
-              setOrganizationsLoaded(true);
-
-              if (isPublicAuthRoute()) {
-                console.log('[AuthContext] SIGNED_OUT on public route, skipping redirect');
-                return;
-              }
-
-              void performFullCacheClear({ clearAuth: true, redirectTo: '/login' });
-            });
+            performFullCacheClear({ clearAuth: true, redirectTo: '/login' });
           }, 0);
           return;
         }
@@ -945,7 +592,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               userRef.current?.id === session.user.id;
 
             if (isSameInitializedUser) {
-              applySession(session);
+              setSession(session);
               setUser(session.user);
               userRef.current = session.user;
 
@@ -956,36 +603,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               return;
             }
 
-            applySession(session);
+            setLoading(true);
+            setOrganizationsLoaded(false);
+            setIsInitializingOrg(true);
+            setSession(session);
             setUser(session.user);
             userRef.current = session.user;
-            const hydratedFromCache = hydrateCachedAuthContextRef.current(session.user.id);
-            setLoading(false);
-            setAuthInitialized(true);
-            setOrganizationsLoaded(hydratedFromCache);
-            setIsInitializingOrg(!hydratedFromCache);
 
             // Defer Supabase calls to avoid deadlock with the auth listener
             setTimeout(() => {
               if (!isMounted) return;
-              void (async () => {
-                const [profileLoaded, organizationListLoaded] = await Promise.all([
-                  withSoftTimeout(fetchProfileRef.current(session.user.id), false, 'signIn fetchProfile'),
-                  withSoftTimeout(checkMultiOrgRef.current(session.user.id), false, 'signIn checkMultiOrg'),
-                ]);
-                return profileLoaded || organizationListLoaded;
-              })().catch((error) => {
-                console.error('[AuthContext] Deferred auth bootstrap failed:', error);
-                return false;
-              }).then((organizationListLoaded) => {
+              Promise.all([
+                fetchProfileRef.current(session.user.id),
+                checkMultiOrgRef.current(session.user.id, {
+                  forceSelectorForMultiOrg: authEvent === 'SIGNED_IN',
+                }),
+              ]).finally(() => {
                 if (!isMounted) return;
-                const resolvedContext = hasResolvedOrganizationContext(organizationListLoaded || hydratedFromCache);
-                setIsInitializingOrg(!resolvedContext);
+                setIsInitializingOrg(false);
                 setLoading(false);
                 setAuthInitialized(true);
-                if (resolvedContext) {
-                  setOrganizationsLoaded(true);
-                }
               });
             }, 0);
           } else {
@@ -999,7 +636,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (authEvent === 'TOKEN_REFRESHED') {
           // Just update session/user, never refetch profile here
           if (session) {
-            applySession(session);
+            setSession(session);
             setUser(session.user);
             userRef.current = session.user;
           }
@@ -1007,74 +644,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (!session) {
-          setTimeout(() => {
-            if (!isMounted) return;
-            void restoreSessionFromSupabaseRef.current('empty auth event recheck').then((restored) => {
-              if (!isMounted || restored) return;
-              clearAllStates();
-              setLoading(false);
-              setAuthInitialized(true);
-              setOrganizationsLoaded(true);
-            });
-          }, 0);
+          clearAllStates();
+          setLoading(false);
+          setAuthInitialized(true);
+          setOrganizationsLoaded(true);
         }
       }
     );
 
     return () => {
       isMounted = false;
-      isProviderMountedRef.current = false;
       clearTimeout(safetyTimeout);
       subscription.unsubscribe();
     };
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    resetAuthRequestState();
     const { error, data } = await supabase.auth.signInWithPassword({ email, password });
+    const signedInIsSuperAdmin = !error && data.user ? await checkSuperAdmin(data.user.id) : false;
 
-    if (!error && data.session?.user) {
-      const signedInUserId = data.session.user.id;
-      applySession(data.session);
-      setUser(data.session.user);
-      userRef.current = data.session.user;
-
-      const hydratedFromCache = hydrateCachedAuthContext(signedInUserId);
-      if (hydratedFromCache) {
-        setLoading(false);
-        setAuthInitialized(true);
-        setIsInitializingOrg(false);
-      } else {
-        setLoading(false);
-        setAuthInitialized(true);
-        setOrganizationsLoaded(false);
-        setIsInitializingOrg(true);
-      }
-
-      void Promise.all([
-          withSoftTimeout(fetchProfileRef.current(signedInUserId), false, 'direct signIn fetchProfile'),
-          withSoftTimeout(checkMultiOrgRef.current(signedInUserId), false, 'direct signIn checkMultiOrg'),
-        ]).then(([profileLoaded, organizationListLoaded]) => {
-          if (!isProviderMountedRef.current || userRef.current?.id !== signedInUserId) return;
-
-          const resolvedContext = hasResolvedOrganizationContext(
-            hydratedFromCache || profileLoaded || organizationListLoaded,
-          );
-          setLoading(false);
-          setAuthInitialized(true);
-          setIsInitializingOrg(!resolvedContext);
-          if (resolvedContext) {
-            setOrganizationsLoaded(true);
-          }
-        }).catch((bootstrapError) => {
-          console.error('[AuthContext] direct signIn bootstrap failed:', bootstrapError);
-          if (!isProviderMountedRef.current || userRef.current?.id !== signedInUserId) return;
-          setLoading(false);
-          setAuthInitialized(true);
-          setIsInitializingOrg(!hasResolvedOrganizationContext(hydratedFromCache));
-        });
-    }
-
+    // Log successful login (async to avoid blocking)
     if (!error && data.user) {
       setTimeout(() => {
         logAuditAction('login', 'session', data.user.id, undefined, {
@@ -1084,7 +673,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }, 0);
     }
 
-    return { error, isSuperAdmin: false };
+    return { error, isSuperAdmin: signedInIsSuperAdmin };
   };
 
   const signUp = async (email: string, password: string, name: string) => {
@@ -1103,7 +692,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const resetPassword = async (email: string) => {
     try {
-      const redirectUrl = getPublicAppUrl(ROUTES.RESET_PASSWORD);
+      const redirectUrl = `${window.location.origin}/reset-password`;
       console.log('[AuthContext] Resetting password for:', email, 'redirectUrl:', redirectUrl);
 
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
@@ -1129,7 +718,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     isLoggingOutRef.current = true;
-
+    
     // Log logout before clearing states (capture user ID while we still have it)
     const currentUserId = user?.id;
     if (currentUserId) {
@@ -1146,9 +735,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Executar limpeza profunda e redirecionar para login com cache bust
     await performFullCacheClear({
       clearAuth: true,
-      redirectTo: '/login',
-      clearBrowserCaches: false,
-      preserveAuthContext: true
+      redirectTo: '/login'
     });
   };
 

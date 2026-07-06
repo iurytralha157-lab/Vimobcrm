@@ -52,7 +52,7 @@ func (repo Repository) Overview(ctx context.Context, tenantContext tenant.Contex
 	if err != nil {
 		return Overview{}, err
 	}
-	history, _, err := repo.events(ctx, tenantContext, 100, true)
+	history, _, err := repo.events(ctx, tenantContext, 2000, true)
 	if err != nil {
 		return Overview{}, err
 	}
@@ -143,7 +143,7 @@ func (repo Repository) UpsertRule(ctx context.Context, tenantContext tenant.Cont
 	if !canManageGamification(tenantContext) {
 		return Rule{}, tenant.ErrOrganizationAccessDenied
 	}
-	actionType = strings.TrimSpace(actionType)
+	actionType = normalizeActionType(actionType)
 	if actionType == "" || request.Points < 0 {
 		return Rule{}, ErrInvalidInput
 	}
@@ -366,7 +366,7 @@ func (repo Repository) CreateManualEntry(ctx context.Context, tenantContext tena
 	} else if !ok {
 		return ManualEntry{}, ErrNotReady
 	}
-	actionKey := strings.TrimSpace(request.ActionKey)
+	actionKey := normalizeActionType(request.ActionKey)
 	if actionKey == "" || request.Quantity < 1 || request.Quantity > 100 {
 		return ManualEntry{}, ErrInvalidInput
 	}
@@ -788,13 +788,16 @@ func (repo Repository) performance(ctx context.Context, tenantContext tenant.Con
 		"Lead/Outros":      0,
 	}
 	positiveTypes := map[string]bool{
-		"sale_closed":       true,
-		"contract_signed":   true,
-		"proposal_sent":     true,
-		"visit_scheduled":   true,
-		"visit_confirmed":   true,
-		"meeting_held":      true,
-		"meeting_scheduled": true,
+		"sale_closed":         true,
+		"contract_signed":     true,
+		"proposal_sent":       true,
+		"lost_lead_recovered": true,
+		"contact_made":        true,
+		"visit_scheduled":     true,
+		"visit_confirmed":     true,
+		"meeting_held":        true,
+		"meeting_scheduled":   true,
+		"property_created":    true,
 	}
 
 	for _, event := range events {
@@ -936,6 +939,7 @@ func (repo Repository) participants(ctx context.Context, tenantContext tenant.Co
 		 and ugs.user_id = u.id
 		`+join+`
 		where u.organization_id = $1::uuid
+		  and coalesce(u.is_active, true) = true
 		order by coalesce(nullif(u.name, ''), u.email, 'Usuario')
 	`, tenantContext.OrganizationID)
 	if err != nil {
@@ -1074,7 +1078,26 @@ func (repo Repository) users(ctx context.Context, tenantContext tenant.Context) 
 	return users, rows.Err()
 }
 
+// RecordAction is the public interface for other modules to award gamification points
+// for automated CRM actions like making a call or completing a task.
+func (repo Repository) RecordAction(ctx context.Context, tenantContext tenant.Context, actionType string, quantity int, referenceID string) error {
+	actionType = normalizeActionType(actionType)
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	err = repo.recordGamificationEvent(ctx, tx, tenantContext, tenantContext.UserID, actionType, quantity, "system_action", referenceID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
 func (repo Repository) recordGamificationEvent(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, userID string, actionType string, quantity int, source string, referenceID string) error {
+	actionType = normalizeActionType(actionType)
 	points := repo.rulePoints(ctx, tx, tenantContext.OrganizationID, actionType)
 	total := points * quantity
 	if total <= 0 {
@@ -1149,6 +1172,7 @@ func (repo Repository) recordGamificationEvent(ctx context.Context, tx pgx.Tx, t
 }
 
 func (repo Repository) rulePoints(ctx context.Context, tx pgx.Tx, organizationID string, actionType string) int {
+	actionType = normalizeActionType(actionType)
 	if ok, err := repo.tableExists(ctx, "gamification_rules"); err != nil || !ok {
 		return defaultRulePoints(actionType)
 	}
@@ -1208,6 +1232,7 @@ func scanEvent(row interface{ Scan(dest ...any) error }) (Event, error) {
 	event.CreatedAt = textPointer(createdAt)
 	event.Details = textPointer(details)
 	event.Source = textPointer(source)
+	event.EventType = normalizeActionType(event.EventType)
 	return event, nil
 }
 
@@ -1305,6 +1330,7 @@ func scanManualEntry(row interface{ Scan(dest ...any) error }) (ManualEntry, err
 	entry.ApprovedAt = textPointer(approvedAt)
 	entry.RejectionReason = textPointer(rejectionReason)
 	entry.CreatedAt = textPointer(createdAt)
+	entry.ActionKey = normalizeActionType(entry.ActionKey)
 	return entry, nil
 }
 
@@ -1378,7 +1404,7 @@ func normalizeMissionRequest(request MissionRequest) (MissionRequest, error) {
 		}
 	}
 	if request.ActionType != nil {
-		value := strings.TrimSpace(*request.ActionType)
+		value := normalizeActionType(*request.ActionType)
 		if value == "" {
 			request.ActionType = nil
 		} else {
@@ -1413,7 +1439,46 @@ func normalizeMissionRequest(request MissionRequest) (MissionRequest, error) {
 	return request, nil
 }
 
+func normalizeActionType(actionType string) string {
+	key := strings.ToLower(strings.TrimSpace(actionType))
+	key = strings.ReplaceAll(key, " ", "_")
+	key = strings.ReplaceAll(key, "-", "_")
+	switch key {
+	case "ligacao_realizada", "ligacao", "call":
+		return "call_made"
+	case "mensagem", "mensagem_enviada", "whatsapp_message", "message":
+		return "message_sent"
+	case "contato_efetivo", "contato":
+		return "contact_made"
+	case "visita_agendada":
+		return "visit_scheduled"
+	case "visita_realizada", "visita_confirmada":
+		return "visit_confirmed"
+	case "reuniao_agendada":
+		return "meeting_scheduled"
+	case "reuniao_realizada":
+		return "meeting_held"
+	case "proposta_enviada":
+		return "proposal_sent"
+	case "venda_concluida", "lead_ganho", "ganho":
+		return "sale_closed"
+	case "contrato_assinado":
+		return "contract_signed"
+	case "lead_criado", "novo_lead":
+		return "lead_created"
+	case "lead_manual", "lead_criado_manual":
+		return "lead_created_manual"
+	case "imovel_captado", "imovel_criado":
+		return "property_created"
+	case "lead_recuperado", "recuperar_lead_perdido", "lost_lead_reopened":
+		return "lost_lead_recovered"
+	default:
+		return key
+	}
+}
+
 func distributionBucket(eventType string) string {
+	eventType = normalizeActionType(eventType)
 	switch eventType {
 	case "call_made":
 		return "Ligacoes"
@@ -1444,13 +1509,16 @@ func defaultRules() []Rule {
 		{ID: "default-proposal_sent", ActionType: "proposal_sent", Points: 30, IsActive: true, IsTemp: true},
 		{ID: "default-sale_closed", ActionType: "sale_closed", Points: 500, IsActive: true, IsTemp: true},
 		{ID: "default-contract_signed", ActionType: "contract_signed", Points: 250, IsActive: true, IsTemp: true},
+		{ID: "default-lost_lead_recovered", ActionType: "lost_lead_recovered", Points: 20, IsActive: true, IsTemp: true},
 		{ID: "default-lead_created", ActionType: "lead_created", Points: 10, IsActive: true, IsTemp: true},
 		{ID: "default-lead_created_manual", ActionType: "lead_created_manual", Points: 10, IsActive: true, IsTemp: true},
 		{ID: "default-property_created", ActionType: "property_created", Points: 50, IsActive: true, IsTemp: true},
+		{ID: "default-prospecting_report", ActionType: "prospecting_report", Points: 10, IsActive: true, IsTemp: true},
 	}
 }
 
 func defaultRulePoints(actionType string) int {
+	actionType = normalizeActionType(actionType)
 	for _, rule := range defaultRules() {
 		if rule.ActionType == actionType && rule.IsActive {
 			return rule.Points

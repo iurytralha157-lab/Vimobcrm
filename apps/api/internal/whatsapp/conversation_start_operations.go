@@ -41,6 +41,18 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 		remoteJID += "@c.us"
 	}
 
+	matchedLeadName := ""
+	if leadID == "" {
+		match, err := repo.findLeadByPhone(ctx, tenantContext.OrganizationID, cleanPhone, remoteJID)
+		if err != nil {
+			return Conversation{}, err
+		}
+		if match != nil {
+			leadID = match.ID
+			matchedLeadName = match.Name
+		}
+	}
+
 	if conversation, err := repo.findConversationByExactSessionJID(ctx, tenantContext, session.ID, remoteJID); err == nil && conversation != nil {
 		if leadID != "" && pointerValue(conversation.LeadID) != leadID {
 			_, _ = repo.db.Pool().Exec(ctx, `
@@ -95,6 +107,9 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 	}
 
 	contactName := strings.TrimSpace(request.LeadName)
+	if contactName == "" {
+		contactName = matchedLeadName
+	}
 	if contactName == "" {
 		contactName = cleanPhone
 	}

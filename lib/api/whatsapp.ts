@@ -104,6 +104,11 @@ export interface WhatsAppConversation {
       name: string
       color: string | null
     } | null
+    assignee?: {
+      id: string
+      name: string
+      avatar_url?: string | null
+    } | null
     tags?: Array<{
       tag: {
         id: string

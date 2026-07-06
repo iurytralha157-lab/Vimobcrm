@@ -16,11 +16,16 @@ import (
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
+type GamificationRecorder interface {
+	RecordAction(ctx context.Context, tenantContext tenant.Context, actionType string, quantity int, referenceID string) error
+}
+
 type Repository struct {
-	db                *dbpkg.Postgres
-	storage           storageClient
-	evolutionGoAPIURL string
-	evolutionGoAPIKey string
+	db                   *dbpkg.Postgres
+	storage              storageClient
+	evolutionGoAPIURL    string
+	evolutionGoAPIKey    string
+	gamificationRecorder GamificationRecorder
 }
 
 type scanner interface {
@@ -65,8 +70,8 @@ type leadSnapshot struct {
 	InterestValue  string
 }
 
-func NewRepository(db *dbpkg.Postgres, storageConfigs ...StorageConfig) Repository {
-	repository := Repository{db: db}
+func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder, storageConfigs ...StorageConfig) Repository {
+	repository := Repository{db: db, gamificationRecorder: gamificationRecorder}
 	if len(storageConfigs) > 0 {
 		repository.storage = newStorageClient(storageConfigs[0])
 		repository.evolutionGoAPIURL = strings.TrimRight(strings.TrimSpace(storageConfigs[0].EvolutionGo.APIURL), "/")
@@ -430,6 +435,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	}
 
 	repo.dispatchDealWonNotification(ctx, tenantContext, current, input)
+	repo.recordDealStatusGamification(ctx, tenantContext, current, input)
 
 	return repo.Get(ctx, tenantContext, updatedID)
 }
@@ -1804,6 +1810,22 @@ func (repo Repository) dispatchDealWonNotification(ctx context.Context, tenantCo
 			"valor_interesse": nullableString(interestValue),
 		},
 	})
+}
+
+func (repo Repository) recordDealStatusGamification(ctx context.Context, tenantContext tenant.Context, current leadSnapshot, input updateInput) {
+	if repo.gamificationRecorder == nil || !input.DealStatus.Set || input.DealStatus.Value == nil || *input.DealStatus.Value == current.DealStatus {
+		return
+	}
+
+	newStatus := *input.DealStatus.Value
+	switch newStatus {
+	case "won":
+		_ = repo.gamificationRecorder.RecordAction(ctx, tenantContext, "sale_closed", 1, current.ID)
+	case "open":
+		if current.DealStatus == "lost" {
+			_ = repo.gamificationRecorder.RecordAction(ctx, tenantContext, "lost_lead_recovered", 1, current.ID)
+		}
+	}
 }
 
 func (repo Repository) linkWhatsAppConversations(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, phone *string, conversationID *string) error {

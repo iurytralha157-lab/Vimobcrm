@@ -125,17 +125,11 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 	}
 
 	if conversation.LeadID == nil && !conversation.IsGroup {
-		if matchedLeadID, matchedLeadName := repo.matchLeadByPhone(ctx, session.OrganizationID, conversation.ContactPhone, conversation.RemoteJID, phone); matchedLeadID != "" {
-			conversation.LeadID = &matchedLeadID
-			_, _ = repo.db.Pool().Exec(ctx, `
-				update public.whatsapp_conversations
-				set lead_id = $3::uuid,
-				    contact_name = coalesce(nullif($4, ''), contact_name),
-				    updated_at = now()
-				where organization_id = $1::uuid
-				  and id = $2::uuid
-			`, session.OrganizationID, conversation.ID, matchedLeadID, matchedLeadName)
+		resolved, err := repo.resolveConversationLead(ctx, tenantContext, conversation)
+		if err != nil {
+			return SendMessageResponse{}, err
 		}
+		conversation = resolved
 	}
 
 	messageID := providerMessageID(providerResult)
@@ -234,6 +228,10 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 	`, session.OrganizationID, conversation.ID, outgoingLastMessage(messageType, actualContent, senderName, conversation.IsGroup), session.ID)
 	if err != nil {
 		return SendMessageResponse{}, err
+	}
+
+	if repo.gamificationRecorder != nil {
+		_ = repo.gamificationRecorder.RecordAction(ctx, tenantContext, "message_sent", 1, messageID)
 	}
 
 	return SendMessageResponse{
@@ -452,46 +450,6 @@ func (repo Repository) rebindConversationSession(ctx context.Context, organizati
 		  and id = $2::uuid
 	`, organizationID, conversationID, sessionID, remoteJID)
 	return err
-}
-
-func (repo Repository) matchLeadByPhone(ctx context.Context, organizationID string, contactPhone *string, remoteJID string, fallbackPhone string) (string, string) {
-	phoneDigits := normalizePhone(firstNonEmpty(pointerValue(contactPhone), remoteJID, fallbackPhone))
-	tail := phoneDigits
-	if len(tail) > 8 {
-		tail = tail[len(tail)-8:]
-	}
-	if tail == "" {
-		return "", ""
-	}
-
-	rows, err := repo.db.Pool().Query(ctx, `
-		select id::text, name, phone
-		from public.leads
-		where organization_id = $1::uuid
-		  and phone ilike $2
-		limit 10
-	`, organizationID, "%"+tail+"%")
-	if err != nil {
-		return "", ""
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var id, name string
-		var phone *string
-		if err := rows.Scan(&id, &name, &phone); err != nil {
-			return "", ""
-		}
-		candidate := normalizePhone(pointerValue(phone))
-		if len(candidate) > 8 {
-			candidate = candidate[len(candidate)-8:]
-		}
-		if candidate == tail {
-			return id, name
-		}
-	}
-
-	return "", ""
 }
 
 func (repo Repository) userDisplayName(ctx context.Context, userID string) string {

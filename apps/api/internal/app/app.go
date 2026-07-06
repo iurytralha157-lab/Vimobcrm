@@ -61,7 +61,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	healthHandler := health.NewHandler(postgres)
 	realtimeHandler := realtime.NewHandler(realtimeHub)
 	analyticsHandler := analytics.NewHandler(analytics.NewRepository(postgres))
-	gamificationHandler := gamification.NewHandler(gamification.NewRepository(postgres))
+	gamificationRepository := gamification.NewRepository(postgres)
+	gamificationHandler := gamification.NewHandler(gamificationRepository)
 	cadencesHandler := cadences.NewHandler(cadences.NewRepository(postgres))
 	financialHandler := financial.NewHandler(financial.NewRepository(postgres, financial.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
@@ -88,7 +89,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	meHandler := me.NewHandler(me.NewRepository(postgres))
 	tenantRepository := tenant.NewRepository(postgres)
 	auditHandler := audit.NewHandler(audit.NewRepository(postgres))
-	leadsRepository := leads.NewRepository(postgres, leads.StorageConfig{
+	leadsRepository := leads.NewRepository(postgres, gamificationRepository, leads.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 		EvolutionGo: leads.EvolutionGoConfig{
@@ -104,7 +105,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		APIKey:     cfg.Storage.APIKey,
 	}))
 	roundRobinHandler := roundrobin.NewHandler(roundrobin.NewRepository(postgres))
-	scheduleHandler := schedule.NewHandler(schedule.NewRepository(postgres), realtimeHub)
+	scheduleHandler := schedule.NewHandler(schedule.NewRepository(postgres, gamificationRepository), realtimeHub)
 	stageConfigHandler := stageconfig.NewHandler(stageconfig.NewRepository(postgres))
 	settingsHandler := settings.NewHandler(settings.NewRepository(postgres, settings.ExternalConfig{
 		ProjectURL:   cfg.Storage.ProjectURL,
@@ -135,7 +136,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 	}))
-	whatsappHandler := whatsapp.NewHandler(whatsapp.NewRepository(postgres, whatsapp.StorageConfig{
+	whatsappHandler := whatsapp.NewHandler(whatsapp.NewRepository(postgres, gamificationRepository, whatsapp.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 		EvolutionGo: whatsapp.EvolutionGoConfig{

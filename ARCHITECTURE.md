@@ -152,7 +152,7 @@ import { useAuth } from '@/components/providers'
 
 export function LoginPage() {
   const { signIn, loading } = useAuth()
-
+  
   const handleLogin = async (email: string, password: string) => {
     const { error } = await signIn(email, password)
     if (error) console.error(error)
@@ -166,7 +166,7 @@ import { useUIStore } from '@/stores'
 
 export function Sidebar() {
   const { sidebarOpen, toggleSidebar } = useUIStore()
-
+  
   return <button onClick={toggleSidebar}>{sidebarOpen ? 'Close' : 'Open'}</button>
 }
 ```

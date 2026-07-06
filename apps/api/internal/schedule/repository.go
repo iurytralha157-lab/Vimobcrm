@@ -14,8 +14,13 @@ import (
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
+type GamificationRecorder interface {
+	RecordAction(ctx context.Context, tenantContext tenant.Context, actionType string, quantity int, referenceID string) error
+}
+
 type Repository struct {
-	db *dbpkg.Postgres
+	db                   *dbpkg.Postgres
+	gamificationRecorder GamificationRecorder
 }
 
 type scanner interface {
@@ -39,8 +44,8 @@ type eventSnapshot struct {
 	Visibility     string
 }
 
-func NewRepository(db *dbpkg.Postgres) Repository {
-	return Repository{db: db}
+func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder) Repository {
+	return Repository{db: db, gamificationRecorder: gamificationRecorder}
 }
 
 func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, filter ListFilter) ([]Event, error) {
@@ -244,6 +249,10 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		if err := repo.insertScheduleActivity(ctx, tx, tenantContext.OrganizationID, snapshot, "created"); err != nil {
 			return Event{}, err
 		}
+
+		if repo.gamificationRecorder != nil && snapshot.EventType == "visit" {
+			_ = repo.gamificationRecorder.RecordAction(ctx, tenantContext, "visit_scheduled", 1, snapshot.ID)
+		}
 	}
 	if err := repo.insertScheduleNotifications(ctx, tx, tenantContext.OrganizationID, tenantContext.UserID, append(input.AssigneeIDs, input.UserID), "Nova atividade", input.Title, map[string]any{
 		"schedule_event_id": eventID,
@@ -409,6 +418,10 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 			}
 			if err := repo.insertScheduleActivity(ctx, tx, tenantContext.OrganizationID, updated, "completed"); err != nil {
 				return Event{}, err
+			}
+
+			if repo.gamificationRecorder != nil && updated.EventType == "visit" {
+				_ = repo.gamificationRecorder.RecordAction(ctx, tenantContext, "visit_confirmed", 1, updated.ID)
 			}
 		}
 	}

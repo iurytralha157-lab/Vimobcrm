@@ -1,20 +1,19 @@
-import { useEffect, useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Switch } from "@/components/ui/switch";
+import { useState } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Switch } from '@/components/ui/switch';
+import { PhoneInput } from '@/components/ui/phone-input';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,90 +23,71 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+} from '@/components/ui/alert-dialog';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Loader2, Plus, Trash2 } from "lucide-react";
-import { toast } from "sonner";
-import { useQueryClient } from "@tanstack/react-query";
-import { useAuth } from "@/contexts/AuthContext";
-import { useLanguage } from "@/contexts/LanguageContext";
-import { useDeleteUser, useOrganizationUsers, useUpdateUser } from "@/hooks/use-users";
-import { useAdminInvitations } from "@/hooks/use-admin-invitations";
-import {
-  OrganizationRole,
+} from '@/components/ui/select';
+import { 
+  Plus, 
+  Trash2, 
+  Loader2,
+} from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { useOrganizationUsers, useUpdateUser } from '@/hooks/use-users';
+import { 
+  useOrganizationRoles, 
+  useUserOrganizationRoles, 
   useAssignUserRole,
-  useOrganizationRoles,
-  useUserOrganizationRoles,
-} from "@/hooks/use-organization-roles";
-import { RolesTab } from "./RolesTab";
+  OrganizationRole
+} from '@/hooks/use-organization-roles';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
+import { RolesTab } from './RolesTab';
 
 const getErrorMessage = (error: unknown, fallback: string) => {
   if (error instanceof Error) return error.message;
   return fallback;
 };
 
-const roleLabel = (role: string | null | undefined) => {
-  if (role === "admin") return "Administrador";
-  return "Usuario";
-};
-
 export function TeamTab() {
-  const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
+  const { profile, isSuperAdmin } = useAuth();
   const { t } = useLanguage();
   const queryClient = useQueryClient();
-
-  const activeOrganizationId = organization?.id || profile?.organization_id || undefined;
-  const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
-  const isAdmin =
-    isSuperAdmin ||
-    profile?.role === "admin" ||
-    activeMemberRole === "admin" ||
-    activeMemberRole === "owner";
-
+  
   const { data: users = [], isLoading: usersLoading } = useOrganizationUsers();
   const { data: organizationRoles = [] } = useOrganizationRoles();
   const { data: userOrgRoles = [] } = useUserOrganizationRoles();
-  const { invitations = [], createInvitation, deleteInvitation } = useAdminInvitations(activeOrganizationId);
-
+  
   const updateUser = useUpdateUser();
-  const deleteUser = useDeleteUser();
   const assignUserRole = useAssignUserRole();
 
-  const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
+  const [userDialogOpen, setUserDialogOpen] = useState(false);
   const [deleteUserDialogOpen, setDeleteUserDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<{ id: string; name: string } | null>(null);
   const [deletingUser, setDeletingUser] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<"admin" | "user">("user");
+  const [creatingUser, setCreatingUser] = useState(false);
 
-  const creatingInvite = createInvitation.isPending;
+  // Form state for new user
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserPhone, setNewUserPhone] = useState('');
+  const [newUserEndereco, setNewUserEndereco] = useState('');
+  const [newUserRole, setNewUserRole] = useState<'admin' | 'user'>('user');
 
+  const isAdmin = profile?.role === 'admin' || isSuperAdmin;
+
+  // Helper para obter a funÃ§Ã£o customizada de um usuÃ¡rio
   const getUserCustomRole = (userId: string): OrganizationRole | undefined => {
-    const assignment = userOrgRoles.find((uor) => uor.user_id === userId);
+    const assignment = userOrgRoles.find(uor => uor.user_id === userId);
     if (!assignment) return undefined;
-    return organizationRoles.find((role) => role.id === assignment.organization_role_id);
+    return organizationRoles.find(r => r.id === assignment.organization_role_id);
   };
-
-  const resetInviteForm = () => {
-    setInviteEmail("");
-    setInviteRole("user");
-  };
-
-  useEffect(() => {
-    const handleMobileCreate = () => {
-      if (!isAdmin) return;
-      setInviteDialogOpen(true);
-    };
-
-    window.addEventListener("vimob:mobile-create-user", handleMobileCreate);
-    return () => window.removeEventListener("vimob:mobile-create-user", handleMobileCreate);
-  }, [isAdmin]);
 
   const handleAssignRole = async (userId: string, roleId: string | null) => {
     await assignUserRole.mutateAsync({ userId, roleId });
@@ -117,306 +97,342 @@ export function TeamTab() {
     await updateUser.mutateAsync({ id: userId, is_active: !currentValue });
   };
 
-  const handleUpdateUserRole = async (userId: string, role: "admin" | "user") => {
+  const handleUpdateUserRole = async (userId: string, role: 'admin' | 'user') => {
     await updateUser.mutateAsync({ id: userId, role });
-    await queryClient.invalidateQueries({ queryKey: ["organization-users"] });
+    await queryClient.invalidateQueries({ queryKey: ['organization-users'] });
   };
 
   const handleDeleteUser = async () => {
     if (!userToDelete) return;
     setDeletingUser(true);
     try {
-      await deleteUser.mutateAsync(userToDelete.id);
-      toast.success("Usuario excluido com sucesso!");
-      await queryClient.invalidateQueries({ queryKey: ["organization-users"] });
+      const { data, error } = await supabase.functions.invoke('delete-user', {
+        body: { userId: userToDelete.id }
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || 'Erro ao excluir usuÃ¡rio');
+      toast.success('UsuÃ¡rio excluÃ­do com sucesso!');
+      queryClient.invalidateQueries({ queryKey: ['organization-users'] });
       setDeleteUserDialogOpen(false);
       setUserToDelete(null);
     } catch (error: unknown) {
-      toast.error("Erro ao excluir usuario: " + getErrorMessage(error, "Erro desconhecido"));
+      toast.error('Erro ao excluir usuÃ¡rio: ' + getErrorMessage(error, 'Erro desconhecido'));
     } finally {
       setDeletingUser(false);
     }
   };
 
-  const handleInviteUser = async () => {
-    if (!activeOrganizationId) {
-      toast.error("Selecione uma organizacao para convidar usuarios.");
+  const handleCreateUser = async () => {
+    if (!newUserName.trim() || !newUserEmail.trim()) {
+      toast.error('Preencha nome e email');
       return;
     }
-    if (!inviteEmail.trim()) {
-      toast.error("Informe o e-mail do usuario.");
+    if (!newUserPhone.trim()) {
+      toast.error('Informe o WhatsApp para envio das credenciais de acesso');
       return;
     }
-
+    setCreatingUser(true);
     try {
-      const invitation = await createInvitation.mutateAsync({
-        email: inviteEmail.trim(),
-        role: inviteRole,
-        organizationId: activeOrganizationId,
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !session?.access_token) {
+        toast.error('Sua sessão expirou. Por favor, faça login novamente.');
+        window.location.assign('/login');
+        return;
+      }
+      const { data: result, error } = await supabase.functions.invoke('create-user', {
+        body: {
+          name: newUserName.trim(),
+          email: newUserEmail.trim(),
+          phone: newUserPhone.trim() || undefined,
+          whatsapp: newUserPhone.trim() || undefined,
+          endereco: newUserEndereco.trim() || undefined,
+          role: newUserRole
+        }
       });
+      if (error) throw new Error(error.message || 'Erro ao criar usuÃ¡rio');
 
-      if ("email_sent" in invitation && invitation.email_sent === false) {
-        toast.warning("Convite criado, mas o e-mail nao foi enviado. Verifique a configuracao do Resend.");
+      if (result.wasMultiOrg || result.wasOrphan) {
+        toast.success(result.message || 'UsuÃ¡rio vinculado Ã  organizaÃ§Ã£o! Acesso com senha existente.');
+      } else if (result.whatsappSent) {
+        toast.success('UsuÃ¡rio criado! Credenciais de acesso enviadas via WhatsApp.');
       } else {
-        toast.success("Convite enviado por e-mail.");
+        toast.success(
+          `UsuÃ¡rio criado! Senha gerada: ${result.generatedPassword}. âš ï¸ WhatsApp nÃ£o enviado â€” copie a senha agora.`,
+          { duration: 15000 }
+        );
       }
-
-      await queryClient.invalidateQueries({ queryKey: ["organization-users"] });
-      setInviteDialogOpen(false);
-      resetInviteForm();
+      queryClient.invalidateQueries({ queryKey: ['organization-users'] });
+      setUserDialogOpen(false);
+      resetNewUserForm();
     } catch (error: unknown) {
-      const message = getErrorMessage(error, "Erro ao enviar convite.");
-      if (message.includes("SESSION_EXPIRED") || message.includes("Unauthorized")) {
-        toast.error("Sua sessao expirou. Faca login novamente.");
-        window.location.assign("/login");
+      const errorMessage = getErrorMessage(error, 'Erro ao criar usuário');
+      if (errorMessage.includes('SESSION_EXPIRED') || errorMessage.includes('Unauthorized')) {
+        toast.error('Sua sessão expirou. Por favor, faça login novamente.');
+        window.location.assign('/login');
       } else {
-        toast.error(message);
+        toast.error(errorMessage);
       }
+    } finally {
+      setCreatingUser(false);
     }
   };
 
-  const visibleUsers = users.filter((user) => user.role !== "super_admin");
+  const resetNewUserForm = () => {
+    setNewUserName('');
+    setNewUserEmail('');
+    setNewUserPhone('');
+    setNewUserEndereco('');
+    setNewUserRole('user');
+  };
 
   return (
     <div className="space-y-6">
-      <div className={`grid gap-6 ${isAdmin ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1"}`}>
-        <Card className="app-card border-0 shadow-none">
-          <CardHeader className="flex flex-row items-center justify-between gap-4">
+      <div className={`grid gap-6 ${isAdmin ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
+        {/* LEFT: Users List */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
             <div>
-              <CardTitle className="text-lg font-medium text-foreground">{t.settings.users.title}</CardTitle>
-              <CardDescription className="mt-0.5 text-sm text-muted-foreground">
-                {t.settings.users.description}
-              </CardDescription>
+              <CardTitle className="text-xl font-semibold text-foreground">{t.settings.users.title}</CardTitle>
+              <CardDescription className="mt-0.5 text-sm text-muted-foreground">{t.settings.users.description}</CardDescription>
             </div>
             {isAdmin && (
-              <Dialog
-                open={inviteDialogOpen}
-                onOpenChange={(open) => {
-                  setInviteDialogOpen(open);
-                  if (!open) resetInviteForm();
-                }}
-              >
-                <DialogTrigger asChild>
-                  <Button data-tour="team-add-user" size="sm" className="shrink-0">
-                    <Plus className="mr-2 h-4 w-4" />
-                    Novo Corretor
+              <Sheet open={userDialogOpen} onOpenChange={(open) => {
+                setUserDialogOpen(open);
+                if (!open) resetNewUserForm();
+              }}>
+                <SheetTrigger asChild>
+                  <Button 
+                    data-tour="team-add-user" 
+                    size="sm"
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg border-2 border-primary/20 hover:scale-105 transition-all duration-200"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    {t.settings.users.newUser}
                   </Button>
-                </DialogTrigger>
-                <DialogContent className="w-[92vw] max-w-[460px] rounded-[8px] p-6">
-                  <DialogHeader>
-                    <DialogTitle>Convidar usuario</DialogTitle>
-                    <DialogDescription>
-                      Envie um convite para o e-mail do corretor. Ele finaliza o cadastro pelo link.
-                    </DialogDescription>
-                  </DialogHeader>
-
-                  <div className="space-y-4">
+                </SheetTrigger>
+                <SheetContent side="right" className="w-[90%] sm:w-[650px] sm:max-w-[650px] p-6 flex flex-col overflow-y-auto">
+                  <SheetHeader>
+                    <SheetTitle>{t.settings.users.createUser}</SheetTitle>
+                  </SheetHeader>
+                  <div className="space-y-4 mt-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>{t.common.name}</Label>
+                        <Input 
+                          placeholder={t.common.name} 
+                          value={newUserName} 
+                          onChange={e => setNewUserName(e.target.value)} 
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t.common.email}</Label>
+                        <Input 
+                          type="email" 
+                          placeholder="email@company.com" 
+                          value={newUserEmail} 
+                          onChange={e => setNewUserEmail(e.target.value)} 
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>WhatsApp <span className="text-destructive">*</span></Label>
+                        <PhoneInput value={newUserPhone} onChange={setNewUserPhone} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t.settings.users.role}</Label>
+                        <Select value={newUserRole} onValueChange={v => setNewUserRole(v as 'admin' | 'user')}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="admin">{t.settings.users.admin}</SelectItem>
+                            <SelectItem value="user">{t.settings.users.user}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
                     <div className="space-y-2">
-                      <Label>E-mail</Label>
+                      <Label>{t.common.address}</Label>
                       <Input
-                        type="email"
-                        placeholder="email@empresa.com"
-                        value={inviteEmail}
-                        onChange={(event) => setInviteEmail(event.target.value)}
+                        placeholder="EndereÃ§o completo"
+                        value={newUserEndereco}
+                        onChange={e => setNewUserEndereco(e.target.value)}
                       />
                     </div>
-                    <div className="space-y-2">
-                      <Label>Funcao</Label>
-                      <Select value={inviteRole} onValueChange={(value) => setInviteRole(value as "admin" | "user")}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="user">Usuario</SelectItem>
-                          <SelectItem value="admin">Administrador</SelectItem>
-                        </SelectContent>
-                      </Select>
+                    <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                      <p className="text-xs text-foreground">
+                        ðŸ” Uma <strong>senha aleatÃ³ria segura</strong> serÃ¡ gerada automaticamente e enviada
+                        ao novo usuÃ¡rio via <strong>WhatsApp</strong>, junto com o link de acesso e o login.
+                      </p>
                     </div>
-                    <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-3 text-xs leading-5 text-muted-foreground">
-                      O usuario fica como pendente ate aceitar o convite e concordar com os termos.
+                    <div className="flex justify-end gap-2 pt-4">
+                      <Button variant="outline" onClick={() => setUserDialogOpen(false)} disabled={creatingUser}>
+                        {t.common.cancel}
+                      </Button>
+                      <Button onClick={handleCreateUser} disabled={creatingUser || !newUserName.trim() || !newUserEmail.trim()}>
+                        {creatingUser && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                        {t.settings.users.createUser}
+                      </Button>
                     </div>
                   </div>
-
-                  <DialogFooter className="gap-2 pt-2 sm:space-x-0">
-                    <Button variant="secondary" onClick={() => setInviteDialogOpen(false)} disabled={creatingInvite}>
-                      Cancelar
-                    </Button>
-                    <Button onClick={handleInviteUser} disabled={creatingInvite || !inviteEmail.trim()}>
-                      {creatingInvite && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Enviar convite
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+                </SheetContent>
+              </Sheet>
             )}
           </CardHeader>
-
-          <CardContent className="px-4 pb-4 md:px-6">
+          <CardContent className="px-4 md:px-6 pb-4">
             {usersLoading ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
             ) : (
               <div className="space-y-3">
-                {visibleUsers.map((user) => {
-                  const customRole = getUserCustomRole(user.id);
-                  return (
-                    <div
-                      key={user.id}
-                      className="flex items-center justify-between gap-3 rounded-[6px] bg-[var(--app-surface-soft)] p-3 transition-colors hover:bg-[var(--app-surface-hover)]"
-                    >
-                      <div className="flex min-w-0 items-center gap-3">
-                        <Avatar className="h-9 w-9 shrink-0">
-                          <AvatarImage src={user.avatar_url || undefined} />
-                          <AvatarFallback className="bg-primary text-sm text-primary-foreground">
-                            {user.name.split(" ").map((part) => part[0]).join("").slice(0, 2)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="truncate text-sm font-medium">{user.name}</p>
-                            {!user.is_active && (
-                              <Badge variant="secondary" className="text-xs">
-                                {t.common.inactive}
-                              </Badge>
-                            )}
-                            {user.role !== "admin" && customRole && (
-                              <Badge
-                                variant="outline"
-                                className="border-0 text-xs"
-                                style={{
-                                  backgroundColor: `${customRole.color}22`,
-                                  color: customRole.color,
-                                }}
-                              >
-                                {customRole.name}
-                              </Badge>
-                            )}
-                          </div>
-                          <p className="truncate text-xs text-muted-foreground">{user.email}</p>
+                {users.filter(user => user.role !== 'super_admin').map(user => (
+                  <div 
+                    key={user.id} 
+                    className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Avatar className="h-9 w-9">
+                        <AvatarImage src={user.avatar_url || undefined} />
+                        <AvatarFallback className="bg-primary text-primary-foreground text-sm">
+                          {user.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-medium text-sm">{user.name}</p>
+                          {!user.is_active && (
+                            <Badge variant="secondary" className="text-xs">{t.common.inactive}</Badge>
+                          )}
+                          {/* Mostrar funÃ§Ã£o customizada */}
+                          {user.role !== 'admin' && getUserCustomRole(user.id) && (
+                            <Badge 
+                              variant="outline" 
+                              className="text-xs"
+                              style={{
+                                borderColor: getUserCustomRole(user.id)?.color,
+                                color: getUserCustomRole(user.id)?.color
+                              }}
+                            >
+                              {getUserCustomRole(user.id)?.name}
+                            </Badge>
+                          )}
                         </div>
+                        <p className="text-xs text-muted-foreground">{user.email}</p>
                       </div>
-
-                      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                        {isAdmin ? (
-                          <>
-                            <Select
-                              value={user.role ?? "user"}
-                              onValueChange={(value) => handleUpdateUserRole(user.id, value as "admin" | "user")}
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                      {isAdmin ? (
+                        <>
+                          {/* Tipo de usuÃ¡rio (admin/user) */}
+                          <Select 
+                            value={user.role ?? 'user'} 
+                            onValueChange={v => handleUpdateUserRole(user.id, v as 'admin' | 'user')} 
+                            disabled={user.id === profile?.id}
+                          >
+                            <SelectTrigger className="w-24 h-8 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="admin">{t.settings.users.admin}</SelectItem>
+                              <SelectItem value="user">{t.settings.users.user}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          
+                          {/* FunÃ§Ã£o customizada (apenas para nÃ£o-admins) */}
+                          {user.role !== 'admin' && organizationRoles.length > 0 && (
+                            <Select 
+                              value={getUserCustomRole(user.id)?.id || 'none'} 
+                              onValueChange={v => handleAssignRole(user.id, v === 'none' ? null : v)} 
                               disabled={user.id === profile?.id}
                             >
-                              <SelectTrigger className="h-8 w-24 text-xs">
-                                <SelectValue />
+                              <SelectTrigger className="w-28 h-8 text-xs">
+                                <SelectValue placeholder="FunÃ§Ã£o..." />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="admin">{t.settings.users.admin}</SelectItem>
-                                <SelectItem value="user">{t.settings.users.user}</SelectItem>
+                                <SelectItem value="none">Sem funÃ§Ã£o</SelectItem>
+                                {organizationRoles.map(role => (
+                                  <SelectItem key={role.id} value={role.id}>
+                                    <div className="flex items-center gap-2">
+                                      <div 
+                                        className="w-2 h-2 rounded-full" 
+                                        style={{ backgroundColor: role.color }} 
+                                      />
+                                      {role.name}
+                                    </div>
+                                  </SelectItem>
+                                ))}
                               </SelectContent>
                             </Select>
-
-                            {user.role !== "admin" && organizationRoles.length > 0 && (
-                              <Select
-                                value={customRole?.id || "none"}
-                                onValueChange={(value) => handleAssignRole(user.id, value === "none" ? null : value)}
-                                disabled={user.id === profile?.id}
-                              >
-                                <SelectTrigger className="h-8 w-28 text-xs">
-                                  <SelectValue placeholder="Funcao..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="none">Sem funcao</SelectItem>
-                                  {organizationRoles.map((role) => (
-                                    <SelectItem key={role.id} value={role.id}>
-                                      <div className="flex items-center gap-2">
-                                        <div className="h-2 w-2 rounded-full" style={{ backgroundColor: role.color }} />
-                                        {role.name}
-                                      </div>
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            )}
-
-                            <Switch
-                              checked={user.is_active || false}
-                              onCheckedChange={() => handleToggleUserActive(user.id, user.is_active || false)}
-                              disabled={user.id === profile?.id}
-                            />
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                              onClick={() => {
-                                setUserToDelete({ id: user.id, name: user.name });
-                                setDeleteUserDialogOpen(true);
+                          )}
+                          
+                          <Switch 
+                            checked={user.is_active || false} 
+                            onCheckedChange={() => handleToggleUserActive(user.id, user.is_active || false)} 
+                            disabled={user.id === profile?.id} 
+                          />
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10" 
+                            onClick={() => {
+                              setUserToDelete({ id: user.id, name: user.name });
+                              setDeleteUserDialogOpen(true);
+                            }} 
+                            disabled={user.id === profile?.id}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <Badge variant={user.role === 'admin' ? 'default' : 'secondary'}>
+                            {user.role === 'admin' ? t.settings.users.admin : t.settings.users.user}
+                          </Badge>
+                          {user.role !== 'admin' && getUserCustomRole(user.id) && (
+                            <Badge 
+                              variant="outline"
+                              style={{
+                                borderColor: getUserCustomRole(user.id)?.color,
+                                color: getUserCustomRole(user.id)?.color
                               }}
-                              disabled={user.id === profile?.id}
                             >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </>
-                        ) : (
-                          <Badge variant={user.role === "admin" ? "default" : "secondary"}>
-                            {roleLabel(user.role)}
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {isAdmin &&
-                  invitations.map((invitation) => (
-                    <div
-                      key={invitation.id}
-                      className="flex items-center justify-between gap-3 rounded-[6px] bg-[var(--app-surface-soft)] p-3 opacity-85"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="truncate text-sm font-medium">{invitation.email || "Convite sem e-mail"}</p>
-                          <Badge variant="secondary" className="border-0 bg-primary/10 text-xs text-primary">
-                            Pendente
-                          </Badge>
+                              {getUserCustomRole(user.id)?.name}
+                            </Badge>
+                          )}
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          {roleLabel(invitation.role)} - expira em {new Date(invitation.expires_at).toLocaleDateString("pt-BR")}
-                        </p>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                        onClick={() => deleteInvitation.mutate(invitation.id)}
-                        disabled={deleteInvitation.isPending}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      )}
                     </div>
-                  ))}
+                  </div>
+                ))}
               </div>
             )}
           </CardContent>
         </Card>
 
+        {/* RIGHT: Roles (only for admins) */}
         {isAdmin && <RolesTab />}
       </div>
 
+      {/* Delete User Confirmation Dialog */}
       <AlertDialog open={deleteUserDialogOpen} onOpenChange={setDeleteUserDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Excluir usuario</AlertDialogTitle>
+            <AlertDialogTitle>Excluir usuÃ¡rio</AlertDialogTitle>
             <AlertDialogDescription>
-              Tem certeza que deseja excluir o usuario <strong>{userToDelete?.name}</strong>? Esta acao nao pode ser desfeita.
+              Tem certeza que deseja excluir o usuÃ¡rio <strong>{userToDelete?.name}</strong>? 
+              Esta aÃ§Ã£o nÃ£o pode ser desfeita.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deletingUser}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteUser}
-              disabled={deletingUser}
+            <AlertDialogAction 
+              onClick={handleDeleteUser} 
+              disabled={deletingUser} 
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {deletingUser && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {deletingUser && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Excluir
             </AlertDialogAction>
           </AlertDialogFooter>

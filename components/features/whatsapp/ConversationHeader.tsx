@@ -51,6 +51,8 @@ interface ConversationHeaderProps {
   isArchived?: boolean;
   leadId?: string | null;
   leadTags?: LeadTag[];
+  leadAssigneeName?: string | null;
+  leadAssigneeIsCurrentUser?: boolean;
   pipelineName?: string | null;
   stageName?: string | null;
   stageColor?: string | null;
@@ -74,6 +76,8 @@ export function ConversationHeader({
   isArchived,
   leadId,
   leadTags = [],
+  leadAssigneeName,
+  leadAssigneeIsCurrentUser = true,
   pipelineName,
   stageName,
   stageColor,
@@ -157,6 +161,14 @@ export function ConversationHeader({
             )}
           </div>
           {getPresenceIndicator()}
+
+          {leadId && leadAssigneeName && !leadAssigneeIsCurrentUser && (
+            <div className="mt-1">
+              <Badge className="h-5 border-0 bg-amber-500/15 px-2 text-[10px] font-medium text-amber-300">
+                Lead com {leadAssigneeName}
+              </Badge>
+            </div>
+          )}
 
           {/* Tags and Pipeline Info */}
           {(visibleTags.length > 0 || pipelineName) && (

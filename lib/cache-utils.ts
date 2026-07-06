@@ -2,22 +2,18 @@
  * Utility to perform deep cache clearing and force system updates
  */
 
-const SUPABASE_AUTH_STORAGE_KEY_PREFIX = 'sb-';
+const SUPABASE_STORAGE_KEY = 'sb-iemalzlfnbouobyjwlwi-auth-token';
 
 export async function performFullCacheClear(options: {
   clearAuth?: boolean;
   reload?: boolean;
   redirectTo?: string;
-  clearBrowserCaches?: boolean;
-  preserveAuthContext?: boolean;
 } = {}): Promise<void> {
   const clearAuth = options.clearAuth ?? false;
-  const clearBrowserCaches = options.clearBrowserCaches ?? !clearAuth;
-  const preserveAuthContext = options.preserveAuthContext ?? false;
   let reload = options.reload ?? false;
   let redirectTo = options.redirectTo;
 
-  console.log('[CacheUtils] Starting full cache clear...', { clearAuth, reload, redirectTo, clearBrowserCaches });
+  console.log('[CacheUtils] Starting full cache clear...', { clearAuth, reload, redirectTo });
 
   // Prevent cache clear + redirect/reload on public routes
   const publicRoutes = ['/login', '/cadastro', '/reset-password', '/onboarding', '/checkout', '/termos-de-uso', '/politica-de-privacidade'];
@@ -30,7 +26,7 @@ export async function performFullCacheClear(options: {
   }
 
   // 1. Unregister all Service Workers
-  if (clearBrowserCaches && typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+  if ('serviceWorker' in navigator) {
     try {
       const registrations = await navigator.serviceWorker.getRegistrations();
       for (const registration of registrations) {
@@ -42,7 +38,7 @@ export async function performFullCacheClear(options: {
   }
 
   // 2. Clear all Cache Storage (PWA caches)
-  if (clearBrowserCaches && typeof window !== 'undefined' && 'caches' in window) {
+  if ('caches' in window) {
     try {
       const cacheNames = await caches.keys();
       await Promise.all(
@@ -54,15 +50,11 @@ export async function performFullCacheClear(options: {
   }
 
   // 3. Clear localStorage
-  const authKeysToKeep = clearAuth
-    ? [
-        'remember_me',
-        'remembered_email',
-        ...(preserveAuthContext ? ['vimob_active_organization_', 'vimob_auth_context_'] : []),
-      ]
-    : [SUPABASE_AUTH_STORAGE_KEY_PREFIX, 'impersonating', 'remember_me', 'remembered_email'];
+  const authKeysToKeep = clearAuth 
+    ? ['remember_me', 'remembered_email'] 
+    : [SUPABASE_STORAGE_KEY, 'impersonating', 'remember_me', 'remembered_email'];
   const keysToRemove: string[] = [];
-
+  
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
     if (key && !authKeysToKeep.some(authKey => key.includes(authKey))) {

@@ -72,28 +72,6 @@ function normalizeJid(value: unknown, forceGroup = false) {
   return `${digits}@${forceGroup ? "g.us" : "s.whatsapp.net"}`;
 }
 
-function phoneVariants(phone: string) {
-  const digits = normalizeDigits(phone);
-  const variants = [digits];
-
-  if (digits.startsWith("55")) variants.push(digits.slice(2));
-  if (!digits.startsWith("55") && digits.length >= 10) variants.push(`55${digits}`);
-
-  for (const variant of [...variants]) {
-    const local = variant.startsWith("55") ? variant.slice(2) : variant;
-    if (local.length === 11 && local[2] === "9") {
-      variants.push(local.slice(0, 2) + local.slice(3));
-      variants.push(`55${local.slice(0, 2)}${local.slice(3)}`);
-    }
-    if (local.length === 10) {
-      variants.push(`${local.slice(0, 2)}9${local.slice(2)}`);
-      variants.push(`55${local.slice(0, 2)}9${local.slice(2)}`);
-    }
-  }
-
-  return unique(variants);
-}
-
 function parseBoolean(value: unknown) {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") return ["true", "1", "yes", "sim"].includes(value.toLowerCase());
@@ -939,25 +917,14 @@ async function resolveRoundRobinAssignee(rule: JsonRecord | null, organizationId
 }
 
 async function findLeadByPhone(organizationId: string, phone: string) {
-  const variants = phoneVariants(phone);
-  if (variants.length === 0) return null;
-
-  const filters = variants.flatMap((variant) => [
-    `phone.ilike.%${variant}%`,
-    `whatsapp.ilike.%${variant}%`,
-  ]);
-
   const { data, error } = await supabase
-    .from("leads")
-    .select("id, name, assigned_user_id, whatsapp_avatar_url, property_code, property_id, interest_property_id, source_detail, metadata")
-    .eq("organization_id", organizationId)
-    .or(filters.join(","))
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .rpc("find_lead_by_normalized_phone", {
+      p_organization_id: organizationId,
+      p_phone: phone,
+    });
 
   if (error) throw error;
-  return data || null;
+  return Array.isArray(data) ? data[0] || null : data || null;
 }
 
 async function resolvePropertyByCode(organizationId: string, propertyCode: string | null) {

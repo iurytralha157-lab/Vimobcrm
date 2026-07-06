@@ -2992,6 +2992,18 @@ func (repo Repository) insertTaskCompletedActivity(
 		insert into public.activities (organization_id, lead_id, type, content, user_id, metadata)
 		values ($1::uuid, $2::uuid, 'task_completed', $3, $4::uuid, $5::jsonb)
 	`, organizationID, leadID, "Cadencia concluida: "+title, userID, jsonb(metadata))
+
+	if err == nil && repo.gamificationRecorder != nil {
+		tenantCtx := tenant.Context{OrganizationID: organizationID, UserID: userID}
+		if taskType != nil && *taskType == "call" {
+			_ = repo.gamificationRecorder.RecordAction(ctx, tenantCtx, "call_made", 1, taskID)
+
+			if outcome != nil && (strings.EqualFold(*outcome, "efetivo") || strings.EqualFold(*outcome, "contato efetivo")) {
+				_ = repo.gamificationRecorder.RecordAction(ctx, tenantCtx, "contact_made", 1, taskID)
+			}
+		}
+	}
+
 	return err
 }
 

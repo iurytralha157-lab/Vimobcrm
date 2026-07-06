@@ -210,10 +210,6 @@ const allNavItems: NavItem[] = [
       labelKey: 'dashboard',
       path: '/gamificacao#dashboard'
     }, {
-      icon: Zap,
-      labelKey: 'arenaRanking',
-      path: '/gamificacao#rankings'
-    }, {
       icon: History,
       labelKey: 'history',
       path: '/gamificacao#history'
@@ -460,21 +456,40 @@ export const AppSidebar = React.memo(function AppSidebar() {
               return (
                 <DropdownMenuItem
                   key={child.path}
-                  asChild
                   className={cn(
                     "cursor-pointer rounded-[6px] p-0 text-[var(--app-text-secondary)] focus:bg-[var(--app-surface-hover)] focus:text-[var(--app-text-primary)]",
                     SIDEBAR_NAV_RESET,
                     childActive && "bg-[var(--app-surface-soft)] text-[#FF4529]"
                   )}
+                  onSelect={(e) => {
+                    if (child.path.includes('#') && pathname === child.path.split('#')[0]) {
+                      e.preventDefault();
+                      const hash = child.path.split('#')[1];
+                      setPendingPath(child.path);
+                      window.location.hash = hash;
+                    } else {
+                      setPendingPath(child.path);
+                    }
+                  }}
+                  asChild={!child.path.includes('#') || pathname !== child.path.split('#')[0]}
                 >
-                  <Link
-                    href={child.path}
-                    onPointerDown={() => setPendingPath(child.path)}
-                    className={cn("flex w-full items-center gap-3 px-3 py-2.5", SIDEBAR_NAV_CHILD_TEXT, SIDEBAR_NAV_RESET)}
-                  >
-                    <ChildIcon className="h-4 w-4 flex-shrink-0" strokeWidth={SIDEBAR_ICON_STROKE} />
-                    <span>{getLabel(child.labelKey)}</span>
-                  </Link>
+                  {(!child.path.includes('#') || pathname !== child.path.split('#')[0]) ? (
+                    <Link
+                      href={child.path}
+                      onPointerDown={() => setPendingPath(child.path)}
+                      className={cn("flex w-full items-center gap-3 px-3 py-2.5", SIDEBAR_NAV_CHILD_TEXT, SIDEBAR_NAV_RESET)}
+                    >
+                      <ChildIcon className="h-4 w-4 flex-shrink-0" strokeWidth={SIDEBAR_ICON_STROKE} />
+                      <span>{getLabel(child.labelKey)}</span>
+                    </Link>
+                  ) : (
+                    <button
+                      className={cn("flex w-full items-center gap-3 px-3 py-2.5", SIDEBAR_NAV_CHILD_TEXT, SIDEBAR_NAV_RESET)}
+                    >
+                      <ChildIcon className="h-4 w-4 flex-shrink-0" strokeWidth={SIDEBAR_ICON_STROKE} />
+                      <span>{getLabel(child.labelKey)}</span>
+                    </button>
+                  )}
                 </DropdownMenuItem>
               );
             })}

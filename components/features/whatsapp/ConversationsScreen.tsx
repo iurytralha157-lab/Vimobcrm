@@ -37,6 +37,7 @@ import { useMetaIntegrations } from "@/hooks/use-meta-integration";
 import { useMentionNames } from "@/hooks/use-mention-names";
 import { whatsappAPI } from "@/lib/api/whatsapp";
 import { getWhatsAppMessageInputState } from "@/lib/whatsapp-message-input";
+import { useAuth } from "@/contexts/AuthContext";
 
 const MAX_IMAGE_DIMENSION = 1600;
 const IMAGE_QUALITY = 0.82;
@@ -157,8 +158,10 @@ async function compressImageFile(file: File): Promise<File> {
 }
 
 export default function Conversations() {
+  const { user, profile } = useAuth();
   const isMobile = useIsMobile();
   const router = useRouter();
+  const currentUserId = profile?.id || user?.id || null;
   const [activePlatform, setActivePlatform] = useState<'whatsapp' | 'instagram' | 'facebook'>('whatsapp');
   const [selectedSessionId, setSelectedSessionId] = useState<string>("all");
   const [selectedPageId, setSelectedPageId] = useState<string>("all");
@@ -839,6 +842,7 @@ export default function Conversations() {
                         key={conv.id}
                         conversation={conv}
                         isSelected={false}
+                        currentUserId={currentUserId}
                         onClick={() => setSelectedConversation(conv)}
                         formatTime={formatConversationTime}
                         onArchive={() => handleArchive(conv)}
@@ -1065,6 +1069,7 @@ export default function Conversations() {
                       key={conv.id}
                       conversation={conv}
                       isSelected={selectedConversation?.id === conv.id}
+                      currentUserId={currentUserId}
                       onClick={() => setSelectedConversation(conv)}
                       formatTime={formatConversationTime}
                       onArchive={() => handleArchive(conv)}
@@ -1109,6 +1114,7 @@ export default function Conversations() {
                         key={conv.id}
                         conversation={screenConversation}
                         isSelected={selectedConversation?.id === conv.id}
+                        currentUserId={currentUserId}
                         onClick={() => setSelectedConversation(screenConversation)}
                         formatTime={formatConversationTime}
                         onArchive={() => {}}
@@ -1139,6 +1145,8 @@ export default function Conversations() {
                 isArchived={!!selectedConversation.archived_at}
                 leadId={selectedLeadId}
                 leadTags={selectedConversation.lead?.tags}
+                leadAssigneeName={selectedConversation.lead?.assignee?.name}
+                leadAssigneeIsCurrentUser={!selectedConversation.lead?.assignee?.id || !currentUserId || selectedConversation.lead.assignee.id === currentUserId}
                 pipelineName={selectedConversation.lead?.pipeline?.name}
                 stageName={selectedConversation.lead?.stage?.name}
                 stageColor={selectedConversation.lead?.stage?.color}
@@ -1303,6 +1311,7 @@ export default function Conversations() {
 function ConversationItem({
   conversation,
   isSelected,
+  currentUserId,
   onClick,
   formatTime,
   onArchive,
@@ -1315,6 +1324,7 @@ function ConversationItem({
 }: {
   conversation: WhatsAppConversation;
   isSelected: boolean;
+  currentUserId?: string | null;
   onClick: () => void;
   formatTime: (date: string | null) => string;
   onArchive: () => void;
@@ -1329,6 +1339,9 @@ function ConversationItem({
   const leadTagIds = leadTags.map(lt => lt.tag.id);
   const unassignedTags = availableTags.filter(t => !leadTagIds.includes(t.id));
   const displayName = conversation.lead?.name || (conversation.contact_name && conversation.contact_name !== conversation.contact_phone ? conversation.contact_name : formatPhoneForDisplay(conversation.contact_phone || ""));
+  const otherAssigneeName = currentUserId && conversation.lead?.assignee?.id && conversation.lead.assignee.id !== currentUserId
+    ? conversation.lead.assignee.name
+    : null;
   const formatPreviewMessage = (message: string | null) => {
     if (!message) return "Sem mensagens";
     const trimmed = message.trim();
@@ -1370,6 +1383,11 @@ function ConversationItem({
               {conversation.is_group && <Badge className="h-4 shrink-0 border-0 bg-orange-500/15 px-1.5 text-[9px] font-medium text-orange-700 shadow-none dark:bg-orange-500/15 dark:text-orange-300">
                   Grupo
                 </Badge>}
+              {otherAssigneeName && (
+                <Badge className="h-4 max-w-[72px] shrink-0 border-0 bg-amber-500/15 px-1.5 text-[9px] font-medium text-amber-700 shadow-none dark:text-amber-300">
+                  <span className="truncate">com {otherAssigneeName}</span>
+                </Badge>
+              )}
               {leadTags.slice(0, 2).map(lt => (
                 <Badge
                   key={lt.tag.id}

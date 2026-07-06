@@ -68,7 +68,6 @@ export const DEFAULT_LOSS_REASON_OPTIONS = [
   { value: 'concorrente', label: 'Comprou com concorrente' },
 ] as const
 
-// System module keys used to enable product areas per organization.
 export const SYSTEM_MODULES = [
   { key: 'crm', label: 'Gestão' },
   { key: 'financial', label: 'Financeiro' },

@@ -99,14 +99,21 @@ type SessionLite struct {
 }
 
 type LeadLite struct {
-	ID                string       `json:"id"`
-	Name              string       `json:"name"`
-	WhatsAppAvatarURL *string      `json:"whatsapp_avatar_url,omitempty"`
-	PipelineID        *string      `json:"pipeline_id,omitempty"`
-	StageID           *string      `json:"stage_id,omitempty"`
-	Pipeline          *NameRef     `json:"pipeline,omitempty"`
-	Stage             *StageRef    `json:"stage,omitempty"`
-	Tags              []LeadTagRef `json:"tags,omitempty"`
+	ID                string           `json:"id"`
+	Name              string           `json:"name"`
+	WhatsAppAvatarURL *string          `json:"whatsapp_avatar_url,omitempty"`
+	PipelineID        *string          `json:"pipeline_id,omitempty"`
+	StageID           *string          `json:"stage_id,omitempty"`
+	Pipeline          *NameRef         `json:"pipeline,omitempty"`
+	Stage             *StageRef        `json:"stage,omitempty"`
+	Assignee          *LeadAssigneeRef `json:"assignee,omitempty"`
+	Tags              []LeadTagRef     `json:"tags,omitempty"`
+}
+
+type LeadAssigneeRef struct {
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	AvatarURL *string `json:"avatar_url,omitempty"`
 }
 
 type NameRef struct {
