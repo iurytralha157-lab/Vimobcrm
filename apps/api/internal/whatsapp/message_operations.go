@@ -75,13 +75,15 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 	}
 
 	mediaSource := storedMediaURL
-	if mediaSource == "" {
-		mediaSource = input.Base64
-	}
-	if storedMediaPath != "" && !(input.MediaType == "audio" && input.Base64 != "") {
+	mediaSourceIsBase64 := false
+	if storedMediaPath != "" {
 		if signedURL, signErr := repo.storage.signedURL(ctx, whatsappMediaBucket, storedMediaPath, 15*60); signErr == nil && signedURL != "" {
 			mediaSource = signedURL
 		}
+	}
+	if mediaSource == "" && input.Base64 != "" {
+		mediaSource = input.Base64
+		mediaSourceIsBase64 = true
 	}
 
 	mentions := mentionsFromText(input.Text)
@@ -94,9 +96,7 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		body := map[string]any{
 			"number":       destination,
 			"type":         input.MediaType,
-			"url":          mediaSource,
 			"media":        mediaSource,
-			"base64":       mediaSource,
 			"mediatype":    input.MediaType,
 			"mediaType":    input.MediaType,
 			"mimetype":     input.Mimetype,
@@ -105,6 +105,12 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 			"caption":      nilIfEmpty(actualContent),
 			"mentions":     mentions,
 			"mentionedJid": mentions,
+		}
+		if mediaSourceIsBase64 {
+			body["base64"] = mediaSource
+		} else {
+			body["url"] = mediaSource
+			body["mediaUrl"] = mediaSource
 		}
 		providerResult, err = repo.functions.invokeEvolution(ctx, action, map[string]any{
 			"session_id": session.ID,
@@ -373,7 +379,7 @@ func (repo Repository) resolveAnyConnectedSendSession(ctx context.Context, tenan
 		  )
 		order by ws.last_connected_at desc nulls last, ws.created_at desc
 		limit 2
-	`, tenantContext.OrganizationID, tenantContext.UserID, tenantContext.IsSuperAdmin)
+	`, tenantContext.OrganizationID, tenantContext.UserID, canManageWhatsApp(tenantContext))
 	if err != nil {
 		return Session{}, err
 	}
@@ -427,9 +433,9 @@ func (repo Repository) getCanSendSession(ctx context.Context, tenantContext tena
 		        and coalesce(access.can_view, access.can_read, true) = true
 		        and coalesce(access.can_send, false) = true
 		    )
-		  )
+		)
 		limit 1
-	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, tenantContext.IsSuperAdmin))
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, canManageWhatsApp(tenantContext)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, ErrSessionNotFound
 	}

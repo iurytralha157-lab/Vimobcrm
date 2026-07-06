@@ -70,7 +70,10 @@ func (repo Repository) findLeadByPhone(ctx context.Context, organizationID strin
 			where normalize_phone(candidate.value) <> ''
 			  and (
 				(l.phone is not null and normalize_phone(l.phone) = normalize_phone(candidate.value))
-				or (l.whatsapp is not null and normalize_phone(l.whatsapp) = normalize_phone(candidate.value))
+				or (
+					nullif(to_jsonb(l)->>'whatsapp', '') is not null
+					and normalize_phone(to_jsonb(l)->>'whatsapp') = normalize_phone(candidate.value)
+				)
 			  )
 		  )
 		order by

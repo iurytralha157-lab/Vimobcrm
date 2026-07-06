@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { format, isSameDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Bot, ExternalLink, Loader2, MessageCircle, Mic, Paperclip } from 'lucide-react';
+import { Bot, ExternalLink, Loader2, MessageCircle, Paperclip } from 'lucide-react';
 import { MessageBox } from '@/components/ui/message-box';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { MessageBubble as WhatsAppMessageBubble } from '@/components/features/whatsapp/MessageBubble';
+import { MessageErrorBoundary } from '@/components/features/whatsapp/MessageErrorBoundary';
+import { AudioRecorderButton } from '@/components/features/whatsapp/AudioRecorderButton';
 import { cn } from '@/lib/utils';
 import { useLeadHistory, type UnifiedHistoryEvent } from '@/hooks/use-lead-history';
+import { useAccessibleSessions } from '@/hooks/use-accessible-sessions';
 import {
   useSendWhatsAppMessage,
   useWhatsAppConversations,
@@ -13,8 +17,14 @@ import {
   type WhatsAppConversation,
   type WhatsAppMessage,
 } from '@/hooks/use-whatsapp-conversations';
-import { useWhatsAppSessions } from '@/hooks/use-whatsapp-sessions';
 import { useStartConversation } from '@/hooks/use-start-conversation';
+import { useAuth } from '@/contexts/AuthContext';
+import { toast } from '@/hooks/use-toast';
+import { whatsappAPI } from '@/lib/api/whatsapp';
+import { getWhatsAppMessageInputState } from '@/lib/whatsapp-message-input';
+
+const MAX_IMAGE_DIMENSION = 1600;
+const IMAGE_QUALITY = 0.82;
 
 type LeadUnifiedThreadProps = {
   leadId: string;
@@ -38,6 +48,79 @@ type ThreadItem =
       timestamp: string;
       message: WhatsAppMessage;
     };
+
+const mimeExtension = (mimetype: string, fallback = 'bin') => {
+  const clean = mimetype.split(';')[0].toLowerCase();
+  const map: Record<string, string> = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+    'image/gif': 'gif',
+    'audio/ogg': 'ogg',
+    'audio/webm': 'webm',
+    'audio/mpeg': 'mp3',
+    'video/mp4': 'mp4',
+    'application/pdf': 'pdf',
+  };
+  return map[clean] || fallback;
+};
+
+const fileToBase64 = (file: Blob) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+  reader.onerror = reject;
+  reader.readAsDataURL(file);
+});
+
+async function compressImageFile(file: File): Promise<File> {
+  if (!file.type.startsWith('image/') || file.type === 'image/gif') return file;
+
+  const imageUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = 'async';
+    const loaded = new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = reject;
+    });
+    image.src = imageUrl;
+    await loaded;
+
+    const scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(image.width, image.height));
+    if (scale >= 1 && file.size < 900_000) return file;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) return file;
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    const targetType = file.type === 'image/png' ? 'image/webp' : file.type;
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, targetType, IMAGE_QUALITY));
+    if (!blob || blob.size >= file.size) return file;
+
+    const baseName = file.name.replace(/\.[^.]+$/, '') || 'imagem';
+    return new File([blob], `${baseName}.${mimeExtension(targetType, 'webp')}`, { type: targetType });
+  } catch {
+    return file;
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
+
+const getMediaTypeFromFile = (file: File) => {
+  if (file.type.startsWith('image/')) return 'image';
+  if (file.type.startsWith('video/')) return 'video';
+  if (file.type.startsWith('audio/')) return 'audio';
+  return 'document';
+};
+
+type MessageMediaStatus = 'pending' | 'ready' | 'failed' | null;
+
+const toMessageMediaStatus = (status: WhatsAppMessage['media_status']): MessageMediaStatus => {
+  return status === 'pending' || status === 'ready' || status === 'failed' ? status : null;
+};
 
 function getAttachmentFileName(event: UnifiedHistoryEvent) {
   const metadata = event.metadata || {};
@@ -137,7 +220,7 @@ function getLostReason(event: UnifiedHistoryEvent) {
 
 function getEventDetail(event: UnifiedHistoryEvent) {
   const metadata = event.metadata || {};
-  if (event.type === 'meta_form_answer') {
+  if (event.type === 'meta_form_answer' || event.type === 'webhook_form_answer') {
     return metadataText(metadata.answer) || event.content || null;
   }
 
@@ -216,6 +299,11 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
     return question ? `Meta: ${question}` : 'Resposta do formulario Meta';
   }
 
+  if (event.type === 'webhook_form_answer') {
+    const question = metadataText(metadata.question) || label.replace(/^Webhook:\s*/i, '');
+    return question ? `Webhook: ${question}` : 'Resposta do formulario';
+  }
+
   if (isAttachmentEvent(event)) {
     const fileName = getAttachmentFileName(event);
     return fileName ? `Documento anexado: ${fileName}` : 'Documento anexado';
@@ -251,7 +339,8 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
   if (outcomeActionLabel) return outcomeActionLabel;
 
   if (event.type === 'lead_created' || /foi criado/i.test(label)) {
-    const source = String(metadata.source_label || metadata.source || event.sourceOrigin || '').trim();
+    let source = String(metadata.source_label || metadata.source || event.sourceOrigin || '').trim();
+    if (source === 'generic_webhook') source = 'Webhook';
     return source && !/manual/i.test(source) ? `Lead criado via ${source}` : 'Lead criado';
   }
 
@@ -351,6 +440,10 @@ function getEventTone(event: UnifiedHistoryEvent) {
     return 'bg-[#1877F2] !text-white';
   }
 
+  if (event.type === 'webhook_form_answer') {
+    return 'bg-[#FF4529] !text-white';
+  }
+
   if (toStatus === 'lost' || text.includes('perdido') || text.includes('perda')) {
     return 'bg-red-600 !text-white ring-1 ring-red-700';
   }
@@ -377,12 +470,6 @@ function getEventTone(event: UnifiedHistoryEvent) {
   }
 
   return 'bg-[var(--app-surface-soft)] !text-[var(--app-text-secondary)]';
-}
-
-function messagePreview(message: WhatsAppMessage) {
-  if (message.content?.trim()) return message.content;
-  if (message.message_type && message.message_type !== 'text') return `Mensagem ${message.message_type}`;
-  return 'Mensagem';
 }
 
 function DatePill({ date }: { date: Date }) {
@@ -420,16 +507,20 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
   const toneClass = getEventTone(event);
   const isSolidTone = toneClass.includes('!text-white');
 
-  if (event.type === 'meta_form_answer') {
+  if (event.type === 'meta_form_answer' || event.type === 'webhook_form_answer') {
     const metadata = event.metadata || {};
-    const question = metadataText(metadata.question) || normalizeEventLabel(event).replace(/^Meta:\s*/i, '');
+    const isWebhookAnswer = event.type === 'webhook_form_answer';
+    const question = metadataText(metadata.question) || normalizeEventLabel(event).replace(isWebhookAnswer ? /^Webhook:\s*/i : /^Meta:\s*/i, '');
     const answer = detail || event.content || '';
 
     return (
       <div className="flex justify-end px-2">
-        <div className="max-w-[88%] rounded-[8px] bg-[#1877F2] px-3 py-2 text-right text-white shadow-sm">
+        <div className={cn(
+          "max-w-[88%] rounded-[8px] px-3 py-2 text-right text-white shadow-sm",
+          isWebhookAnswer ? "bg-[#FF4529]" : "bg-[#1877F2]",
+        )}>
           <div className="text-[9px] font-medium uppercase tracking-wide text-white/70">
-            Meta Lead Ads
+            {isWebhookAnswer ? 'Webhook' : 'Meta Lead Ads'}
           </div>
           <div className="mt-0.5 text-[10px] font-medium uppercase leading-snug text-white/90">
             {question}
@@ -593,100 +684,62 @@ function FeedbackBubble({ event }: { event: UnifiedHistoryEvent }) {
   );
 }
 
-function MessageBubble({
-  message,
-  leadName,
-  leadAvatarUrl,
-}: {
-  message: WhatsAppMessage;
-  leadName: string;
-  leadAvatarUrl?: string | null;
-}) {
-  const fromMe = message.from_me;
-  const label = fromMe ? (message.sender_name || 'Equipe') : leadName;
-
-  return (
-    <div className={cn('flex items-end gap-2 px-2', fromMe ? 'justify-end' : 'justify-start')}>
-      {!fromMe && (
-        <Avatar className="h-6 w-6 shrink-0 border-0">
-          <AvatarImage src={leadAvatarUrl || undefined} />
-          <AvatarFallback className="bg-primary text-[10px] text-white">
-            {leadName?.[0]?.toUpperCase() || '?'}
-          </AvatarFallback>
-        </Avatar>
-      )}
-      <div
-        className={cn(
-          'max-w-[78%] rounded-[8px] px-3 py-2 text-xs leading-relaxed',
-          fromMe
-            ? 'bg-primary text-white'
-            : 'bg-[var(--app-surface-soft)] text-[var(--app-text-primary)]',
-        )}
-      >
-        <div className={cn('mb-1 text-[10px] font-medium', fromMe ? 'text-white/72' : 'text-[var(--app-text-tertiary)]')}>
-          {label}
-        </div>
-        <div className="whitespace-pre-wrap break-words">{messagePreview(message)}</div>
-        <div className={cn('mt-1 text-right text-[9px]', fromMe ? 'text-white/66' : 'text-[var(--app-text-tertiary)]')}>
-          {format(new Date(message.sent_at), 'HH:mm', { locale: ptBR })}
-          {fromMe && message.status ? ` - ${message.status}` : ''}
-        </div>
-      </div>
-      {fromMe && (
-        <Avatar className="h-6 w-6 shrink-0 border-0">
-          <AvatarFallback className="bg-[var(--app-surface-soft)] text-[10px] text-[var(--app-text-secondary)]">
-            V
-          </AvatarFallback>
-        </Avatar>
-      )}
-    </div>
-  );
-}
-
-export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, whatsappVerified, leadCreatedAt }: LeadUnifiedThreadProps) {
+export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerified, leadCreatedAt }: LeadUnifiedThreadProps) {
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const { profile } = useAuth();
   const { data: history = [], isLoading: loadingHistory } = useLeadHistory(leadId);
   const { data: conversations = [] } = useWhatsAppConversations(undefined, { hideGroups: true });
-  const { data: sessions = [] } = useWhatsAppSessions();
+  const { data: sessions = [] } = useAccessibleSessions();
 
   const conversation = useMemo<WhatsAppConversation | null>(() => {
     return conversations.find((item) => item.lead_id === leadId || item.lead?.id === leadId) || null;
   }, [conversations, leadId]);
 
-  const { data: messages = [], isLoading: loadingMessages } = useWhatsAppMessages(conversation?.id ?? null, leadId, 80);
+  const {
+    data: messages = [],
+    isLoading: loadingMessages,
+    refetch: refetchMessages,
+  } = useWhatsAppMessages(conversation?.id ?? null, leadId, 80);
   const sendMessage = useSendWhatsAppMessage();
   const startConversation = useStartConversation();
 
   const hasLeadPhone = Boolean(leadPhone?.replace(/\D/g, ''));
   const leadHasNoWhatsApp = whatsappVerified === false;
-  const embeddedSessionConnected = conversation?.session?.status === 'connected' || conversation?.session?.status === 'connecting';
-  const hasConnectedSession = embeddedSessionConnected || sessions.some((session) => session.status === 'connected' || session.status === 'connecting');
-  const linkedSession = conversation ? sessions.find((session) => session.id === conversation.session_id) : null;
-  const conversationSessionStatus = conversation?.session?.status || linkedSession?.status || null;
-  const conversationSessionConnected = conversation
-    ? conversationSessionStatus === 'connected' || conversationSessionStatus === 'connecting' || (!conversationSessionStatus && hasConnectedSession)
-    : false;
+  const messageInputConversation = useMemo(
+    () =>
+      conversation ||
+      (hasLeadPhone
+        ? {
+            session_id: null,
+            contact_phone: leadPhone,
+            remote_jid: null,
+            is_group: false,
+            session: null,
+          }
+        : null),
+    [conversation, hasLeadPhone, leadPhone],
+  );
+  const whatsappMessageInputState = useMemo(
+    () => getWhatsAppMessageInputState(messageInputConversation, null, sessions),
+    [messageInputConversation, sessions],
+  );
   const canSendMessage = Boolean(
     hasLeadPhone &&
       !leadHasNoWhatsApp &&
-      hasConnectedSession &&
-      (!conversation || conversationSessionConnected),
+      !whatsappMessageInputState.disabled,
   );
   const isSendingMessage = sendMessage.isPending || startConversation.isPending;
   const inputPlaceholder = !hasLeadPhone
     ? 'Lead sem telefone cadastrado'
     : leadHasNoWhatsApp
       ? 'Este lead nao tem WhatsApp'
-      : !hasConnectedSession
-        ? 'Conecte um WhatsApp para enviar'
-        : !conversation
-          ? 'Digite para iniciar a conversa com este lead'
-          : !conversationSessionConnected
-            ? 'A conexao deste WhatsApp esta desconectada'
-            : 'Digite sua mensagem...';
+      : !conversation && !whatsappMessageInputState.disabled
+        ? 'Digite para iniciar a conversa com este lead'
+        : whatsappMessageInputState.placeholder;
 
   const items = useMemo<ThreadItem[]>(() => {
     const visibleEvents = removeRedundantEvents(history.filter(shouldShowEvent));
@@ -747,23 +800,115 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [items.length]);
 
+  const ensureConversationForSend = async () => {
+    if (!canSendMessage) {
+      throw new Error(inputPlaceholder);
+    }
+
+    if (conversation) return conversation;
+
+    return startConversation.mutateAsync({
+      phone: leadPhone || '',
+      leadId,
+      leadName,
+      sessionId: whatsappMessageInputState.sendSessionId,
+    });
+  };
+
   const handleSend = async () => {
     const content = text.trim();
     if (!content || !canSendMessage || isSendingMessage) return;
 
     setText('');
     try {
-      const targetConversation =
-        conversation ||
-        (await startConversation.mutateAsync({
-          phone: leadPhone || '',
-          leadId,
-          leadName,
-        }));
+      const targetConversation = await ensureConversationForSend();
 
-      await sendMessage.mutateAsync({ conversation: targetConversation, text: content });
+      await sendMessage.mutateAsync({
+        conversation: targetConversation,
+        text: content,
+        sendSessionId: whatsappMessageInputState.sendSessionId,
+      });
     } catch {
       setText(content);
+    }
+  };
+
+  const handleSendAudio = async (base64: string, mimetype: string) => {
+    if (!canSendMessage || isSendingMessage) {
+      toast({
+        title: 'Audio nao enviado',
+        description: inputPlaceholder,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const targetConversation = await ensureConversationForSend();
+    await sendMessage.mutateAsync({
+      conversation: targetConversation,
+      text: '',
+      mediaType: 'audio',
+      base64,
+      mimetype,
+      filename: `audio.${mimeExtension(mimetype, 'webm')}`,
+      previewMediaUrl: `data:${mimetype || 'audio/webm'};base64,${base64}`,
+      sendSessionId: whatsappMessageInputState.sendSessionId,
+    });
+  };
+
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!canSendMessage || isSendingMessage) {
+      toast({
+        title: 'Arquivo nao enviado',
+        description: inputPlaceholder,
+        variant: 'destructive',
+      });
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    try {
+      const processedFile = await compressImageFile(file);
+      const base64 = await fileToBase64(processedFile);
+      const mediaType = getMediaTypeFromFile(processedFile);
+      const targetConversation = await ensureConversationForSend();
+
+      await sendMessage.mutateAsync({
+        conversation: targetConversation,
+        text: processedFile.name,
+        mediaType,
+        base64,
+        mimetype: processedFile.type || file.type || 'application/octet-stream',
+        filename: processedFile.name,
+        previewMediaUrl: `data:${processedFile.type || file.type || 'application/octet-stream'};base64,${base64}`,
+        sendSessionId: whatsappMessageInputState.sendSessionId,
+      });
+    } catch (error) {
+      toast({
+        title: 'Erro ao enviar arquivo',
+        description: error instanceof Error && error.message.length < 160
+          ? error.message
+          : 'Nao foi possivel enviar o arquivo.',
+        variant: 'destructive',
+      });
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const retryMediaDownload = async (messageId: string) => {
+    try {
+      await whatsappAPI.retryMediaDownload(messageId, profile?.organization_id);
+      await refetchMessages();
+    } catch {
+      toast({
+        title: 'Midia nao atualizada',
+        description: 'Nao foi possivel buscar a midia agora.',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -800,7 +945,29 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                     <EventBubble event={item.event} />
                   )
                 ) : (
-                  <MessageBubble message={item.message} leadName={leadName} leadAvatarUrl={leadAvatarUrl} />
+                  <MessageErrorBoundary messageId={item.message.id}>
+                    <WhatsAppMessageBubble
+                      content={item.message.content}
+                      messageType={item.message.message_type || 'text'}
+                      mediaUrl={item.message.media_url ?? null}
+                      mediaMimeType={item.message.media_mime_type ?? null}
+                      mediaStatus={toMessageMediaStatus(item.message.media_status)}
+                      mediaError={item.message.media_error ?? null}
+                      mediaSize={item.message.media_size ?? null}
+                      fromMe={item.message.from_me}
+                      status={item.message.status || ''}
+                      sentAt={item.message.sent_at}
+                      senderName={item.message.from_me ? item.message.sender_name ?? 'Equipe' : item.message.sender_name ?? null}
+                      isGroup={conversation?.is_group ?? false}
+                      onRetryMedia={() => retryMediaDownload(item.message.id)}
+                      messageId={item.message.id}
+                      leadId={leadId}
+                      leadName={leadName}
+                      conversationRemoteJid={conversation?.remote_jid ?? item.message.remote_jid ?? null}
+                      conversationSessionId={conversation?.session_id ?? item.message.session_id ?? null}
+                      reactions={[]}
+                    />
+                  </MessageErrorBoundary>
                 )}
               </div>
             );
@@ -809,6 +976,13 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
         </div>
 
         <div className="bg-transparent px-3 pb-3 pt-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            onChange={handleFileSelect}
+            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx"
+            className="hidden"
+          />
           <MessageBox
             value={text}
             onChange={setText}
@@ -827,14 +1001,20 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
             compact
             showRightActionsWhenEmpty
             leftActions={
-              <button type="button" disabled title="Anexar midia">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!canSendMessage || isSendingMessage}
+                title="Anexar midia"
+              >
                 <Paperclip className="h-4 w-4" />
               </button>
             }
             rightActions={
-              <button type="button" disabled title="Audio">
-                <Mic className="h-4 w-4" />
-              </button>
+              <AudioRecorderButton
+                onSend={handleSendAudio}
+                disabled={!canSendMessage || isSendingMessage}
+              />
             }
           />
         </div>

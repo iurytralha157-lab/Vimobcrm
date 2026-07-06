@@ -133,9 +133,11 @@ export function useWhatsAppConversations(
       }) as Promise<WhatsAppConversation[]>;
     },
     enabled: !!profile?.organization_id,
-    refetchInterval: 30_000,
+    refetchInterval: 5_000,
     refetchIntervalInBackground: false,
-    staleTime: 30_000,
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: true,
+    staleTime: 2_000,
     gcTime: 1000 * 60 * 10,
   });
 }
@@ -183,12 +185,13 @@ export function useWhatsAppMessages(
       return page.messages as WhatsAppMessage[];
     },
     enabled: (!!conversationId && !!profile?.organization_id) || (!!leadId && !!profile?.organization_id),
-    refetchInterval: conversationId || leadId ? 30_000 : false,
+    refetchInterval: conversationId || leadId ? 5_000 : false,
     refetchIntervalInBackground: false,
-    staleTime: 30_000,
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: true,
+    staleTime: 2_000,
     gcTime: 1000 * 60 * 15,
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
+    refetchOnMount: true,
   });
 }
 

@@ -415,17 +415,24 @@ func evolutionSendTextBody(body map[string]any) map[string]any {
 
 func evolutionSendMediaBody(body map[string]any, forcedType string) map[string]any {
 	mediaType := firstPresentAny(forcedType, body["type"], body["mediatype"], body["mediaType"], body["kind"])
-	media := firstPresentAny(body["url"], body["mediaUrl"], body["media"], body["base64"], body["path"], body["file"])
+	urlMedia := firstPresentAny(body["url"], body["mediaUrl"], body["path"], body["file"])
+	base64Media := firstPresentAny(body["base64"], body["base64Media"])
+	media := firstPresentAny(urlMedia, body["media"], base64Media)
 	filename := firstPresentAny(body["filename"], body["fileName"], body["name"])
 	out := evolutionSendCommonBody(body)
 	out["type"] = mediaType
 	out["mediatype"] = mediaType
 	out["mediaType"] = mediaType
-	out["url"] = media
 	out["media"] = media
-	out["base64"] = body["base64"]
-	out["path"] = media
-	out["file"] = media
+	if urlMedia != nil {
+		out["url"] = urlMedia
+		out["mediaUrl"] = urlMedia
+		out["path"] = urlMedia
+		out["file"] = urlMedia
+	}
+	if base64Media != nil {
+		out["base64"] = base64Media
+	}
 	if mediaType == "audio" {
 		out["audio"] = media
 		out["ptt"] = firstPresentAny(body["ptt"], true)

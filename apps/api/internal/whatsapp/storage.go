@@ -88,11 +88,7 @@ func (client storageClient) signedURL(ctx context.Context, bucket string, object
 	if signed == "" {
 		signed = parsed.SignedUrl
 	}
-	if strings.HasPrefix(signed, "/") {
-		signed = client.projectURL + signed
-	}
-
-	return signed, nil
+	return client.resolveSignedURL(signed), nil
 }
 
 func (client storageClient) upload(ctx context.Context, bucket string, objectPath string, contentType string, body io.Reader, upsert bool) error {
@@ -162,4 +158,30 @@ func escapeStorageObjectPath(value string) string {
 	}
 
 	return strings.Join(parts, "/")
+}
+
+func (client storageClient) resolveSignedURL(value string) string {
+	signed := strings.TrimSpace(value)
+	if signed == "" {
+		return ""
+	}
+	if strings.HasPrefix(signed, "http://") || strings.HasPrefix(signed, "https://") {
+		return signed
+	}
+	if client.projectURL == "" {
+		return signed
+	}
+
+	switch {
+	case strings.HasPrefix(signed, "/storage/v1/"):
+		return client.projectURL + signed
+	case strings.HasPrefix(signed, "/object/"):
+		return client.projectURL + "/storage/v1" + signed
+	case strings.HasPrefix(signed, "object/"):
+		return client.projectURL + "/storage/v1/" + signed
+	case strings.HasPrefix(signed, "/"):
+		return client.projectURL + signed
+	default:
+		return signed
+	}
 }
