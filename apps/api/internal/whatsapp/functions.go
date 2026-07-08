@@ -45,10 +45,7 @@ func (client functionsClient) webhookURL(functionName string) string {
 }
 
 func (client functionsClient) configuredEvolutionWebhookURL(sessionID string, instanceID string, webhookToken string) string {
-	baseURL := client.evolutionWebhookURL
-	if baseURL == "" {
-		baseURL = client.webhookURL("evolution-go-webhook")
-	}
+	baseURL := client.validEvolutionWebhookBaseURL()
 	if baseURL == "" {
 		return ""
 	}
@@ -64,6 +61,33 @@ func (client functionsClient) configuredEvolutionWebhookURL(sessionID string, in
 	endpoint.RawQuery = query.Encode()
 
 	return endpoint.String()
+}
+
+func (client functionsClient) validEvolutionWebhookBaseURL() string {
+	if isDeadEvolutionWebhookURL(client.evolutionWebhookURL) {
+		return client.webhookURL("evolution-go-webhook")
+	}
+
+	if client.evolutionWebhookURL != "" {
+		return client.evolutionWebhookURL
+	}
+
+	return client.webhookURL("evolution-go-webhook")
+}
+
+func isDeadEvolutionWebhookURL(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+
+	endpoint, err := url.Parse(value)
+	if err != nil {
+		return true
+	}
+
+	return strings.EqualFold(endpoint.Host, "api.vimobcrm.com.br") &&
+		strings.TrimRight(endpoint.Path, "/") == "/v1/whatsapp/webhook/evolution-go"
 }
 
 func (client functionsClient) invoke(ctx context.Context, functionName string, body map[string]any) (map[string]any, error) {

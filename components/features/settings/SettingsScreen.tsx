@@ -29,10 +29,6 @@ export default function Settings() {
   );
   const requestedTab = searchParams.get('tab') || 'account';
   const normalizedRequestedTab = requestedTab === 'webhook' ? 'webhooks' : requestedTab;
-  const legacyIntegrationTabs = ['webhooks', 'meta', 'whatsapp', 'api', 'ai'];
-  const initialIntegration = legacyIntegrationTabs.includes(normalizedRequestedTab) ? normalizedRequestedTab : undefined;
-  const initialTab = initialIntegration ? 'integrations' : requestedTab;
-  const [activeTab, setActiveTab] = useState(initialTab);
   const isBillingBlocked = !isSuperAdmin && isBillingBlockedStatus(organization?.subscription_status);
   const activeOrganizationId = organization?.id || profile?.organization_id;
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
@@ -41,6 +37,14 @@ export default function Settings() {
     profile?.role === 'admin' ||
     activeMemberRole === 'admin' ||
     activeMemberRole === 'owner';
+  const legacyIntegrationTabs = canManageOrganization
+    ? ['webhooks', 'meta', 'whatsapp', 'api', 'ai']
+    : ['webhooks', 'meta', 'whatsapp', 'api'];
+  const isUnauthorizedAIRequest = normalizedRequestedTab === 'ai' && !canManageOrganization;
+  const initialIntegration =
+    !isUnauthorizedAIRequest && legacyIntegrationTabs.includes(normalizedRequestedTab) ? normalizedRequestedTab : undefined;
+  const initialTab = isUnauthorizedAIRequest ? 'account' : initialIntegration ? 'integrations' : requestedTab;
+  const [activeTab, setActiveTab] = useState(initialTab);
 
   // Sync tab when URL query param changes (e.g. external navigation)
   useEffect(() => {
@@ -57,6 +61,13 @@ export default function Settings() {
 
     const rawTab = searchParams.get('tab');
     const t = rawTab === 'webhook' ? 'webhooks' : rawTab;
+    if (t === 'ai' && !canManageOrganization) {
+      if (activeTab !== 'account') setActiveTab('account');
+      const next = new URLSearchParams(searchParams);
+      next.set('tab', 'account');
+      replaceSearchParams(next);
+      return;
+    }
     const normalizedTab = t && legacyIntegrationTabs.includes(t) ? 'integrations' : t;
     if (normalizedTab && !canManageOrganization && ['team', 'subscription', 'properties'].includes(normalizedTab)) {
       if (activeTab !== 'account') setActiveTab('account');
@@ -80,7 +91,7 @@ export default function Settings() {
   };
 
   const hasWhatsAppModule = hasModule('whatsapp');
-  const hasAIModule = hasModule('ai_agent');
+  const hasAIModule = canManageOrganization && hasModule('ai_agent');
   const hasWebhooksModule = hasModule('webhooks');
   const hasAPIModule = hasModule('api');
 

@@ -118,6 +118,8 @@ export function SharedFilters({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const onSearchChangeRef = useRef(onSearchChange);
   const searchQueryRef = useRef(searchQuery);
+  const internalSelectInteractionRef = useRef(false);
+  const internalSelectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     onSearchChangeRef.current = onSearchChange;
@@ -143,6 +145,25 @@ export function SharedFilters({
     }
   }, []);
 
+  const markInternalSelectInteraction = useCallback(() => {
+    internalSelectInteractionRef.current = true;
+    if (internalSelectTimerRef.current) {
+      clearTimeout(internalSelectTimerRef.current);
+    }
+    internalSelectTimerRef.current = setTimeout(() => {
+      internalSelectInteractionRef.current = false;
+      internalSelectTimerRef.current = null;
+    }, 180);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (internalSelectTimerRef.current) {
+        clearTimeout(internalSelectTimerRef.current);
+      }
+    };
+  }, []);
+
   const handleDatePresetChange = useCallback(
     (nextPreset: DatePreset | null) => {
       onDatePresetChange(nextPreset ?? "last30days");
@@ -161,6 +182,9 @@ export function SharedFilters({
 
   const handleFiltersOpenChange = useCallback(
     (open: boolean) => {
+      if (!open && internalSelectInteractionRef.current) {
+        return;
+      }
       if (!open) {
         commitSearch();
         setUserFilterOpen(false);
@@ -251,6 +275,15 @@ export function SharedFilters({
   const filterSelectContentClass = "z-[130]";
   const dashboardTriggerClass =
     "h-8 gap-2 rounded-[6px] border-0 bg-[var(--app-surface)] px-3 text-[11px] font-semibold uppercase tracking-wider text-[var(--app-text-primary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] focus-visible:ring-1 focus-visible:ring-primary/30";
+  const isFilterFloatingLayer = (target: EventTarget | null) => {
+    const element = target instanceof Element ? target : null;
+    return Boolean(
+      internalSelectInteractionRef.current ||
+      element?.closest("[data-radix-popper-content-wrapper]") ||
+        element?.closest("[role='listbox']") ||
+        element?.closest("[cmdk-list]"),
+    );
+  };
   const getUserInitials = (name?: string | null, email?: string | null) => {
     const source = name?.trim() || email?.trim() || "U";
     return source
@@ -314,14 +347,21 @@ export function SharedFilters({
             align="end"
             onOpenAutoFocus={(e) => e.preventDefault()}
             onInteractOutside={(e) => {
-              const target = e.target instanceof Element ? e.target : null;
-              if (
-                target?.closest("[role='listbox']") ||
-                target?.closest("[data-radix-popper-content-wrapper]")
-              ) {
+              if (isFilterFloatingLayer(e.target)) {
                 e.preventDefault();
               }
             }}
+            onPointerDownOutside={(e) => {
+              if (isFilterFloatingLayer(e.target)) {
+                e.preventDefault();
+              }
+            }}
+            onFocusOutside={(e) => {
+              if (isFilterFloatingLayer(e.target)) {
+                e.preventDefault();
+              }
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
             className={cn(
               "z-[100] w-72 p-3 border-white/[0.055] shadow-2xl",
               isMobile && "w-[280px] max-h-[80vh] overflow-y-auto",
@@ -377,12 +417,16 @@ export function SharedFilters({
                 {availableTeams.length > 0 && (
                   <Select
                     value={teamId || "all"}
+                    onOpenChange={markInternalSelectInteraction}
                     onValueChange={(value) => {
                       onTeamChange(value === "all" ? null : value);
                       onUserChange(null);
                     }}
                   >
-                    <SelectTrigger className={cn("h-9 w-full text-xs", teamId && "border-primary text-primary")}>
+                    <SelectTrigger
+                      onPointerDown={markInternalSelectInteraction}
+                      className={cn("h-9 w-full text-xs", teamId && "border-primary text-primary")}
+                    >
                       <Users className="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
                       <SelectValue placeholder="Equipe" />
                     </SelectTrigger>
@@ -405,6 +449,7 @@ export function SharedFilters({
                         variant="outline"
                         role="combobox"
                         aria-expanded={userFilterOpen}
+                        onPointerDown={markInternalSelectInteraction}
                         className={cn(
                           "h-9 w-full justify-between rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-xs font-normal text-[var(--app-text-primary)] shadow-none outline-none ring-0 transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:bg-[var(--app-surface-hover)]",
                           userId && userId !== "all" && "text-primary",
@@ -430,6 +475,8 @@ export function SharedFilters({
                       align="start"
                       className="z-[140] w-[260px] p-0"
                       onOpenAutoFocus={(event) => event.preventDefault()}
+                      onPointerDownCapture={markInternalSelectInteraction}
+                      onDoubleClick={(event) => event.stopPropagation()}
                     >
                       <Command shouldFilter={false} className="[&_[cmdk-input-wrapper]]:border-b-0">
                         <CommandInput
@@ -501,9 +548,13 @@ export function SharedFilters({
                 {/* Source Filter */}
                 <Select
                   value={source || "all"}
+                  onOpenChange={markInternalSelectInteraction}
                   onValueChange={(value) => onSourceChange(value === "all" ? null : value)}
                 >
-                  <SelectTrigger className={cn("h-9 w-full text-xs", source && "border-primary text-primary")}>
+                  <SelectTrigger
+                    onPointerDown={markInternalSelectInteraction}
+                    className={cn("h-9 w-full text-xs", source && "border-primary text-primary")}
+                  >
                     <Globe className="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
                     <SelectValue placeholder={isLoadingSources ? "Carregando..." : "Origem"} />
                   </SelectTrigger>
@@ -520,9 +571,13 @@ export function SharedFilters({
                 {/* Tag Filter */}
                 <Select
                   value={tagId || "all"}
+                  onOpenChange={markInternalSelectInteraction}
                   onValueChange={(value) => onTagChange(value === "all" ? null : value)}
                 >
-                  <SelectTrigger className={cn("h-9 w-full text-xs", tagId && "border-primary text-primary")}>
+                  <SelectTrigger
+                    onPointerDown={markInternalSelectInteraction}
+                    className={cn("h-9 w-full text-xs", tagId && "border-primary text-primary")}
+                  >
                     <TagIcon className="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
                     <SelectValue placeholder="Tag" />
                   </SelectTrigger>
@@ -542,9 +597,13 @@ export function SharedFilters({
                 {/* Deal Status Filter */}
                 <Select
                   value={dealStatus || "all"}
+                  onOpenChange={markInternalSelectInteraction}
                   onValueChange={(value) => onDealStatusChange(value === "all" ? null : value)}
                 >
-                  <SelectTrigger className={cn("h-9 w-full text-xs", dealStatus && "border-primary text-primary")}>
+                  <SelectTrigger
+                    onPointerDown={markInternalSelectInteraction}
+                    className={cn("h-9 w-full text-xs", dealStatus && "border-primary text-primary")}
+                  >
                     <CircleDot className="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
                     <SelectValue placeholder="Status" />
                   </SelectTrigger>
@@ -568,9 +627,13 @@ export function SharedFilters({
                     <div className="space-y-1">
                       <Select
                         value={campaignId || "all"}
+                        onOpenChange={markInternalSelectInteraction}
                         onValueChange={(value) => onCampaignChange(value === "all" ? null : value)}
                       >
-                        <SelectTrigger className="h-8 text-xs bg-white/[0.035] border-white/[0.055]">
+                        <SelectTrigger
+                          onPointerDown={markInternalSelectInteraction}
+                          className="h-8 text-xs bg-white/[0.035] border-white/[0.055]"
+                        >
                           <SelectValue placeholder={isLoadingCampaigns ? "Carregando..." : "Todas campanhas"} />
                         </SelectTrigger>
                         <SelectContent className={filterSelectContentClass}>
@@ -594,9 +657,13 @@ export function SharedFilters({
                       <div className="space-y-1">
                         <Select
                           value={adSetId || "all"}
+                          onOpenChange={markInternalSelectInteraction}
                           onValueChange={(value) => onAdSetChange(value === "all" ? null : value)}
                         >
-                          <SelectTrigger className="h-8 text-xs bg-white/[0.035] border-white/[0.055] animate-in fade-in slide-in-from-top-1">
+                          <SelectTrigger
+                            onPointerDown={markInternalSelectInteraction}
+                            className="h-8 text-xs bg-white/[0.035] border-white/[0.055] animate-in fade-in slide-in-from-top-1"
+                          >
                             <SelectValue placeholder={isLoadingAdSets ? "Carregando..." : "Todos conjuntos"} />
                           </SelectTrigger>
                           <SelectContent className={filterSelectContentClass}>
@@ -616,9 +683,13 @@ export function SharedFilters({
                       <div className="space-y-1">
                         <Select
                           value={adId || "all"}
+                          onOpenChange={markInternalSelectInteraction}
                           onValueChange={(value) => onAdChange(value === "all" ? null : value)}
                         >
-                          <SelectTrigger className="h-8 text-xs bg-white/[0.035] border-white/[0.055] animate-in fade-in slide-in-from-top-1">
+                          <SelectTrigger
+                            onPointerDown={markInternalSelectInteraction}
+                            className="h-8 text-xs bg-white/[0.035] border-white/[0.055] animate-in fade-in slide-in-from-top-1"
+                          >
                             <SelectValue placeholder={isLoadingAds ? "Carregando..." : "Todos criativos"} />
                           </SelectTrigger>
                           <SelectContent className={filterSelectContentClass}>

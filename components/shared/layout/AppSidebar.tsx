@@ -245,6 +245,7 @@ const bottomItems: NavItem[] = [
       icon: Bot,
       labelKey: 'settingsAI',
       path: '/settings?tab=ai',
+      adminOnly: true,
       module: 'ai_agent'
     }, {
       icon: Building2,
@@ -302,6 +303,14 @@ export const AppSidebar = React.memo(function AppSidebar() {
       }];
     }
 
+    const canAccessAsTeamLeader = (path?: string) =>
+      isTeamLeader &&
+      (
+        path === '/crm/management' ||
+        path === '/crm/management?tab=teams' ||
+        path === '/crm/management?tab=distribution'
+      );
+
     const filterItems = (items: NavItem[]): NavItem[] => {
       return items.filter(item => {
         if (item.superAdminOnly && !isSuperAdmin) return false;
@@ -309,7 +318,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
         if (item.adminOnly && !canAccessAdminItems) return false;
         if (item.permission && !hasPermission(item.permission)) return false;
         if (item.anyPermissions && !item.anyPermissions.some(permission => hasPermission(permission))) {
-          if (!(item.path === '/crm/management' && isTeamLeader)) return false;
+          if (!canAccessAsTeamLeader(item.path)) return false;
         }
         return true;
       }).map(item => {
@@ -330,6 +339,14 @@ export const AppSidebar = React.memo(function AppSidebar() {
   const computedBottomItems = useMemo(() => {
     if (isBillingBlocked) return [];
 
+    const canAccessAsTeamLeader = (path?: string) =>
+      isTeamLeader &&
+      (
+        path === '/crm/management' ||
+        path === '/crm/management?tab=teams' ||
+        path === '/crm/management?tab=distribution'
+      );
+
     const filterItems = (items: NavItem[]): NavItem[] => {
       return items.filter(item => {
         if (item.superAdminOnly && !isSuperAdmin) return false;
@@ -337,7 +354,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
         if (item.adminOnly && !canAccessAdminItems) return false;
         if (item.permission && !hasPermission(item.permission)) return false;
         if (item.anyPermissions && !item.anyPermissions.some(permission => hasPermission(permission))) {
-          if (!(item.path === '/crm/management' && isTeamLeader)) return false;
+          if (!canAccessAsTeamLeader(item.path)) return false;
         }
         return true;
       }).map(item => {
@@ -448,7 +465,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
             align="start"
             alignOffset={dropdownAlignOffset}
             sideOffset={8}
-            className="w-60 rounded-[6px] border-0 bg-[var(--app-sidebar)] p-1.5 text-[var(--app-text-primary)] shadow-[0_8px_18px_rgba(0,0,0,0.045)] backdrop-blur-md dark:shadow-[0_8px_18px_rgba(0,0,0,0.14)]"
+            className="w-60 space-y-1 rounded-[6px] border-0 bg-[var(--app-sidebar)] p-1.5 text-[var(--app-text-primary)] shadow-[0_8px_18px_rgba(0,0,0,0.045)] backdrop-blur-md dark:shadow-[0_8px_18px_rgba(0,0,0,0.14)]"
           >
             {item.children.map(child => {
               const ChildIcon = child.icon;
@@ -458,7 +475,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
                 <DropdownMenuItem
                   key={child.path}
                   className={cn(
-                    "cursor-pointer rounded-[6px] p-0 text-[var(--app-text-secondary)] focus:bg-[var(--app-surface-hover)] focus:text-[var(--app-text-primary)]",
+                    "cursor-pointer rounded-[5px] p-0 text-[var(--app-text-secondary)] focus:bg-[var(--app-surface-hover)] focus:text-[var(--app-text-primary)]",
                     SIDEBAR_NAV_RESET,
                     childActive && "bg-[var(--app-surface-soft)] text-[#FF4529]"
                   )}
@@ -478,14 +495,14 @@ export const AppSidebar = React.memo(function AppSidebar() {
                     <Link
                       href={child.path}
                       onPointerDown={() => setPendingPath(child.path)}
-                      className={cn("flex w-full items-center gap-3 px-3 py-2.5", SIDEBAR_NAV_CHILD_TEXT, SIDEBAR_NAV_RESET)}
+                      className={cn("flex w-full items-center gap-3 px-3 py-2", SIDEBAR_NAV_CHILD_TEXT, SIDEBAR_NAV_RESET)}
                     >
                       <ChildIcon className="h-4 w-4 flex-shrink-0" strokeWidth={SIDEBAR_ICON_STROKE} />
                       <span>{getLabel(child.labelKey)}</span>
                     </Link>
                   ) : (
                     <button
-                      className={cn("flex w-full items-center gap-3 px-3 py-2.5", SIDEBAR_NAV_CHILD_TEXT, SIDEBAR_NAV_RESET)}
+                      className={cn("flex w-full items-center gap-3 px-3 py-2", SIDEBAR_NAV_CHILD_TEXT, SIDEBAR_NAV_RESET)}
                     >
                       <ChildIcon className="h-4 w-4 flex-shrink-0" strokeWidth={SIDEBAR_ICON_STROKE} />
                       <span>{getLabel(child.labelKey)}</span>

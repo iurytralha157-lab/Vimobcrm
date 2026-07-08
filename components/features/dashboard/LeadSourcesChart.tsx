@@ -46,6 +46,15 @@ const COLORS = [
   '#06B6D4',
 ];
 
+function getTotalValueClassName(total: number) {
+  const digits = Math.abs(total).toString().length;
+
+  if (digits <= 3) return 'text-4xl sm:text-5xl';
+  if (digits === 4) return 'text-3xl sm:text-4xl';
+  if (digits === 5) return 'text-2xl sm:text-3xl';
+  return 'text-xl sm:text-2xl';
+}
+
 function ChartSkeleton() {
   return (
     <div className="flex flex-col items-center justify-center h-full space-y-6 py-4">
@@ -113,6 +122,7 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
   }
 
   const total = data.reduce((sum, item) => sum + item.value, 0);
+  const totalValueClassName = getTotalValueClassName(total);
   const chartData = data
     .map(item => ({
       ...item,
@@ -208,8 +218,8 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
                         key={`cell-${index}`}
                         fill={entry.color}
                         opacity={hasSelection && !isSelected ? 0.35 : 1}
-                        stroke={isSelected ? "white" : "transparent"}
-                        strokeWidth={isSelected ? 2 : 0}
+                        stroke="transparent"
+                        strokeWidth={0}
                         className={cn(
                           "transition-all duration-300 hover:opacity-90 origin-center outline-none cursor-pointer",
                           isSelected && "drop-shadow-md scale-[1.02]"
@@ -234,8 +244,13 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
               <span className="text-[10px] sm:text-[11px] uppercase font-bold text-muted-foreground/70 tracking-[0.2em] mb-0.5">
                 Leads
               </span>
-              <div className="relative">
-                <span className="text-4xl sm:text-5xl font-black text-foreground tracking-tighter tabular-nums drop-shadow-sm">
+              <div className="relative flex max-w-[52%] items-center justify-center">
+                <span
+                  className={cn(
+                    "max-w-full truncate font-black leading-none text-foreground tabular-nums drop-shadow-sm",
+                    totalValueClassName,
+                  )}
+                >
                   {total}
                 </span>
                 <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-8 h-1 bg-primary/20 rounded-full blur-[2px]" />

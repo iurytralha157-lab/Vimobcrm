@@ -172,21 +172,21 @@ const SOURCE_OPTIONS = [
 ];
 
 const CONDITION_TYPES = [
-  { value: 'source', label: 'Fonte genérica' },
-  { value: 'webhook', label: 'Webhook específico' },
-  { value: 'whatsapp_session', label: 'Conexão WhatsApp' },
-  { value: 'meta_form', label: 'Formulário Meta' },
+  { value: 'source', label: 'Canal de entrada' },
+  { value: 'webhook', label: 'Webhook especifico' },
+  { value: 'whatsapp_session', label: 'Conexao WhatsApp' },
+  { value: 'meta_form', label: 'Formulario Meta' },
   { value: 'website_category', label: 'Categoria do site' },
-  { value: 'campaign_contains', label: 'Nome da campanha contém' },
+  { value: 'campaign_contains', label: 'Nome da campanha contem' },
   { value: 'tag', label: 'Tag' },
   { value: 'city', label: 'Cidade' },
-  { value: 'interest_property', label: 'Interesse em imóvel' },
+  { value: 'interest_property', label: 'Interesse em imovel' },
 ];
 
 const WEBSITE_CATEGORY_OPTIONS = [
   { value: 'venda', label: 'Venda' },
-  { value: 'locacao', label: 'Locação' },
-  { value: 'lancamento', label: 'Lançamento' },
+  { value: 'locacao', label: 'Locacao' },
+  { value: 'lancamento', label: 'Lancamento' },
 ];
 
 function isQueueStrategy(value: unknown): value is QueueStrategy {
@@ -308,7 +308,7 @@ export function DistributionQueueEditor({
   allowedPipelineIds,
 }: DistributionQueueEditorProps) {
   const { data: pipelines = [] } = usePipelines();
-  const { data: teams = [] } = useTeams();
+  const { data: teams = [] } = useTeams({ includeInactive: true });
   const { data: users = [] } = useOrganizationUsers();
   const { data: tags = [] } = useTags();
   const { data: properties = [] } = useProperties();
@@ -346,6 +346,14 @@ export function DistributionQueueEditor({
       ? pipelines.filter((pipeline) => effectiveAllowedPipelineIds.includes(pipeline.id))
       : pipelines
   ), [effectiveAllowedPipelineIds, hasPipelineRestriction, pipelines]);
+  const incomingWebhooks = useMemo(
+    () => webhooks.filter((webhook) => webhook.type === 'incoming'),
+    [webhooks]
+  );
+  const activeWhatsAppSessions = useMemo(
+    () => whatsappSessions.filter((session) => session.is_active),
+    [whatsappSessions]
+  );
 
   const [saving, setSaving] = useState(false);
   const [openSections, setOpenSections] = useState<string[]>([]);
@@ -367,6 +375,22 @@ export function DistributionQueueEditor({
     conditions: [],
     members: [],
   });
+
+  const selectableUsers = useMemo(
+    () => visibleUsers.filter((user) => !formData.members.some((member) => member.type === 'user' && member.entityId === user.id)),
+    [formData.members, visibleUsers]
+  );
+  const selectableTeams = useMemo(
+    () => visibleTeams.filter((team) => !formData.members.some((member) => member.type === 'team' && member.entityId === team.id)),
+    [formData.members, visibleTeams]
+  );
+  const teamSelectMessage = teams.length === 0
+    ? 'Nenhuma equipe cadastrada.'
+    : activeTeams.length === 0
+      ? 'Nenhuma equipe ativa encontrada.'
+      : selectableTeams.length === 0
+        ? 'Todas as equipes ativas ja foram adicionadas.'
+        : null;
 
   // Sensors for DnD
   const sensors = useSensors(
@@ -424,7 +448,7 @@ export function DistributionQueueEditor({
               type: 'user',
               entityId: userId,
               weight: m.weight || 10,
-              name: m.user?.name || 'Usuário',
+              name: m.user?.name || 'Usuario',
             });
           }
         }
@@ -555,19 +579,19 @@ export function DistributionQueueEditor({
 
   const handleSave = async () => {
     if (!formData.name.trim()) {
-      toast.error('Nome da fila é obrigatório');
+      toast.error('Nome da fila e obrigatorio');
       return;
     }
     if (!formData.target_pipeline_id) {
-      toast.error('Pipeline de destino é obrigatório');
+      toast.error('Pipeline de destino e obrigatorio');
       return;
     }
     if (!formData.target_stage_id) {
-      toast.error('Estágio inicial é obrigatório');
+      toast.error('Estagio inicial e obrigatorio');
       return;
     }
     if (hasPipelineRestriction && !effectiveAllowedPipelineIds.includes(formData.target_pipeline_id)) {
-      toast.error('Você só pode criar filas para pipelines da sua equipe');
+      toast.error('Voce so pode criar filas para pipelines da sua equipe');
       return;
     }
     if (hasTeamRestriction || hasUserRestriction) {
@@ -577,7 +601,7 @@ export function DistributionQueueEditor({
           : !effectiveAllowedUserIds.includes(member.entityId)
       );
       if (invalidMember) {
-        toast.error('Você só pode distribuir para sua equipe ou membros dela');
+        toast.error('Voce so pode distribuir para sua equipe ou membros dela');
         return;
       }
     }
@@ -597,7 +621,7 @@ export function DistributionQueueEditor({
       condition.values.some(value => value.trim())
     );
     if (!hasValidCriteria) {
-      toast.error('Adicione pelo menos um critério de entrada para salvar a fila');
+      toast.error('Adicione pelo menos um criterio de entrada para salvar a fila');
       return;
     }
     if (formData.is_active && validMembers.length === 0) {
@@ -651,7 +675,12 @@ export function DistributionQueueEditor({
           <div className="space-y-2">
             <p className="text-xs text-muted-foreground">Webhooks:</p>
             <div className="flex flex-wrap gap-1">
-              {webhooks.filter(w => w.type === 'incoming').map(wh => (
+              {incomingWebhooks.length === 0 && (
+                <span className="rounded-md bg-[var(--app-surface)] px-2 py-1 text-xs text-muted-foreground">
+                  Nenhum webhook de entrada encontrado.
+                </span>
+              )}
+              {incomingWebhooks.map(wh => (
                 <Badge
                   key={wh.id}
                   variant={condition.values.includes(wh.id) ? 'default' : 'outline'}
@@ -673,9 +702,14 @@ export function DistributionQueueEditor({
       case 'whatsapp_session':
         return (
           <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">Conexões WhatsApp:</p>
+            <p className="text-xs text-muted-foreground">Conexoes WhatsApp:</p>
             <div className="flex flex-wrap gap-1">
-              {whatsappSessions.filter(s => s.is_active).map(session => (
+              {activeWhatsAppSessions.length === 0 && (
+                <span className="rounded-md bg-[var(--app-surface)] px-2 py-1 text-xs text-muted-foreground">
+                  Nenhuma conexao WhatsApp ativa.
+                </span>
+              )}
+              {activeWhatsAppSessions.map(session => (
                 <Badge
                   key={session.id}
                   variant={condition.values.includes(session.id) ? 'default' : 'outline'}
@@ -697,8 +731,13 @@ export function DistributionQueueEditor({
       case 'meta_form':
         return (
           <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">Formulários Meta:</p>
+            <p className="text-xs text-muted-foreground">Formularios Meta:</p>
             <div className="flex flex-wrap gap-1">
+              {metaFormConfigs.length === 0 && (
+                <span className="rounded-md bg-[var(--app-surface)] px-2 py-1 text-xs text-muted-foreground">
+                  Nenhum formulario Meta integrado.
+                </span>
+              )}
               {metaFormConfigs.map(form => (
                 <Badge
                   key={form.form_id}
@@ -749,6 +788,11 @@ export function DistributionQueueEditor({
       case 'tag':
         return (
           <div className="flex flex-wrap gap-1">
+            {tags.length === 0 && (
+              <span className="rounded-md bg-[var(--app-surface)] px-2 py-1 text-xs text-muted-foreground">
+                Nenhuma tag cadastrada.
+              </span>
+            )}
             {tags.map(tag => (
               <Badge
                 key={tag.id}
@@ -770,7 +814,7 @@ export function DistributionQueueEditor({
       case 'city':
         return (
           <Input
-            placeholder="Ex: São Paulo, Campinas"
+            placeholder="Ex: Sao Paulo, Campinas"
             value={condition.values.join(', ')}
             onChange={e => updateCondition(condition.id, {
               values: e.target.value.split(',').map(v => v.trim()).filter(Boolean)
@@ -801,7 +845,7 @@ export function DistributionQueueEditor({
       <DialogContent className="max-h-[90vh] w-[94vw] max-w-6xl overflow-hidden border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-2xl">
         <DialogHeader className="bg-[var(--app-surface-soft)] px-6 py-5">
           <DialogTitle>
-            {queue ? 'Editar Fila de Distribuição' : 'Nova Fila de Distribuição'}
+            {queue ? 'Editar Fila de Distribuicao' : 'Nova Fila de Distribuicao'}
           </DialogTitle>
         </DialogHeader>
 
@@ -812,7 +856,7 @@ export function DistributionQueueEditor({
                 <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
                   <div className="flex items-center gap-2">
                     <Settings2 className="h-4 w-4 text-primary" />
-                    <span className="font-medium">Informações básicas</span>
+                    <span className="font-medium">Informacoes basicas</span>
                   </div>
                   <ChevronDown className={cn('h-4 w-4 transition-transform', openSections.includes('basic') && 'rotate-180')} />
                 </CollapsibleTrigger>
@@ -827,7 +871,7 @@ export function DistributionQueueEditor({
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>Estratégia</Label>
+                      <Label>Estrategia</Label>
                       <Select
                         value={formData.strategy}
                         onValueChange={(value) => {
@@ -869,14 +913,14 @@ export function DistributionQueueEditor({
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <Label>Estágio inicial *</Label>
+                      <Label>Estagio inicial *</Label>
                       <Select
                         value={formData.target_stage_id || ''}
                         onValueChange={v => setFormData(prev => ({ ...prev, target_stage_id: v }))}
                         disabled={!formData.target_pipeline_id}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Selecione um estágio..." />
+                          <SelectValue placeholder="Selecione um estagio..." />
                         </SelectTrigger>
                         <SelectContent>
                           {stages.map(s => (
@@ -904,6 +948,9 @@ export function DistributionQueueEditor({
                   <ChevronDown className={cn('h-4 w-4 transition-transform', openSections.includes('rules') && 'rotate-180')} />
                 </CollapsibleTrigger>
                 <CollapsibleContent className="space-y-4 px-1 pt-4">
+                  <p className="rounded-lg bg-[var(--app-surface-soft)] px-3 py-2 text-xs text-muted-foreground">
+                    Defina quais leads entram nesta fila. Use canal para regras amplas e os campos especificos quando quiser travar uma origem exata.
+                  </p>
                   {formData.conditions.map((condition) => (
                     <div key={condition.id} className="space-y-3 rounded-lg border-0 bg-[var(--app-surface-soft)] p-3">
                       <div className="flex items-center justify-between gap-2">
@@ -915,7 +962,7 @@ export function DistributionQueueEditor({
                             }
                           }}
                         >
-                          <SelectTrigger className="w-56">
+                          <SelectTrigger className="w-full min-w-0 sm:w-56">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -932,10 +979,10 @@ export function DistributionQueueEditor({
                     </div>
                   ))}
                   {!hasValidCriteria && (
-                    <p className="text-xs text-destructive">Adicione pelo menos um critério preenchido para salvar a fila.</p>
+                    <p className="text-xs text-destructive">Adicione pelo menos um criterio preenchido para salvar a fila.</p>
                   )}
                   <Button variant="outline" onClick={addCondition} className="w-full gap-2">
-                    <Plus className="h-4 w-4" /> Nova condição
+                    <Plus className="h-4 w-4" /> Nova condicao
                   </Button>
                 </CollapsibleContent>
               </Collapsible>
@@ -946,7 +993,7 @@ export function DistributionQueueEditor({
                 <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
                   <div className="flex items-center gap-2">
                     <Users className="h-4 w-4 text-primary" />
-                    <span className="font-medium">Ordem de distribuição</span>
+                    <span className="font-medium">Ordem de distribuicao</span>
                     {formData.members.length > 0 && <Badge variant="secondary" className="text-xs">{formData.members.length}</Badge>}
                   </div>
                   <ChevronDown className={cn('h-4 w-4 transition-transform', openSections.includes('members') && 'rotate-180')} />
@@ -1003,7 +1050,12 @@ export function DistributionQueueEditor({
                         <SelectValue placeholder="Adicionar corretor..." />
                       </SelectTrigger>
                       <SelectContent>
-                        {visibleUsers.filter(u => !formData.members.some(m => m.type === 'user' && m.entityId === u.id)).map(user => (
+                        {selectableUsers.length === 0 && (
+                          <SelectItem value="__no_users" disabled>
+                            Nenhum corretor ativo disponivel.
+                          </SelectItem>
+                        )}
+                        {selectableUsers.map(user => (
                           <SelectItem key={user.id} value={user.id}>{user.name}</SelectItem>
                         ))}
                       </SelectContent>
@@ -1016,12 +1068,22 @@ export function DistributionQueueEditor({
                         <SelectValue placeholder="Adicionar equipe..." />
                       </SelectTrigger>
                       <SelectContent>
-                        {visibleTeams.filter(t => !formData.members.some(m => m.type === 'team' && m.entityId === t.id)).map(team => (
+                        {teamSelectMessage && (
+                          <SelectItem value="__no_teams" disabled>
+                            {teamSelectMessage}
+                          </SelectItem>
+                        )}
+                        {selectableTeams.map(team => (
                           <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
+                  {teams.length > 0 && activeTeams.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      Ative uma equipe em Gestao &gt; Equipes para usa-la em uma fila.
+                    </p>
+                  )}
                   {formData.is_active && formData.members.length === 0 && (
                     <p className="text-xs text-destructive">Adicione pelo menos um participante para manter a fila ativa.</p>
                   )}
@@ -1032,7 +1094,7 @@ export function DistributionQueueEditor({
                 <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
                   <div className="flex items-center gap-2">
                     <AlertCircle className="h-4 w-4 text-primary" />
-                    <span className="font-medium">Redistribuição</span>
+                    <span className="font-medium">Redistribuicao</span>
                     {formData.settings.enable_redistribution && <Badge variant="secondary" className="text-xs">Ativa</Badge>}
                   </div>
                   <ChevronDown className={cn('h-4 w-4 transition-transform', openSections.includes('redistribution') && 'rotate-180')} />
@@ -1041,9 +1103,9 @@ export function DistributionQueueEditor({
                   <div className="space-y-4 rounded-lg border-0 bg-[var(--app-surface-soft)] p-4">
                     <div className="flex items-start justify-between gap-4">
                       <div className="space-y-1">
-                        <Label>Ativar redistribuição de lead parado</Label>
+                        <Label>Ativar redistribuicao de lead parado</Label>
                         <p className="text-xs text-muted-foreground">
-                          Se o responsável não fizer contato nem movimentar o próprio lead no prazo, o sistema envia para o próximo participante da fila.
+                          Se o responsavel nao fizer contato nem movimentar o proprio lead no prazo, o sistema envia para o proximo participante da fila.
                         </p>
                       </div>
                       <Switch

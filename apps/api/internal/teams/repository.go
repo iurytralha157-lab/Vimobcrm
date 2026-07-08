@@ -38,8 +38,20 @@ func NewRepository(db *dbpkg.Postgres, storageConfig StorageConfig) Repository {
 
 func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, includeInactive bool) ([]Team, error) {
 	where := []string{"t.organization_id = $1::uuid"}
+	args := []any{tenantContext.OrganizationID}
 	if !includeInactive {
 		where = append(where, "t.is_active = true")
+	}
+	if !canManageTeams(tenantContext) {
+		if !tenantContext.IsTeamLeader || len(tenantContext.LedTeamIDs) == 0 {
+			return []Team{}, nil
+		}
+		placeholders := []string{}
+		for _, teamID := range tenantContext.LedTeamIDs {
+			args = append(args, teamID)
+			placeholders = append(placeholders, fmt.Sprintf("$%d::uuid", len(args)))
+		}
+		where = append(where, "t.id in ("+strings.Join(placeholders, ", ")+")")
 	}
 
 	rows, err := repo.db.Pool().Query(ctx, `
@@ -59,7 +71,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, i
 		left join public.users u on u.id = t.created_by
 		where `+strings.Join(where, " and ")+`
 		order by t.name asc, t.created_at desc
-	`, tenantContext.OrganizationID)
+	`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -134,12 +146,19 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 }
 
 func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context, teamID string, request UpdateTeamRequest) (Team, error) {
-	if !canManageTeams(tenantContext) {
-		return Team{}, tenant.ErrOrganizationAccessDenied
-	}
 	teamID, ok := normalizeUUID(teamID)
 	if !ok {
 		return Team{}, ErrInvalidInput
+	}
+	isAdminScope := canManageTeams(tenantContext)
+	if !isAdminScope {
+		if !tenantContext.LeadsTeam(teamID) || !hasMemberUpdate(request) {
+			return Team{}, tenant.ErrOrganizationAccessDenied
+		}
+		if request.Name != nil || request.LogoURL != nil || request.IsActive != nil {
+			return Team{}, tenant.ErrOrganizationAccessDenied
+		}
+		request.PreserveLeadership = true
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
@@ -189,6 +208,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 			current, err := repo.currentLeaderMap(ctx, tx, teamID)
 			if err != nil {
 				return Team{}, err
+			}
+			if !isAdminScope && !preservesCurrentLeaders(current, memberInputs) {
+				return Team{}, tenant.ErrOrganizationAccessDenied
 			}
 			for index := range memberInputs {
 				memberInputs[index].IsLeader = current[memberInputs[index].UserID]
@@ -257,6 +279,9 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, te
 	if !ok {
 		return Team{}, ErrInvalidInput
 	}
+	if !canManageTeams(tenantContext) && !tenantContext.LeadsTeam(teamID) {
+		return Team{}, tenant.ErrOrganizationAccessDenied
+	}
 	team, err := scanTeam(repo.db.Pool().QueryRow(ctx, `
 		select
 			t.id::text,
@@ -324,8 +349,21 @@ func (repo Repository) ListTeamPipelines(ctx context.Context, tenantContext tena
 		if !ok {
 			return nil, ErrInvalidInput
 		}
+		if !canManageTeams(tenantContext) && !tenantContext.LeadsTeam(normalizedTeamID) {
+			return []TeamPipelineRelation{}, nil
+		}
 		args = append(args, normalizedTeamID)
 		where = append(where, fmt.Sprintf("tp.team_id = $%d::uuid", len(args)))
+	} else if !canManageTeams(tenantContext) {
+		if !tenantContext.IsTeamLeader || len(tenantContext.LedTeamIDs) == 0 {
+			return []TeamPipelineRelation{}, nil
+		}
+		placeholders := []string{}
+		for _, ledTeamID := range tenantContext.LedTeamIDs {
+			args = append(args, ledTeamID)
+			placeholders = append(placeholders, fmt.Sprintf("$%d::uuid", len(args)))
+		}
+		where = append(where, "tp.team_id in ("+strings.Join(placeholders, ", ")+")")
 	}
 
 	rows, err := repo.db.Pool().Query(ctx, `
@@ -461,6 +499,17 @@ func (repo Repository) ListAvailability(ctx context.Context, tenantContext tenan
 		}
 		where = append(where, "ma.team_member_id in ("+strings.Join(placeholders, ", ")+")")
 	}
+	if !canManageTeams(tenantContext) {
+		if !tenantContext.IsTeamLeader || len(tenantContext.LedTeamIDs) == 0 {
+			return []MemberAvailability{}, nil
+		}
+		placeholders := []string{}
+		for _, ledTeamID := range tenantContext.LedTeamIDs {
+			args = append(args, ledTeamID)
+			placeholders = append(placeholders, fmt.Sprintf("$%d::uuid", len(args)))
+		}
+		where = append(where, "tm.team_id in ("+strings.Join(placeholders, ", ")+")")
+	}
 
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
@@ -503,6 +552,9 @@ func (repo Repository) UpsertAvailability(ctx context.Context, tenantContext ten
 	if err != nil {
 		return MemberAvailability{}, err
 	}
+	if err := repo.ensureCanManageAvailability(ctx, repo.db.Pool(), tenantContext, input.TeamMemberID); err != nil {
+		return MemberAvailability{}, err
+	}
 	return repo.upsertAvailability(ctx, repo.db.Pool(), tenantContext.OrganizationID, input)
 }
 
@@ -519,6 +571,9 @@ func (repo Repository) ReplaceAvailability(ctx context.Context, tenantContext te
 	defer tx.Rollback(ctx)
 
 	if err := ensureTeamMemberBelongsToOrganization(ctx, tx, tenantContext.OrganizationID, teamMemberID); err != nil {
+		return nil, err
+	}
+	if err := repo.ensureCanManageAvailability(ctx, tx, tenantContext, teamMemberID); err != nil {
 		return nil, err
 	}
 
@@ -1097,12 +1152,69 @@ func memberUserIDs(members []TeamMemberInput) []string {
 	return out
 }
 
+func preservesCurrentLeaders(current map[string]bool, members []TeamMemberInput) bool {
+	selected := map[string]struct{}{}
+	for _, member := range members {
+		if userID, ok := normalizeUUID(member.UserID); ok {
+			selected[userID] = struct{}{}
+		}
+	}
+	for userID, isLeader := range current {
+		if !isLeader {
+			continue
+		}
+		if _, ok := selected[userID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func hasMemberUpdate(request UpdateTeamRequest) bool {
 	return request.Members != nil || request.MemberIDs != nil
 }
 
+func (repo Repository) ensureCanManageAvailability(ctx context.Context, q queryRowExecutor, tenantContext tenant.Context, teamMemberID string) error {
+	if canManageTeams(tenantContext) {
+		return nil
+	}
+	if !tenantContext.IsTeamLeader {
+		return tenant.ErrOrganizationAccessDenied
+	}
+
+	var teamID string
+	err := q.QueryRow(ctx, `
+		select tm.team_id::text
+		from public.team_members tm
+		join public.teams t on t.id = tm.team_id
+		where tm.organization_id = $1::uuid
+		  and tm.id = $2::uuid
+		  and t.organization_id = $1::uuid
+		  and coalesce(tm.is_active, true) = true
+		  and coalesce(t.is_active, true) = true
+	`, tenantContext.OrganizationID, teamMemberID).Scan(&teamID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrTeamMemberNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if !tenantContext.LeadsTeam(teamID) {
+		return tenant.ErrOrganizationAccessDenied
+	}
+	return nil
+}
+
 func canManageTeams(tenantContext tenant.Context) bool {
-	return tenantContext.HasPermission("settings_manage") ||
+	if tenantContext.IsSuperAdmin || tenantContext.HasRole("owner", "admin") {
+		return true
+	}
+	if tenantContext.IsTeamLeader {
+		return false
+	}
+
+	return tenantContext.HasRole("manager") ||
+		tenantContext.HasPermission("settings_manage") ||
 		tenantContext.HasPermission("settings_teams") ||
 		tenantContext.HasPermission("teams_manage")
 }

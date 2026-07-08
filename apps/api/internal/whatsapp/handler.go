@@ -1,10 +1,13 @@
 package whatsapp
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
@@ -24,6 +27,82 @@ func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
 		publisher = publishers[0]
 	}
 	return Handler{repo: repo, publisher: publisher}
+}
+
+func (handler Handler) EvolutionGoWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{
+			"ok":      true,
+			"service": "evolution-go-webhook-proxy",
+		})
+		return
+	}
+	if r.Method != http.MethodPost {
+		httpserver.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not allowed.")
+		return
+	}
+
+	target := handler.repo.functions.webhookURL("evolution-go-webhook")
+	if target == "" || handler.repo.functions.apiKey == "" {
+		httpserver.WriteError(w, r, http.StatusInternalServerError, "whatsapp_webhook_not_configured", "WhatsApp webhook receiver is not configured.")
+		return
+	}
+
+	endpoint, err := url.Parse(target)
+	if err != nil {
+		httpserver.WriteError(w, r, http.StatusInternalServerError, "whatsapp_webhook_not_configured", "WhatsApp webhook receiver is invalid.")
+		return
+	}
+	endpoint.RawQuery = r.URL.RawQuery
+
+	defer r.Body.Close()
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 32<<20))
+	if err != nil {
+		httpserver.WriteError(w, r, http.StatusRequestEntityTooLarge, "whatsapp_webhook_body_too_large", "Webhook body is too large.")
+		return
+	}
+
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint.String(), bytes.NewReader(body))
+	if err != nil {
+		httpserver.WriteError(w, r, http.StatusInternalServerError, "whatsapp_webhook_proxy_failed", "Unable to proxy WhatsApp webhook.")
+		return
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", r.Header.Get("Content-Type"))
+	if request.Header.Get("Content-Type") == "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	request.Header.Set("apikey", handler.repo.functions.apiKey)
+	request.Header.Set("Authorization", "Bearer "+handler.repo.functions.apiKey)
+	copyOptionalHeader(request.Header, r.Header, "x-webhook-token")
+	copyOptionalHeader(request.Header, r.Header, "x-evolution-webhook-token")
+
+	response, err := handler.repo.functions.httpClient.Do(request)
+	if err != nil {
+		httpserver.WriteError(w, r, http.StatusBadGateway, "whatsapp_webhook_proxy_failed", "Unable to reach WhatsApp webhook receiver.")
+		return
+	}
+	defer response.Body.Close()
+
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	if err != nil {
+		httpserver.WriteError(w, r, http.StatusBadGateway, "whatsapp_webhook_proxy_failed", "Unable to read WhatsApp webhook response.")
+		return
+	}
+
+	if contentType := response.Header.Get("Content-Type"); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+	}
+	w.WriteHeader(response.StatusCode)
+	_, _ = w.Write(responseBody)
+}
+
+func copyOptionalHeader(target http.Header, source http.Header, key string) {
+	if value := source.Get(key); value != "" {
+		target.Set(key, value)
+	}
 }
 
 func (handler Handler) ListSessions(w http.ResponseWriter, r *http.Request) {

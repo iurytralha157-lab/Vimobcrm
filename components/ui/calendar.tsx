@@ -42,11 +42,11 @@ function Calendar({ className, classNames, components, showOutsideDays = true, .
           "outside text-muted-foreground opacity-50 aria-selected:bg-primary/10 aria-selected:text-muted-foreground aria-selected:opacity-30",
         disabled: "text-muted-foreground opacity-50",
         range_start:
-          "!rounded-l-[6px] !rounded-r-none !bg-primary/15 [&>button]:!rounded-[6px] [&>button]:!bg-primary [&>button]:!text-primary-foreground",
+          "!rounded-l-[6px] !rounded-r-none !bg-[color-mix(in_srgb,var(--primary)_15%,transparent)] [&>button]:!rounded-[6px] [&>button]:!bg-primary [&>button]:!text-primary-foreground",
         range_middle:
-          "!rounded-none !bg-primary/15 [&>button]:!rounded-none [&>button]:!bg-transparent [&>button]:!text-foreground hover:[&>button]:!rounded-[6px] hover:[&>button]:!bg-primary hover:[&>button]:!text-primary-foreground focus-within:[&>button]:!rounded-[6px] focus-within:[&>button]:!bg-primary focus-within:[&>button]:!text-primary-foreground",
+          "!rounded-none !bg-[color-mix(in_srgb,var(--primary)_15%,transparent)] !text-foreground !opacity-100 [&>button]:!rounded-none [&>button]:!bg-transparent [&>button]:!text-foreground [&>button]:!opacity-100 hover:[&>button]:!rounded-[6px] hover:[&>button]:!bg-primary hover:[&>button]:!text-primary-foreground focus-within:[&>button]:!rounded-[6px] focus-within:[&>button]:!bg-primary focus-within:[&>button]:!text-primary-foreground",
         range_end:
-          "!rounded-l-none !rounded-r-[6px] !bg-primary/15 [&>button]:!rounded-[6px] [&>button]:!bg-primary [&>button]:!text-primary-foreground",
+          "!rounded-l-none !rounded-r-[6px] !bg-[color-mix(in_srgb,var(--primary)_15%,transparent)] [&>button]:!rounded-[6px] [&>button]:!bg-primary [&>button]:!text-primary-foreground",
         hidden: "invisible",
         ...classNames,
       }}

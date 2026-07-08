@@ -200,8 +200,8 @@ export const AppHeader = React.memo(function AppHeader({
                 )}
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" sideOffset={12} collisionPadding={16} className="w-[calc(100vw-2rem)] sm:w-80 max-w-[380px] bg-popover/95 backdrop-blur-md rounded-2xl p-1 border-border/50">
-              <div className="px-4 py-3 border-b border-border/40">
+            <DropdownMenuContent align="end" sideOffset={12} collisionPadding={12} className="flex max-h-[min(520px,calc(100dvh-8rem))] w-[min(340px,calc(100vw-1.25rem))] flex-col overflow-hidden rounded-xl border-border/50 bg-popover/95 p-1 backdrop-blur-md sm:max-h-[min(560px,calc(100dvh-6rem))] sm:w-[340px]">
+              <div className="shrink-0 px-4 py-2.5 border-b border-border/40">
                 <p className="font-semibold text-sm">Notificações</p>
               </div>
               {isLoading ? (
@@ -210,23 +210,23 @@ export const AppHeader = React.memo(function AppHeader({
                 </div>
               ) : notifications.length > 0 ? (
                 <>
-                  <div className="max-h-[70vh] overflow-y-auto scrollbar-thin">
+                  <div className="min-h-0 flex-1 overflow-y-auto scrollbar-thin">
                     {notifications.slice(0, 5).map(notification => {
                       const NotificationIcon = notificationIcons[notification.type] || Bell;
                       return (
-                        <DropdownMenuItem key={notification.id} className="p-3 cursor-pointer rounded-xl m-1" onClick={() => handleNotificationClick(notification)}>
-                          <div className={`flex items-start gap-3 w-full ${notification.is_read ? 'opacity-60' : ''}`}>
-                            <div className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 ${notification.is_read ? 'bg-muted' : 'bg-primary/10'}`}>
-                              <NotificationIcon className={`h-4 w-5 ${notification.is_read ? 'text-muted-foreground' : 'text-primary'}`} />
+                        <DropdownMenuItem key={notification.id} className="m-1 cursor-pointer rounded-lg px-2.5 py-2.5 sm:px-3" onClick={() => handleNotificationClick(notification)}>
+                          <div className={`flex w-full items-start gap-2.5 ${notification.is_read ? 'opacity-60' : ''}`}>
+                            <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full sm:h-9 sm:w-9 ${notification.is_read ? 'bg-muted' : 'bg-primary/10'}`}>
+                              <NotificationIcon className={`h-4 w-4 ${notification.is_read ? 'text-muted-foreground' : 'text-primary'}`} />
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
-                                <p className={`text-sm truncate ${!notification.is_read ? 'font-semibold' : ''}`}>
+                                <p className={`truncate text-[13px] sm:text-sm ${!notification.is_read ? 'font-semibold' : ''}`}>
                                   {notification.title}
                                 </p>
                                 {!notification.is_read && <span className="h-2 w-2 rounded-full bg-primary shrink-0" />}
                               </div>
-                              {notification.content && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{notification.content}</p>}
+                              {notification.content && <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-muted-foreground sm:text-xs">{notification.content}</p>}
                               <p className="text-xs text-muted-foreground mt-1 tabular-nums">
                                 {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true, locale: ptBR })}
                               </p>
@@ -237,7 +237,7 @@ export const AppHeader = React.memo(function AppHeader({
                     })}
                   </div>
                   <DropdownMenuSeparator className="my-1 border-border/40" />
-                  <div className="p-2 flex gap-2">
+                  <div className="flex shrink-0 gap-2 p-2">
                     {unreadCount > 0 && (
                       <Button variant="ghost" size="sm" className="flex-1 text-[11px] h-8 rounded-lg" onClick={() => markAllRead.mutate()}>
                         Marcar todas como lidas

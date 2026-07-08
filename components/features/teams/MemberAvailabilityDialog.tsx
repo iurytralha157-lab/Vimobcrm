@@ -168,13 +168,10 @@ export function MemberAvailabilityDialog({
             </div>
           ) : (
             <div className="max-h-[55vh] space-y-3 overflow-y-auto overflow-x-hidden pr-1">
-              <div className="flex items-center justify-between rounded-[8px] bg-[var(--app-surface-soft)] p-3">
-                <div className="flex items-center gap-2">
+              <div className="flex min-h-12 items-center justify-between rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-2.5">
+                <div className="flex items-center gap-2.5">
                   <Clock className="h-4 w-4 text-primary" />
-                  <div>
-                    <span className="block text-sm font-medium">Marcar todos como 24h</span>
-                    <span className="text-[10px] text-[var(--app-text-tertiary)]">Define 24h para todos os dias ativos</span>
-                  </div>
+                  <span className="text-sm font-medium leading-none">Marcar todos como 24h</span>
                 </div>
                 <Switch checked={globalAllDay} onCheckedChange={toggleGlobalAllDay} />
               </div>
@@ -182,7 +179,7 @@ export function MemberAvailabilityDialog({
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label className="text-xs text-[var(--app-text-tertiary)]">Dias da semana</Label>
-                  <Badge variant="secondary" className="border-0 bg-[var(--app-surface-hover)] text-xs text-[var(--app-text-primary)]">
+                  <Badge variant="secondary" className="rounded-[6px] border-0 bg-[var(--app-surface-hover)] text-xs text-[var(--app-text-primary)]">
                     {activeDays} {activeDays === 1 ? 'dia' : 'dias'} ativos
                   </Badge>
                 </div>
@@ -258,7 +255,7 @@ export function MemberAvailabilityDialog({
                             </div>
                           ) : (
                             <div className="flex flex-1 justify-center">
-                              <Badge variant="secondary" className="h-5 border-0 bg-[var(--app-surface-hover)] px-2 py-0 text-[10px] text-[var(--app-text-primary)]">
+                              <Badge variant="secondary" className="h-5 rounded-[6px] border-0 bg-[var(--app-surface-hover)] px-2 py-0 text-[10px] text-[var(--app-text-primary)]">
                                 Dia inteiro
                               </Badge>
                             </div>

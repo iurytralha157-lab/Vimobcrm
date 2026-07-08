@@ -1129,7 +1129,9 @@ func eventUserVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder stri
 }
 
 func dashboardNeedsLeadSubquery(filter DashboardFilter) bool {
-	return (filter.Source != "" && filter.Source != "all") ||
+	return (filter.UserID != "" && filter.UserID != "all") ||
+		(filter.TeamID != "" && filter.TeamID != "all") ||
+		(filter.Source != "" && filter.Source != "all") ||
 		(filter.CampaignID != "" && filter.CampaignID != "all") ||
 		(filter.AdSetID != "" && filter.AdSetID != "all") ||
 		(filter.AdID != "" && filter.AdID != "all") ||

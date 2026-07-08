@@ -35,6 +35,7 @@ export function DateFilterPopover({
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [tempDateRange, setTempDateRange] = useState<{ from?: Date; to?: Date }>({});
   const isMobile = useIsMobile();
+  const calendarRange = normalizeCalendarRange(tempDateRange);
 
   // Quando o popover abre, reflete o preset ou range customizado no calendário
   const handleOpenChange = (open: boolean) => {
@@ -123,19 +124,19 @@ export function DateFilterPopover({
         align={align}
       >
         {isMobile ? (
-          <div className="p-4 space-y-4">
+          <div className="space-y-2.5 p-3">
             {/* Preset buttons in 2-column grid matching the design */}
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-1.5">
               {filteredPresets.map((option) => (
                 <Button
                   key={option.value}
-                  variant={datePreset === option.value && !customDateRange ? "default" : "outline"}
+                  variant="ghost"
                   size="sm"
                   className={cn(
-                    "h-10 text-sm font-medium rounded-full transition-all",
+                    "h-8 rounded-[6px] border-0 text-xs font-medium shadow-none transition-colors",
                     datePreset === option.value && !customDateRange
                       ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                      : "hover:bg-muted",
+                      : "bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
                   )}
                   onClick={() => handleDatePresetChange(option.value)}
                 >
@@ -159,19 +160,19 @@ export function DateFilterPopover({
                 {/* Calendar for custom range */}
                 <Calendar
                   mode="range"
-                  selected={{ from: tempDateRange.from, to: tempDateRange.to }}
+                  selected={calendarRange}
                   onSelect={(range) => {
-                    setTempDateRange({ from: range?.from, to: range?.to });
+                    setTempDateRange(normalizeCalendarRange(range));
                   }}
                   numberOfMonths={1}
                   locale={ptBR}
-                  className="pointer-events-auto rounded-md"
+                  className="pointer-events-auto rounded-[6px] p-1"
                 />
 
                 {/* Apply button */}
                 <Button
                   size="sm"
-                  className="w-full h-10 rounded-full font-medium"
+                  className="h-9 w-full rounded-[6px] font-medium"
                   disabled={!tempDateRange.from || !tempDateRange.to}
                   onClick={handleApplyCustomDate}
                 >
@@ -182,7 +183,7 @@ export function DateFilterPopover({
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-9 w-full border-0 bg-primary/10 text-primary shadow-none hover:bg-primary/15 hover:text-primary"
+                    className="h-8 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[10px] font-medium text-[var(--app-text-tertiary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-secondary)]"
                     onClick={handleClearDate}
                   >
                     Limpar período
@@ -226,8 +227,8 @@ export function DateFilterPopover({
               </p>
               <Calendar
                 mode="range"
-                selected={{ from: tempDateRange.from, to: tempDateRange.to }}
-                onSelect={(range) => setTempDateRange({ from: range?.from, to: range?.to })}
+                selected={calendarRange}
+                onSelect={(range) => setTempDateRange(normalizeCalendarRange(range))}
                 numberOfMonths={1}
                 locale={ptBR}
                 className="rounded-md border border-border/40 p-2"
@@ -258,6 +259,13 @@ export function DateFilterPopover({
       </PopoverContent>
     </Popover>
   );
+}
+
+function normalizeCalendarRange(range?: { from?: Date; to?: Date } | null) {
+  return {
+    from: range?.from ? startOfDay(range.from) : undefined,
+    to: range?.to ? startOfDay(range.to) : undefined,
+  };
 }
 
 // Simple period filter for pages that only need preset options (no custom date range)

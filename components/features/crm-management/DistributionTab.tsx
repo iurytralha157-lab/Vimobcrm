@@ -108,13 +108,15 @@ export function DistributionTab() {
     if (accessScope.isAdmin) return roundRobins;
     const ledTeamIds = new Set(accessScope.ledTeamIds);
     const ledUserIds = new Set(accessScope.ledUserIds);
+    const currentUserId = profile?.id;
     return roundRobins.filter((queue) =>
+      (currentUserId && queue.created_by === currentUserId) ||
       queue.members.some((member) =>
         (member.team_id && ledTeamIds.has(member.team_id)) ||
         (!member.team_id && member.user_id && ledUserIds.has(member.user_id))
       )
     );
-  }, [accessScope.isAdmin, accessScope.ledTeamIds, accessScope.ledUserIds, roundRobins]);
+  }, [accessScope.isAdmin, accessScope.ledTeamIds, accessScope.ledUserIds, profile?.id, roundRobins]);
 
   const effectiveAllowedPipelineIds = useMemo(() => {
     if (accessScope.isAdmin) return undefined;

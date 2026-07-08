@@ -41,6 +41,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
   const { data: users = [] } = useUsers();
   const createTeam = useCreateTeam();
   const updateTeam = useUpdateTeam();
+  const canEditTeamIdentity = canEditLeadership || !team;
 
   const activeUsers = useMemo(
     () => users.filter((user) => user.is_active !== false && Boolean(user.id)),
@@ -123,7 +124,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
   };
 
   const uploadLogo = async () => {
-    if (!logoFile) return logoUrl;
+    if (!canEditTeamIdentity || !logoFile) return logoUrl;
 
     const maxLogoSize = 5 * 1024 * 1024;
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml'];
@@ -168,11 +169,15 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
       if (team) {
         await updateTeam.mutateAsync({
           id: team.id,
-          name: name.trim(),
-          logo_url: finalLogoUrl || null,
-          is_active: team.is_active ?? true,
           members: validMembersToSave,
           preserveLeadership: !canEditLeadership,
+          ...(canEditTeamIdentity
+            ? {
+                name: name.trim(),
+                logo_url: finalLogoUrl || null,
+                is_active: team.is_active ?? true,
+              }
+            : {}),
         });
       } else {
         await createTeam.mutateAsync({
@@ -218,6 +223,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                 type="button"
                 className="group relative h-12 w-12 shrink-0 overflow-hidden rounded-full bg-white/10 sm:h-14 sm:w-14"
                 onClick={() => fileInputRef.current?.click()}
+                disabled={!canEditTeamIdentity}
               >
                 <Avatar className="h-full w-full">
                   <AvatarImage src={displayLogo} />
@@ -234,6 +240,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                 type="file"
                 accept="image/*"
                 className="hidden"
+                disabled={!canEditTeamIdentity}
                 onChange={(event) => setLogoFile(event.target.files?.[0] || null)}
               />
               <div className="min-w-0 flex-1">
@@ -241,6 +248,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                   placeholder="Nome da equipe"
+                  disabled={!canEditTeamIdentity}
                   className="h-10 rounded-[8px] border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] placeholder:text-[var(--app-text-tertiary)] focus-visible:ring-1 focus-visible:ring-primary"
                 />
                 <p className="mt-1.5 text-xs text-[var(--app-text-tertiary)]">

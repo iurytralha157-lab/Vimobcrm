@@ -45,6 +45,15 @@ func NewRepository(db *dbpkg.Postgres) Repository {
 }
 
 func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) ([]RoundRobin, error) {
+	args := []any{tenantContext.OrganizationID}
+	where := []string{"rr.organization_id = $1::uuid"}
+	if !canManageRoundRobins(tenantContext) {
+		if !tenantContext.IsTeamLeader {
+			return []RoundRobin{}, nil
+		}
+		where = append(where, leadershipRoundRobinCondition(tenantContext, "rr", &args))
+	}
+
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
 			rr.id::text,
@@ -81,9 +90,9 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) (
 			where rrl.organization_id = rr.organization_id
 			  and rrl.round_robin_id = rr.id
 		) logs on true
-		where rr.organization_id = $1::uuid
+		where `+strings.Join(where, " and ")+`
 		order by rr.created_at desc, rr.id desc
-	`, tenantContext.OrganizationID)
+	`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +147,9 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, ro
 	roundRobinID, ok := normalizeUUID(roundRobinID)
 	if !ok {
 		return RoundRobin{}, ErrRoundRobinNotFound
+	}
+	if err := repo.ensureRoundRobinVisible(ctx, repo.db.Pool(), tenantContext, roundRobinID); err != nil {
+		return RoundRobin{}, err
 	}
 
 	item, err := scanRoundRobin(repo.db.Pool().QueryRow(ctx, `
@@ -202,7 +214,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, ro
 }
 
 func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context, input createInput) (RoundRobin, error) {
-	if !canManageRoundRobins(tenantContext) {
+	if !canManageRoundRobinScope(tenantContext) {
 		return RoundRobin{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -213,6 +225,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	defer tx.Rollback(ctx)
 
 	if err := repo.validateDestination(ctx, tx, tenantContext.OrganizationID, input.TargetPipelineID, input.TargetStageID); err != nil {
+		return RoundRobin{}, err
+	}
+	if err := ensureRoundRobinInputInScope(tenantContext, input.TargetPipelineID, input.Members, true, true); err != nil {
 		return RoundRobin{}, err
 	}
 	if err := repo.checkConditionConflicts(ctx, tx, tenantContext.OrganizationID, nil, input.Rules); err != nil {
@@ -264,7 +279,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 }
 
 func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context, roundRobinID string, input updateInput) (RoundRobin, error) {
-	if !canManageRoundRobins(tenantContext) {
+	if !canManageRoundRobinScope(tenantContext) {
 		return RoundRobin{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -278,6 +293,10 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return RoundRobin{}, err
 	}
 	defer tx.Rollback(ctx)
+
+	if err := repo.ensureRoundRobinMutable(ctx, tx, tenantContext, roundRobinID); err != nil {
+		return RoundRobin{}, err
+	}
 
 	current, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, roundRobinID)
 	if err != nil {
@@ -321,6 +340,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 
 	targetStageID := stringPointerFromMetadata(metadata, "target_stage_id")
 	if err := repo.validateDestination(ctx, tx, tenantContext.OrganizationID, pipelineID, targetStageID); err != nil {
+		return RoundRobin{}, err
+	}
+	if err := ensureRoundRobinInputInScope(tenantContext, pipelineID, input.Members, input.MembersSet, true); err != nil {
 		return RoundRobin{}, err
 	}
 	if input.RulesSet {
@@ -440,20 +462,34 @@ func (repo Repository) ListRules(ctx context.Context, tenantContext tenant.Conte
 			return nil, ErrRoundRobinNotFound
 		}
 		roundRobinID = &value
-		if err := repo.ensureRoundRobin(ctx, repo.db.Pool(), tenantContext.OrganizationID, value); err != nil {
+		if err := repo.ensureRoundRobinVisible(ctx, repo.db.Pool(), tenantContext, value); err != nil {
 			return nil, err
 		}
 	}
 
-	return repo.listRules(ctx, tenantContext.OrganizationID, roundRobinID)
+	items, err := repo.listRules(ctx, tenantContext.OrganizationID, roundRobinID)
+	if err != nil || roundRobinID != nil || canManageRoundRobins(tenantContext) {
+		return items, err
+	}
+	visibleIDs, err := repo.visibleRoundRobinIDSet(ctx, tenantContext)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]Rule, 0, len(items))
+	for _, item := range items {
+		if visibleIDs[item.RoundRobinID] {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered, nil
 }
 
 func (repo Repository) CreateRule(ctx context.Context, tenantContext tenant.Context, input ruleMutationInput) (Rule, error) {
-	if !canManageRoundRobins(tenantContext) {
+	if !canManageRoundRobinScope(tenantContext) {
 		return Rule{}, tenant.ErrOrganizationAccessDenied
 	}
 
-	if err := repo.ensureRoundRobin(ctx, repo.db.Pool(), tenantContext.OrganizationID, input.RoundRobinID); err != nil {
+	if err := repo.ensureRoundRobinMutable(ctx, repo.db.Pool(), tenantContext, input.RoundRobinID); err != nil {
 		return Rule{}, err
 	}
 	if err := repo.checkConditionConflicts(ctx, repo.db.Pool(), tenantContext.OrganizationID, &input.RoundRobinID, []ruleInput{{
@@ -504,7 +540,7 @@ func (repo Repository) CreateRule(ctx context.Context, tenantContext tenant.Cont
 }
 
 func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Context, ruleID string, input updateRuleInput) (Rule, error) {
-	if !canManageRoundRobins(tenantContext) {
+	if !canManageRoundRobinScope(tenantContext) {
 		return Rule{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -515,6 +551,9 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 
 	current, err := repo.getRule(ctx, tenantContext.OrganizationID, ruleID)
 	if err != nil {
+		return Rule{}, err
+	}
+	if err := repo.ensureRoundRobinMutable(ctx, repo.db.Pool(), tenantContext, current.RoundRobinID); err != nil {
 		return Rule{}, err
 	}
 
@@ -595,7 +634,7 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 }
 
 func (repo Repository) DeleteRule(ctx context.Context, tenantContext tenant.Context, ruleID string) error {
-	if !canManageRoundRobins(tenantContext) {
+	if !canManageRoundRobinScope(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 
@@ -606,6 +645,9 @@ func (repo Repository) DeleteRule(ctx context.Context, tenantContext tenant.Cont
 
 	current, err := repo.getRule(ctx, tenantContext.OrganizationID, ruleID)
 	if err != nil {
+		return err
+	}
+	if err := repo.ensureRoundRobinMutable(ctx, repo.db.Pool(), tenantContext, current.RoundRobinID); err != nil {
 		return err
 	}
 
@@ -627,7 +669,7 @@ func (repo Repository) DeleteRule(ctx context.Context, tenantContext tenant.Cont
 }
 
 func (repo Repository) AddMember(ctx context.Context, tenantContext tenant.Context, roundRobinID string, input memberMutationInput) ([]Member, error) {
-	if !canManageRoundRobins(tenantContext) {
+	if !canManageRoundRobinScope(tenantContext) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -642,7 +684,7 @@ func (repo Repository) AddMember(ctx context.Context, tenantContext tenant.Conte
 	}
 	defer tx.Rollback(ctx)
 
-	if err := repo.ensureRoundRobin(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+	if err := repo.ensureRoundRobinMutable(ctx, tx, tenantContext, roundRobinID); err != nil {
 		return nil, err
 	}
 
@@ -653,6 +695,9 @@ func (repo Repository) AddMember(ctx context.Context, tenantContext tenant.Conte
 		TeamID:   input.TeamID,
 		Weight:   input.Weight,
 	}}
+	if err := ensureRoundRobinInputInScope(tenantContext, nil, items, true, false); err != nil {
+		return nil, err
+	}
 	ids, err := repo.insertMembers(ctx, tx, tenantContext.OrganizationID, roundRobinID, items)
 	if err != nil {
 		return nil, err
@@ -675,13 +720,16 @@ func (repo Repository) AddMember(ctx context.Context, tenantContext tenant.Conte
 }
 
 func (repo Repository) UpdateMember(ctx context.Context, tenantContext tenant.Context, memberID string, input updateMemberInput) (Member, error) {
-	if !canManageRoundRobins(tenantContext) {
+	if !canManageRoundRobinScope(tenantContext) {
 		return Member{}, tenant.ErrOrganizationAccessDenied
 	}
 
 	memberID, ok := normalizeUUID(memberID)
 	if !ok {
 		return Member{}, ErrMemberNotFound
+	}
+	if err := repo.ensureRoundRobinMemberMutable(ctx, repo.db.Pool(), tenantContext, memberID); err != nil {
+		return Member{}, err
 	}
 
 	setClauses := []string{}
@@ -716,13 +764,16 @@ func (repo Repository) UpdateMember(ctx context.Context, tenantContext tenant.Co
 }
 
 func (repo Repository) DeleteMember(ctx context.Context, tenantContext tenant.Context, memberID string) error {
-	if !canManageRoundRobins(tenantContext) {
+	if !canManageRoundRobinScope(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 
 	memberID, ok := normalizeUUID(memberID)
 	if !ok {
 		return ErrMemberNotFound
+	}
+	if err := repo.ensureRoundRobinMemberMutable(ctx, repo.db.Pool(), tenantContext, memberID); err != nil {
+		return err
 	}
 
 	commandTag, err := repo.db.Pool().Exec(ctx, `
@@ -1493,9 +1544,179 @@ func jsonb(value any) string {
 	return string(payload)
 }
 
+func canManageRoundRobinScope(tenantContext tenant.Context) bool {
+	return canManageRoundRobins(tenantContext) || tenantContext.IsTeamLeader
+}
+
 func canManageRoundRobins(tenantContext tenant.Context) bool {
-	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin", "manager") ||
+	if tenantContext.IsSuperAdmin || tenantContext.HasRole("owner", "admin") {
+		return true
+	}
+	if tenantContext.IsTeamLeader {
+		return false
+	}
+
+	return tenantContext.HasRole("manager") ||
 		tenantContext.HasPermission("lead_manage") ||
 		tenantContext.HasPermission("lead_assign")
+}
+
+func ensureRoundRobinInputInScope(tenantContext tenant.Context, pipelineID *string, members []memberInput, membersSet bool, requirePipeline bool) error {
+	if canManageRoundRobins(tenantContext) {
+		return nil
+	}
+	if !tenantContext.IsTeamLeader {
+		return tenant.ErrOrganizationAccessDenied
+	}
+	if requirePipeline {
+		if pipelineID == nil || !tenantContext.LeadsPipeline(*pipelineID) {
+			return tenant.ErrOrganizationAccessDenied
+		}
+	} else if pipelineID != nil && !tenantContext.LeadsPipeline(*pipelineID) {
+		return tenant.ErrOrganizationAccessDenied
+	}
+	if !membersSet {
+		return nil
+	}
+	if len(members) == 0 {
+		return tenant.ErrOrganizationAccessDenied
+	}
+	for _, member := range members {
+		if member.TeamID != nil {
+			if !tenantContext.LeadsTeam(*member.TeamID) {
+				return tenant.ErrOrganizationAccessDenied
+			}
+			continue
+		}
+		if member.UserID == nil || !tenantContext.LeadsUser(*member.UserID) {
+			return tenant.ErrOrganizationAccessDenied
+		}
+	}
+	return nil
+}
+
+func leadershipRoundRobinCondition(tenantContext tenant.Context, alias string, args *[]any) string {
+	conditions := []string{}
+	if tenantContext.UserID != "" {
+		*args = append(*args, tenantContext.UserID)
+		conditions = append(conditions, fmt.Sprintf("%s.created_by = $%d::uuid", alias, len(*args)))
+	}
+	if len(tenantContext.LedPipelineIDs) > 0 {
+		conditions = append(conditions, fmt.Sprintf("%s.pipeline_id in (%s)", alias, appendUUIDPlaceholders(args, tenantContext.LedPipelineIDs)))
+	}
+	if len(tenantContext.LedTeamIDs) > 0 {
+		conditions = append(conditions, fmt.Sprintf(`exists (
+			select 1
+			from public.round_robin_members scoped_rrm
+			where scoped_rrm.organization_id = %s.organization_id
+			  and scoped_rrm.round_robin_id = %s.id
+			  and coalesce(scoped_rrm.is_active, true) = true
+			  and scoped_rrm.team_id in (%s)
+		)`, alias, alias, appendUUIDPlaceholders(args, tenantContext.LedTeamIDs)))
+	}
+	if len(tenantContext.LedUserIDs) > 0 {
+		conditions = append(conditions, fmt.Sprintf(`exists (
+			select 1
+			from public.round_robin_members scoped_rrm
+			where scoped_rrm.organization_id = %s.organization_id
+			  and scoped_rrm.round_robin_id = %s.id
+			  and coalesce(scoped_rrm.is_active, true) = true
+			  and scoped_rrm.user_id in (%s)
+		)`, alias, alias, appendUUIDPlaceholders(args, tenantContext.LedUserIDs)))
+	}
+	if len(conditions) == 0 {
+		return "false"
+	}
+	return "(" + strings.Join(conditions, " or ") + ")"
+}
+
+func appendUUIDPlaceholders(args *[]any, values []string) string {
+	placeholders := make([]string, 0, len(values))
+	for _, value := range values {
+		*args = append(*args, value)
+		placeholders = append(placeholders, fmt.Sprintf("$%d::uuid", len(*args)))
+	}
+	if len(placeholders) == 0 {
+		return "null"
+	}
+	return strings.Join(placeholders, ", ")
+}
+
+func (repo Repository) ensureRoundRobinVisible(ctx context.Context, q queryer, tenantContext tenant.Context, roundRobinID string) error {
+	if canManageRoundRobins(tenantContext) {
+		return repo.ensureRoundRobin(ctx, q, tenantContext.OrganizationID, roundRobinID)
+	}
+	if !tenantContext.IsTeamLeader {
+		return tenant.ErrOrganizationAccessDenied
+	}
+	args := []any{tenantContext.OrganizationID, roundRobinID}
+	condition := leadershipRoundRobinCondition(tenantContext, "rr", &args)
+	var exists bool
+	if err := q.QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.round_robins rr
+			where rr.organization_id = $1::uuid
+			  and rr.id = $2::uuid
+			  and `+condition+`
+		)
+	`, args...).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrRoundRobinNotFound
+	}
+	return nil
+}
+
+func (repo Repository) ensureRoundRobinMutable(ctx context.Context, q queryer, tenantContext tenant.Context, roundRobinID string) error {
+	return repo.ensureRoundRobinVisible(ctx, q, tenantContext, roundRobinID)
+}
+
+func (repo Repository) ensureRoundRobinMemberMutable(ctx context.Context, q queryer, tenantContext tenant.Context, memberID string) error {
+	var roundRobinID string
+	err := q.QueryRow(ctx, `
+		select round_robin_id::text
+		from public.round_robin_members
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+	`, tenantContext.OrganizationID, memberID).Scan(&roundRobinID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrMemberNotFound
+	}
+	if err != nil {
+		return err
+	}
+	return repo.ensureRoundRobinMutable(ctx, q, tenantContext, roundRobinID)
+}
+
+func (repo Repository) visibleRoundRobinIDSet(ctx context.Context, tenantContext tenant.Context) (map[string]bool, error) {
+	if canManageRoundRobins(tenantContext) {
+		return nil, nil
+	}
+	if !tenantContext.IsTeamLeader {
+		return map[string]bool{}, nil
+	}
+	args := []any{tenantContext.OrganizationID}
+	condition := leadershipRoundRobinCondition(tenantContext, "rr", &args)
+	rows, err := repo.db.Pool().Query(ctx, `
+		select rr.id::text
+		from public.round_robins rr
+		where rr.organization_id = $1::uuid
+		  and `+condition+`
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		result[id] = true
+	}
+	return result, rows.Err()
 }

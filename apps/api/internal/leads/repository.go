@@ -1396,6 +1396,13 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 		 and tm.team_id = rrm.team_id
 		 and tm.user_id = rrm.user_id
 		 and coalesce(tm.is_active, true) = true
+		left join lateral (
+		  select count(*)::bigint as total
+		  from public.round_robin_logs rrl
+		  where rrl.organization_id = rrm.organization_id
+		    and rrl.round_robin_id = rrm.round_robin_id
+		    and rrl.assigned_user_id = rrm.user_id
+		) logs on true
 		where rrm.organization_id = $1::uuid
 		  and rrm.round_robin_id = $2::uuid
 		  and rrm.is_active = true
@@ -1427,7 +1434,7 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 		        )
 		    )
 		  )
-		order by rrm.position asc, rrm.created_at asc
+		order by coalesce(logs.total, 0) asc, coalesce(rrm.position, 0) asc, rrm.created_at asc
 		limit 1
 	`, organizationID, roundRobinID).Scan(&selection.MemberID, &selection.UserID)
 	if errors.Is(err, pgx.ErrNoRows) {

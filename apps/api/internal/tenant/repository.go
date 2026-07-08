@@ -68,7 +68,7 @@ func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrga
 
 	cacheKey := userID + "|" + requestedOrganizationID
 	if cached, ok := repo.getCachedContext(cacheKey); ok {
-		return cached, nil
+		return repo.applyTeamLeadershipScope(ctx, cached)
 	}
 
 	profile, err := repo.getUserProfile(ctx, userID)
@@ -118,6 +118,10 @@ func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrga
 	if err != nil {
 		return Context{}, fmt.Errorf("%w: %v", ErrTenantResolutionUnhealthy, err)
 	}
+	resolved, err = repo.applyTeamLeadershipScope(ctx, resolved)
+	if err != nil {
+		return Context{}, err
+	}
 
 	repo.storeCachedContext(cacheKey, resolved)
 	return resolved, nil
@@ -157,6 +161,15 @@ func cloneContext(source Context) Context {
 	clone := source
 	if source.Permissions != nil {
 		clone.Permissions = append([]string(nil), source.Permissions...)
+	}
+	if source.LedTeamIDs != nil {
+		clone.LedTeamIDs = append([]string(nil), source.LedTeamIDs...)
+	}
+	if source.LedUserIDs != nil {
+		clone.LedUserIDs = append([]string(nil), source.LedUserIDs...)
+	}
+	if source.LedPipelineIDs != nil {
+		clone.LedPipelineIDs = append([]string(nil), source.LedPipelineIDs...)
 	}
 	return clone
 }
@@ -357,6 +370,93 @@ func (repo Repository) getPermissions(ctx context.Context, userID string, organi
 	return strings.Split(csv, ","), nil
 }
 
+func (repo Repository) applyTeamLeadershipScope(ctx context.Context, tenantContext Context) (Context, error) {
+	tenantContext.IsTeamLeader = false
+	tenantContext.LedTeamIDs = nil
+	tenantContext.LedUserIDs = nil
+	tenantContext.LedPipelineIDs = nil
+
+	if !tenantContext.IsOrganizationMember() {
+		return tenantContext, nil
+	}
+
+	rows, err := repo.db.Pool().Query(ctx, `
+		with led_teams as (
+			select distinct tm.team_id
+			from public.team_members tm
+			join public.teams t
+			  on t.id = tm.team_id
+			 and t.organization_id = tm.organization_id
+			where tm.organization_id = $1::uuid
+			  and tm.user_id = $2::uuid
+			  and coalesce(tm.is_active, true) = true
+			  and coalesce(tm.is_leader, false) = true
+			  and coalesce(t.is_active, true) = true
+		),
+		led_users as (
+			select distinct member.user_id
+			from public.team_members member
+			join led_teams lt on lt.team_id = member.team_id
+			join public.users u on u.id = member.user_id
+			where member.organization_id = $1::uuid
+			  and coalesce(member.is_active, true) = true
+			  and coalesce(u.is_active, true) = true
+			union
+			select $2::uuid
+		),
+		led_pipelines as (
+			select distinct tp.pipeline_id
+			from public.team_pipelines tp
+			join led_teams lt on lt.team_id = tp.team_id
+			join public.pipelines p
+			  on p.id = tp.pipeline_id
+			 and p.organization_id = tp.organization_id
+			where tp.organization_id = $1::uuid
+			  and coalesce(p.is_active, true) = true
+		)
+		select 'team' as scope_type, team_id::text as id from led_teams
+		union all
+		select 'user' as scope_type, user_id::text as id from led_users
+		union all
+		select 'pipeline' as scope_type, pipeline_id::text as id from led_pipelines
+	`, tenantContext.OrganizationID, tenantContext.UserID)
+	if err != nil {
+		return Context{}, fmt.Errorf("%w: %v", ErrTenantResolutionUnhealthy, err)
+	}
+	defer rows.Close()
+
+	teamIDs := []string{}
+	userIDs := []string{}
+	pipelineIDs := []string{}
+	for rows.Next() {
+		var scopeType, id string
+		if err := rows.Scan(&scopeType, &id); err != nil {
+			return Context{}, err
+		}
+		switch scopeType {
+		case "team":
+			teamIDs = appendUniqueString(teamIDs, id)
+		case "user":
+			userIDs = appendUniqueString(userIDs, id)
+		case "pipeline":
+			pipelineIDs = appendUniqueString(pipelineIDs, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return Context{}, err
+	}
+
+	tenantContext.IsTeamLeader = len(teamIDs) > 0
+	tenantContext.LedTeamIDs = teamIDs
+	tenantContext.LedUserIDs = userIDs
+	tenantContext.LedPipelineIDs = pipelineIDs
+	if tenantContext.IsTeamLeader && !stringSliceContains(tenantContext.Permissions, "lead_view_team") {
+		tenantContext.Permissions = append(append([]string(nil), tenantContext.Permissions...), "lead_view_team")
+	}
+
+	return tenantContext, nil
+}
+
 func (repo Repository) getLegacyPermissions(ctx context.Context, userID string, organizationID string) ([]string, error) {
 	var csv string
 
@@ -383,6 +483,24 @@ func (repo Repository) getLegacyPermissions(ctx context.Context, userID string, 
 	}
 
 	return strings.Split(csv, ","), nil
+}
+
+func appendUniqueString(values []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" || stringSliceContains(values, value) {
+		return values
+	}
+	return append(values, value)
+}
+
+func stringSliceContains(values []string, target string) bool {
+	target = strings.TrimSpace(target)
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), target) {
+			return true
+		}
+	}
+	return false
 }
 
 func isUndefinedSchemaError(err error) bool {

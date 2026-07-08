@@ -286,7 +286,7 @@ export default function Dashboard() {
         </div>
 
         {/* ===== MOBILE LAYOUT ===== */}
-        <div className={cn("app-scrollbar lg:hidden flex flex-col gap-4 overflow-y-auto", !isMobile ? "flex-1 min-h-0" : "")}>
+        <div className={cn("scrollbar-hidden lg:hidden flex flex-col gap-4 overflow-y-auto", !isMobile ? "flex-1 min-h-0" : "")}>
           <KPICards
             data={kpiData}
             isLoading={kpisLoading}
@@ -303,14 +303,14 @@ export default function Dashboard() {
             onValueChange={setMobileChartTab}
             className={cn(!isMobile ? "flex-1 flex flex-col min-h-0" : "")}
           >
-            <TabsList className="w-full grid grid-cols-3 border-0 bg-[var(--app-surface-soft)]">
-              <TabsTrigger value="funnel" className="text-xs">
+            <TabsList className="w-full grid grid-cols-3 gap-1 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+              <TabsTrigger value="funnel" className="mx-0 rounded-[6px] text-xs data-[state=active]:shadow-none">
                 Funil
               </TabsTrigger>
-              <TabsTrigger value="evolution" className="text-xs">
+              <TabsTrigger value="evolution" className="mx-0 rounded-[6px] text-xs data-[state=active]:shadow-none">
                 Evolução
               </TabsTrigger>
-              <TabsTrigger value="sources" className="text-xs">
+              <TabsTrigger value="sources" className="mx-0 rounded-[6px] text-xs data-[state=active]:shadow-none">
                 Origem
               </TabsTrigger>
             </TabsList>

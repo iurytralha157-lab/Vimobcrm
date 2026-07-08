@@ -342,6 +342,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("GET /v1/automation-media", withOrganization(http.HandlerFunc(automationsHandler.ListMedia)))
 	mux.Handle("POST /v1/automation-media", withOrganization(http.HandlerFunc(automationsHandler.UploadMedia)))
 	mux.Handle("DELETE /v1/automation-media", withOrganization(http.HandlerFunc(automationsHandler.DeleteMedia)))
+	mux.HandleFunc("GET /v1/whatsapp/webhook/evolution-go", whatsappHandler.EvolutionGoWebhook)
+	mux.HandleFunc("POST /v1/whatsapp/webhook/evolution-go", whatsappHandler.EvolutionGoWebhook)
 	mux.Handle("POST /v1/public/webhooks/generic", http.HandlerFunc(webhooksHandler.ReceiveLead))
 	mux.HandleFunc("GET /v1/public/integrations/meta/webhook", metaHandler.Webhook)
 	mux.HandleFunc("POST /v1/public/integrations/meta/webhook", metaHandler.Webhook)

@@ -163,7 +163,7 @@ const bottomItems: NavItem[] = [
       { icon: Users, labelKey: 'settingsUsers', path: '/settings?tab=team', adminOnly: true },
       { icon: CreditCard, labelKey: 'settingsBilling', path: '/settings?tab=subscription', adminOnly: true },
       { icon: Plug, labelKey: 'settingsIntegrations', path: '/settings?tab=integrations' },
-      { icon: Bot, labelKey: 'settingsAI', path: '/settings?tab=ai', module: 'ai_agent' },
+      { icon: Bot, labelKey: 'settingsAI', path: '/settings?tab=ai', adminOnly: true, module: 'ai_agent' },
       { icon: Building2, labelKey: 'settingsProperties', path: '/settings?tab=properties', adminOnly: true },
       { icon: Globe, labelKey: 'site', path: '/settings/site', adminOnly: true, module: 'site' },
     ],
@@ -200,6 +200,14 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
     activeMemberRole === 'owner';
 
   const navItems = useMemo(() => {
+    const canAccessAsTeamLeader = (path?: string) =>
+      isTeamLeader &&
+      (
+        path === '/crm/management' ||
+        path === '/crm/management?tab=teams' ||
+        path === '/crm/management?tab=distribution'
+      );
+
     const filterItems = (items: NavItem[]): NavItem[] => {
       return items.filter(item => {
         if (item.superAdminOnly && !isSuperAdmin) return false;
@@ -207,7 +215,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
         if (item.adminOnly && !canAccessAdminItems) return false;
         if (item.permission && !hasPermission(item.permission)) return false;
         if (item.anyPermissions && !item.anyPermissions.some(permission => hasPermission(permission))) {
-          if (!(item.path === '/crm/management' && isTeamLeader)) return false;
+          if (!canAccessAsTeamLeader(item.path)) return false;
         }
         return true;
       }).map(item => {
@@ -226,6 +234,14 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
   }, [hasModule, hasPermission, canAccessAdminItems, isTeamLeader, isSuperAdmin]);
 
   const computedBottomItems = useMemo(() => {
+    const canAccessAsTeamLeader = (path?: string) =>
+      isTeamLeader &&
+      (
+        path === '/crm/management' ||
+        path === '/crm/management?tab=teams' ||
+        path === '/crm/management?tab=distribution'
+      );
+
     const filterItems = (items: NavItem[]): NavItem[] => {
       return items.filter(item => {
         if (item.superAdminOnly && !isSuperAdmin) return false;
@@ -233,7 +249,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
         if (item.adminOnly && !canAccessAdminItems) return false;
         if (item.permission && !hasPermission(item.permission)) return false;
         if (item.anyPermissions && !item.anyPermissions.some(permission => hasPermission(permission))) {
-          if (!(item.path === '/crm/management' && isTeamLeader)) return false;
+          if (!canAccessAsTeamLeader(item.path)) return false;
         }
         return true;
       }).map(item => {

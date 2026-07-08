@@ -17,6 +17,10 @@ type Context struct {
 	OrganizationLogo string   `json:"organizationLogo,omitempty"`
 	MemberRole       string   `json:"memberRole,omitempty"`
 	Permissions      []string `json:"permissions"`
+	IsTeamLeader     bool     `json:"isTeamLeader"`
+	LedTeamIDs       []string `json:"ledTeamIds,omitempty"`
+	LedUserIDs       []string `json:"ledUserIds,omitempty"`
+	LedPipelineIDs   []string `json:"ledPipelineIds,omitempty"`
 	IsSuperAdmin     bool     `json:"isSuperAdmin"`
 }
 
@@ -64,6 +68,31 @@ func (ctx Context) HasPermission(permission string) bool {
 		}
 	}
 
+	return false
+}
+
+func (ctx Context) LeadsTeam(teamID string) bool {
+	return containsScopeID(ctx.LedTeamIDs, teamID)
+}
+
+func (ctx Context) LeadsUser(userID string) bool {
+	return containsScopeID(ctx.LedUserIDs, userID)
+}
+
+func (ctx Context) LeadsPipeline(pipelineID string) bool {
+	return containsScopeID(ctx.LedPipelineIDs, pipelineID)
+}
+
+func containsScopeID(values []string, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), target) {
+			return true
+		}
+	}
 	return false
 }
 
