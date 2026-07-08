@@ -59,7 +59,9 @@ func main() {
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("api server graceful shutdown failed", "error", err)
-		os.Exit(1)
+		if closeErr := server.Close(); closeErr != nil {
+			logger.Error("api server forced shutdown failed", "error", closeErr)
+		}
 	}
 
 	logger.Info("vimob api stopped")

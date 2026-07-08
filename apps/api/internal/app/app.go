@@ -58,7 +58,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux := http.NewServeMux()
 	realtimeHub := realtime.NewHub()
 
-	healthHandler := health.NewHandler(postgres)
+	healthHandler := health.NewHandler(postgres, cfg.Database.HealthTimeout)
 	realtimeHandler := realtime.NewHandler(realtimeHub)
 	analyticsHandler := analytics.NewHandler(analytics.NewRepository(postgres))
 	gamificationRepository := gamification.NewRepository(postgres)
