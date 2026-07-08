@@ -22,6 +22,7 @@ import { useSidebar } from '@/contexts/SidebarContext';
 import { useSystemSettings } from '@/hooks/use-system-settings';
 import { useTheme } from 'next-themes';
 import { isBillingBlockedStatus } from '@/lib/billing-access';
+import { canUseFinancialModule } from '@/lib/financial-access';
 import { Button } from '@/components/ui/button';
 
 const DEFAULT_BRAND_LOGO_DARK = "/images/logo-white.png";
@@ -287,7 +288,12 @@ export const AppSidebar = React.memo(function AppSidebar() {
   const logoHeight = Math.min(systemSettings?.logo_height || 32, 28);
   const isBillingBlocked = !isSuperAdmin && isBillingBlockedStatus(organization?.subscription_status);
   const activeOrganizationId = organization?.id || profile?.organization_id;
-  const activeMemberRole = userOrganizations.find(org => org.organization_id === activeOrganizationId)?.member_role;
+  const activeOrganizationMembership = userOrganizations.find(org => org.organization_id === activeOrganizationId);
+  const activeMemberRole = activeOrganizationMembership?.member_role;
+  const canAccessFinancialModule = canUseFinancialModule({
+    id: activeOrganizationId,
+    name: organization?.name || activeOrganizationMembership?.organization_name,
+  });
   const canAccessAdminItems =
     isSuperAdmin ||
     profile?.role === 'admin' ||
@@ -314,6 +320,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
     const filterItems = (items: NavItem[]): NavItem[] => {
       return items.filter(item => {
         if (item.superAdminOnly && !isSuperAdmin) return false;
+        if (item.module === 'financial' && !canAccessFinancialModule) return false;
         if (item.module && !hasModule(item.module)) return false;
         if (item.adminOnly && !canAccessAdminItems) return false;
         if (item.permission && !hasPermission(item.permission)) return false;
@@ -334,7 +341,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
     };
 
     return filterItems(allNavItems);
-  }, [hasModule, hasPermission, canAccessAdminItems, isBillingBlocked, isTeamLeader, isSuperAdmin]);
+  }, [canAccessFinancialModule, hasModule, hasPermission, canAccessAdminItems, isBillingBlocked, isTeamLeader, isSuperAdmin]);
 
   const computedBottomItems = useMemo(() => {
     if (isBillingBlocked) return [];
@@ -350,6 +357,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
     const filterItems = (items: NavItem[]): NavItem[] => {
       return items.filter(item => {
         if (item.superAdminOnly && !isSuperAdmin) return false;
+        if (item.module === 'financial' && !canAccessFinancialModule) return false;
         if (item.module && !hasModule(item.module)) return false;
         if (item.adminOnly && !canAccessAdminItems) return false;
         if (item.permission && !hasPermission(item.permission)) return false;
@@ -370,7 +378,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
     };
 
     return filterItems(bottomItems);
-  }, [canAccessAdminItems, hasModule, hasPermission, isBillingBlocked, isSuperAdmin, isTeamLeader]);
+  }, [canAccessAdminItems, canAccessFinancialModule, hasModule, hasPermission, isBillingBlocked, isSuperAdmin, isTeamLeader]);
 
   const getLabel = (labelKey: string): string => {
     return (t.nav as Record<string, string>)[labelKey] || labelKey;

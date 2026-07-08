@@ -22,6 +22,7 @@ import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { MobileSidebar } from './MobileSidebar';
 import { CreateLeadDialog } from '@/components/features/leads/CreateLeadDialog';
 import { isBillingBlockedStatus } from '@/lib/billing-access';
+import { canUseFinancialModule } from '@/lib/financial-access';
 
 interface TabItem {
   icon: ElementType;
@@ -38,6 +39,7 @@ export function MobileBottomNav() {
   const { t } = useLanguage();
   const { hasModule } = useOrganizationModules();
   const isBillingBlocked = !isSuperAdmin && isBillingBlockedStatus(organization?.subscription_status);
+  const canAccessFinancialModule = canUseFinancialModule(organization);
 
   // Build the 4 visible tabs dynamically based on modules
   const tabs = useMemo(() => {
@@ -57,7 +59,7 @@ export function MobileBottomNav() {
       result.push({ icon: Calendar, labelKey: 'schedule', path: '/agenda' });
     } else if (hasModule('properties')) {
       result.push({ icon: Building2, labelKey: 'properties', path: '/properties' });
-    } else if (hasModule('financial') && (profile?.role === 'admin' || isSuperAdmin)) {
+    } else if (hasModule('financial') && canAccessFinancialModule && (profile?.role === 'admin' || isSuperAdmin)) {
       result.push({ icon: DollarSign, labelKey: 'financial', path: '/financeiro' });
     }
 
@@ -77,7 +79,7 @@ export function MobileBottomNav() {
     result.push('more');
 
     return result;
-  }, [hasModule, profile?.role, isSuperAdmin, isBillingBlocked]);
+  }, [canAccessFinancialModule, hasModule, profile?.role, isSuperAdmin, isBillingBlocked]);
 
   const isActive = (path: string) => {
     return pathname === path || pathname.startsWith(path + '/');

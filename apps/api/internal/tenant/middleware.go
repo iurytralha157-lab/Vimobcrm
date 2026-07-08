@@ -3,6 +3,7 @@ package tenant
 import (
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
@@ -38,6 +39,41 @@ func RequireOrganization(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func RequireFinancialAccess(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tenantContext, ok := FromContext(r.Context())
+		if !ok || tenantContext.OrganizationID == "" {
+			httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+			return
+		}
+
+		if !CanUseFinancialModule(tenantContext) {
+			httpserver.WriteError(w, r, http.StatusForbidden, "financial_module_unavailable", "Financial module is available only for Vetter Co.")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func CanUseFinancialModule(tenantContext Context) bool {
+	allowedIDs := strings.Split(os.Getenv("FINANCIAL_ORGANIZATION_IDS"), ",")
+	for _, id := range allowedIDs {
+		if strings.EqualFold(strings.TrimSpace(id), strings.TrimSpace(tenantContext.OrganizationID)) {
+			return true
+		}
+	}
+
+	return normalizeFinancialOrganizationName(tenantContext.OrganizationName) == "vetter co"
+}
+
+func normalizeFinancialOrganizationName(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.TrimSuffix(value, ".")
+	value = strings.Join(strings.Fields(value), " ")
+	return value
 }
 
 func RequirePermission(permission string, next http.Handler) http.Handler {

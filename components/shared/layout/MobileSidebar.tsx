@@ -18,6 +18,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { useOrganizationModules, type ModuleName } from '@/hooks/use-organization-modules';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useUserAccessScope } from '@/hooks/use-user-access-scope';
+import { canUseFinancialModule } from '@/lib/financial-access';
 import {
   Menu,
   LayoutDashboard,
@@ -192,7 +193,12 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
   const { hasPermission } = useUserPermissions();
   const { isTeamLeader } = useUserAccessScope();
   const activeOrganizationId = organization?.id || profile?.organization_id;
-  const activeMemberRole = userOrganizations.find(org => org.organization_id === activeOrganizationId)?.member_role;
+  const activeOrganizationMembership = userOrganizations.find(org => org.organization_id === activeOrganizationId);
+  const activeMemberRole = activeOrganizationMembership?.member_role;
+  const canAccessFinancialModule = canUseFinancialModule({
+    id: activeOrganizationId,
+    name: organization?.name || activeOrganizationMembership?.organization_name,
+  });
   const canAccessAdminItems =
     isSuperAdmin ||
     profile?.role === 'admin' ||
@@ -211,6 +217,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
     const filterItems = (items: NavItem[]): NavItem[] => {
       return items.filter(item => {
         if (item.superAdminOnly && !isSuperAdmin) return false;
+        if (item.module === 'financial' && !canAccessFinancialModule) return false;
         if (item.module && !hasModule(item.module)) return false;
         if (item.adminOnly && !canAccessAdminItems) return false;
         if (item.permission && !hasPermission(item.permission)) return false;
@@ -231,7 +238,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
     };
 
     return filterItems(allNavItems);
-  }, [hasModule, hasPermission, canAccessAdminItems, isTeamLeader, isSuperAdmin]);
+  }, [canAccessFinancialModule, hasModule, hasPermission, canAccessAdminItems, isTeamLeader, isSuperAdmin]);
 
   const computedBottomItems = useMemo(() => {
     const canAccessAsTeamLeader = (path?: string) =>
@@ -245,6 +252,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
     const filterItems = (items: NavItem[]): NavItem[] => {
       return items.filter(item => {
         if (item.superAdminOnly && !isSuperAdmin) return false;
+        if (item.module === 'financial' && !canAccessFinancialModule) return false;
         if (item.module && !hasModule(item.module)) return false;
         if (item.adminOnly && !canAccessAdminItems) return false;
         if (item.permission && !hasPermission(item.permission)) return false;
@@ -265,7 +273,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
     };
 
     return filterItems(bottomItems);
-  }, [canAccessAdminItems, hasModule, hasPermission, isSuperAdmin, isTeamLeader]);
+  }, [canAccessAdminItems, canAccessFinancialModule, hasModule, hasPermission, isSuperAdmin, isTeamLeader]);
 
   const getLabel = (labelKey: string): string => {
     return (t.nav as Record<string, string>)[labelKey] || labelKey;
