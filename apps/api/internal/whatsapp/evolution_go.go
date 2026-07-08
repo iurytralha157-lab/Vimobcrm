@@ -338,10 +338,22 @@ func evolutionEndpointFor(action string, body map[string]any, instanceKey string
 				"integration":  firstPresentAny(body["integration"], "WHATSAPP-BAILEYS"),
 				"token":        body["token"],
 				"proxy":        body["proxy"],
+				"webhookUrl":   firstPresentAny(body["webhookUrl"], body["webhook_url"], body["url"]),
+				"webhook_url":  firstPresentAny(body["webhook_url"], body["webhookUrl"], body["url"]),
+				"subscribe":    body["subscribe"],
+				"events":       body["events"],
+				"advancedSettings": mergeMaps(map[string]any{
+					"rejectCall":      false,
+					"groupsIgnore":    false,
+					"alwaysOnline":    true,
+					"readMessages":    false,
+					"readStatus":      false,
+					"syncFullHistory": false,
+				}, mapFromAny(body["advancedSettings"])),
 			}),
 		}, nil
 	case "instance.connect":
-		return evolutionEndpoint{Method: http.MethodPost, Path: "/instance/connect", Body: body}, nil
+		return evolutionEndpoint{Method: http.MethodPost, Path: "/instance/connect", Query: map[string]any{"instanceId": instanceKey}, Body: body}, nil
 	case "instance.delete":
 		return evolutionEndpoint{Method: http.MethodDelete, Path: fmt.Sprintf("/instance/delete/%s", url.PathEscape(instanceKey))}, nil
 	case "instance.disconnect":
@@ -377,6 +389,8 @@ func evolutionEndpointFor(action string, body map[string]any, instanceKey string
 		return evolutionEndpoint{Method: http.MethodPost, Path: "/chat/mute", Body: body}, nil
 	case "chat.pin":
 		return evolutionEndpoint{Method: http.MethodPost, Path: "/chat/pin", Body: body}, nil
+	case "chat.historySync":
+		return evolutionEndpoint{Method: http.MethodPost, Path: "/chat/historySync", Body: body}, nil
 	case "label.list":
 		return evolutionEndpoint{Method: http.MethodGet, Path: "/label"}, nil
 	case "label.addChat":

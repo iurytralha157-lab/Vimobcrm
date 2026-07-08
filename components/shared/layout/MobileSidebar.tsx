@@ -45,6 +45,7 @@ import {
   Settings,
   Megaphone,
   Plug,
+  Bot,
 } from 'lucide-react';
 
 const DEFAULT_BRAND_LOGO_DARK = "/images/logo-white.png";
@@ -104,7 +105,6 @@ const allNavItems: NavItem[] = [
     module: 'properties',
     children: [
       { icon: Building2, labelKey: 'propertiesAll', path: '/properties' },
-      { icon: Building2, labelKey: 'propertiesRentals', path: '/properties/rentals' },
       { icon: Building2, labelKey: 'propertiesCondos', path: '/properties/condominiums' },
       { icon: MapPin, labelKey: 'propertiesLocations', path: '/properties/locations' },
       { icon: Users, labelKey: 'propertiesOwners', path: '/properties/owners' },
@@ -163,6 +163,7 @@ const bottomItems: NavItem[] = [
       { icon: Users, labelKey: 'settingsUsers', path: '/settings?tab=team', adminOnly: true },
       { icon: CreditCard, labelKey: 'settingsBilling', path: '/settings?tab=subscription', adminOnly: true },
       { icon: Plug, labelKey: 'settingsIntegrations', path: '/settings?tab=integrations' },
+      { icon: Bot, labelKey: 'settingsAI', path: '/settings?tab=ai', module: 'ai_agent' },
       { icon: Building2, labelKey: 'settingsProperties', path: '/settings?tab=properties', adminOnly: true },
       { icon: Globe, labelKey: 'site', path: '/settings/site', adminOnly: true, module: 'site' },
     ],

@@ -40,6 +40,28 @@ func (handler Handler) List(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, response)
 }
 
+func (handler Handler) Stats(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+
+	filter, err := ParseListFilter(r.URL.Query())
+	if err != nil {
+		writePropertyError(w, r, err)
+		return
+	}
+
+	response, err := handler.repo.Stats(r.Context(), tenantContext, filter)
+	if err != nil {
+		writePropertyError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, response)
+}
+
 func (handler Handler) Show(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := tenant.FromContext(r.Context())
 	if !ok || tenantContext.OrganizationID == "" {
@@ -54,6 +76,22 @@ func (handler Handler) Show(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpserver.WriteJSON(w, http.StatusOK, map[string]Property{"data": property})
+}
+
+func (handler Handler) History(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+
+	events, err := handler.repo.ListHistory(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writePropertyError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, map[string][]HistoryEvent{"data": events})
 }
 
 func (handler Handler) Create(w http.ResponseWriter, r *http.Request) {

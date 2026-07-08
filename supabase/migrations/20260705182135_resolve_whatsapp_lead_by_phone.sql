@@ -30,10 +30,8 @@ as $$
   from public.leads l
   where l.organization_id = p_organization_id
     and normalize_phone(p_phone) <> ''
-    and (
-      (l.phone is not null and normalize_phone(l.phone) = normalize_phone(p_phone))
-      or (l.whatsapp is not null and normalize_phone(l.whatsapp) = normalize_phone(p_phone))
-    )
+    and l.phone is not null
+    and normalize_phone(l.phone) = normalize_phone(p_phone)
   order by
     case when l.deal_status = 'open' then 0 else 1 end,
     l.last_contact_at desc nulls last,

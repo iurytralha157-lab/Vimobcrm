@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -105,18 +106,46 @@ func (handler Handler) UpdateOrganizationUser(w http.ResponseWriter, r *http.Req
 	httpserver.WriteJSON(w, http.StatusOK, MutateUserResult{Success: true, User: user})
 }
 
+func (handler Handler) GetDeleteUserImpact(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+
+	impact, err := handler.repo.GetDeleteUserImpact(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writeUserError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[DeleteUserImpact]{Data: impact})
+}
+
 func (handler Handler) DeleteOrganizationUser(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := organizationContext(w, r)
 	if !ok {
 		return
 	}
 
-	if err := handler.repo.DeleteOrganizationUser(r.Context(), tenantContext, r.PathValue("id")); err != nil {
+	defer r.Body.Close()
+	var request DeleteUserRequest
+	if err := decodeOptionalJSON(w, r, &request); err != nil {
+		return
+	}
+
+	input, err := normalizeDeleteUserInput(request)
+	if err != nil {
 		writeUserError(w, r, err)
 		return
 	}
 
-	httpserver.WriteJSON(w, http.StatusOK, DeleteUserResult{Success: true})
+	result, err := handler.repo.DeleteOrganizationUser(r.Context(), tenantContext, r.PathValue("id"), input)
+	if err != nil {
+		writeUserError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, result)
 }
 
 func (handler Handler) ListSummaries(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +184,24 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+		return err
+	}
+
+	return nil
+}
+
+func decodeOptionalJSON(w http.ResponseWriter, r *http.Request, target any) error {
+	if r.Body == nil || r.ContentLength == 0 {
+		return nil
+	}
+
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
 		return err
 	}

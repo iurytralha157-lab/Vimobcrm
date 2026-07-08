@@ -105,7 +105,7 @@ function getEventIcon(event: UnifiedHistoryEvent): React.ComponentType<{ classNa
     if (src === 'meta_ads' || src === 'Meta Ads') return Target;
     if (src === 'whatsapp' || src === 'WhatsApp') return Smartphone;
     if (src === 'website' || src === 'Site') return Globe;
-    if (src === 'webhook' || src === 'Webhook') return Webhook;
+    if (src === 'webhook' || src === 'Webhook' || src === 'generic_webhook') return Webhook;
     if (src === 'manual') return PenLine;
     return UserPlus;
   }
@@ -128,6 +128,7 @@ function getEventIcon(event: UnifiedHistoryEvent): React.ComponentType<{ classNa
     email:                   Mail,
     message:                 MessageSquare,
     automation_message:      Bot,
+    webhook_form_answer:     Webhook,
     task_completed:          CheckCircle,
     contact_updated:         UserCircle,
     commission_created:      DollarSign,
@@ -162,7 +163,7 @@ function getEventColors(event: UnifiedHistoryEvent): { text: string; bg: string 
     if (src === 'meta_ads' || src === 'Meta Ads') return { text: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-500/15' };
     if (src === 'whatsapp' || src === 'WhatsApp') return { text: 'text-green-600 dark:text-green-400', bg: 'bg-green-500/15' };
     if (src === 'website' || src === 'Site') return { text: 'text-indigo-600 dark:text-indigo-400', bg: 'bg-indigo-500/15' };
-    if (src === 'webhook' || src === 'Webhook') return { text: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-500/15' };
+    if (src === 'webhook' || src === 'Webhook' || src === 'generic_webhook') return { text: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-500/15' };
     return { text: 'text-green-600 dark:text-green-400', bg: 'bg-green-500/15' };
   }
 
@@ -185,6 +186,7 @@ function getEventColors(event: UnifiedHistoryEvent): { text: string; bg: string 
     email:                     { text: 'text-blue-600 dark:text-blue-400',   bg: 'bg-blue-500/15' },
     message:                   { text: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-500/15' },
     automation_message:        { text: 'text-violet-600 dark:text-violet-400', bg: 'bg-violet-500/15' },
+    webhook_form_answer:       { text: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-500/15' },
     automation_stage_move:     { text: 'text-violet-600 dark:text-violet-400', bg: 'bg-violet-500/15' },
     automation_tag_added:      { text: 'text-violet-600 dark:text-violet-400', bg: 'bg-violet-500/15' },
     task_completed:            { text: 'text-muted-foreground', bg: 'bg-muted' },
@@ -264,6 +266,8 @@ export function LeadHistory({ leadId, onEventClick }: LeadHistoryProps) {
           const outcome = metadata?.outcome as string | undefined;
           const outcomeNotes = metadata?.outcome_notes as string | undefined;
           const outcomeConfig = outcome ? OUTCOME_CONFIG[outcome] : null;
+          const fromStageText = historyText(metadata.from_stage) || historyText(metadata.old_stage_name);
+          const toStageText = historyText(metadata.to_stage) || historyText(metadata.new_stage_name);
           const lostReason = event.type === 'status_change' && String(metadata.to_status || '').toLowerCase() === 'lost'
             ? getHistoryLostReason(event)
             : null;
@@ -391,11 +395,11 @@ export function LeadHistory({ leadId, onEventClick }: LeadHistoryProps) {
                     )}
 
                     {/* Stage transition from metadata when content not set */}
-                    {!event.content && !outcome && (metadata.from_stage || metadata.old_stage_name) && (metadata.to_stage || metadata.new_stage_name) && (
+                    {!event.content && !outcome && fromStageText && toStageText && (
                       <span className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5">
-                        {metadata.from_stage || metadata.old_stage_name}
+                        {fromStageText}
                         <ArrowRight className="h-3 w-3" />
-                        {metadata.to_stage || metadata.new_stage_name}
+                        {toStageText}
                       </span>
                     )}
                   </div>

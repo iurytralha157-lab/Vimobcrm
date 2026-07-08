@@ -76,6 +76,7 @@ export const SYSTEM_MODULES = [
   { key: 'automations', label: 'Automações' },
   { key: 'agenda', label: 'Agenda' },
   { key: 'whatsapp', label: 'WhatsApp' },
+  { key: 'ai_agent', label: 'IA' },
   { key: 'campaigns', label: 'Meta' },
   { key: 'instagram', label: 'Instagram' },
   { key: 'portals', label: 'Portais' },

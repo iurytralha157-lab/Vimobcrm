@@ -207,7 +207,7 @@ func (handler Handler) ToggleAutoReplySession(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := handler.repo.ToggleAutoReplySession(r.Context(), tenantContext, r.PathValue("id"), request.Enabled); err != nil {
+	if err := handler.repo.ToggleAutoReplySession(r.Context(), tenantContext, r.PathValue("id"), request); err != nil {
 		writeWhatsAppError(w, r, err)
 		return
 	}
@@ -886,6 +886,8 @@ func writeWhatsAppError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_message_not_found", "WhatsApp message was not found.")
 	case errors.Is(err, ErrProviderFailed):
 		httpserver.WriteError(w, r, http.StatusBadGateway, "whatsapp_provider_failed", err.Error())
+	case errors.Is(err, ErrFeatureUnavailable):
+		httpserver.WriteError(w, r, http.StatusForbidden, "whatsapp_feature_unavailable", err.Error())
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	default:

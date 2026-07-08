@@ -305,7 +305,7 @@ func (repo Repository) SaveMetaFormConfig(ctx context.Context, tenantContext ten
 		return nil, err
 	}
 
-	if err := repo.replaceMetaFormRule(ctx, tx, request.RoundRobinID, formID); err != nil {
+	if err := repo.replaceMetaFormRule(ctx, tx, tenantContext.OrganizationID, request.RoundRobinID, formID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -509,26 +509,58 @@ func (repo Repository) ListMetaMessages(ctx context.Context, tenantContext tenan
 	return items, err
 }
 
-func (repo Repository) replaceMetaFormRule(ctx context.Context, tx pgx.Tx, roundRobinID *string, formID string) error {
-	if _, err := tx.Exec(ctx, `delete from public.round_robin_rules where match_type = 'meta_form' and match_value = $1`, formID); err != nil {
+func (repo Repository) replaceMetaFormRule(ctx context.Context, tx pgx.Tx, organizationID string, roundRobinID *string, formID string) error {
+	if _, err := tx.Exec(ctx, `
+		delete from public.round_robin_rules
+		where organization_id = $1::uuid
+		  and coalesce(nullif(match_type, ''), conditions->>'match_type', name, '') = 'meta_form'
+		  and coalesce(nullif(match_value, ''), conditions->>'match_value', '') = $2
+	`, organizationID, formID); err != nil {
 		return err
 	}
 	roundRobinID = cleanString(roundRobinID)
 	if roundRobinID == nil {
 		return nil
 	}
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.round_robins
+			where organization_id = $1::uuid
+			  and id = $2::uuid
+		)
+	`, organizationID, *roundRobinID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrInvalidInput
+	}
 	matchJSON, _ := json.Marshal(map[string]any{"meta_form_id": []string{formID}})
 	_, err := tx.Exec(ctx, `
 		insert into public.round_robin_rules (
+			organization_id,
 			round_robin_id,
 			match_type,
 			match_value,
 			match,
+			name,
+			conditions,
 			priority,
 			is_active
 		)
-		values ($1::uuid, 'meta_form', $2, $3::jsonb, 100, true)
-	`, *roundRobinID, formID, string(matchJSON))
+		values (
+			$1::uuid,
+			$2::uuid,
+			'meta_form',
+			$3,
+			$4::jsonb,
+			'meta_form',
+			$4::jsonb,
+			100,
+			true
+		)
+	`, organizationID, *roundRobinID, formID, string(matchJSON))
 	return err
 }
 

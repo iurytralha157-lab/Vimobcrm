@@ -29,7 +29,7 @@ export default function Settings() {
   );
   const requestedTab = searchParams.get('tab') || 'account';
   const normalizedRequestedTab = requestedTab === 'webhook' ? 'webhooks' : requestedTab;
-  const legacyIntegrationTabs = ['webhooks', 'meta', 'whatsapp', 'api'];
+  const legacyIntegrationTabs = ['webhooks', 'meta', 'whatsapp', 'api', 'ai'];
   const initialIntegration = legacyIntegrationTabs.includes(normalizedRequestedTab) ? normalizedRequestedTab : undefined;
   const initialTab = initialIntegration ? 'integrations' : requestedTab;
   const [activeTab, setActiveTab] = useState(initialTab);
@@ -80,6 +80,7 @@ export default function Settings() {
   };
 
   const hasWhatsAppModule = hasModule('whatsapp');
+  const hasAIModule = hasModule('ai_agent');
   const hasWebhooksModule = hasModule('webhooks');
   const hasAPIModule = hasModule('api');
 
@@ -101,6 +102,7 @@ export default function Settings() {
             <IntegrationsTab
               defaultIntegration={initialIntegration}
               hasWhatsAppModule={hasWhatsAppModule}
+              hasAIModule={hasAIModule}
               hasWebhooksModule={hasWebhooksModule}
               hasAPIModule={hasAPIModule}
             />

@@ -95,15 +95,15 @@ export function PublicHomeScreen({
         <img src={heroImage} alt="" className="absolute inset-0 h-full w-full object-cover" loading="eager" />
         <div className="absolute inset-0 bg-black/56" />
         <div className="relative z-10 mx-auto flex min-h-[calc(100vh-80px)] w-full max-w-7xl flex-col justify-center px-4 py-20 text-white sm:px-6 lg:px-8">
-          <p className="mb-4 text-sm font-semibold uppercase tracking-[0.22em] text-white/70">
+          <p className="mb-4 text-sm font-medium uppercase tracking-[0.24em] text-white/70">
             {site.organization_name || "Portal imobiliario"}
           </p>
-          <h1 className="max-w-4xl text-4xl font-semibold leading-tight sm:text-5xl lg:text-6xl">{title}</h1>
+          <h1 className="max-w-4xl text-4xl font-light leading-tight tracking-normal sm:text-5xl lg:text-6xl">{title}</h1>
           <p className="mt-5 max-w-2xl text-base leading-7 text-white/78 sm:text-lg">{subtitle}</p>
 
           <form
             action={buildSiteHref(basePath, "/imoveis")}
-            className="mt-10 grid gap-3 rounded-lg border border-white/14 bg-black/42 p-4 backdrop-blur md:grid-cols-4"
+            className="mt-10 grid max-w-5xl gap-3 rounded-[14px] bg-black/46 p-3 backdrop-blur-xl sm:p-4 md:grid-cols-4"
           >
             {activeFilters.map((filter) => (
               <SearchFilterField
@@ -115,7 +115,7 @@ export function PublicHomeScreen({
             ))}
             <button
               type="submit"
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold text-white"
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-4 text-sm font-semibold text-white transition hover:brightness-110"
               style={{ backgroundColor: tokens.primary }}
             >
               <Search className="h-4 w-4" />
@@ -452,14 +452,15 @@ function SearchFilterField({
   filter: SiteSearchFilter;
   propertyTypes: string[];
 }>) {
-  const commonClass = "h-11 rounded-lg border border-white/16 bg-white px-3 text-sm text-slate-900 outline-none";
+  const commonClass =
+    "h-11 rounded-[10px] border-0 bg-white/12 px-3 text-sm text-white outline-none transition placeholder:text-white/58 hover:bg-white/16 focus:bg-white/18 focus:ring-2 focus:ring-white/22";
 
   if (filter.filter_key === "tipo") {
     return (
       <select name="tipo" className={commonClass} defaultValue="">
-        <option value="">{filter.label || "Tipo"}</option>
+        <option className="text-slate-900" value="">{filter.label || "Tipo"}</option>
         {propertyTypes.map((type) => (
-          <option key={type} value={type}>
+          <option className="text-slate-900" key={type} value={type}>
             {type}
           </option>
         ))}
@@ -470,9 +471,9 @@ function SearchFilterField({
   if (filter.filter_key === "finalidade") {
     return (
       <select name="finalidade" className={commonClass} defaultValue="">
-        <option value="">{filter.label || "Finalidade"}</option>
-        <option value="venda">Venda</option>
-        <option value="aluguel">Aluguel</option>
+        <option className="text-slate-900" value="">{filter.label || "Finalidade"}</option>
+        <option className="text-slate-900" value="venda">Venda</option>
+        <option className="text-slate-900" value="aluguel">Aluguel</option>
       </select>
     );
   }
@@ -480,9 +481,9 @@ function SearchFilterField({
   if (filter.filter_key === "cidade") {
     return (
       <select name="cidade" className={commonClass} defaultValue="">
-        <option value="">{filter.label || "Cidade"}</option>
+        <option className="text-slate-900" value="">{filter.label || "Cidade"}</option>
         {cities.map((city) => (
-          <option key={city} value={city}>
+          <option className="text-slate-900" key={city} value={city}>
             {city}
           </option>
         ))}

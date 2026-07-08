@@ -2,9 +2,11 @@ package gamification
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -545,6 +547,10 @@ func (repo Repository) ranking(ctx context.Context, tenantContext tenant.Context
 	if err != nil {
 		return nil, err
 	}
+	hasActivityLogs, err := repo.tableExists(ctx, "gamification_activity_logs")
+	if err != nil {
+		return nil, err
+	}
 
 	joinParticipants := ""
 	participationFilter := ""
@@ -554,6 +560,25 @@ func (repo Repository) ranking(ctx context.Context, tenantContext tenant.Context
 		  on gp.user_id = u.id
 		 and gp.organization_id = u.organization_id`
 		participationFilter = "and coalesce(gp.participates, true) = true"
+	}
+	activityJoin := ""
+	activityPointsExpr := "0::int"
+	activityLastExpr := "null::text"
+	if hasActivityLogs {
+		activityJoin = `
+		left join (
+			select
+				organization_id,
+				user_id,
+				sum(coalesce(points_earned, 0))::int as total_points,
+				max(created_at)::text as last_activity_at
+			from public.gamification_activity_logs
+			group by organization_id, user_id
+		) gal
+		  on gal.user_id = u.id
+		 and gal.organization_id = u.organization_id`
+		activityPointsExpr = "gal.total_points"
+		activityLastExpr = "gal.last_activity_at"
 	}
 
 	rows, err := repo.db.Pool().Query(ctx, `
@@ -572,12 +597,15 @@ func (repo Repository) ranking(ctx context.Context, tenantContext tenant.Context
 			ugs.xp_current_level,
 			ugs.xp_next_level,
 			ugs.xp_total,
-			ugs.last_activity_at::text
+			ugs.last_activity_at::text,
+			`+activityPointsExpr+`,
+			`+activityLastExpr+`
 		from public.users u
 		left join public.user_gamification_stats ugs
 		  on ugs.user_id = u.id
 		 and ugs.organization_id = u.organization_id
 		`+joinParticipants+`
+		`+activityJoin+`
 		where u.organization_id = $1::uuid
 		  and coalesce(u.is_active, true) = true
 		  `+participationFilter+`
@@ -590,8 +618,8 @@ func (repo Repository) ranking(ctx context.Context, tenantContext tenant.Context
 	ranking := []RankingEntry{}
 	for rows.Next() {
 		var entry RankingEntry
-		var avatarURL, currentRank, rankTier, lastActivityAt pgtype.Text
-		var userPoints, userXP, level, streakDays, totalPoints, statXP, xpCurrent, xpNext, xpTotal pgtype.Int4
+		var avatarURL, currentRank, rankTier, lastActivityAt, logLastActivityAt pgtype.Text
+		var userPoints, userXP, level, streakDays, totalPoints, statXP, xpCurrent, xpNext, xpTotal, logPoints pgtype.Int4
 		if err := rows.Scan(
 			&entry.UserID,
 			&entry.Name,
@@ -608,13 +636,15 @@ func (repo Repository) ranking(ctx context.Context, tenantContext tenant.Context
 			&xpNext,
 			&xpTotal,
 			&lastActivityAt,
+			&logPoints,
+			&logLastActivityAt,
 		); err != nil {
 			return nil, err
 		}
 
 		entry.AvatarURL = textPointer(avatarURL)
-		entry.Points = firstInt(totalPoints, userPoints)
-		entry.XP = firstInt(xpTotal, statXP, userXP)
+		entry.Points = maxPositiveInt(totalPoints, logPoints, userPoints)
+		entry.XP = maxPositiveInt(xpTotal, statXP, userXP, logPoints)
 		entry.Level = firstInt(level)
 		if entry.Level <= 0 {
 			entry.Level = fallbackLevel(entry.XP)
@@ -629,7 +659,7 @@ func (repo Repository) ranking(ctx context.Context, tenantContext tenant.Context
 		if entry.XPNextLevel <= 0 {
 			entry.XPNextLevel = 1000
 		}
-		entry.LastActivityAt = textPointer(lastActivityAt)
+		entry.LastActivityAt = textPointer(firstTextValue(lastActivityAt, logLastActivityAt))
 		ranking = append(ranking, entry)
 	}
 	if err := rows.Err(); err != nil {
@@ -647,8 +677,21 @@ func (repo Repository) ranking(ctx context.Context, tenantContext tenant.Context
 }
 
 func (repo Repository) events(ctx context.Context, tenantContext tenant.Context, limit int, includeAll bool) ([]Event, int, error) {
+	useActivityLogs, err := repo.useActivityLogs(ctx, tenantContext.OrganizationID)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	totalEvents := 0
-	if err := repo.db.Pool().QueryRow(ctx, `
+	if useActivityLogs {
+		if err := repo.db.Pool().QueryRow(ctx, `
+			select count(*)::int
+			from public.gamification_activity_logs
+			where organization_id = $1::uuid
+		`, tenantContext.OrganizationID).Scan(&totalEvents); err != nil {
+			return nil, 0, err
+		}
+	} else if err := repo.db.Pool().QueryRow(ctx, `
 		select count(*)::int
 		from public.gamification_events
 		where organization_id = $1::uuid
@@ -664,7 +707,33 @@ func (repo Repository) events(ctx context.Context, tenantContext tenant.Context,
 		limit = 12
 	}
 
-	rows, err := repo.db.Pool().Query(ctx, `
+	var rows pgx.Rows
+	if useActivityLogs {
+		rows, err = repo.db.Pool().Query(ctx, `
+			select
+				gal.id::text,
+				gal.user_id::text,
+				coalesce(nullif(u.name, ''), u.email, 'Usuario'),
+				gal.action_type,
+				coalesce(gal.points_earned, 0),
+				coalesce(gal.created_at, now())::text,
+				coalesce(
+					nullif(gal.metadata->>'details', ''),
+					nullif(gal.metadata->>'notes', ''),
+					nullif(gal.metadata->>'description', ''),
+					nullif(gal.metadata->>'lead_name', ''),
+					nullif(gal.metadata->>'title', '')
+				),
+				coalesce(nullif(gal.metadata->>'source_module', ''), 'gamification')
+			from public.gamification_activity_logs gal
+			left join public.users u on u.id = gal.user_id
+			where gal.organization_id = $1::uuid
+			`+userFilter+`
+			order by gal.created_at desc nulls last
+			limit $2
+		`, tenantContext.OrganizationID, limit)
+	} else {
+		rows, err = repo.db.Pool().Query(ctx, `
 		select
 			ge.id::text,
 			ge.user_id::text,
@@ -681,6 +750,7 @@ func (repo Repository) events(ctx context.Context, tenantContext tenant.Context,
 		order by ge.created_at desc
 		limit $2
 	`, tenantContext.OrganizationID, limit)
+	}
 	if err != nil {
 		return nil, 0, err
 	}
@@ -746,12 +816,27 @@ func (repo Repository) performance(ctx context.Context, tenantContext tenant.Con
 	startWeek := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -(weekday - 1))
 	endWeek := startWeek.AddDate(0, 0, 7)
 
-	rows, err := repo.db.Pool().Query(ctx, `
-		select event_type, coalesce(points_earned, 0), created_at
-		from public.gamification_events
-		where organization_id = $1::uuid
-		  and created_at >= $2
-	`, tenantContext.OrganizationID, startLastMonth)
+	useActivityLogs, err := repo.useActivityLogs(ctx, tenantContext.OrganizationID)
+	if err != nil {
+		return Performance{}, err
+	}
+
+	var rows pgx.Rows
+	if useActivityLogs {
+		rows, err = repo.db.Pool().Query(ctx, `
+			select action_type, coalesce(points_earned, 0), coalesce(created_at, now())
+			from public.gamification_activity_logs
+			where organization_id = $1::uuid
+			  and coalesce(created_at, now()) >= $2
+		`, tenantContext.OrganizationID, startLastMonth)
+	} else {
+		rows, err = repo.db.Pool().Query(ctx, `
+			select event_type, coalesce(points_earned, 0), coalesce(created_at, now())
+			from public.gamification_events
+			where organization_id = $1::uuid
+			  and coalesce(created_at, now()) >= $2
+		`, tenantContext.OrganizationID, startLastMonth)
+	}
 	if err != nil {
 		return Performance{}, err
 	}
@@ -1104,13 +1189,44 @@ func (repo Repository) recordGamificationEvent(ctx context.Context, tx pgx.Tx, t
 		return nil
 	}
 
+	metadata := jsonb(map[string]any{
+		"count":         quantity,
+		"unit_points":   points,
+		"source_module": source,
+		"reference_id":  referenceID,
+	})
+	referenceUUID := uuidTextOrNil(referenceID)
+	idempotencyKey := gamificationIdempotencyKey(actionType, referenceID, quantity, userID)
+
+	if ok, err := repo.tableExists(ctx, "gamification_activity_logs"); err != nil {
+		return err
+	} else if ok {
+		_, err = tx.Exec(ctx, `
+			insert into public.gamification_activity_logs (
+				organization_id,
+				user_id,
+				action_type,
+				points_earned,
+				reference_id,
+				metadata,
+				idempotency_key,
+				quantity,
+				xp_awarded
+			)
+			values ($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::jsonb, $7, $8, $4)
+			on conflict (idempotency_key) do nothing
+		`, tenantContext.OrganizationID, userID, actionType, total, referenceUUID, metadata, idempotencyKey, quantity)
+		if err != nil {
+			return err
+		}
+	}
+
 	_, err := tx.Exec(ctx, `
 		insert into public.gamification_events (
 			organization_id,
 			user_id,
 			event_type,
 			points_earned,
-			xp_earned,
 			metadata
 		)
 		values (
@@ -1118,15 +1234,9 @@ func (repo Repository) recordGamificationEvent(ctx context.Context, tx pgx.Tx, t
 			$2::uuid,
 			$3,
 			$4,
-			$4,
-			jsonb_build_object(
-				'count', $5,
-				'unit_points', $6,
-				'source_module', $7,
-				'reference_id', $8
-			)
+			$5::jsonb
 		)
-	`, tenantContext.OrganizationID, userID, actionType, total, quantity, points, source, referenceID)
+	`, tenantContext.OrganizationID, userID, actionType, total, metadata)
 	if err != nil {
 		return err
 	}
@@ -1169,6 +1279,23 @@ func (repo Repository) recordGamificationEvent(ctx context.Context, tx pgx.Tx, t
 			updated_at = now()
 	`, tenantContext.OrganizationID, userID, total)
 	return err
+}
+
+func (repo Repository) useActivityLogs(ctx context.Context, organizationID string) (bool, error) {
+	ok, err := repo.tableExists(ctx, "gamification_activity_logs")
+	if err != nil || !ok {
+		return false, err
+	}
+
+	count := 0
+	if err := repo.db.Pool().QueryRow(ctx, `
+		select count(*)::int
+		from public.gamification_activity_logs
+		where organization_id = $1::uuid
+	`, organizationID).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (repo Repository) rulePoints(ctx context.Context, tx pgx.Tx, organizationID string, actionType string) int {
@@ -1536,6 +1663,25 @@ func firstInt(values ...pgtype.Int4) int {
 	return 0
 }
 
+func maxPositiveInt(values ...pgtype.Int4) int {
+	maxValue := 0
+	for _, value := range values {
+		if value.Valid && int(value.Int32) > maxValue {
+			maxValue = int(value.Int32)
+		}
+	}
+	return maxValue
+}
+
+func firstTextValue(values ...pgtype.Text) pgtype.Text {
+	for _, value := range values {
+		if value.Valid && value.String != "" {
+			return value
+		}
+	}
+	return pgtype.Text{}
+}
+
 func firstText(values ...any) string {
 	fallback := "Bronze"
 	for _, value := range values {
@@ -1566,4 +1712,46 @@ func textPointer(value pgtype.Text) *string {
 		return nil
 	}
 	return &value.String
+}
+
+func jsonb(value any) string {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return "{}"
+	}
+
+	return string(payload)
+}
+
+func gamificationIdempotencyKey(actionType string, referenceID string, quantity int, userID string) string {
+	return strings.Join([]string{
+		normalizeActionType(actionType),
+		strings.TrimSpace(referenceID),
+		strconv.Itoa(quantity),
+		strings.TrimSpace(userID),
+	}, "_")
+}
+
+func uuidTextOrNil(value string) *string {
+	text := strings.TrimSpace(value)
+	if len(text) != 36 {
+		return nil
+	}
+	for index, char := range text {
+		switch index {
+		case 8, 13, 18, 23:
+			if char != '-' {
+				return nil
+			}
+		default:
+			if !isUUIDHex(char) {
+				return nil
+			}
+		}
+	}
+	return &text
+}
+
+func isUUIDHex(char rune) bool {
+	return (char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')
 }

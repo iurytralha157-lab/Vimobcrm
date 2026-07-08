@@ -190,15 +190,32 @@ export function useUpdateLead() {
       return data;
     },
     onSuccess: (data) => {
-      // Sincronização cirúrgica: apenas o necessário
       if (data?.id) {
-        queryClient.invalidateQueries({ queryKey: ['lead', data.id] });
+        queryClient.setQueryData(['lead', organizationId, data.id], data);
+        queryClient.setQueriesData<Lead[]>({ queryKey: ['leads'] }, (current) => {
+          if (!Array.isArray(current)) return current;
+          return current.map((lead) => lead.id === data.id ? { ...lead, ...data } : lead);
+        });
+        queryClient.setQueriesData<Array<{ leads?: Array<Partial<Lead> & { id: string }> }>>(
+          { queryKey: ['stages-with-leads'] },
+          (current) => {
+            if (!Array.isArray(current)) return current;
+            return current.map((stage) => {
+              if (!Array.isArray(stage?.leads)) return stage;
+              return {
+                ...stage,
+                leads: stage.leads.map((lead) => lead.id === data.id ? { ...lead, ...data } : lead),
+              };
+            });
+          },
+        );
+
+        queryClient.invalidateQueries({ queryKey: ['lead', organizationId, data.id] });
         queryClient.invalidateQueries({ queryKey: ['lead-history-v2', data.id] });
       }
 
-      // Invalida listas apenas para refletir as mudanças (usa refetch em background)
-      queryClient.invalidateQueries({ queryKey: ['leads'], refetchType: 'none' });
-      queryClient.invalidateQueries({ queryKey: ['stages-with-leads'], refetchType: 'none' });
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+      queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
       queryClient.invalidateQueries({ queryKey: ['activities'], refetchType: 'none' });
     },
     onError: (error) => {

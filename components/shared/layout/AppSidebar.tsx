@@ -8,7 +8,7 @@ import {
   LayoutDashboard, Kanban, Building2, Shuffle,
   ChevronLeft, ChevronRight, Users, MessageSquare, Calendar, DollarSign,
   FileText, Receipt, TrendingUp, BarChart3, Zap, MapPin,
-  Globe, Trophy, CreditCard, Tags, Activity, History, Megaphone, Settings, Plug
+  Globe, Trophy, CreditCard, Tags, Activity, History, Megaphone, Settings, Plug, Bot
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -121,10 +121,6 @@ const allNavItems: NavItem[] = [
       icon: Building2,
       labelKey: 'propertiesAll',
       path: '/properties'
-    }, {
-      icon: Building2,
-      labelKey: 'propertiesRentals',
-      path: '/properties/rentals'
     }, {
       icon: Building2,
       labelKey: 'propertiesCondos',
@@ -245,6 +241,11 @@ const bottomItems: NavItem[] = [
       icon: Plug,
       labelKey: 'settingsIntegrations',
       path: '/settings?tab=integrations'
+    }, {
+      icon: Bot,
+      labelKey: 'settingsAI',
+      path: '/settings?tab=ai',
+      module: 'ai_agent'
     }, {
       icon: Building2,
       labelKey: 'settingsProperties',

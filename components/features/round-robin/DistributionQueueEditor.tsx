@@ -323,16 +323,24 @@ export function DistributionQueueEditor({
   const effectiveAllowedTeamIds = allowedTeamIds ?? EMPTY_RESTRICTION_IDS;
   const effectiveAllowedUserIds = allowedUserIds ?? EMPTY_RESTRICTION_IDS;
   const effectiveAllowedPipelineIds = allowedPipelineIds ?? EMPTY_RESTRICTION_IDS;
+  const activeTeams = useMemo(
+    () => teams.filter((team) => team.is_active !== false && Boolean(team.id)),
+    [teams]
+  );
+  const activeUsers = useMemo(
+    () => users.filter((user) => user.is_active !== false && Boolean(user.id)),
+    [users]
+  );
   const visibleTeams = useMemo(() => (
     hasTeamRestriction
-      ? teams.filter((team) => effectiveAllowedTeamIds.includes(team.id))
-      : teams
-  ), [effectiveAllowedTeamIds, hasTeamRestriction, teams]);
+      ? activeTeams.filter((team) => effectiveAllowedTeamIds.includes(team.id))
+      : activeTeams
+  ), [activeTeams, effectiveAllowedTeamIds, hasTeamRestriction]);
   const visibleUsers = useMemo(() => (
     hasUserRestriction
-      ? users.filter((user) => effectiveAllowedUserIds.includes(user.id))
-      : users
-  ), [effectiveAllowedUserIds, hasUserRestriction, users]);
+      ? activeUsers.filter((user) => effectiveAllowedUserIds.includes(user.id))
+      : activeUsers
+  ), [activeUsers, effectiveAllowedUserIds, hasUserRestriction]);
   const visiblePipelines = useMemo(() => (
     hasPipelineRestriction
       ? pipelines.filter((pipeline) => effectiveAllowedPipelineIds.includes(pipeline.id))
@@ -505,6 +513,8 @@ export function DistributionQueueEditor({
   };
 
   const addMember = (type: 'user' | 'team', entityId: string, name: string) => {
+    if (!entityId.trim()) return;
+
     setFormData(prev => ({
       ...prev,
       members: prev.members.some(m => m.type === type && m.entityId === entityId)
@@ -571,6 +581,18 @@ export function DistributionQueueEditor({
         return;
       }
     }
+    const validUserIds = new Set(visibleUsers.map((user) => user.id));
+    const validTeamIds = new Set(visibleTeams.map((team) => team.id));
+    const hasLoadedParticipants = validUserIds.size > 0 || validTeamIds.size > 0;
+    const validMembers = formData.members.filter((member) => {
+      if (!member.entityId?.trim()) return false;
+      if (!hasLoadedParticipants) return true;
+      return member.type === 'team' ? validTeamIds.has(member.entityId) : validUserIds.has(member.entityId);
+    });
+    if (validMembers.length !== formData.members.length) {
+      toast.info('Removi participantes pendentes ou inativos antes de salvar a fila.');
+      setFormData(prev => ({ ...prev, members: validMembers }));
+    }
     const hasValidCriteria = formData.conditions.some(condition =>
       condition.values.some(value => value.trim())
     );
@@ -578,13 +600,24 @@ export function DistributionQueueEditor({
       toast.error('Adicione pelo menos um critério de entrada para salvar a fila');
       return;
     }
-    if (formData.is_active && formData.members.length === 0) {
+    if (formData.is_active && validMembers.length === 0) {
       toast.error('Adicione pelo menos um participante antes de ativar a fila');
       return;
     }
+    const sanitizedConditions = formData.conditions
+      .map((condition) => ({
+        ...condition,
+        values: condition.values.map((value) => value.trim()).filter(Boolean),
+      }))
+      .filter((condition) => condition.values.length > 0);
+    const payload: QueueFormData = {
+      ...formData,
+      conditions: sanitizedConditions,
+      members: validMembers,
+    };
     setSaving(true);
     try {
-      await onSave(formData);
+      await onSave(payload);
       onOpenChange(false);
     } finally {
       setSaving(false);
@@ -963,7 +996,7 @@ export function DistributionQueueEditor({
 
                   <div className="flex flex-col gap-2 sm:flex-row">
                     <Select onValueChange={v => {
-                      const user = users.find(u => u.id === v);
+                      const user = visibleUsers.find(u => u.id === v);
                       if (user) addMember('user', v, user.name);
                     }}>
                       <SelectTrigger className="flex-1">

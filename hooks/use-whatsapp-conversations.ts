@@ -116,11 +116,20 @@ export function useWhatsAppConversations(
   sessionId?: string,
   filters?: ConversationFilters,
   accessibleSessionIds?: string[],
+  limit: number = 80,
 ) {
   const { profile } = useAuth();
+  const accessibleSessionKey = accessibleSessionIds?.join(",") ?? "pending";
 
   return useQuery({
-    queryKey: ["whatsapp-conversations", sessionId, filters, accessibleSessionIds],
+    queryKey: [
+      "whatsapp-conversations",
+      sessionId ?? "all",
+      filters?.hideGroups ?? false,
+      filters?.showArchived ?? false,
+      accessibleSessionKey,
+      limit,
+    ],
     queryFn: async () => {
       if (!profile?.organization_id) return [];
       if (!sessionId && accessibleSessionIds !== undefined && accessibleSessionIds.length === 0) return [];
@@ -130,15 +139,18 @@ export function useWhatsAppConversations(
         sessionId,
         filters,
         accessibleSessionIds,
+        limit,
       }) as Promise<WhatsAppConversation[]>;
     },
     enabled: !!profile?.organization_id,
-    refetchInterval: 5_000,
+    refetchInterval: 20_000,
     refetchIntervalInBackground: false,
     refetchOnReconnect: true,
-    refetchOnWindowFocus: true,
-    staleTime: 2_000,
+    refetchOnWindowFocus: false,
+    staleTime: 10_000,
     gcTime: 1000 * 60 * 10,
+    retry: false,
+    placeholderData: previousData => previousData ?? [],
   });
 }
 

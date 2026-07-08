@@ -5,11 +5,12 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { Building2, Search, SlidersHorizontal, ChevronRight, ExternalLink } from 'lucide-react';
+import { Building2, Search, SlidersHorizontal, ChevronRight, ExternalLink, Clock, CheckCircle, KeyRound, type LucideIcon } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useQuery } from '@tanstack/react-query';
 import { getPropertySiteInfo } from '@/lib/api/property-support';
 import { buildPropertySiteUrl } from '@/lib/property-site-url';
+import { toast } from 'sonner';
 
 interface Property {
   id: string;
@@ -22,6 +23,7 @@ interface Property {
   tipo_de_imovel?: string | null;
   tipo_de_negocio?: string | null;
   commission_percentage?: number | null;
+  status?: string | null;
 }
 
 interface PropertyPickerDialogProps {
@@ -29,6 +31,63 @@ interface PropertyPickerDialogProps {
   selectedPropertyId?: string | null;
   onSelect: (property: Property) => void;
   trigger?: React.ReactNode;
+}
+
+type PropertyStatusBadge = {
+  label: string;
+  className: string;
+  icon: LucideIcon;
+};
+
+function normalizePropertyStatus(status?: string | null) {
+  return (status || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function getPropertyStatusBadge(status?: string | null): PropertyStatusBadge | null {
+  switch (normalizePropertyStatus(status)) {
+    case 'reservado':
+    case 'reserved':
+      return {
+        label: 'Reservado',
+        className: 'bg-amber-950/75 text-white dark:bg-amber-200/90 dark:text-amber-950',
+        icon: Clock,
+      };
+    case 'vendido':
+    case 'sold':
+      return {
+        label: 'Vendido',
+        className: 'bg-zinc-900/75 text-white dark:bg-zinc-100/85 dark:text-zinc-950',
+        icon: CheckCircle,
+      };
+    case 'alugado':
+    case 'locado':
+    case 'rented':
+      return {
+        label: 'Alugado',
+        className: 'bg-sky-950/75 text-white dark:bg-sky-200/85 dark:text-sky-950',
+        icon: KeyRound,
+      };
+    default:
+      return null;
+  }
+}
+
+function getSelectionBlockedMessage(status?: string | null) {
+  switch (normalizePropertyStatus(status)) {
+    case 'vendido':
+    case 'sold':
+      return 'Imovel vendido nao pode ser selecionado.';
+    case 'alugado':
+    case 'locado':
+    case 'rented':
+      return 'Imovel alugado nao pode ser selecionado.';
+    default:
+      return null;
+  }
 }
 
 export function PropertyPickerDialog({ properties, selectedPropertyId, onSelect, trigger }: PropertyPickerDialogProps) {
@@ -171,19 +230,33 @@ export function PropertyPickerDialog({ properties, selectedPropertyId, onSelect,
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-2">
-                {filteredProperties.map(p => (
-                  <div
-                    key={p.id}
-                    className={cn(
-                      'flex flex-col rounded-xl border overflow-hidden text-left transition-all hover:ring-2 hover:ring-primary/50 cursor-pointer',
-                      selectedPropertyId === p.id && 'ring-2 ring-primary'
-                    )}
-                    onClick={() => {
-                      onSelect(p);
-                      setOpen(false);
-                    }}
-                  >
-                    <div className="relative aspect-[4/3] bg-[var(--app-surface-soft)]">
+                {filteredProperties.map(p => {
+                  const statusBadge = getPropertyStatusBadge(p.status);
+                  const StatusIcon = statusBadge?.icon;
+                  const blockedMessage = getSelectionBlockedMessage(p.status);
+
+                  return (
+                    <div
+                      key={p.id}
+                      className={cn(
+                        'flex flex-col rounded-xl border overflow-hidden text-left transition-all',
+                        blockedMessage
+                          ? 'cursor-not-allowed opacity-75'
+                          : 'cursor-pointer hover:ring-2 hover:ring-primary/50',
+                        selectedPropertyId === p.id && 'ring-2 ring-primary'
+                      )}
+                      aria-disabled={!!blockedMessage}
+                      title={blockedMessage || undefined}
+                      onClick={() => {
+                        if (blockedMessage) {
+                          toast.warning(blockedMessage);
+                          return;
+                        }
+                        onSelect(p);
+                        setOpen(false);
+                      }}
+                    >
+                      <div className="relative aspect-[4/3] bg-[var(--app-surface-soft)]">
                       {p.imagem_principal ? (
                         <NextImage
                           src={p.imagem_principal}
@@ -196,6 +269,14 @@ export function PropertyPickerDialog({ properties, selectedPropertyId, onSelect,
                       ) : (
                         <div className="w-full h-full flex items-center justify-center">
                           <Building2 className="h-6 w-6 text-muted-foreground/40" />
+                        </div>
+                      )}
+                      {statusBadge && StatusIcon && (
+                        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/25">
+                          <Badge className={cn('border-0 px-2.5 py-1 text-[10px] font-semibold uppercase shadow-sm backdrop-blur-sm', statusBadge.className)}>
+                            <StatusIcon className="h-3 w-3 mr-1" />
+                            {statusBadge.label}
+                          </Badge>
                         </div>
                       )}
                       {p.code && (
@@ -218,8 +299,8 @@ export function PropertyPickerDialog({ properties, selectedPropertyId, onSelect,
                           </button>
                         ) : null;
                       })()}
-                    </div>
-                    <div className="p-2 space-y-0.5">
+                      </div>
+                      <div className="p-2 space-y-0.5">
                       <p className="text-[11px] font-medium truncate">{p.title || 'Sem título'}</p>
                       {p.bairro && (
                         <p className="text-[10px] text-muted-foreground truncate">
@@ -231,9 +312,10 @@ export function PropertyPickerDialog({ properties, selectedPropertyId, onSelect,
                           {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(p.preco))}
                         </p>
                       )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

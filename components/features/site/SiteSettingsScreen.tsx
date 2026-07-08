@@ -378,87 +378,101 @@ export default function SiteSettings() {
   };
 
   const getWorkerCode = () => {
-    return `const BOT_AGENTS = [
-  'facebookexternalhit',
-  'whatsapp',
-  'telegrambot',
-  'twitterbot',
-  'linkedinbot',
-  'googlebot',
-  'bingbot',
-  'slackbot',
-  'discordbot',
-  'pinterestbot',
-  'applebot',
-  'redditbot',
-  'embedly',
-  'quora',
-  'skypeuripreview',
-  'facebot',
-  'outbrain',
-  'vkshare',
-  'tumblr'
-];
+    return `const SITE_ORIGIN = 'https://app.vimobcrm.com.br';
+const HTML_CACHE_SECONDS = 300;
+const STALE_SECONDS = 86400;
 
-function isBot(userAgent) {
-  const lower = (userAgent || '').toLowerCase();
-  return BOT_AGENTS.some((bot) => lower.includes(bot));
+function isHtmlRequest(request) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return false;
+
+  const accept = request.headers.get('accept') || '';
+  return accept.includes('text/html') || accept.includes('*/*');
+}
+
+function buildOriginRequest(request) {
+  const sourceUrl = new URL(request.url);
+  const originUrl = new URL(SITE_ORIGIN);
+  const targetUrl = new URL(request.url);
+
+  targetUrl.protocol = originUrl.protocol;
+  targetUrl.hostname = originUrl.hostname;
+  targetUrl.port = originUrl.port;
+
+  const headers = new Headers(request.headers);
+  headers.set('X-Forwarded-Host', sourceUrl.hostname);
+  headers.set('X-Forwarded-Proto', 'https');
+  headers.set('X-Vimob-Public-Site', '1');
+  headers.delete('host');
+
+  return new Request(targetUrl.toString(), {
+    method: request.method,
+    headers,
+    body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
+    redirect: 'follow'
+  });
+}
+
+function withPublicCacheHeaders(response) {
+  const headers = new Headers(response.headers);
+  headers.delete('set-cookie');
+  headers.set(
+    'Cache-Control',
+    'public, max-age=60, s-maxage=' + HTML_CACHE_SECONDS + ', stale-while-revalidate=' + STALE_SECONDS + ', stale-if-error=' + STALE_SECONDS
+  );
+  headers.set('X-Vimob-Public-Proxy', 'cloudflare-worker');
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  });
+}
+
+async function fetchAndCache(request, cacheKey, cache) {
+  const response = await fetch(buildOriginRequest(request));
+  const publicResponse = withPublicCacheHeaders(response);
+
+  if (publicResponse.ok && isHtmlRequest(request)) {
+    await cache.put(cacheKey, publicResponse.clone());
+  }
+
+  return publicResponse;
 }
 
 export default {
-  async fetch(request) {
-    const url = new URL(request.url);
-    const hostname = url.hostname;
+  async fetch(request, env, ctx) {
+    const cache = caches.default;
+    const cacheable = isHtmlRequest(request);
+    const cacheKey = cacheable ? new Request(request.url, { headers: request.headers }) : null;
 
-    const configResponse = await fetch(
-      'https://api.vimobcrm.com.br/v1/public/site/resolve?domain=' + encodeURIComponent(hostname),
-      {
-        method: 'GET'
-      }
-    );
-
-    if (!configResponse.ok) {
-      return new Response('Site não encontrado', { status: 404 });
-    }
-
-    const configEnvelope = await configResponse.json();
-    if (!configEnvelope.found || !configEnvelope.site_config) {
-      return new Response('Site não encontrado', { status: 404 });
-    }
-
-    const config = configEnvelope.site_config;
-    const userAgent = request.headers.get('user-agent') || '';
-
-    if (isBot(userAgent)) {
-      const ssrUrl =
-        'https://vimobcrm.com.br' + url.pathname + url.search;
-
-      const ssrResponse = await fetch(ssrUrl);
-
-      if (ssrResponse.ok) {
-        return new Response(ssrResponse.body, {
-          headers: {
-            'Content-Type': 'text/html; charset=utf-8',
-            'Cache-Control': 'public, max-age=300'
-          }
-        });
+    if (cacheable && cacheKey) {
+      const cached = await cache.match(cacheKey);
+      if (cached) {
+        ctx.waitUntil(fetchAndCache(request, cacheKey, cache).catch(() => undefined));
+        return cached;
       }
     }
 
-    const targetUrl = new URL(request.url);
-    targetUrl.hostname = config.target || 'vimobe.lovable.app';
+    try {
+      if (!cacheable || !cacheKey) {
+        return fetch(buildOriginRequest(request));
+      }
 
-    const headers = new Headers(request.headers);
-    headers.set('X-Forwarded-Host', hostname);
+      return await fetchAndCache(request, cacheKey, cache);
+    } catch {
+      if (cacheable && cacheKey) {
+        const cached = await cache.match(cacheKey);
+        if (cached) return cached;
+      }
 
-    const proxyRequest = new Request(targetUrl.toString(), {
-      method: request.method,
-      headers,
-      body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
-      redirect: 'follow'
-    });
-
-    return fetch(proxyRequest);
+      return new Response('Site temporariamente indisponivel. Tente novamente em instantes.', {
+        status: 503,
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Cache-Control': 'no-store'
+        }
+      });
+    }
   }
 };`;
   };
@@ -471,16 +485,17 @@ export default {
   };
 
   const copyDnsInstructions = () => {
-    const instructions = `Configuração de Domínio Próprio via Cloudflare Workers para ${formData.custom_domain}:
+    const instructions = `Configuracao de dominio proprio via Cloudflare Worker para ${formData.custom_domain}:
 
 1. Crie uma conta gratuita em https://cloudflare.com
-2. Adicione seu domínio (${formData.custom_domain}) no Cloudflare
+2. Adicione seu dominio (${formData.custom_domain}) no Cloudflare
 3. Altere os nameservers no seu registrador para os fornecidos pelo Cloudflare
 4. No Cloudflare, vá em Workers and Routes > Create Worker
-5. Cole o código do Worker gerado pelo sistema
+5. Cole o codigo do Worker gerado pelo sistema
 6. Configure a rota: ${formData.custom_domain}/* → seu Worker
+7. O Worker deve apontar para https://app.vimobcrm.com.br e preservar o dominio original
 
-Código do Worker:
+Codigo do Worker:
 ${getWorkerCode()}`;
 
     navigator.clipboard.writeText(instructions);
@@ -755,7 +770,7 @@ ${getWorkerCode()}`;
                       <Card className="app-card-soft">
                         <CardContent className="p-4 space-y-4">
                           <div className="flex items-start justify-between">
-                            <h4 className="font-medium">Configurar via Cloudflare Workers</h4>
+                            <h4 className="font-medium">Publicar com Cloudflare Worker</h4>
                             <Button variant="outline" size="sm" onClick={copyDnsInstructions}>
                               {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                             </Button>
@@ -777,9 +792,9 @@ ${getWorkerCode()}`;
                             <div className="flex gap-3">
                               <span className="bg-primary text-primary-foreground rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shrink-0">4</span>
                               <div className="flex-1">
-                                <p className="mb-2">Cole o código abaixo no editor do Worker:</p>
+                                <p className="mb-2">Cole o código abaixo no editor do Worker. Ele entrega o site novo pelo domínio do cliente e mantém cache de segurança.</p>
                                 <div className="relative">
-                                  <pre className="bg-background p-3 rounded text-xs overflow-auto max-h-80 border text-left whitespace-pre">{getWorkerCode()}</pre>
+                                  <pre className="bg-background p-3 rounded text-xs overflow-auto max-h-80 text-left whitespace-pre">{getWorkerCode()}</pre>
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -801,8 +816,8 @@ ${getWorkerCode()}`;
                                   <li>Em Worker, selecione o worker criado no passo 3.</li>
                                   <li>Se quiser com www, crie outra rota: <code className="bg-background px-1 py-0.5 rounded text-xs">{`www.${formData.custom_domain}/*`}</code></li>
                                 </ul>
-                                <div className="mt-2 text-amber-600 dark:text-amber-500 bg-amber-50 dark:bg-amber-950/30 p-2 rounded text-xs border border-amber-200 dark:border-amber-900 border-l-2">
-                                  <strong>⚠️ Importante:</strong> Se você abrir o botão "Visualizar" no Cloudflare (link `.workers.dev`), ele vai mostrar <strong>"Site não encontrado"</strong>. Isso é perfeitamente <strong>normal</strong> e indica que o código está funcionando! O sistema só reconhece o site quando acessado pelo seu domínio real configurado na rota.
+                                <div className="mt-2 rounded bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400">
+                                  <strong>Importante:</strong> teste pelo domínio real configurado na rota. O link `.workers.dev` não representa o domínio do cliente e pode não carregar o site correto.
                                 </div>
                               </div>
                             </div>

@@ -43,7 +43,7 @@ export type WhatsAppSessionsResponse = Envelope<WhatsAppSession[]> & {
   meta?: WhatsAppSessionQuota
 }
 
-export type WhatsAppAccessMode = 'assigned_leads_only' | 'team_leads' | 'all_leads' | 'full_inbox'
+export type WhatsAppAccessMode = 'assigned_leads_only'
 
 export interface WhatsAppSessionAccess {
   id: string
@@ -175,6 +175,14 @@ export type SendWhatsAppMessageResult = Record<string, unknown> & {
   providerData?: Record<string, unknown>
 }
 
+export type AIAutoReplySessionInput = {
+  enabled: boolean
+  agentId?: string | null
+  followUpEnabled?: boolean
+  followUpIntervalDays?: number
+  followUpTemplate?: string
+}
+
 export type WhatsAppQRCode = {
   base64?: string
   qrcode?: string
@@ -290,11 +298,11 @@ export const whatsappAPI = {
     })
   },
 
-  async toggleAIAutoReplySession(sessionId: string, enabled: boolean, organizationId?: string | null) {
+  async toggleAIAutoReplySession(sessionId: string, input: AIAutoReplySessionInput, organizationId?: string | null) {
     await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/sessions/${sessionId}/ai-auto-reply`, {
       method: 'POST',
       organizationId,
-      body: { enabled },
+      body: input,
     })
   },
 
@@ -335,6 +343,7 @@ export const whatsappAPI = {
     sessionId?: string
     filters?: ConversationFilters
     accessibleSessionIds?: string[]
+    limit?: number
   }) {
     const response = await vimobAPIRequest<Envelope<WhatsAppConversation[]>>('/v1/whatsapp/conversations', {
       organizationId: params.organizationId,
@@ -343,6 +352,7 @@ export const whatsappAPI = {
         hideGroups: params.filters?.hideGroups,
         showArchived: params.filters?.showArchived,
         sessionIds: params.accessibleSessionIds?.join(','),
+        limit: params.limit,
       },
     })
     return response.data

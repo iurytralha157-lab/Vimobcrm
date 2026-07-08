@@ -40,6 +40,23 @@ export type UpdateUserInput = Partial<Pick<User, 'name' | 'role' | 'is_active' |
   id: string;
 };
 
+export type DeleteUserImpact = {
+  leads: number;
+  properties: number;
+  whatsapp_sessions: number;
+};
+
+export type DeleteUserInput = {
+  userId: string;
+  transferLeadsToUserId?: string | null;
+  transferPropertiesToUserId?: string | null;
+};
+
+export type DeleteUserResult = {
+  success: boolean;
+  impact: DeleteUserImpact;
+};
+
 export type UserOrganization = {
   organization_id: string;
   organization_name: string;
@@ -81,10 +98,21 @@ export const usersAPI = {
     return response.user;
   },
 
-  async deleteUser(userId: string, organizationId?: string | null) {
-    return vimobAPIRequest<{ success: boolean }>(`/v1/users/${userId}`, {
+  async getDeleteUserImpact(userId: string, organizationId?: string | null) {
+    const response = await vimobAPIRequest<Envelope<DeleteUserImpact>>(`/v1/users/${userId}/delete-impact`, {
+      organizationId,
+    });
+    return response.data;
+  },
+
+  async deleteUser(input: DeleteUserInput, organizationId?: string | null) {
+    return vimobAPIRequest<DeleteUserResult>(`/v1/users/${input.userId}`, {
       method: 'DELETE',
       organizationId,
+      body: {
+        transfer_leads_to_user_id: input.transferLeadsToUserId || null,
+        transfer_properties_to_user_id: input.transferPropertiesToUserId || null,
+      },
     });
   },
 };

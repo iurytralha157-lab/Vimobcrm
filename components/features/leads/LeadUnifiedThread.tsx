@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { format, isSameDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Bot, ExternalLink, Loader2, MessageCircle, Paperclip } from 'lucide-react';
+import { Bot, ExternalLink, Loader2, MessageCircle, Paperclip, Timer } from 'lucide-react';
 import { MessageBox } from '@/components/ui/message-box';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { MessageBubble as WhatsAppMessageBubble } from '@/components/features/whatsapp/MessageBubble';
@@ -243,6 +243,33 @@ function getEventDetail(event: UnifiedHistoryEvent) {
     return lostReason ? `Motivo: ${lostReason}` : null;
   }
 
+  if (event.type === 'property_selected' || event.type === 'property_linked') {
+    const title = metadataText(metadata.property_title) || metadataText(metadata.property_name);
+    const code = metadataText(metadata.property_code) || metadataText(metadata.property_ref);
+    const rawPrice = Number(metadata.property_price);
+    const price = Number.isFinite(rawPrice) && rawPrice > 0 ? `R$ ${rawPrice.toLocaleString('pt-BR')}` : null;
+    return [title, code, price].filter(Boolean).join('\n') || null;
+  }
+
+  if (
+    event.type === 'agenda_created' ||
+    event.type === 'agenda_rescheduled' ||
+    event.type === 'agenda_completed' ||
+    event.type === 'agenda_cancelled' ||
+    event.type === 'visit_scheduled' ||
+    event.type === 'visit_confirmed' ||
+    event.type === 'meeting_scheduled' ||
+    event.type === 'meeting_held'
+  ) {
+    const title = metadataText(metadata.title) || metadataText(metadata.event_title);
+    const startsAt =
+      metadataText(metadata.starts_at) ||
+      metadataText(metadata.start_at) ||
+      metadataText(metadata.start_time) ||
+      metadataText(metadata.scheduled_at);
+    return [title, startsAt].filter(Boolean).join('\n') || null;
+  }
+
   const notes =
     metadataText(metadata.notes) ||
     metadataText(metadata.outcome_notes) ||
@@ -308,6 +335,24 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
     const fileName = getAttachmentFileName(event);
     return fileName ? `Documento anexado: ${fileName}` : 'Documento anexado';
   }
+
+  if (event.type === 'property_selected' || event.type === 'property_linked') {
+    const code = metadataText(metadata.property_code) || metadataText(metadata.property_ref);
+    return code ? `Imovel selecionado: ${code}` : 'Imovel selecionado';
+  }
+
+  if (event.type === 'proposal_sent') {
+    return 'Proposta registrada';
+  }
+
+  if (event.type === 'agenda_created') return 'Atividade agendada';
+  if (event.type === 'agenda_rescheduled') return 'Atividade remarcada';
+  if (event.type === 'agenda_completed') return 'Atividade concluida';
+  if (event.type === 'agenda_cancelled') return 'Atividade cancelada';
+  if (event.type === 'visit_scheduled') return 'Visita agendada';
+  if (event.type === 'visit_confirmed') return 'Visita realizada';
+  if (event.type === 'meeting_scheduled') return 'Reuniao agendada';
+  if (event.type === 'meeting_held') return 'Reuniao realizada';
 
   if (event.type === 'first_response') {
     return content || label || 'Primeiro contato';
@@ -429,7 +474,7 @@ function getEventTone(event: UnifiedHistoryEvent) {
   }
 
   if (event.type === 'first_response') {
-    return 'bg-sky-500/10 !text-sky-700 ring-1 ring-sky-500/20 dark:bg-sky-500/15 dark:!text-sky-300 dark:ring-sky-500/25';
+    return 'bg-amber-400 !text-amber-950 ring-1 ring-amber-500';
   }
 
   if (event.type === 'task_completed') {
@@ -442,6 +487,25 @@ function getEventTone(event: UnifiedHistoryEvent) {
 
   if (event.type === 'webhook_form_answer') {
     return 'bg-[#FF4529] !text-white';
+  }
+
+  if (event.type === 'property_selected' || event.type === 'property_linked') {
+    return 'bg-[color-mix(in_srgb,#FF4529_14%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#FF4529_72%,var(--app-text-primary))] ring-1 ring-[#FF4529]/20';
+  }
+
+  if (
+    event.type === 'agenda_created' ||
+    event.type === 'agenda_rescheduled' ||
+    event.type === 'visit_scheduled' ||
+    event.type === 'visit_confirmed' ||
+    event.type === 'meeting_scheduled' ||
+    event.type === 'meeting_held'
+  ) {
+    return 'bg-[color-mix(in_srgb,#3b82f6_14%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#3b82f6_72%,var(--app-text-primary))] ring-1 ring-blue-500/20';
+  }
+
+  if (event.type === 'proposal_sent') {
+    return 'bg-[color-mix(in_srgb,#f59e0b_16%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#f59e0b_72%,var(--app-text-primary))] ring-1 ring-[#f59e0b]/25';
   }
 
   if (toStatus === 'lost' || text.includes('perdido') || text.includes('perda')) {
@@ -506,6 +570,7 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
   const detail = getEventDetail(event);
   const toneClass = getEventTone(event);
   const isSolidTone = toneClass.includes('!text-white');
+  const isFirstResponse = event.type === 'first_response';
 
   if (event.type === 'meta_form_answer' || event.type === 'webhook_form_answer') {
     const metadata = event.metadata || {};
@@ -587,6 +652,11 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
           )}
 
           <div className="space-y-2 px-3 py-2">
+            <div className="space-y-1 rounded-[6px] bg-white/[0.12] px-2.5 py-2 text-right">
+              <div className="text-[12px] font-semibold leading-snug text-white">
+                {creativeName}
+              </div>
+            </div>
             <div className="flex flex-wrap justify-end gap-1.5">
               {linkUrl && (
                 <a
@@ -629,9 +699,10 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
       )}
       title={alignment !== 'center' && event.actor ? `${event.actor.name} fez esta acao` : undefined}
     >
-      <div className="uppercase tracking-wide">
+      <div className={cn('uppercase tracking-wide', isFirstResponse && 'inline-flex items-center justify-end gap-1.5')}>
+        {isFirstResponse && <Timer className="h-3 w-3" />}
         <span>{normalizeEventLabel(event)}</span>
-        <span className={cn('ml-2', isSolidTone ? 'text-white/70' : 'text-[var(--app-text-tertiary)]')}>
+        <span className={cn('ml-2', isFirstResponse ? 'text-amber-950/65' : isSolidTone ? 'text-white/70' : 'text-[var(--app-text-tertiary)]')}>
           {format(new Date(event.timestamp), 'HH:mm', { locale: ptBR })}
         </span>
         {event.isAutomation && <Bot className="ml-1 inline h-3 w-3 align-[-2px]" />}

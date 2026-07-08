@@ -387,6 +387,9 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 	err := tx.QueryRow(ctx, `
 		select rrm.id::text, rrm.user_id::text
 		from public.round_robin_members rrm
+		join public.round_robins rr
+		  on rr.id = rrm.round_robin_id
+		 and rr.organization_id = rrm.organization_id
 		join public.organization_members om
 		  on om.organization_id = rrm.organization_id
 		 and om.user_id = rrm.user_id
@@ -394,6 +397,11 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 		join public.users u
 		  on u.id = rrm.user_id
 		 and coalesce(u.is_active, true) = true
+		left join public.team_members tm
+		  on tm.organization_id = rrm.organization_id
+		 and tm.team_id = rrm.team_id
+		 and tm.user_id = rrm.user_id
+		 and coalesce(tm.is_active, true) = true
 		left join lateral (
 			select count(*)::bigint as total
 			from public.round_robin_logs rrl
@@ -405,6 +413,34 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 		  and rrm.round_robin_id = $2::uuid
 		  and coalesce(rrm.is_active, true) = true
 		  and (nullif($3, '')::uuid is null or rrm.user_id <> nullif($3, '')::uuid)
+		  and (
+		    tm.id is null
+		    or not exists (
+		      select 1
+		      from public.member_availability ma_any
+		      where ma_any.organization_id = rrm.organization_id
+		        and ma_any.team_member_id = tm.id
+		    )
+		    or exists (
+		      select 1
+		      from public.member_availability ma
+		      where ma.organization_id = rrm.organization_id
+		        and ma.team_member_id = tm.id
+		        and ma.day_of_week = extract(dow from now() at time zone 'America/Sao_Paulo')::int
+		        and coalesce(ma.is_active, true) = true
+		        and (
+		          coalesce(ma.is_all_day, false) = true
+		          or (
+		            ma.start_time is not null
+		            and ma.end_time is not null
+		            and (
+		              (ma.start_time <= ma.end_time and (now() at time zone 'America/Sao_Paulo')::time >= ma.start_time and (now() at time zone 'America/Sao_Paulo')::time <= ma.end_time)
+		              or (ma.start_time > ma.end_time and ((now() at time zone 'America/Sao_Paulo')::time >= ma.start_time or (now() at time zone 'America/Sao_Paulo')::time <= ma.end_time))
+		            )
+		          )
+		        )
+		    )
+		  )
 		order by coalesce(logs.total, 0) asc, coalesce(rrm.position, 0) asc, rrm.created_at asc
 		limit 1
 	`, organizationID, roundRobinID, excludedUserID).Scan(&selection.MemberID, &selection.UserID)

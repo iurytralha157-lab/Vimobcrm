@@ -25,11 +25,14 @@ type scanner interface {
 }
 
 type propertySnapshot struct {
-	ID           string
-	CreatorID    string
-	PropertyType string
-	Title        string
-	Code         string
+	ID                string
+	CreatorID         string
+	ResponsibleUserID string
+	PropertyType      string
+	Title             string
+	Code              string
+	Status            string
+	PublishedOnSite   bool
 }
 
 func NewRepository(db *dbpkg.Postgres, storageConfig StorageConfig) Repository {
@@ -62,9 +65,19 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 			or p.external_id ilike $%d
 		)`, index, index, index, index, index, index, index, index))
 	}
+	if filter.Status != "" {
+		addFilter("lower(trim(coalesce(p.status, ''))) = any($%d::text[])", propertyStatusAliases(filter.Status))
+	}
 	dealType := normalizedDealTypeForFilter(filter.DealType)
 	if filter.DealType != "" {
-		addFilter("p.finalidade = $%d", dealType)
+		switch dealType {
+		case "venda":
+			addFilter("p.finalidade = any($%d::text[])", []string{"venda", "venda_locacao"})
+		case "locacao":
+			addFilter("p.finalidade = any($%d::text[])", []string{"locacao", "venda_locacao"})
+		default:
+			addFilter("p.finalidade = $%d", dealType)
+		}
 	}
 	if filter.PropertyType != "" {
 		addFilter("p.tipo = $%d", filter.PropertyType)
@@ -77,6 +90,9 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	}
 	if filter.AcceptsExchange != nil {
 		addFilter("coalesce(p.aceita_permuta, false) = $%d::boolean", *filter.AcceptsExchange)
+	}
+	if filter.PublishedOnSite != nil {
+		addFilter("coalesce(p.published_on_site, false) = $%d::boolean", *filter.PublishedOnSite)
 	}
 	if filter.ResponsibleID != "" {
 		args = append(args, filter.ResponsibleID)
@@ -195,6 +211,152 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	}, nil
 }
 
+func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, filter ListFilter) (StatsResponse, error) {
+	args := []any{tenantContext.OrganizationID}
+	where := []string{"p.organization_id = $1::uuid"}
+
+	addFilter := func(clause string, value any) {
+		args = append(args, value)
+		where = append(where, fmt.Sprintf(clause, len(args)))
+	}
+
+	if filter.Search != "" {
+		args = append(args, "%"+filter.Search+"%")
+		index := len(args)
+		where = append(where, fmt.Sprintf(`(
+			p.code ilike $%d
+			or p.title ilike $%d
+			or p.bairro ilike $%d
+			or p.cidade ilike $%d
+			or p.uf ilike $%d
+			or p.tipo ilike $%d
+			or p.finalidade ilike $%d
+			or p.external_id ilike $%d
+		)`, index, index, index, index, index, index, index, index))
+	}
+	if filter.Status != "" {
+		addFilter("lower(trim(coalesce(p.status, ''))) = any($%d::text[])", propertyStatusAliases(filter.Status))
+	}
+	dealType := normalizedDealTypeForFilter(filter.DealType)
+	if filter.DealType != "" {
+		switch dealType {
+		case "venda":
+			addFilter("p.finalidade = any($%d::text[])", []string{"venda", "venda_locacao"})
+		case "locacao":
+			addFilter("p.finalidade = any($%d::text[])", []string{"locacao", "venda_locacao"})
+		default:
+			addFilter("p.finalidade = $%d", dealType)
+		}
+	}
+	if filter.PropertyType != "" {
+		addFilter("p.tipo = $%d", filter.PropertyType)
+	}
+	if filter.City != "" {
+		addFilter("p.cidade ilike $%d", "%"+filter.City+"%")
+	}
+	if filter.Neighborhood != "" {
+		addFilter("p.bairro ilike $%d", "%"+filter.Neighborhood+"%")
+	}
+	if filter.AcceptsExchange != nil {
+		addFilter("coalesce(p.aceita_permuta, false) = $%d::boolean", *filter.AcceptsExchange)
+	}
+	if filter.PublishedOnSite != nil {
+		addFilter("coalesce(p.published_on_site, false) = $%d::boolean", *filter.PublishedOnSite)
+	}
+	if filter.ResponsibleID != "" {
+		args = append(args, filter.ResponsibleID)
+		index := len(args)
+		where = append(where, fmt.Sprintf("(p.responsible_user_id = $%d::uuid or p.created_by = $%d::uuid)", index, index))
+	}
+	if filter.BedroomsMin > 0 {
+		addFilter("p.quartos >= $%d::integer", filter.BedroomsMin)
+	}
+	if filter.SuitesMin > 0 {
+		addFilter("p.suites >= $%d::integer", filter.SuitesMin)
+	}
+	if filter.BathroomsMin > 0 {
+		addFilter("p.banheiros >= $%d::integer", filter.BathroomsMin)
+	}
+	if filter.PriceMin > 0 {
+		if dealType == "locacao" || dealType == "temporada" {
+			addFilter("p.valor_locacao >= $%d::numeric", filter.PriceMin)
+		} else if dealType == "venda" {
+			addFilter("p.preco >= $%d::numeric", filter.PriceMin)
+		} else {
+			args = append(args, filter.PriceMin)
+			index := len(args)
+			where = append(where, fmt.Sprintf("(p.preco >= $%d::numeric or p.valor_locacao >= $%d::numeric)", index, index))
+		}
+	}
+	if filter.PriceMax > 0 {
+		if dealType == "locacao" || dealType == "temporada" {
+			addFilter("p.valor_locacao <= $%d::numeric", filter.PriceMax)
+		} else if dealType == "venda" {
+			addFilter("p.preco <= $%d::numeric", filter.PriceMax)
+		} else {
+			args = append(args, filter.PriceMax)
+			index := len(args)
+			where = append(where, fmt.Sprintf("(p.preco <= $%d::numeric or p.valor_locacao <= $%d::numeric)", index, index))
+		}
+	}
+
+	var stats StatsResponse
+	err := repo.db.Pool().QueryRow(ctx, `
+		with filtered as (
+			select
+				coalesce(nullif(lower(trim(p.status)), ''), 'active') as status,
+				coalesce(nullif(lower(trim(p.finalidade)), ''), 'venda') as deal_type,
+				p.published_on_site
+			from public.properties p
+			where `+strings.Join(where, " and ")+`
+		)
+		select
+			count(*)::bigint,
+			count(*) filter (where deal_type in ('venda', 'venda_locacao', 'lancamento'))::bigint,
+			count(*) filter (where deal_type in ('locacao', 'venda_locacao'))::bigint,
+			count(*) filter (where status not in ('sold', 'vendido', 'rented', 'alugado', 'locado', 'reserved', 'reservado', 'inactive', 'inativo', 'archived', 'arquivado', 'draft', 'rascunho'))::bigint,
+			count(*) filter (where status in ('reserved', 'reservado'))::bigint,
+			count(*) filter (where status in ('sold', 'vendido'))::bigint,
+			count(*) filter (where status in ('rented', 'alugado', 'locado'))::bigint,
+			count(*) filter (where published_on_site is false)::bigint
+		from filtered
+	`, args...).Scan(
+		&stats.Total,
+		&stats.Sale,
+		&stats.Rental,
+		&stats.Available,
+		&stats.Reserved,
+		&stats.Sold,
+		&stats.Rented,
+		&stats.Private,
+	)
+	if err != nil {
+		return StatsResponse{}, err
+	}
+	return stats, nil
+}
+
+func propertyStatusAliases(status string) []string {
+	switch status {
+	case "active":
+		return []string{"active", "ativo", "disponivel"}
+	case "reserved":
+		return []string{"reserved", "reservado"}
+	case "sold":
+		return []string{"sold", "vendido"}
+	case "rented":
+		return []string{"rented", "alugado", "locado"}
+	case "inactive":
+		return []string{"inactive", "inativo"}
+	case "archived":
+		return []string{"archived", "arquivado"}
+	case "draft":
+		return []string{"draft", "rascunho"}
+	default:
+		return []string{status}
+	}
+}
+
 func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, propertyID string) (Property, error) {
 	propertyID, ok := normalizeUUID(propertyID)
 	if !ok {
@@ -215,7 +377,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, pr
 }
 
 func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context, input propertyRequest) (Property, error) {
-	if !canManageProperties(tenantContext) {
+	if !canCreateProperties(tenantContext) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -225,11 +387,18 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	}
 	defer tx.Rollback(ctx)
 
-	if input["created_by"] == nil {
+	if !canAssignProperties(tenantContext) {
+		input["created_by"] = tenantContext.UserID
+		input["responsible_user_id"] = tenantContext.UserID
+		input["cadastrado_por"] = tenantContext.UserID
+	} else if input["created_by"] == nil {
 		input["created_by"] = tenantContext.UserID
 	}
 	if input["responsible_user_id"] == nil {
 		input["responsible_user_id"] = tenantContext.UserID
+	}
+	if input["cadastrado_por"] == nil {
+		input["cadastrado_por"] = input["responsible_user_id"]
 	}
 
 	propertyType, _ := input["tipo"].(string)
@@ -289,8 +458,13 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err != nil {
 		return nil, err
 	}
-	if !canEditProperty(tenantContext, current.CreatorID, editPolicy) {
+	if !canEditProperty(tenantContext, current.CreatorID, current.ResponsibleUserID, editPolicy) {
 		return nil, tenant.ErrOrganizationAccessDenied
+	}
+	if !canAssignProperties(tenantContext) {
+		delete(input, "created_by")
+		delete(input, "responsible_user_id")
+		delete(input, "cadastrado_por")
 	}
 
 	if nextType, ok := input["tipo"].(string); ok && strings.TrimSpace(nextType) != "" && nextType != current.PropertyType {
@@ -324,6 +498,10 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	}
 	property = normalizePropertyOutput(property)
 
+	if err := repo.insertPropertyUpdatedActivity(ctx, tx, tenantContext, current, input, property); err != nil {
+		slog.Warn("property activity insert skipped", "error", err)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -355,21 +533,110 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 	return nil
 }
 
+func (repo Repository) ListHistory(ctx context.Context, tenantContext tenant.Context, propertyID string) ([]HistoryEvent, error) {
+	propertyID, ok := normalizeUUID(propertyID)
+	if !ok {
+		return nil, ErrPropertyNotFound
+	}
+
+	var exists bool
+	if err := repo.db.Pool().QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.properties
+			where organization_id = $1::uuid
+			  and id = $2::uuid
+		)
+	`, tenantContext.OrganizationID, propertyID).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrPropertyNotFound
+	}
+
+	rows, err := repo.db.Pool().Query(ctx, `
+		with property_events as (
+			select
+				e.id::text as id,
+				e.event_type,
+				e.payload,
+				e.created_at,
+				coalesce(e.payload->>'message', e.event_type) as title
+			from public.events e
+			where e.organization_id = $1::uuid
+			  and e.entity_type = 'property'
+			  and e.entity_id = $2::uuid
+		),
+		schedule_rows as (
+			select
+				se.id::text as id,
+				case
+					when se.status = 'completed' then 'property_schedule_completed'
+					else 'property_schedule'
+				end as event_type,
+				jsonb_build_object(
+					'title', se.title,
+					'description', se.description,
+					'event_type', se.event_type,
+					'status', se.status,
+					'start_time', se.start_time,
+					'end_time', se.end_time,
+					'user_id', se.user_id,
+					'lead_id', se.lead_id,
+					'message', 'Agendamento vinculado ao imovel'
+				) as payload,
+				se.created_at,
+				se.title
+			from public.schedule_events se
+			where se.organization_id = $1::uuid
+			  and se.property_id = $2::uuid
+		)
+		select id, event_type, title, payload::text, created_at::text
+		from (
+			select * from property_events
+			union all
+			select * from schedule_rows
+		) history
+		order by created_at desc
+		limit 100
+	`, tenantContext.OrganizationID, propertyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	events := []HistoryEvent{}
+	for rows.Next() {
+		var event HistoryEvent
+		var payload string
+		if err := rows.Scan(&event.ID, &event.Type, &event.Title, &payload, &event.CreatedAt); err != nil {
+			return nil, err
+		}
+		event.Metadata = map[string]any{}
+		_ = json.Unmarshal([]byte(payload), &event.Metadata)
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
 func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, organizationID string, propertyID string) (propertySnapshot, error) {
 	var snapshot propertySnapshot
-	var creatorID, propertyType, title, code pgtype.Text
+	var creatorID, responsibleUserID, propertyType, title, code, status pgtype.Text
 	err := tx.QueryRow(ctx, `
 		select
 			id::text,
-			coalesce(responsible_user_id::text, created_by::text, ''),
-			tipo,
+			coalesce(created_by::text, ''),
+			coalesce(responsible_user_id::text, ''),
+			coalesce(tipo, tipo_de_imovel, ''),
 			title,
-			code
+			code,
+			coalesce(status, 'active'),
+			coalesce(published_on_site, false)
 		from public.properties
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 		for update
-	`, organizationID, propertyID).Scan(&snapshot.ID, &creatorID, &propertyType, &title, &code)
+	`, organizationID, propertyID).Scan(&snapshot.ID, &creatorID, &responsibleUserID, &propertyType, &title, &code, &status, &snapshot.PublishedOnSite)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return propertySnapshot{}, ErrPropertyNotFound
 	}
@@ -378,9 +645,11 @@ func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, orga
 	}
 
 	snapshot.CreatorID = textValue(creatorID)
+	snapshot.ResponsibleUserID = textValue(responsibleUserID)
 	snapshot.PropertyType = textValue(propertyType)
 	snapshot.Title = textValue(title)
 	snapshot.Code = textValue(code)
+	snapshot.Status = textValue(status)
 	return snapshot, nil
 }
 
@@ -558,6 +827,104 @@ func (repo Repository) insertPropertyCreatedActivity(ctx context.Context, tx pgx
 		"code":            code,
 		"organization_id": tenantContext.OrganizationID,
 		"message":         fmt.Sprintf(`Imovel "%s" (Cod: %s) foi captado`, title, code),
+	}))
+	return err
+}
+
+func (repo Repository) insertPropertyUpdatedActivity(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current propertySnapshot, input propertyRequest, property Property) error {
+	propertyID, _ := property["id"].(string)
+	if propertyID == "" {
+		propertyID = current.ID
+	}
+	if propertyID == "" {
+		return nil
+	}
+
+	var hasEventsTable bool
+	if err := tx.QueryRow(ctx, `select to_regclass('public.events') is not null`).Scan(&hasEventsTable); err != nil {
+		return err
+	}
+	if !hasEventsTable {
+		return nil
+	}
+
+	title := current.Title
+	if value, _ := property["title"].(string); strings.TrimSpace(value) != "" {
+		title = value
+	}
+	if title == "" {
+		title = "Imovel"
+	}
+
+	changes := map[string]any{}
+	eventType := "property_updated"
+	message := fmt.Sprintf(`Imovel "%s" atualizado`, title)
+
+	if value, ok := input["status"].(string); ok {
+		changes["status"] = map[string]any{
+			"from": displayPropertyStatus(current.Status),
+			"to":   displayPropertyStatus(value),
+		}
+		eventType = "property_status_changed"
+		message = fmt.Sprintf(`Imovel "%s" alterado para %s`, title, displayPropertyStatus(value))
+	}
+	if value, ok := input["preco"]; ok {
+		changes["preco"] = value
+		if eventType == "property_updated" {
+			eventType = "property_price_updated"
+			message = fmt.Sprintf(`Valor de venda do imovel "%s" atualizado`, title)
+		}
+	}
+	if value, ok := input["valor_locacao"]; ok {
+		changes["valor_locacao"] = value
+		if eventType == "property_updated" {
+			eventType = "property_price_updated"
+			message = fmt.Sprintf(`Valor de locacao do imovel "%s" atualizado`, title)
+		}
+	}
+	if value, ok := input["published_on_site"]; ok {
+		changes["published_on_site"] = value
+		if eventType == "property_updated" {
+			eventType = "property_publication_changed"
+			message = fmt.Sprintf(`Publicacao do imovel "%s" atualizada`, title)
+		}
+	}
+	if value, ok := input["anunciar"]; ok {
+		changes["anunciar"] = value
+		if eventType == "property_updated" {
+			eventType = "property_publication_changed"
+			message = fmt.Sprintf(`Publicacao do imovel "%s" atualizada`, title)
+		}
+	}
+	if value, ok := input["metadata"]; ok {
+		changes["metadata"] = value
+	}
+
+	_, err := tx.Exec(ctx, `
+		insert into public.events (
+			organization_id,
+			event_type,
+			entity_type,
+			entity_id,
+			payload,
+			status
+		)
+		values (
+			$1::uuid,
+			$2,
+			'property',
+			$3::uuid,
+			$4::jsonb,
+			'processed'
+		)
+	`, tenantContext.OrganizationID, eventType, propertyID, jsonb(map[string]any{
+		"user_id":         tenantContext.UserID,
+		"title":           title,
+		"property_id":     propertyID,
+		"code":            current.Code,
+		"organization_id": tenantContext.OrganizationID,
+		"message":         message,
+		"changes":         changes,
 	}))
 	return err
 }
@@ -769,6 +1136,8 @@ func displayDealType(value string) string {
 	switch value {
 	case "locacao":
 		return "Aluguel"
+	case "lancamento":
+		return "Lan\u00e7amento"
 	case "temporada":
 		return "Temporada"
 	case "venda_locacao":
@@ -779,16 +1148,18 @@ func displayDealType(value string) string {
 }
 
 func displayPropertyStatus(value string) string {
-	switch value {
-	case "draft":
-		return "draft"
-	case "sold":
+	switch normalizeASCII(value) {
+	case "draft", "rascunho":
+		return "rascunho"
+	case "sold", "vendido":
 		return "vendido"
-	case "rented":
+	case "reserved", "reservado":
+		return "reservado"
+	case "rented", "alugado", "locado":
 		return "alugado"
-	case "inactive":
+	case "inactive", "inativo":
 		return "inativo"
-	case "archived":
+	case "archived", "arquivado":
 		return "arquivado"
 	default:
 		return "ativo"
@@ -824,7 +1195,7 @@ func normalizeUUID(value string) (string, bool) {
 func propertyPrefix(propertyType string) string {
 	normalized := normalizeASCII(propertyType)
 	switch normalized {
-	case "casa", "sobrado", "condominio":
+	case "casa", "sobrado", "condominio", "casa de condominio":
 		return "CA"
 	case "apartamento", "cobertura", "kitnet", "flat", "loft", "studio":
 		return "AP"
@@ -862,14 +1233,33 @@ func canManageProperties(tenantContext tenant.Context) bool {
 		tenantContext.HasPermission("property_manage")
 }
 
-func canEditProperty(tenantContext tenant.Context, creatorID string, editPolicy ...string) bool {
+func canCreateProperties(tenantContext tenant.Context) bool {
+	if canManageProperties(tenantContext) || tenantContext.HasPermission("property_create") {
+		return true
+	}
+	return tenantContext.IsOrganizationMember()
+}
+
+func canCreatePropertyOwners(tenantContext tenant.Context) bool {
+	if canManageProperties(tenantContext) || tenantContext.HasPermission("property_owner_create") {
+		return true
+	}
+	return tenantContext.IsOrganizationMember()
+}
+
+func canAssignProperties(tenantContext tenant.Context) bool {
+	return canManageProperties(tenantContext) || tenantContext.HasPermission("property_assign")
+}
+
+func canEditProperty(tenantContext tenant.Context, creatorID string, responsibleUserID string, editPolicy ...string) bool {
 	if canManageProperties(tenantContext) {
 		return true
 	}
 	if len(editPolicy) > 0 && editPolicy[0] == "everyone" && tenantContext.UserID != "" {
 		return true
 	}
-	return creatorID != "" && creatorID == tenantContext.UserID
+	return (creatorID != "" && creatorID == tenantContext.UserID) ||
+		(responsibleUserID != "" && responsibleUserID == tenantContext.UserID)
 }
 
 func canDeleteProperties(tenantContext tenant.Context) bool {

@@ -1038,8 +1038,18 @@ func publicPropertyJSONSQL() string {
 		'cidade', p.cidade,
 		'estado', p.uf,
 		'cep', case when p.address_visibility = 'full' then p.cep else null end,
-		'imagem_principal', p.image_urls[1],
-		'fotos', p.image_urls,
+		'imagem_principal', (
+			select img.url
+			from unnest(array_remove(array_prepend(nullif(p.imagem_principal, ''), coalesce(p.image_urls, '{}'::text[])), null)) with ordinality as img(url, ord)
+			where not (coalesce(p.metadata->'hidden_site_image_urls', '[]'::jsonb) ? img.url)
+			order by img.ord
+			limit 1
+		),
+		'fotos', coalesce((
+			select jsonb_agg(img.url order by img.ord)
+			from unnest(array_remove(array_prepend(nullif(p.imagem_principal, ''), coalesce(p.image_urls, '{}'::text[])), null)) with ordinality as img(url, ord)
+			where not (coalesce(p.metadata->'hidden_site_image_urls', '[]'::jsonb) ? img.url)
+		), '[]'::jsonb),
 		'destaque', p.is_featured,
 		'status', p.status
 	)`

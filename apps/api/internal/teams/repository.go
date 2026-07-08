@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
@@ -147,6 +148,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	}
 	defer tx.Rollback(ctx)
 
+	var roundRobinMemberIDs []string
 	args := []any{tenantContext.OrganizationID, teamID}
 	assignments := []string{}
 	if request.Name != nil {
@@ -195,19 +197,37 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		if err := replaceMembers(ctx, tx, tenantContext.OrganizationID, teamID, memberInputs); err != nil {
 			return Team{}, err
 		}
-		if err := syncRoundRobinWithTeam(ctx, tx, tenantContext.OrganizationID, teamID, memberUserIDs(memberInputs)); err != nil {
-			return Team{}, err
-		}
+		roundRobinMemberIDs = memberUserIDs(memberInputs)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return Team{}, err
+	}
+	if roundRobinMemberIDs != nil {
+		repo.syncRoundRobinWithTeamBestEffort(ctx, tenantContext.OrganizationID, teamID, roundRobinMemberIDs)
 	}
 	return repo.Get(ctx, tenantContext, teamID)
 }
 
 func (repo Repository) UpdateStatus(ctx context.Context, tenantContext tenant.Context, teamID string, isActive bool) (Team, error) {
 	return repo.Update(ctx, tenantContext, teamID, UpdateTeamRequest{IsActive: &isActive})
+}
+
+func (repo Repository) syncRoundRobinWithTeamBestEffort(ctx context.Context, organizationID string, teamID string, memberIDs []string) {
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		slog.Warn("team round robin sync skipped", "organization_id", organizationID, "team_id", teamID, "error", err)
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	if err := syncRoundRobinWithTeam(ctx, tx, organizationID, teamID, memberIDs); err != nil {
+		slog.Warn("team round robin sync failed", "organization_id", organizationID, "team_id", teamID, "error", err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		slog.Warn("team round robin sync commit failed", "organization_id", organizationID, "team_id", teamID, "error", err)
+	}
 }
 
 func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context, teamID string) error {
@@ -403,8 +423,11 @@ func (repo Repository) SetTeamLeader(ctx context.Context, tenantContext tenant.C
 
 	tag, err := repo.db.Pool().Exec(ctx, `
 		update public.team_members tm
-		set is_leader = $4
-		where tm.team_id = $2::uuid
+		set
+			is_leader = $4,
+			updated_at = now()
+		where tm.organization_id = $1::uuid
+		  and tm.team_id = $2::uuid
 		  and tm.user_id = $3::uuid
 		  and exists (
 		    select 1
@@ -672,10 +695,12 @@ func ensureUsersBelongToOrganization(ctx context.Context, tx pgx.Tx, organizatio
 		left join public.organization_members om
 		  on om.user_id = u.id
 		 and om.organization_id = $1::uuid
-		 and om.is_active = true
 		where u.id in (`+strings.Join(placeholders, ", ")+`)
 		  and coalesce(u.is_active, true) = true
-		  and (u.organization_id = $1::uuid or om.id is not null)
+		  and (
+			(om.id is not null and coalesce(om.is_active, false) = true)
+			or (u.organization_id = $1::uuid and coalesce(om.is_active, true) = true)
+		  )
 	`, args...).Scan(&validCount); err != nil {
 		return err
 	}
@@ -698,7 +723,7 @@ func syncRoundRobinWithTeam(ctx context.Context, tx pgx.Tx, organizationID strin
 		  on rr.id = rrm.round_robin_id
 		 and rr.organization_id = rrm.organization_id
 		where rr.organization_id = $1::uuid
-		  and rr.team_id = $2::uuid
+		  and rrm.team_id = $2::uuid
 	`, organizationID, teamID)
 	if err != nil {
 		return err
@@ -756,13 +781,14 @@ func syncRoundRobinWithTeam(ctx context.Context, tx pgx.Tx, organizationID strin
 				continue
 			}
 			if _, err := tx.Exec(ctx, `
-				insert into public.round_robin_members (organization_id, round_robin_id, user_id, weight, position, is_active)
-				values ($1::uuid, $2::uuid, $3::uuid, $4, $5, true)
+				insert into public.round_robin_members (organization_id, round_robin_id, team_id, user_id, weight, position, is_active)
+				values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6, true)
 				on conflict (round_robin_id, user_id) do update
 				set weight = excluded.weight,
+				    team_id = excluded.team_id,
 				    position = excluded.position,
 				    is_active = true
-			`, organizationID, roundRobinID, userID, defaultWeight, position); err != nil {
+			`, organizationID, roundRobinID, teamID, userID, defaultWeight, position); err != nil {
 				return err
 			}
 			position++

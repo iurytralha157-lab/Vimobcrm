@@ -190,15 +190,20 @@ export default function Conversations() {
   } = useAccessibleSessions();
 
   // Extract accessible session IDs for filtering
-  const accessibleSessionIds = sessions?.map(s => s.id) || [];
+  const accessibleSessionIds = useMemo(() => sessions?.map(s => s.id) || [], [sessions]);
+  const conversationFilters = useMemo(() => ({ hideGroups, showArchived }), [hideGroups, showArchived]);
+  const conversationSessionIds = selectedSessionId === "all"
+    ? (loadingSessions ? [] : accessibleSessionIds)
+    : undefined;
 
   const {
     data: conversations,
-    isLoading: loadingConversations
+    isLoading: loadingConversations,
+    isError: conversationsFailed,
   } = useWhatsAppConversations(
     selectedSessionId === "all" ? undefined : selectedSessionId,
-    { hideGroups, showArchived },
-    selectedSessionId === "all" ? (loadingSessions ? undefined : accessibleSessionIds) : undefined
+    conversationFilters,
+    conversationSessionIds
   );
 
   const {
@@ -817,7 +822,16 @@ export default function Conversations() {
               {/* Mobile Conversation List */}
               <ScrollArea data-tour="conversations-list" className="flex-1">
                 <div className="divide-y divide-white/[0.045]">
-                  {loadingConversations ? (
+                  {conversationsFailed ? (
+                    <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+                      <MessageSquare className="w-8 h-8 text-muted-foreground mb-2" />
+                      <p className="text-sm font-medium mb-1">Nao foi possivel carregar as conversas</p>
+                      <p className="text-xs text-muted-foreground mb-4">Verifique a conexao do WhatsApp e tente novamente.</p>
+                      <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
+                        Tentar novamente
+                      </Button>
+                    </div>
+                  ) : loadingConversations ? (
                     <div className="flex items-center justify-center py-12">
                       <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
                     </div>
@@ -1054,7 +1068,16 @@ export default function Conversations() {
           <ScrollArea data-tour="conversations-list" className="flex-1">
             <div className="divide-y divide-white/[0.045]">
               {activePlatform === 'whatsapp' ? (
-                loadingConversations ? (
+                conversationsFailed ? (
+                  <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+                    <MessageSquare className="w-8 h-8 text-muted-foreground mb-2" />
+                    <p className="text-sm font-medium mb-1">Nao foi possivel carregar as conversas</p>
+                    <p className="text-xs text-muted-foreground mb-4">Verifique a conexao do WhatsApp e tente novamente.</p>
+                    <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
+                      Tentar novamente
+                    </Button>
+                  </div>
+                ) : loadingConversations ? (
                   <div className="flex items-center justify-center py-12">
                     <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
                   </div>

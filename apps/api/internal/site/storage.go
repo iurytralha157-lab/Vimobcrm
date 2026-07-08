@@ -49,9 +49,7 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 		contentType = "application/octet-stream"
 	}
 	request.Header.Set("apikey", client.apiKey)
-	if !isSupabaseAPIKey(client.apiKey) {
-		request.Header.Set("Authorization", "Bearer "+client.apiKey)
-	}
+	request.Header.Set("Authorization", "Bearer "+client.apiKey)
 	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("Cache-Control", "3600")
 	request.Header.Set("x-upsert", "true")
@@ -85,10 +83,6 @@ func (client storageClient) publicURL(bucket string, objectPath string) string {
 		url.PathEscape(bucket),
 		escapeStorageObjectPath(objectPath),
 	)
-}
-
-func isSupabaseAPIKey(value string) bool {
-	return strings.HasPrefix(value, "sb_secret_") || strings.HasPrefix(value, "sb_publishable_")
 }
 
 func escapeStorageObjectPath(value string) string {

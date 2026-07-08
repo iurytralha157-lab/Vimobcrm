@@ -314,14 +314,19 @@ export function useDealsEvolutionData(filters?: DashboardFilters) {
   const { user, organization } = useAuth();
   const currentUserId = user?.id;
   const organizationId = organization?.id;
+  const dealsEvolutionFilters = {
+    ...filters,
+    granularity: isSingleDashboardDayRange(filters?.dateRange) ? ("hour" as const) : null,
+  };
 
   return useQuery({
     queryKey: [
       "deals-evolution",
       currentUserId,
       organizationId,
-      filters?.dateRange?.from?.toISOString(),
-      filters?.dateRange?.to?.toISOString(),
+      dealsEvolutionFilters.dateRange?.from?.toISOString(),
+      dealsEvolutionFilters.dateRange?.to?.toISOString(),
+      dealsEvolutionFilters.granularity,
       filters?.teamId,
       filters?.userId,
       filters?.source,
@@ -335,8 +340,17 @@ export function useDealsEvolutionData(filters?: DashboardFilters) {
     enabled: !!currentUserId && !!organizationId,
     queryFn: () =>
       performanceTracker.trackTimed("useDealsEvolutionData", () =>
-        getDashboardDealsEvolution({ organizationId, filters }) as Promise<DealsEvolutionPoint[]>,
+        getDashboardDealsEvolution({ organizationId, filters: dealsEvolutionFilters }) as Promise<DealsEvolutionPoint[]>,
       ),
     staleTime: DASHBOARD_STALE_TIME_MS,
   });
+}
+
+function isSingleDashboardDayRange(dateRange?: DashboardFilters["dateRange"]) {
+  if (!dateRange?.from || !dateRange?.to) {
+    return false;
+  }
+
+  const durationMs = Math.abs(dateRange.to.getTime() - dateRange.from.getTime());
+  return durationMs > 0 && durationMs <= 24 * 60 * 60 * 1000;
 }

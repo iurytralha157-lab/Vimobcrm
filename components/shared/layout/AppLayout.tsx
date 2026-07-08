@@ -15,7 +15,6 @@ import { BackendRealtimeBus } from '@/contexts/BackendRealtimeBus';
 import { InstallPrompt } from '@/components/features/pwa/InstallPrompt';
 import { WebPushPrompt } from '@/components/features/pwa/WebPushPrompt';
 import { SetupGuideDialog, SetupGuideTour } from '@/components/features/setup-guide';
-import { useWhatsAppHealthMonitor } from '@/hooks/use-whatsapp-health-monitor';
 import { usePushNotifications } from '@/hooks/use-push-notifications';
 import { usePhoneReminder } from '@/hooks/use-phone-reminder';
 import { useWhatsAppSound } from '@/hooks/use-whatsapp-sound';
@@ -51,9 +50,6 @@ function MaintenanceBanner() {
 
 function AppLayoutContent({ children, title, disableMainScroll = false, borderless = false }: AppLayoutProps) {
   const isMobile = useIsMobile();
-
-  // Start WhatsApp session health monitoring
-  useWhatsAppHealthMonitor();
 
   // Initialize native push notifications (only in Capacitor)
   usePushNotifications();

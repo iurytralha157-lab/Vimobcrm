@@ -45,6 +45,20 @@ interface PropertyPreviewDialogProps {
   formatPrice: (value: number | null, tipo: string | null) => string;
 }
 
+type PropertyMetadata = {
+  financing_details?: unknown;
+  exchange_details?: unknown;
+};
+
+function getPropertyMetadata(property?: Property | null): PropertyMetadata {
+  const raw = (property as (Property & { metadata?: unknown }) | null | undefined)?.metadata;
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as PropertyMetadata : {};
+}
+
+function metadataString(value: unknown) {
+  return typeof value === 'string' ? value : '';
+}
+
 export function PropertyPreviewDialog({
   property: propertyFromList,
   open,
@@ -141,6 +155,9 @@ export function PropertyPreviewDialog({
     : property?.preco || null;
   const displayArea = isLand ? property?.area_total : (property?.area_util || property?.area_total);
   const cleanDescription = cleanPropertyDescription(property?.descricao);
+  const propertyMetadata = getPropertyMetadata(property);
+  const financingDetails = metadataString(propertyMetadata.financing_details);
+  const exchangeDetails = metadataString(propertyMetadata.exchange_details);
   const ownerPhone = property?.owner_cellphone || property?.owner_phone_commercial || property?.owner_phone_residential || null;
   const captorName = captorUser?.name || (cadastroUserId ? null : property?.cadastrado_por) || null;
   const captorContact = captorUser?.whatsapp || captorUser?.email || null;
@@ -238,6 +255,7 @@ export function PropertyPreviewDialog({
     { icon: Home, label: 'Situação', value: property.situacao_imovel },
     { icon: User, label: 'Ocupação', value: property.ocupacao },
     { icon: Check, label: 'Financiamento', value: formatBoolean(property.aceita_financiamento) },
+    { icon: Check, label: 'Permuta', value: formatBoolean(property.aceita_permuta) },
     { icon: Check, label: 'FGTS', value: formatBoolean(property.usou_fgts) },
     { icon: Check, label: 'Exclusividade', value: formatBoolean(property.exclusividade) },
     { icon: Check, label: 'Placa no local', value: formatBoolean(property.placa_no_local) },
@@ -261,6 +279,28 @@ export function PropertyPreviewDialog({
             <span className="font-medium ml-auto min-w-0 truncate text-right">{value}</span>
           </div>
         ))}
+      </div>
+    </div>
+  ) : null;
+
+  const negotiationDetailsSection = property && (financingDetails || exchangeDetails) ? (
+    <div className="space-y-3">
+      <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+        Condicoes comerciais
+      </h3>
+      <div className="grid grid-cols-1 gap-2">
+        {financingDetails && (
+          <div className="rounded-lg bg-[var(--app-surface-soft)] p-3">
+            <p className="text-xs font-semibold uppercase text-muted-foreground">Financiamento</p>
+            <p className="mt-1 whitespace-pre-wrap text-sm">{financingDetails}</p>
+          </div>
+        )}
+        {exchangeDetails && (
+          <div className="rounded-lg bg-[var(--app-surface-soft)] p-3">
+            <p className="text-xs font-semibold uppercase text-muted-foreground">Permuta</p>
+            <p className="mt-1 whitespace-pre-wrap text-sm">{exchangeDetails}</p>
+          </div>
+        )}
       </div>
     </div>
   ) : null;
@@ -560,6 +600,7 @@ export function PropertyPreviewDialog({
             {responsibleSection}
             {propertyDetailsSection}
             {extraDetailsSection}
+            {negotiationDetailsSection}
 
             {/* Description */}
             {cleanDescription && (

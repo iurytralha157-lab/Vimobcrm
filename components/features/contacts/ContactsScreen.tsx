@@ -63,13 +63,13 @@ import { ImportContactsDialog } from "@/components/features/contacts/ImportConta
 import { TableSkeleton } from "@/components/features/contacts/TableSkeleton";
 import { EmptyState } from "@/components/features/contacts/EmptyState";
 import { useContactsList, type Contact, type ContactListFilters } from "@/hooks/use-contacts-list";
-import { exportContactsFiltered } from "@/lib/export-contacts";
 import { useLead, useDeleteLead } from "@/hooks/use-leads";
 import { ReentryBadge } from "@/components/features/leads/ReentryBadge";
 import { useToast } from "@/hooks/use-toast";
 import { SharedFilters } from "@/components/shared/SharedFilters";
 import { useSharedFilters } from "@/hooks/use-shared-filters";
 import { useAuth } from "@/contexts/AuthContext";
+import { useUserPermissions } from "@/hooks/use-user-permissions";
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -102,8 +102,10 @@ function LeadCountBadge({ isLoading, totalCount }: { isLoading: boolean; totalCo
 }
 
 export default function Contacts() {
-  const { organization, profile } = useAuth();
+  const { organization, profile, isSuperAdmin } = useAuth();
+  const { hasPermission } = useUserPermissions();
   const organizationId = organization?.id ?? profile?.organization_id ?? null;
+  const canDeleteLeads = isSuperAdmin || profile?.role === "admin" || hasPermission("lead_delete");
   const isMobile = useIsMobile();
   const { toast } = useToast();
 
@@ -259,6 +261,7 @@ export default function Contacts() {
     setIsExporting(true);
 
     try {
+      const { exportContactsFiltered } = await import("@/lib/export-contacts");
       const count = await exportContactsFiltered({
         filters: {
           search: deferredSearch || undefined,
@@ -302,6 +305,7 @@ export default function Contacts() {
   const clearSelection = () => setSelectedIds(new Set());
 
   const toggleSelectAll = () => {
+    if (!canDeleteLeads) return;
     if (selectedIds.size === contacts.length && contacts.length > 0) {
       clearSelection();
     } else {
@@ -310,6 +314,7 @@ export default function Contacts() {
   };
 
   const toggleSelectOne = (id: string) => {
+    if (!canDeleteLeads) return;
     const newSet = new Set(selectedIds);
 
     if (shiftPressed && lastSelectedId) {
@@ -344,6 +349,7 @@ export default function Contacts() {
   };
 
   const handleBulkDelete = async () => {
+    if (!canDeleteLeads) return;
     for (const id of selectedIds) {
       await deleteLead.mutateAsync(id);
     }
@@ -645,7 +651,7 @@ export default function Contacts() {
                       contact={contact}
                       sourceLabels={sourceLabels}
                       onViewDetails={() => setSelectedContactId(contact.id)}
-                      onDelete={() => setDeleteContactId(contact.id)}
+                      onDelete={canDeleteLeads ? () => setDeleteContactId(contact.id) : undefined}
                     />
                   ))}
                 </div>
@@ -668,13 +674,15 @@ export default function Contacts() {
                 <Table className="contacts-table">
                   <TableHeader>
                     <TableRow className="border-b border-[var(--app-border-strong)] bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-soft)]">
-                      <TableHead className="w-10">
-                        <Checkbox
-                          data-tour="contacts-select-all"
-                          checked={selectedIds.size === contacts.length && contacts.length > 0}
-                          onCheckedChange={toggleSelectAll}
-                        />
-                      </TableHead>
+                      {canDeleteLeads && (
+                        <TableHead className="w-10">
+                          <Checkbox
+                            data-tour="contacts-select-all"
+                            checked={selectedIds.size === contacts.length && contacts.length > 0}
+                            onCheckedChange={toggleSelectAll}
+                          />
+                        </TableHead>
+                      )}
                       <TableHead className="cursor-pointer hover:bg-[var(--app-surface-hover)]" onClick={() => handleSort("name")}>
                         <div className="flex items-center">
                           Nome <SortIcon column="name" sortBy={sortBy} sortDir={sortDir} />
@@ -715,12 +723,14 @@ export default function Contacts() {
                           )}
                           onClick={() => setSelectedContactId(contact.id)}
                         >
-                          <TableCell onClick={(e) => e.stopPropagation()}>
-                            <Checkbox
-                              checked={selectedIds.has(contact.id)}
-                              onCheckedChange={() => toggleSelectOne(contact.id)}
-                            />
-                          </TableCell>
+                          {canDeleteLeads && (
+                            <TableCell onClick={(e) => e.stopPropagation()}>
+                              <Checkbox
+                                checked={selectedIds.has(contact.id)}
+                                onCheckedChange={() => toggleSelectOne(contact.id)}
+                              />
+                            </TableCell>
+                          )}
 
                           <TableCell>
                             <div className="flex items-center gap-3">
@@ -882,14 +892,18 @@ export default function Contacts() {
                                     </a>
                                   </DropdownMenuItem>
                                 )}
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  className="text-destructive focus:text-destructive"
-                                  onClick={() => setDeleteContactId(contact.id)}
-                                >
-                                  <Trash2 className="h-4 w-4 mr-2" />
-                                  Excluir
-                                </DropdownMenuItem>
+                                {canDeleteLeads && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      className="text-destructive focus:text-destructive"
+                                      onClick={() => setDeleteContactId(contact.id)}
+                                    >
+                                      <Trash2 className="h-4 w-4 mr-2" />
+                                      Excluir
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </TableCell>
@@ -903,7 +917,7 @@ export default function Contacts() {
           )}
         </Card>
 
-        {selectedIds.size > 0 && (
+        {canDeleteLeads && selectedIds.size > 0 && (
           <div className="app-card fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-4 p-3 shadow-lg">
             <span className="text-sm font-medium">{selectedIds.size} selecionado(s)</span>
             <Button variant="destructive" size="sm" onClick={() => setBulkDeleteDialogOpen(true)}>
@@ -1027,7 +1041,7 @@ export default function Contacts() {
 
         <CreateLeadDialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen} />
 
-        <AlertDialog open={!!deleteContactId} onOpenChange={(open) => !open && setDeleteContactId(null)}>
+        <AlertDialog open={canDeleteLeads && !!deleteContactId} onOpenChange={(open) => !open && setDeleteContactId(null)}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Excluir contato</AlertDialogTitle>
@@ -1040,7 +1054,7 @@ export default function Contacts() {
               <AlertDialogAction
                 className="bg-destructive hover:bg-destructive/90"
                 onClick={async () => {
-                  if (deleteContactId) {
+                  if (canDeleteLeads && deleteContactId) {
                     await deleteLead.mutateAsync(deleteContactId);
                     setDeleteContactId(null);
                   }
@@ -1052,7 +1066,7 @@ export default function Contacts() {
           </AlertDialogContent>
         </AlertDialog>
 
-        <AlertDialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
+        <AlertDialog open={canDeleteLeads && bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Excluir {selectedIds.size} contatos</AlertDialogTitle>

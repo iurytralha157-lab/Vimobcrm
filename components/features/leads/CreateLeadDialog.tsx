@@ -686,6 +686,7 @@ export function CreateLeadDialog({
                             tipo_de_imovel: p.tipo_de_imovel,
                             tipo_de_negocio: p.tipo_de_negocio,
                             commission_percentage: p.commission_percentage,
+                            status: p.status,
                           }))}
                           selectedPropertyId={formData.property_id || null}
                           onSelect={(p) => {

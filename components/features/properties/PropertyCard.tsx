@@ -22,15 +22,20 @@ import {
   Trash2,
   Eye,
   CheckCircle,
+  Clock,
   Globe,
   Lock,
   Percent,
   Share2,
-  ExternalLink
+  ExternalLink,
+  RotateCcw,
+  KeyRound,
+  History
 } from 'lucide-react';
 import { Property } from '@/hooks/use-properties';
 import type { PropertySiteInfo } from '@/lib/api/property-support';
 import { buildPropertySiteUrl } from '@/lib/property-site-url';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 type PropertyWithCommission = Property & {
@@ -47,7 +52,8 @@ interface PropertyCardProps {
   onEdit: (property: Property) => void;
   onDelete: (id: string) => void;
   onPreview: (property: Property) => void;
-  onMarkSold?: (id: string) => void;
+  onHistory?: (property: Property) => void;
+  onChangeStatus?: (id: string, status: 'ativo' | 'reservado' | 'vendido' | 'alugado') => void;
   onToggleVisibility?: (id: string, isPublic: boolean) => void;
   formatPrice: (value: number | null, tipo: string | null) => string;
   canEdit?: boolean;
@@ -59,17 +65,23 @@ export function PropertyCard({
   onEdit,
   onDelete,
   onPreview,
-  onMarkSold,
+  onHistory,
+  onChangeStatus,
   onToggleVisibility,
   formatPrice,
   canEdit = false,
   siteInfo,
 }: PropertyCardProps) {
-  const isSold = property.status === 'vendido';
   const publication = property as PropertyWithPublication;
   const normalizedStatus = (property.status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  const isPrivate = ['privado', 'private', 'draft', 'rascunho', 'arquivado', 'archived'].includes(normalizedStatus);
+  const isSold = normalizedStatus === 'vendido';
+  const isReserved = normalizedStatus === 'reservado';
+  const isRented = normalizedStatus === 'alugado' || normalizedStatus === 'locado';
+  const isInactive = normalizedStatus === 'inativo' || normalizedStatus === 'inactive';
+  const isPrivateStatus = ['privado', 'private', 'draft', 'rascunho', 'arquivado', 'archived'].includes(normalizedStatus);
+  const isUnavailable = isSold || isReserved || isRented;
   const isSitePublished = Boolean(publication.published_on_site ?? publication.anunciar ?? true);
+  const isPrivate = (!isSitePublished && !isUnavailable) || isPrivateStatus;
   const propertyType = (property.tipo_de_imovel || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const isLand = propertyType === 'terreno' || propertyType === 'lote';
   const displayArea = isLand ? property.area_total : (property.area_util || property.area_total);
@@ -85,6 +97,12 @@ export function PropertyCard({
     titleIntent.includes('aluguel') ||
     titleIntent.includes('alugar') ||
     (Number(property.valor_locacao) > 0 && property.preco == null);
+  const isSaleIntent =
+    dealType === 'venda' ||
+    dealType === 'venda e aluguel' ||
+    dealType === 'venda e locacao' ||
+    dealType === 'lancamento' ||
+    dealType === 'lançamento';
   const displayPrice = isRentalIntent
     ? property.valor_locacao || property.preco
     : property.preco;
@@ -93,7 +111,18 @@ export function PropertyCard({
     : null;
   const imageSrc = property.imagem_principal || fallbackPhoto;
   const commissionPercentage = (property as PropertyWithCommission).commission_percentage;
-  const propertySiteUrl = !isPrivate ? buildPropertySiteUrl(property.code, siteInfo) : null;
+  const isPubliclyAvailable = isSitePublished && !isPrivateStatus && !isUnavailable && !isInactive;
+  const propertySiteUrl = isPubliclyAvailable ? buildPropertySiteUrl(property.code, siteInfo) : null;
+  const statusLabel = isSold ? 'Vendido' : isRented ? 'Alugado' : isReserved ? 'Reservado' : isInactive ? 'Inativo' : isPrivate ? 'Privado' : null;
+  const statusIcon = isSold ? CheckCircle : isRented ? KeyRound : isReserved ? Clock : isPrivate ? Lock : Clock;
+  const StatusIcon = statusIcon;
+  const statusBadgeClass = isSold
+    ? 'bg-zinc-900/75 text-white dark:bg-zinc-100/85 dark:text-zinc-950'
+    : isRented
+      ? 'bg-sky-950/75 text-white dark:bg-sky-200/85 dark:text-sky-950'
+      : isReserved
+        ? 'bg-amber-950/75 text-white dark:bg-amber-200/90 dark:text-amber-950'
+        : 'bg-black/70 text-white';
 
   const copyPropertyUrl = async () => {
     if (!propertySiteUrl) return false;
@@ -168,12 +197,11 @@ export function PropertyCard({
           </div>
         )}
 
-        {/* Sold overlay */}
-        {isSold && (
-          <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-            <Badge className="bg-success text-success-foreground text-lg px-4 py-2">
-              <CheckCircle className="h-5 w-5 mr-2" />
-              VENDIDO
+        {isUnavailable && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/25">
+            <Badge className={cn("border-0 px-3 py-1.5 text-xs font-semibold uppercase shadow-sm backdrop-blur-sm", statusBadgeClass)}>
+              <StatusIcon className="h-3.5 w-3.5 mr-1.5" />
+              {statusLabel}
             </Badge>
           </div>
         )}
@@ -192,7 +220,7 @@ export function PropertyCard({
             </Badge>
           )}
           {isPrivate && (
-            <Badge variant="secondary" className="ml-2 bg-black/70 text-muted-foreground">
+            <Badge variant="secondary" className="ml-2 bg-black/70 text-white">
               <Lock className="h-3 w-3 mr-1" />
               Privado
             </Badge>
@@ -211,7 +239,7 @@ export function PropertyCard({
               <Share2 className="h-4 w-4" />
             </button>
           )}
-          {property.status === 'inativo' && (
+          {isInactive && (
             <Badge variant="outline" className="bg-background">Inativo</Badge>
           )}
         </div>
@@ -247,6 +275,12 @@ export function PropertyCard({
                 <Eye className="h-4 w-4 mr-2" />
                 Visualizar
               </DropdownMenuItem>
+              {onHistory && (
+                <DropdownMenuItem onClick={() => onHistory(property)}>
+                  <History className="h-4 w-4 mr-2" />
+                  Historico
+                </DropdownMenuItem>
+              )}
               {propertySiteUrl && (
                 <>
                   <DropdownMenuItem onClick={handleShareProperty}>
@@ -266,13 +300,35 @@ export function PropertyCard({
                 </DropdownMenuItem>
               )}
               {canEdit && <DropdownMenuSeparator />}
-              {canEdit && onMarkSold && !isSold && (
-                <DropdownMenuItem onClick={() => onMarkSold(property.id)}>
-                  <CheckCircle className="h-4 w-4 mr-2 text-success" />
-                  Marcar como Vendido
-                </DropdownMenuItem>
+              {canEdit && onChangeStatus && (
+                <>
+                  {!isReserved && !isSold && !isRented && (
+                    <DropdownMenuItem onClick={() => onChangeStatus(property.id, 'reservado')}>
+                      <Clock className="h-4 w-4 mr-2 text-amber-500" />
+                      Marcar como Reservado
+                    </DropdownMenuItem>
+                  )}
+                  {isSaleIntent && !isSold && (
+                    <DropdownMenuItem onClick={() => onChangeStatus(property.id, 'vendido')}>
+                      <CheckCircle className="h-4 w-4 mr-2 text-success" />
+                      Marcar como Vendido
+                    </DropdownMenuItem>
+                  )}
+                  {isRentalIntent && !isRented && (
+                    <DropdownMenuItem onClick={() => onChangeStatus(property.id, 'alugado')}>
+                      <KeyRound className="h-4 w-4 mr-2 text-sky-500" />
+                      Marcar como Alugado
+                    </DropdownMenuItem>
+                  )}
+                  {(isUnavailable || isInactive || isPrivateStatus) && (
+                    <DropdownMenuItem onClick={() => onChangeStatus(property.id, 'ativo')}>
+                      <RotateCcw className="h-4 w-4 mr-2" />
+                      Voltar disponivel
+                    </DropdownMenuItem>
+                  )}
+                </>
               )}
-              {canEdit && onToggleVisibility && (
+              {canEdit && onToggleVisibility && !isUnavailable && (
                 <DropdownMenuItem onClick={() => onToggleVisibility(property.id, !isSitePublished)}>
                   {isSitePublished ? (
                     <>
@@ -341,7 +397,7 @@ export function PropertyCard({
           )}
         </div>
 
-        <p className={`text-lg font-bold ${isSold ? 'text-muted-foreground line-through' : 'text-primary'}`}>
+        <p className={`text-lg font-bold ${isUnavailable ? 'text-muted-foreground line-through' : 'text-primary'}`}>
           {formatPrice(displayPrice, isRentalIntent ? 'Aluguel' : property.tipo_de_negocio)}
         </p>
       </CardContent>

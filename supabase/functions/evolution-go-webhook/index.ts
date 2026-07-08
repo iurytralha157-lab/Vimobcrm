@@ -11,6 +11,12 @@ const corsHeaders = {
 
 type JsonRecord = Record<string, any>;
 
+declare const EdgeRuntime:
+  | {
+      waitUntil?: (promise: Promise<unknown>) => void;
+    }
+  | undefined;
+
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const EVOLUTION_GO_API_KEY = Deno.env.get("EVOLUTION_GO_API_KEY") || "";
@@ -1442,6 +1448,20 @@ async function triggerAutoReply(
   }
 }
 
+function scheduleAutoReply(
+  session: JsonRecord,
+  conversation: JsonRecord,
+  storedMessage: JsonRecord | null,
+  message: ReturnType<typeof normalizeMessage>,
+) {
+  const task = triggerAutoReply(session, conversation, storedMessage, message);
+  if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
+    EdgeRuntime.waitUntil(task);
+    return;
+  }
+  task.catch((error) => console.warn("AI auto-reply background task failed", error));
+}
+
 async function handleMessages(session: JsonRecord, payload: any) {
   const messages = extractMessages(payload);
   let processed = 0;
@@ -1460,7 +1480,7 @@ async function handleMessages(session: JsonRecord, payload: any) {
       await upsertLeadMetaAttribution(session, lead, message);
       await logLeadEntryAttribution(session, conversation, lead, message);
       await logCreativeActivity(session, conversation, lead, message);
-      await triggerAutoReply(session, conversation, result.message, message);
+      scheduleAutoReply(session, conversation, result.message, message);
     }
     processed += 1;
   }
@@ -1649,6 +1669,15 @@ Deno.serve(async (req) => {
 
     if (!validateSessionSignals(resolved.session, resolved.signals)) {
       return json({ ok: true, ignored: true, reason: "BLOCKED_SESSION_INSTANCE_MISMATCH", signals: resolved.signals });
+    }
+
+    if (resolved.session.is_active === false || resolved.session.status === "deleted") {
+      return json({
+        ok: true,
+        ignored: true,
+        reason: "INACTIVE_SESSION",
+        session_id: resolved.session.id,
+      });
     }
 
     const qrUpdated = event.includes("qr") || extractQr(payload) ? await handleQr(resolved.session, payload) : false;

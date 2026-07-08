@@ -3,7 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import { useState, useEffect, useCallback } from "react";
 import type { Json } from "@/integrations/supabase/types";
-import { whatsappAPI, type WhatsAppSessionQuota } from "@/lib/api/whatsapp";
+import { whatsappAPI, type AIAutoReplySessionInput, type WhatsAppSessionQuota } from "@/lib/api/whatsapp";
 
 export const EVOLUTION_GO_CREATION_ENABLED = true;
 export const WHATSAPP_LEGACY_EVOLUTION_ENABLED = false;
@@ -56,11 +56,7 @@ export interface WhatsAppSessionAccess {
   };
 }
 
-export type WhatsAppAccessMode =
-  | "assigned_leads_only"
-  | "team_leads"
-  | "all_leads"
-  | "full_inbox";
+export type WhatsAppAccessMode = "assigned_leads_only";
 
 function normalizeSession(session: WhatsAppSession): WhatsAppSession {
   return {
@@ -296,6 +292,8 @@ export function useGrantSessionAccess() {
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-session-access", variables.sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] });
       toast({
         title: "Acesso atualizado",
         description: "Permissoes salvas com sucesso",
@@ -314,6 +312,8 @@ export function useRevokeSessionAccess() {
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-session-access", variables.sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] });
       toast({
         title: "Acesso revogado",
         description: "O usuario nao tem mais acesso a sessao",
@@ -526,8 +526,8 @@ export function useToggleAIAutoReplySession() {
   const { profile } = useAuth();
 
   return useMutation({
-    mutationFn: async ({ sessionId, enabled }: { sessionId: string; enabled: boolean }) => {
-      await whatsappAPI.toggleAIAutoReplySession(sessionId, enabled, profile?.organization_id);
+    mutationFn: async ({ sessionId, ...input }: { sessionId: string } & AIAutoReplySessionInput) => {
+      await whatsappAPI.toggleAIAutoReplySession(sessionId, input, profile?.organization_id);
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });

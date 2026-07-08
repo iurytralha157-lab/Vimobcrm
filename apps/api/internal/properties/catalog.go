@@ -103,7 +103,7 @@ func (repo Repository) ListCatalog(ctx context.Context, tenantContext tenant.Con
 }
 
 func (repo Repository) CreateCatalogItem(ctx context.Context, tenantContext tenant.Context, kind CatalogKind, input CatalogCreateInput) (CatalogItem, error) {
-	if !canManageProperties(tenantContext) {
+	if !canCreateProperties(tenantContext) {
 		return CatalogItem{}, tenant.ErrOrganizationAccessDenied
 	}
 

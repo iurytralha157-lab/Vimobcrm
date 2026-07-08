@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -11,12 +12,14 @@ import (
 )
 
 type Config struct {
-	URL             string
-	MaxConns        int32
-	MinConns        int32
-	MaxConnLifetime time.Duration
-	MaxConnIdleTime time.Duration
-	HealthTimeout   time.Duration
+	URL                  string
+	MaxConns             int32
+	MinConns             int32
+	MaxConnLifetime      time.Duration
+	MaxConnIdleTime      time.Duration
+	HealthTimeout        time.Duration
+	StartupRetryTimeout  time.Duration
+	StartupRetryInterval time.Duration
 }
 
 type Postgres struct {
@@ -62,11 +65,77 @@ func NewPostgres(ctx context.Context, cfg Config) (*Postgres, error) {
 	defer cancel()
 
 	if err := postgres.Ping(pingCtx); err != nil {
+		if cfg.StartupRetryTimeout > 0 && isRetriableStartupPingError(err) {
+			if retryErr := retryStartupPing(ctx, postgres, cfg); retryErr == nil {
+				return postgres, nil
+			} else {
+				err = retryErr
+			}
+		}
+
 		pool.Close()
 		return nil, fmt.Errorf("failed to ping postgres: %w", err)
 	}
 
 	return postgres, nil
+}
+
+func retryStartupPing(ctx context.Context, postgres *Postgres, cfg Config) error {
+	deadline := time.Now().Add(cfg.StartupRetryTimeout)
+	interval := cfg.StartupRetryInterval
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+
+	var lastErr error
+	for {
+		if remaining := time.Until(deadline); remaining <= 0 {
+			if lastErr != nil {
+				return lastErr
+			}
+			return context.DeadlineExceeded
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(interval):
+		}
+
+		pingTimeout := cfg.HealthTimeout
+		if pingTimeout <= 0 {
+			pingTimeout = 3 * time.Second
+		}
+		if remaining := time.Until(deadline); remaining > 0 && remaining < pingTimeout {
+			pingTimeout = remaining
+		}
+
+		pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
+		err := postgres.Ping(pingCtx)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if !isRetriableStartupPingError(err) {
+			return err
+		}
+		lastErr = err
+	}
+}
+
+func isRetriableStartupPingError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "ecircuitbreaker") ||
+		strings.Contains(message, "temporarily blocked") ||
+		strings.Contains(message, "connection refused") ||
+		strings.Contains(message, "connection reset") ||
+		strings.Contains(message, "connection timed out") ||
+		strings.Contains(message, "timeout") ||
+		strings.Contains(message, "server closed the connection")
 }
 
 func (postgres *Postgres) Pool() *pgxpool.Pool {

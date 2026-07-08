@@ -48,7 +48,45 @@ func (service Service) Run(ctx context.Context, tenantContext tenant.Context, re
 		return RunResponse{}, ErrAgentNotFound
 	}
 
-	selected := selectRequestedOrDefaultAgent(agents, request.AgentID)
+	contextData, err := service.repo.LoadLeadContext(ctx, tenantContext, request.LeadID, request.Message)
+	if err != nil {
+		return RunResponse{}, err
+	}
+
+	settings, _ := service.repo.Settings(ctx, tenantContext)
+	var matchedRule *RoutingRule
+	var routedAgent Agent
+	if request.AgentID == "" {
+		matchedRule, routedAgent, err = service.repo.MatchRoutingRule(ctx, tenantContext, request, contextData, agents)
+		if err != nil {
+			return RunResponse{}, err
+		}
+		if matchedRule != nil && routedAgent.ID == "" {
+			memory := map[string]any{
+				"routingRuleId":    matchedRule.ID,
+				"routingRuleName":  matchedRule.Name,
+				"routingAction":    matchedRule.Action,
+				"routingMatchedAt": time.Now().UTC().Format(time.RFC3339),
+				"leadId":           request.LeadID,
+				"conversationId":   request.ConversationID,
+				"activeAgentId":    "",
+				"activeAgentType":  "",
+				"lastMessage":      request.Message,
+			}
+			service.repo.SaveConversationState(ctx, tenantContext, request.ConversationID, "", memory)
+			service.repo.SaveAIEvent(ctx, tenantContext, "ai.routing_skipped", memory)
+			return RunResponse{
+				Mode:   "routed",
+				Output: "",
+				Memory: memory,
+			}, nil
+		}
+	}
+
+	selected := routedAgent
+	if selected.ID == "" {
+		selected = selectRequestedOrDefaultAgent(agents, request.AgentID, settings.DefaultTriageAgentID)
+	}
 	if selected.ID == "" {
 		return RunResponse{}, ErrAgentNotFound
 	}
@@ -56,11 +94,6 @@ func (service Service) Run(ctx context.Context, tenantContext tenant.Context, re
 	handoff := service.detectHandoff(selected, agents, request.Message)
 	if handoff != nil {
 		selected = agentByType(agents, handoff.ToAgent.Type)
-	}
-
-	contextData, err := service.repo.LoadLeadContext(ctx, tenantContext, request.LeadID, request.Message)
-	if err != nil {
-		return RunResponse{}, err
 	}
 
 	toolsUsed := []ToolResult{
@@ -87,6 +120,11 @@ func (service Service) Run(ctx context.Context, tenantContext tenant.Context, re
 		"handoff":         handoff,
 		"updatedAt":       time.Now().UTC().Format(time.RFC3339),
 	}
+	if matchedRule != nil {
+		memory["routingRuleId"] = matchedRule.ID
+		memory["routingRuleName"] = matchedRule.Name
+		memory["routingAction"] = matchedRule.Action
+	}
 	service.repo.SaveConversationState(ctx, tenantContext, request.ConversationID, responseID, memory)
 	service.repo.SaveAIEvent(ctx, tenantContext, "ai.agent_run", map[string]any{
 		"agentId":        selected.ID,
@@ -95,6 +133,7 @@ func (service Service) Run(ctx context.Context, tenantContext tenant.Context, re
 		"conversationId": request.ConversationID,
 		"mode":           mode,
 		"handoff":        handoff,
+		"routingRule":    matchedRule,
 	})
 
 	response := RunResponse{
@@ -293,10 +332,17 @@ func suggestedActions(agent Agent, request RunRequest, contextData LeadContext) 
 	return actions
 }
 
-func selectRequestedOrDefaultAgent(agents []Agent, agentID string) Agent {
+func selectRequestedOrDefaultAgent(agents []Agent, agentID string, defaultAgentID string) Agent {
 	if agentID != "" {
 		for _, agent := range agents {
 			if agent.ID == agentID {
+				return agent
+			}
+		}
+	}
+	if defaultAgentID != "" {
+		for _, agent := range agents {
+			if agent.ID == defaultAgentID {
 				return agent
 			}
 		}

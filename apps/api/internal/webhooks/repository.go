@@ -252,6 +252,9 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 		"webhook_name": webhook.Name,
 		"payload":      payload,
 	}
+	if formAnswers := webhookFormAnswers(payload); len(formAnswers) > 0 {
+		metadata["form_answers"] = formAnswers
+	}
 	metadataJSON, _ := json.Marshal(metadata)
 	payloadJSON, _ := json.Marshal(payload)
 
@@ -713,6 +716,316 @@ func payloadText(value any) *string {
 	default:
 		return nil
 	}
+}
+
+var webhookTechnicalFields = map[string]struct{}{
+	"name":                          {},
+	"nome":                          {},
+	"full name":                     {},
+	"email":                         {},
+	"e mail":                        {},
+	"phone":                         {},
+	"telefone":                      {},
+	"whatsapp":                      {},
+	"action":                        {},
+	"form name":                     {},
+	"formname":                      {},
+	"form title":                    {},
+	"form url":                      {},
+	"source detail":                 {},
+	"source page":                   {},
+	"source":                        {},
+	"source url":                    {},
+	"shubid":                        {},
+	"page url":                      {},
+	"post id":                       {},
+	"post title":                    {},
+	"referrer":                      {},
+	"referer":                       {},
+	"remote ip":                     {},
+	"user agent":                    {},
+	"ip":                            {},
+	"token":                         {},
+	"webhook":                       {},
+	"webhook id":                    {},
+	"webhook name":                  {},
+	"payload":                       {},
+	"raw payload":                   {},
+	"field data":                    {},
+	"fielddata":                     {},
+	"custom fields":                 {},
+	"customfields":                  {},
+	"fields":                        {},
+	"form fields":                   {},
+	"formfields":                    {},
+	"form answers":                  {},
+	"formanswers":                   {},
+	"posted data":                   {},
+	"posteddata":                    {},
+	"raw fields":                    {},
+	"rawfields":                     {},
+	"all fields":                    {},
+	"allfields":                     {},
+	"entry":                         {},
+	"entries":                       {},
+	"data":                          {},
+	"submitted at":                  {},
+	"created at":                    {},
+	"updated at":                    {},
+	"timestamp":                     {},
+	"date":                          {},
+	"time":                          {},
+	"nonce":                         {},
+	"wpnonce":                       {},
+	"wpcf7":                         {},
+	"wpcf7 version":                 {},
+	"wpcf7 locale":                  {},
+	"wpcf7 unit tag":                {},
+	"wpcf7 container post":          {},
+	"wpcf7 posted data hash":        {},
+	"elementor pro forms send form": {},
+	"gclid":                         {},
+	"fbclid":                        {},
+	"campaign id":                   {},
+	"campaignid":                    {},
+	"campaign name":                 {},
+	"campaignname":                  {},
+	"adset id":                      {},
+	"adsetid":                       {},
+	"adset name":                    {},
+	"adsetname":                     {},
+	"ad id":                         {},
+	"adid":                          {},
+	"ad name":                       {},
+	"adname":                        {},
+	"form id":                       {},
+	"formid":                        {},
+	"leadgen id":                    {},
+	"leadgenid":                     {},
+	"enviado em":                    {},
+}
+
+var webhookContainerFields = map[string]struct{}{
+	"field data":    {},
+	"fielddata":     {},
+	"custom fields": {},
+	"customfields":  {},
+	"fields":        {},
+	"form fields":   {},
+	"formfields":    {},
+	"form answers":  {},
+	"formanswers":   {},
+	"posted data":   {},
+	"posteddata":    {},
+	"raw fields":    {},
+	"rawfields":     {},
+	"all fields":    {},
+	"allfields":     {},
+	"entry":         {},
+	"entries":       {},
+	"data":          {},
+	"answers":       {},
+	"questions":     {},
+}
+
+var webhookAnswerLabelKeys = []string{
+	"label",
+	"title",
+	"question",
+	"field_label",
+	"fieldLabel",
+	"name",
+	"key",
+	"id",
+	"field_id",
+	"fieldId",
+}
+
+var webhookAnswerValueKeys = []string{
+	"value",
+	"values",
+	"raw_value",
+	"rawValue",
+	"answer",
+	"answers",
+	"text",
+	"selected",
+	"selected_value",
+	"selectedValue",
+	"display_value",
+	"displayValue",
+}
+
+func webhookFormAnswers(payload map[string]any) []map[string]string {
+	answers := make([]map[string]string, 0)
+	seen := map[string]struct{}{}
+
+	pushAnswer := func(question string, value any) {
+		cleanQuestion := strings.TrimSpace(question)
+		if cleanQuestion == "" || isWebhookTechnicalField(cleanQuestion) {
+			return
+		}
+		answer := webhookAnswerText(value)
+		if answer == nil {
+			return
+		}
+		key := normalizeWebhookFieldKey(cleanQuestion) + ":" + *answer
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		answers = append(answers, map[string]string{
+			"question": cleanQuestion,
+			"answer":   *answer,
+		})
+	}
+
+	var visitFieldContainer func(value any, fallbackQuestion string, depth int)
+	visitFieldContainer = func(value any, fallbackQuestion string, depth int) {
+		if depth > 5 || value == nil {
+			return
+		}
+		switch typed := value.(type) {
+		case []any:
+			for _, item := range typed {
+				visitFieldContainer(item, fallbackQuestion, depth+1)
+			}
+			return
+		case map[string]any:
+			if hasWebhookAnswerShape(typed) {
+				question := webhookFieldQuestion(typed, fallbackQuestion)
+				if question != "" {
+					pushAnswer(question, webhookRecordValueByKeys(typed, webhookAnswerValueKeys))
+				}
+				return
+			}
+			for question, nestedValue := range typed {
+				if nestedRecord, ok := nestedValue.(map[string]any); ok && hasWebhookAnswerShape(nestedRecord) {
+					nestedQuestion := webhookFieldQuestion(nestedRecord, question)
+					if nestedQuestion != "" {
+						pushAnswer(nestedQuestion, webhookRecordValueByKeys(nestedRecord, webhookAnswerValueKeys))
+					}
+					continue
+				}
+				if isWebhookContainerField(question) {
+					visitFieldContainer(nestedValue, question, depth+1)
+					continue
+				}
+				switch nestedValue.(type) {
+				case []any, map[string]any:
+					visitFieldContainer(nestedValue, question, depth+1)
+				default:
+					pushAnswer(question, nestedValue)
+				}
+			}
+		default:
+			if fallbackQuestion != "" {
+				pushAnswer(fallbackQuestion, value)
+			}
+		}
+	}
+
+	for question, value := range payload {
+		if isWebhookContainerField(question) {
+			visitFieldContainer(value, question, 0)
+			continue
+		}
+		pushAnswer(question, value)
+	}
+
+	return answers
+}
+
+func webhookAnswerText(value any) *string {
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case string:
+		cleaned := strings.TrimSpace(typed)
+		if cleaned == "" {
+			return nil
+		}
+		return &cleaned
+	case float64:
+		cleaned := strings.TrimSpace(fmt.Sprint(typed))
+		return &cleaned
+	case bool:
+		if !typed {
+			return nil
+		}
+		cleaned := fmt.Sprint(typed)
+		return &cleaned
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text := webhookAnswerText(item)
+			if text != nil {
+				parts = append(parts, *text)
+			}
+		}
+		if len(parts) == 0 {
+			return nil
+		}
+		joined := strings.Join(parts, ", ")
+		return &joined
+	case map[string]any:
+		for _, key := range webhookAnswerValueKeys {
+			if nested, ok := typed[key]; ok {
+				if text := webhookAnswerText(nested); text != nil {
+					return text
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func webhookRecordValueByKeys(record map[string]any, keys []string) any {
+	for _, key := range keys {
+		if value, ok := record[key]; ok {
+			return value
+		}
+	}
+	return nil
+}
+
+func webhookFieldQuestion(record map[string]any, fallback string) string {
+	if value := webhookRecordValueByKeys(record, webhookAnswerLabelKeys); value != nil {
+		if text := webhookAnswerText(value); text != nil {
+			return *text
+		}
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func hasWebhookAnswerShape(record map[string]any) bool {
+	for _, key := range webhookAnswerValueKeys {
+		if _, ok := record[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func isWebhookContainerField(question string) bool {
+	_, ok := webhookContainerFields[normalizeWebhookFieldKey(question)]
+	return ok
+}
+
+func isWebhookTechnicalField(question string) bool {
+	key := normalizeWebhookFieldKey(question)
+	if key == "" {
+		return true
+	}
+	if _, ok := webhookTechnicalFields[key]; ok {
+		return true
+	}
+	return strings.HasPrefix(key, "utm ") || strings.HasPrefix(key, "utm") || strings.HasSuffix(key, " id") || strings.HasSuffix(key, "id")
+}
+
+func normalizeWebhookFieldKey(value string) string {
+	replacer := strings.NewReplacer("_", " ", "-", " ")
+	return strings.Join(strings.Fields(strings.ToLower(replacer.Replace(strings.TrimSpace(value)))), " ")
 }
 
 func resolveWebhookPropertyID(webhook incomingWebhook, payload map[string]any) *string {

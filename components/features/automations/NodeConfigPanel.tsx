@@ -45,7 +45,7 @@ interface NodeConfigPanelProps {
   users?: Array<{ id: string; name: string | null; email: string }>;
   filterUserId?: string;
   setFilterUserId?: (id: string) => void;
-  properties?: Array<{ id: string; title: string | null; code?: string | null; bairro?: string | null; cidade?: string | null; preco?: number | null; imagem_principal?: string | null; tipo_de_imovel?: string | null; tipo_de_negocio?: string | null; commission_percentage?: number | null }>;
+  properties?: Array<{ id: string; title: string | null; code?: string | null; bairro?: string | null; cidade?: string | null; preco?: number | null; imagem_principal?: string | null; tipo_de_imovel?: string | null; tipo_de_negocio?: string | null; commission_percentage?: number | null; status?: string | null }>;
 }
 
 const NODE_TITLES: Record<string, { icon: React.ComponentType<{ className?: string }>; label: string; color: string }> = {
@@ -523,7 +523,19 @@ export function NodeConfigPanel({
                 <p className="text-xs text-foreground font-medium">{selectedNode.data.property_name}</p>
               )}
               <PropertyPickerDialog
-                properties={(properties || []).map(p => ({ id: p.id, code: p.code, title: p.title || 'Sem título', bairro: p.bairro, cidade: p.cidade, preco: p.preco, imagem_principal: p.imagem_principal, tipo_de_imovel: p.tipo_de_imovel, tipo_de_negocio: p.tipo_de_negocio, commission_percentage: p.commission_percentage }))}
+                properties={(properties || []).map(p => ({
+                  id: p.id,
+                  code: p.code,
+                  title: p.title || 'Sem título',
+                  bairro: p.bairro,
+                  cidade: p.cidade,
+                  preco: p.preco,
+                  imagem_principal: p.imagem_principal,
+                  tipo_de_imovel: p.tipo_de_imovel,
+                  tipo_de_negocio: p.tipo_de_negocio,
+                  commission_percentage: p.commission_percentage,
+                  status: p.status,
+                }))}
                 selectedPropertyId={selectedNode.data.property_id || null}
                 onSelect={(prop) => {
                   onNodeDataChange(selectedNode.id, {

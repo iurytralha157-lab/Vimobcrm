@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Camera, Clock, Crown, Loader2, UserPlus, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -41,6 +41,12 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
   const { data: users = [] } = useUsers();
   const createTeam = useCreateTeam();
   const updateTeam = useUpdateTeam();
+
+  const activeUsers = useMemo(
+    () => users.filter((user) => user.is_active !== false && Boolean(user.id)),
+    [users]
+  );
+  const activeUserIds = useMemo(() => new Set(activeUsers.map((user) => user.id)), [activeUsers]);
 
   useEffect(() => {
     let cancelled = false;
@@ -152,6 +158,12 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
             ...member,
             isLeader: leadershipByUserId.get(member.userId) ?? false,
           }));
+      const validMembersToSave =
+        activeUserIds.size > 0 ? membersToSave.filter((member) => activeUserIds.has(member.userId)) : membersToSave;
+
+      if (membersToSave.length !== validMembersToSave.length) {
+        toast.info('Removi membros pendentes ou inativos antes de salvar a equipe.');
+      }
 
       if (team) {
         await updateTeam.mutateAsync({
@@ -159,7 +171,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
           name: name.trim(),
           logo_url: finalLogoUrl || null,
           is_active: team.is_active ?? true,
-          members: membersToSave,
+          members: validMembersToSave,
           preserveLeadership: !canEditLeadership,
         });
       } else {
@@ -167,7 +179,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
           name: name.trim(),
           logo_url: finalLogoUrl || null,
           is_active: true,
-          members: membersToSave,
+          members: validMembersToSave,
         });
       }
 
@@ -184,7 +196,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
   const displayLogo = logoPreview || logoUrl || undefined;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88vh] w-[calc(100vw-16px)] max-w-[560px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-2xl backdrop-blur-xl sm:rounded-[20px] [&>button]:hidden">
+      <DialogContent className="max-h-[88vh] w-[calc(100vw-16px)] max-w-[560px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none backdrop-blur-xl sm:rounded-[12px] [&_button.absolute]:hidden">
         <div className="flex max-h-[88vh] flex-col p-4 sm:p-5">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
@@ -229,7 +241,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                   placeholder="Nome da equipe"
-                  className="h-10 rounded-xl border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] placeholder:text-[var(--app-text-tertiary)] focus-visible:ring-primary"
+                  className="h-10 rounded-[8px] border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] placeholder:text-[var(--app-text-tertiary)] focus-visible:ring-1 focus-visible:ring-primary"
                 />
                 <p className="mt-1.5 text-xs text-[var(--app-text-tertiary)]">
                   {selectedMembers.length} {selectedMembers.length === 1 ? 'membro selecionado' : 'membros selecionados'}
@@ -237,9 +249,9 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
               </div>
             </div>
 
-            <ScrollArea className="min-h-[220px] flex-1 pr-1 sm:pr-2">
-              <div className="space-y-0.5 pb-1">
-                {users.map((user) => {
+            <ScrollArea className="max-h-[300px] min-h-[220px] flex-1">
+              <div className="space-y-0.5 pb-1 pr-3 sm:pr-4 w-full">
+                {activeUsers.map((user) => {
                   const isSelected = isMemberSelected(user.id);
                   const memberData = getMemberSelection(user.id);
                   const savedMember = getSavedTeamMember(user.id);
@@ -247,8 +259,8 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                   return (
                     <div
                       key={user.id}
-                      className={`flex min-w-0 items-center gap-1.5 rounded-xl px-2 py-1 transition sm:gap-2 sm:px-2.5 ${
-                        isSelected ? 'bg-primary/14' : 'bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-hover)]'
+                      className={`flex w-full min-w-0 items-center gap-1.5 rounded-[8px] px-2 py-1 transition sm:gap-2 sm:px-2.5 ${
+                        isSelected ? 'bg-primary/12' : 'bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-hover)]'
                       }`}
                     >
                       {/*
@@ -257,7 +269,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                       */}
                       <button
                         type="button"
-                        className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-not-allowed disabled:opacity-75 sm:gap-2.5"
+                        className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none ring-0 focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-75 sm:gap-2.5"
                         onClick={() => toggleMember(user.id)}
                         disabled={!canEditLeadership && !!savedMember?.is_leader}
                       >
@@ -269,7 +281,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                         </Avatar>
                         <div className="min-w-0 flex-1 max-[380px]:hidden">
                           <p className="truncate text-sm font-semibold">{user.name}</p>
-                          <p className="truncate text-xs text-white/45">{user.email}</p>
+                          <p className="truncate text-xs text-[var(--app-text-tertiary)]">{user.email}</p>
                         </div>
                         <span
                           className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full transition ${
@@ -281,23 +293,25 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                       </button>
 
                       {isSelected && (
-                        <div className="flex shrink-0 items-center gap-1 rounded-lg bg-[var(--app-surface-hover)] px-1.5 py-1 sm:gap-1.5 sm:px-2">
-                          {savedMember && (
-                            <button
-                              type="button"
-                              className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-text-secondary)] transition hover:bg-[var(--app-surface-hover)] hover:text-primary"
-                              title="Editar escala"
-                              onClick={() =>
+                        <div className="flex shrink-0 items-center gap-1 rounded-[8px] bg-[var(--app-surface)]/80 px-1.5 py-1 sm:gap-1.5 sm:px-2">
+                          <button
+                            type="button"
+                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-text-secondary)] transition hover:bg-[var(--app-surface-hover)] hover:text-primary"
+                            title="Editar escala"
+                            onClick={() => {
+                              if (savedMember) {
                                 setAvailabilityMember({
                                   id: savedMember.id,
                                   name: user.name || 'Usuario',
                                   avatar: user.avatar_url,
-                                })
+                                });
+                              } else {
+                                toast.info('Salve a equipe primeiro para poder configurar a escala deste membro.');
                               }
-                            >
-                              <Clock className="h-4 w-4" />
-                            </button>
-                          )}
+                            }}
+                          >
+                            <Clock className="h-4 w-4" />
+                          </button>
                           <div className="flex items-center gap-1.5 text-xs text-[var(--app-text-secondary)]">
                             <Crown className={`h-3.5 w-3.5 ${memberData?.isLeader ? 'text-amber-400' : 'text-[var(--app-text-tertiary)]'}`} />
                             <span className="max-[440px]:hidden">Lider</span>
@@ -306,6 +320,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                             checked={memberData?.isLeader || false}
                             onCheckedChange={() => toggleLeader(user.id)}
                             disabled={!canEditLeadership}
+                            className="rounded-full"
                           />
                         </div>
                       )}
@@ -319,14 +334,14 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
           <div className="mt-4 flex gap-3">
             <Button
               type="button"
-              className="h-10 w-[30%] rounded-xl bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]"
+              className="h-10 w-[30%] rounded-[8px] border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]"
               onClick={() => onOpenChange(false)}
             >
               Cancelar
             </Button>
             <Button
               type="button"
-              className="h-10 w-[70%] rounded-xl"
+              className="h-10 w-[70%] rounded-[8px] shadow-none"
               onClick={handleSubmit}
               disabled={isSubmitting || !name.trim()}
             >

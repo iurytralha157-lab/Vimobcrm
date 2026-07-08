@@ -6,7 +6,7 @@ import {
   Droppable,
   type DropResult,
 } from '@hello-pangea/dnd';
-import { GripVertical, Image as ImageIcon, Loader2, Star, Upload, X } from 'lucide-react';
+import { Eye, EyeOff, GripVertical, Image as ImageIcon, Loader2, Star, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -18,6 +18,8 @@ interface ImageUploaderProps {
   images: string[];
   mainImage: string;
   onImagesChange: (images: string[], mainImage: string) => void;
+  hiddenSiteImages?: string[];
+  onHiddenSiteImagesChange?: (images: string[]) => void;
   organizationId?: string;
   propertyId?: string;
 }
@@ -33,6 +35,8 @@ export function ImageUploader({
   images,
   mainImage,
   onImagesChange,
+  hiddenSiteImages = [],
+  onHiddenSiteImagesChange,
   organizationId,
   propertyId,
 }: ImageUploaderProps) {
@@ -137,6 +141,7 @@ export function ImageUploader({
       images.filter((image) => image !== url),
       mainImage,
     );
+    onHiddenSiteImagesChange?.(hiddenSiteImages.filter((image) => image !== url));
   };
 
   const removeMainImage = () => {
@@ -151,6 +156,18 @@ export function ImageUploader({
 
     onImagesChange(nextImages, url);
     toast.success('Imagem promovida para principal!');
+  };
+
+  const toggleSiteVisibility = (url: string) => {
+    if (!onHiddenSiteImagesChange) return;
+
+    const isHidden = hiddenSiteImages.includes(url);
+    onHiddenSiteImagesChange(
+      isHidden
+        ? hiddenSiteImages.filter((image) => image !== url)
+        : [...hiddenSiteImages, url],
+    );
+    toast.success(isHidden ? 'Foto marcada para aparecer no site.' : 'Foto marcada apenas como interna.');
   };
 
   const handleDragEnd = (result: DropResult) => {
@@ -289,12 +306,15 @@ export function ImageUploader({
                   {...provided.droppableProps}
                   className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3"
                 >
-                  {images.map((url, index) => (
-                    <Draggable key={url} draggableId={url} index={index}>
-                      {(draggableProvided, snapshot) => {
-                        const { style, ...draggableProps } = draggableProvided.draggableProps;
+                  {images.map((url, index) => {
+                    const isHiddenFromSite = hiddenSiteImages.includes(url);
 
-                        return (
+                    return (
+                      <Draggable key={url} draggableId={url} index={index}>
+                        {(draggableProvided, snapshot) => {
+                          const { style, ...draggableProps } = draggableProvided.draggableProps;
+
+                          return (
                           <div
                             ref={draggableProvided.innerRef}
                             {...draggableProps}
@@ -313,6 +333,11 @@ export function ImageUploader({
                             <div className="absolute top-1 right-1 z-10 px-1.5 py-0.5 rounded bg-black/60 text-white text-xs font-medium">
                               {index + 1}
                             </div>
+                            {isHiddenFromSite && (
+                              <div className="absolute bottom-1 left-1 z-10 rounded bg-zinc-950/75 px-1.5 py-0.5 text-[10px] font-medium uppercase text-white">
+                                Interna
+                              </div>
+                            )}
                             <Image
                               src={url}
                               alt={`Foto ${index + 1}`}
@@ -333,6 +358,18 @@ export function ImageUploader({
                                 <Star className="h-3 w-3 mr-1" />
                                 Principal
                               </Button>
+                              {onHiddenSiteImagesChange && (
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  onClick={() => toggleSiteVisibility(url)}
+                                  title={isHiddenFromSite ? 'Publicar no site' : 'Ocultar do site'}
+                                >
+                                  {isHiddenFromSite ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                                </Button>
+                              )}
                               <Button
                                 type="button"
                                 variant="destructive"
@@ -345,10 +382,11 @@ export function ImageUploader({
                               </Button>
                             </div>
                           </div>
-                        );
-                      }}
-                    </Draggable>
-                  ))}
+                          );
+                        }}
+                      </Draggable>
+                    );
+                  })}
                   {provided.placeholder}
                 </div>
               )}

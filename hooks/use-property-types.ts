@@ -13,6 +13,7 @@ export interface PropertyType {
 const defaultTypes = [
   'Apartamento',
   'Casa',
+  'Casa de condomínio',
   'Cobertura',
   'Comercial',
   'Terreno',

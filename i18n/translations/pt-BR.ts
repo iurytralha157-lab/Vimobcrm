@@ -62,6 +62,7 @@ export const ptBR = {
     settingsBilling: 'Pagamentos',
     settingsProperties: 'Imoveis',
     settingsIntegrations: 'Integrações',
+    settingsAI: 'IA',
     help: 'Ajuda',
     superAdmin: 'Super Admin',
     systemSettings: 'Configurações do Sistema',

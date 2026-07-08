@@ -156,6 +156,7 @@ type LeadDetailLead = Omit<PipelineLead, 'stage' | 'assignee' | 'tags'> & Omit<P
   contact_picture?: string | null;
   assignee?: LeadDetailAssignee | null;
   property?: { id?: string; code?: string | null; title?: string | null; preco?: number | null } | null;
+  interest_property?: { id?: string; code?: string | null; title?: string | null; preco?: number | null } | null;
   stage?: LeadDetailStage | null;
   tags?: LeadDetailTag[];
 };
@@ -163,6 +164,16 @@ type LeadDetailLead = Omit<PipelineLead, 'stage' | 'assignee' | 'tags'> & Omit<P
 type CampaignTrackingDetails = Omit<Partial<LeadMeta>, 'lead_id' | 'created_at'> & {
   lead_id?: string | null;
   created_at?: string | null;
+};
+
+type SelectableLeadProperty = {
+  id: string;
+  title?: string | null;
+  code?: string | null;
+  codigo?: string | null;
+  reference?: string | null;
+  preco?: number | null;
+  commission_percentage?: number | null;
 };
 
 type PipelineCacheStage = LeadDetailStage & {
@@ -383,10 +394,11 @@ function CampaignTrackingHover({ leadMeta }: { leadMeta: CampaignTrackingDetails
         </button>
       </HoverCardTrigger>
       <HoverCardContent
-        side="left"
-        align="end"
-        sideOffset={8}
-        className="vimob-popover-content z-[100] w-[min(420px,calc(100vw-2rem))] rounded-[8px] border-0 p-0 text-[var(--app-text-primary)] shadow-2xl text-left"
+        side="right"
+        align="center"
+        sideOffset={10}
+        avoidCollisions={false}
+        className="vimob-popover-content z-[100] w-[min(420px,calc(100vw-2rem))] rounded-[8px] border-0 p-0 text-left text-[var(--app-text-primary)] shadow-[0_22px_70px_rgba(0,0,0,0.28)] dark:shadow-[0_22px_70px_rgba(0,0,0,0.58)]"
       >
         <div className="border-b border-[var(--app-border)] px-3 py-2 text-left">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-primary">Rastreamento de Campanha</p>
@@ -755,6 +767,7 @@ export function LeadDetailDialog({
     setIsUploading(true);
     try {
       await uploadAttachment.mutateAsync({ leadId: lead.id, file });
+      await queryClient.invalidateQueries({ queryKey: ['lead-history-v2', lead.id] });
       toast.success('Documento enviado com sucesso!');
     } catch (error: unknown) {
       console.error('Erro fatal no upload de documento:', error);
@@ -763,6 +776,74 @@ export function LeadDetailDialog({
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
+  };
+
+  const handleSelectInterestProperty = async (property: SelectableLeadProperty) => {
+    const nextPropertyPrice = typeof property.preco === 'number' ? property.preco : null;
+    const nextPropertyCommission =
+      typeof property.commission_percentage === 'number' ? property.commission_percentage : null;
+    const propertyTitle = property.title || null;
+    const propertyCode = property.code || property.codigo || property.reference || null;
+    const selectedProperty = {
+      id: property.id,
+      code: propertyCode,
+      title: propertyTitle,
+      preco: nextPropertyPrice,
+    };
+    const nextLeadPatch: Partial<LeadDetailLead> = {
+      property_id: property.id,
+      interest_property_id: property.id,
+      property_code: propertyCode,
+      property: selectedProperty,
+      interest_property: selectedProperty,
+      valor_interesse: nextPropertyPrice ?? lead.valor_interesse,
+      commission_percentage: nextPropertyCommission ?? lead.commission_percentage,
+    };
+
+    setEditForm((current) => ({
+      ...current,
+      property_id: property.id,
+      valor_interesse: nextPropertyPrice ? nextPropertyPrice.toString() : current.valor_interesse,
+      commission_percentage: nextPropertyCommission ? nextPropertyCommission.toString() : current.commission_percentage,
+    }));
+    setLocalLead((current) => current ? { ...current, ...nextLeadPatch } : current);
+    updatePipelineLeadCache(lead.id, nextLeadPatch);
+
+    const updateData: Partial<Lead> & { id: string } = {
+      id: lead.id,
+      property_id: property.id,
+      interest_property_id: property.id,
+      property_code: propertyCode,
+      valor_interesse: nextPropertyPrice || lead.valor_interesse,
+    };
+
+    if (nextPropertyCommission !== null) {
+      updateData.commission_percentage = nextPropertyCommission;
+    }
+
+    await updateLead.mutateAsync(updateData);
+    await queryClient.invalidateQueries({ queryKey: ['lead'] });
+    await queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
+
+    try {
+      await createActivityMutation.mutateAsync({
+        lead_id: lead.id,
+        type: 'property_selected',
+        content: [propertyCode, propertyTitle].filter(Boolean).join(' - ') || 'Imovel selecionado',
+        metadata: {
+          property_id: property.id,
+          property_title: propertyTitle,
+          property_code: propertyCode,
+          property_price: nextPropertyPrice,
+          commission_percentage: nextPropertyCommission,
+        },
+      });
+    } catch (historyError) {
+      console.warn('Nao foi possivel registrar imovel selecionado no historico:', historyError);
+      await queryClient.invalidateQueries({ queryKey: ['lead-history-v2', lead.id] });
+    }
+
+    refetchStages();
   };
 
   // Quick action handlers for phone/email with outcome dialog
@@ -1426,13 +1507,20 @@ export function LeadDetailDialog({
     }
 
     try {
+      const currentInterestPropertyId =
+        localLead?.interest_property_id ||
+        localLead?.property_id ||
+        lead.interest_property_id ||
+        lead.property_id ||
+        null;
+
       await dealStatusChange.mutateAsync({
         leadId: lead.id,
         newStatus: newStatus as 'open' | 'won' | 'lost',
         organizationId: profile?.organization_id || organization?.id || '',
         organizationName: organization?.name || null,
         userId: lead.assigned_user_id ?? null,
-        propertyId: lead.property_id ?? null,
+        propertyId: currentInterestPropertyId,
         valorInteresse: lead.valor_interesse ?? null,
         commissionPercentage: lead.commission_percentage ?? null,
         leadName: lead.name || 'Lead',
@@ -2279,19 +2367,8 @@ export function LeadDetailDialog({
                   <Label className="text-xs text-muted-foreground mb-2 block">Imóvel de interesse</Label>
                   <PropertyPickerDialog
                     properties={properties}
-                    selectedPropertyId={lead.interest_property_id}
-                    onSelect={(p) => {
-                      const propertyPrice = p.preco || null;
-                      setEditForm({
-                        ...editForm,
-                        valor_interesse: propertyPrice ? propertyPrice.toString() : editForm.valor_interesse
-                      });
-                      updateLead.mutateAsync({
-                        id: lead.id,
-                        interest_property_id: p.id,
-                        valor_interesse: propertyPrice || lead.valor_interesse
-                      }).then(() => refetchStages());
-                    }}
+                    selectedPropertyId={localLead.interest_property_id || editForm.property_id || null}
+                    onSelect={(property) => void handleSelectInterestProperty(property)}
                   />
                 </div>
 
@@ -2632,26 +2709,8 @@ export function LeadDetailDialog({
 
                 <PropertyPickerDialog
                   properties={properties}
-                  selectedPropertyId={lead.interest_property_id || editForm.property_id || null}
-                  onSelect={(property) => {
-                    const nextPropertyPrice = property.preco || null;
-                    const nextPropertyCommission =
-                      'commission_percentage' in property && typeof property.commission_percentage === 'number'
-                        ? property.commission_percentage
-                        : null;
-                    setEditForm({
-                      ...editForm,
-                      property_id: property.id,
-                      valor_interesse: nextPropertyPrice ? nextPropertyPrice.toString() : editForm.valor_interesse,
-                      commission_percentage: nextPropertyCommission ? nextPropertyCommission.toString() : editForm.commission_percentage,
-                    });
-                    updateLead.mutateAsync({
-                      id: lead.id,
-                      interest_property_id: property.id,
-                      valor_interesse: nextPropertyPrice || lead.valor_interesse,
-                      commission_percentage: nextPropertyCommission || lead.commission_percentage,
-                    }).then(() => refetchStages());
-                  }}
+                  selectedPropertyId={localLead.interest_property_id || editForm.property_id || null}
+                  onSelect={(property) => void handleSelectInterestProperty(property)}
                 />
 
                 <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
@@ -3028,26 +3087,8 @@ export function LeadDetailDialog({
 
                 <PropertyPickerDialog
                   properties={properties}
-                  selectedPropertyId={lead.interest_property_id || editForm.property_id || null}
-                  onSelect={(property) => {
-                    const nextPropertyPrice = property.preco || null;
-                    const nextPropertyCommission =
-                      'commission_percentage' in property && typeof property.commission_percentage === 'number'
-                        ? property.commission_percentage
-                        : null;
-                    setEditForm({
-                      ...editForm,
-                      property_id: property.id,
-                      valor_interesse: nextPropertyPrice ? nextPropertyPrice.toString() : editForm.valor_interesse,
-                      commission_percentage: nextPropertyCommission ? nextPropertyCommission.toString() : editForm.commission_percentage,
-                    });
-                    updateLead.mutateAsync({
-                      id: lead.id,
-                      interest_property_id: property.id,
-                      valor_interesse: nextPropertyPrice || lead.valor_interesse,
-                      commission_percentage: nextPropertyCommission || lead.commission_percentage,
-                    }).then(() => refetchStages());
-                  }}
+                  selectedPropertyId={localLead.interest_property_id || editForm.property_id || null}
+                  onSelect={(property) => void handleSelectInterestProperty(property)}
                 />
 
                 <div data-tour="lead-detail-documents" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
@@ -4012,28 +4053,8 @@ export function LeadDetailDialog({
                   <Label className="text-xs text-muted-foreground mb-2 block">Imóvel de interesse</Label>
                   <PropertyPickerDialog
                     properties={properties}
-                    selectedPropertyId={lead.interest_property_id || editForm.property_id || null}
-                    onSelect={(p) => {
-                      const propertyPrice = p.preco || null;
-                      const propertyCommission = p.commission_percentage || null;
-                      setEditForm({
-                        ...editForm,
-                        property_id: p.id,
-                        valor_interesse: propertyPrice ? propertyPrice.toString() : editForm.valor_interesse,
-                        commission_percentage: propertyCommission ? propertyCommission.toString() : editForm.commission_percentage
-                      });
-                      const updateData: Partial<Lead> & { id: string } = {
-                        id: lead.id,
-                        interest_property_id: p.id
-                      };
-                      if (propertyPrice) {
-                        updateData.valor_interesse = propertyPrice;
-                      }
-                      if (propertyCommission) {
-                        updateData.commission_percentage = propertyCommission;
-                      }
-                      updateLead.mutateAsync(updateData).then(() => refetchStages());
-                    }}
+                    selectedPropertyId={localLead.interest_property_id || editForm.property_id || null}
+                    onSelect={(property) => void handleSelectInterestProperty(property)}
                   />
                 </div>
 
@@ -4359,7 +4380,7 @@ export function LeadDetailDialog({
               </div>
 
               <div className="bg-white/[0.035] p-4 rounded-xl border border-white/[0.055] italic text-sm text-foreground/90 whitespace-pre-wrap">
-                {selectedHistoryEvent.content || selectedHistoryEvent.metadata?.outcome_notes || "Nenhum detalhe adicional disponível."}
+                {selectedHistoryEvent.content || metaText(selectedHistoryEvent.metadata?.outcome_notes) || "Nenhum detalhe adicional disponível."}
               </div>
 
               {selectedHistoryEvent.actor && (

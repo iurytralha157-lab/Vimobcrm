@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // Restricted WhatsApp history reader.
-// Uses service role for joins/storage compatibility, then applies lead/session access in code.
+// Uses service role for joins/storage compatibility, then keeps message visibility tied to the session owner.
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -144,41 +144,14 @@ async function getConversation(conversationId: string) {
 }
 
 async function canAccessSessionConversation(requester: JsonRecord, conversation: JsonRecord) {
-  if (normalizeRole(requester.role) === "super_admin") return true;
   if (requester.organization_id !== conversation.organization_id) return false;
 
   const session = conversation.session || {};
-  if (session.owner_user_id === requester.id) return true;
-
-  const member = await getOrgMember(requester.id, conversation.organization_id);
-  const memberRole = normalizeRole(member?.role);
-  if (["owner", "admin", "manager"].includes(memberRole)) return true;
-
-  const { data: access, error } = await supabase
-    .from("whatsapp_session_access")
-    .select("can_view, can_read, can_send, access_mode")
-    .eq("session_id", conversation.session_id)
-    .eq("user_id", requester.id)
-    .maybeSingle();
-
-  if (error) throw error;
-  const canView = access?.can_view ?? access?.can_read ?? false;
-  if (!canView) return false;
-  if (access?.access_mode === "full_inbox") return true;
-  if (!conversation.lead_id) return false;
-
-  const lead = await getLead(conversation.lead_id);
-  if (!lead) return false;
-  return canAccessLead(requester, lead);
+  return session.owner_user_id === requester.id;
 }
 
 async function canViewConversation(requester: JsonRecord, conversation: JsonRecord) {
   if (!conversation || conversation.deleted_at) return false;
-  if (conversation.lead_id) {
-    const lead = await getLead(conversation.lead_id);
-    if (lead && await canAccessLead(requester, lead)) return true;
-  }
-
   return canAccessSessionConversation(requester, conversation);
 }
 

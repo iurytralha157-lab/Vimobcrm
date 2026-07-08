@@ -1,6 +1,9 @@
 package tenant
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 type contextKey string
 
@@ -31,8 +34,11 @@ func (ctx Context) HasRole(roles ...string) bool {
 		return true
 	}
 
+	memberRole := normalizeRole(ctx.MemberRole)
+	userRole := normalizeRole(ctx.UserRole)
 	for _, role := range roles {
-		if ctx.MemberRole == role || ctx.UserRole == role {
+		role = normalizeRole(role)
+		if memberRole == role || userRole == role {
 			return true
 		}
 	}
@@ -40,16 +46,53 @@ func (ctx Context) HasRole(roles ...string) bool {
 	return false
 }
 
+func (ctx Context) IsOrganizationMember() bool {
+	return strings.TrimSpace(ctx.OrganizationID) != "" && strings.TrimSpace(ctx.UserID) != ""
+}
+
 func (ctx Context) HasPermission(permission string) bool {
-	if ctx.IsSuperAdmin || ctx.MemberRole == "owner" || ctx.MemberRole == "admin" {
+	memberRole := normalizeRole(ctx.MemberRole)
+	if ctx.IsSuperAdmin || memberRole == "owner" || memberRole == "admin" {
 		return true
 	}
 
+	permission = strings.TrimSpace(permission)
 	for _, candidate := range ctx.Permissions {
+		candidate = strings.TrimSpace(candidate)
 		if candidate == "*" || candidate == permission {
 			return true
 		}
 	}
 
 	return false
+}
+
+func normalizeRole(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+
+	replacer := strings.NewReplacer(
+		"á", "a", "à", "a", "â", "a", "ã", "a",
+		"é", "e", "ê", "e",
+		"í", "i",
+		"ó", "o", "ô", "o", "õ", "o",
+		"ú", "u",
+		"ç", "c",
+	)
+	value = replacer.Replace(value)
+
+	switch value {
+	case "administrador", "administrator":
+		return "admin"
+	case "proprietario":
+		return "owner"
+	case "gerente":
+		return "manager"
+	case "usuario", "membro", "member", "corretor", "broker", "agent":
+		return "user"
+	default:
+		return value
+	}
 }

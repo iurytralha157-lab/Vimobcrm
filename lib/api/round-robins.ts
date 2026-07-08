@@ -271,15 +271,18 @@ function toAPIRoundRobinBody(input: RoundRobinAPIInput, includeRequired: boolean
     }))
   }
   if (input.members !== undefined) {
-    body.members = input.members.map((member) => {
-      const type = member.type || (member.team_id ? 'team' : 'user')
-      return {
-        id: member.id,
-        type,
-        entityId: member.entityId || member.user_id || member.team_id,
-        weight: member.weight,
-      }
-    })
+    body.members = input.members
+      .map((member) => {
+        const type = member.type || (member.team_id ? 'team' : 'user')
+        const entityId = member.entityId || member.user_id || member.team_id
+        return {
+          id: member.id,
+          type,
+          entityId,
+          weight: member.weight,
+        }
+      })
+      .filter((member) => (member.type === 'user' || member.type === 'team') && Boolean(member.entityId))
   }
 
   return body

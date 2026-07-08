@@ -2,6 +2,7 @@ import { vimobAPIRequest } from './vimob-client'
 
 export type DashboardAPIFilters = {
   dateRange?: { from: Date; to: Date } | null
+  granularity?: 'hour' | 'day' | 'week' | 'month' | null
   teamId?: string | null
   userId?: string | null
   source?: string | null
@@ -264,6 +265,7 @@ function buildDashboardQuery(filters?: DashboardAPIFilters) {
   return {
     dateFrom: filters?.dateRange?.from.toISOString(),
     dateTo: filters?.dateRange?.to.toISOString(),
+    granularity: filters?.granularity,
     teamId: filters?.teamId,
     userId: filters?.userId,
     source: filters?.source,

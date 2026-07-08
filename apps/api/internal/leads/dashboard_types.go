@@ -16,6 +16,7 @@ const (
 type DashboardFilter struct {
 	DateFrom    *time.Time
 	DateTo      *time.Time
+	Granularity string
 	TeamID      string
 	UserID      string
 	Source      string
@@ -194,6 +195,7 @@ func ParseDashboardFilter(values url.Values) (DashboardFilter, error) {
 	return DashboardFilter{
 		DateFrom:    dateFrom,
 		DateTo:      dateTo,
+		Granularity: strings.TrimSpace(values.Get("granularity")),
 		TeamID:      strings.TrimSpace(values.Get("teamId")),
 		UserID:      strings.TrimSpace(values.Get("userId")),
 		Source:      strings.TrimSpace(values.Get("source")),

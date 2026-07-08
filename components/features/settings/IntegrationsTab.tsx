@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Key, Lock, MessageCircle, Search, Settings2, Webhook } from "lucide-react";
+import { Bot, Key, Lock, MessageCircle, Search, Settings2, Webhook } from "lucide-react";
 import NextImage from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { WhatsAppTab } from "@/components/features/settings/WhatsAppTab";
 import { WebhooksTab } from "@/components/features/settings/WebhooksTab";
 import { APITab } from "@/components/features/settings/APITab";
+import { AIAssistantTab } from "@/components/features/settings/AIAssistantTab";
 import { MetaIntegrationSettings } from "@/components/features/integrations/MetaIntegrationSettings";
 import { GoogleCalendarConnect } from "@/components/features/schedule/GoogleCalendarConnect";
 import { VistaImportDialog } from "@/components/features/properties/VistaImportDialog";
@@ -20,7 +21,7 @@ import { useImoviewIntegration } from "@/hooks/use-imoview-integration";
 import { useGoogleCalendarStatus } from "@/hooks/use-google-calendar";
 import { useAuth } from "@/contexts/AuthContext";
 
-type IntegrationKey = "whatsapp" | "meta" | "google-calendar" | "vista" | "imoview" | "webhooks" | "api";
+type IntegrationKey = "whatsapp" | "ai" | "meta" | "google-calendar" | "vista" | "imoview" | "webhooks" | "api";
 const ADMIN_ONLY_INTEGRATIONS = new Set<IntegrationKey>(["meta", "vista", "imoview"]);
 
 interface MetaOAuthPayload {
@@ -88,6 +89,7 @@ interface IntegrationItem {
 interface IntegrationsTabProps {
   defaultIntegration?: string;
   hasWhatsAppModule: boolean;
+  hasAIModule: boolean;
   hasWebhooksModule: boolean;
   hasAPIModule: boolean;
 }
@@ -95,6 +97,7 @@ interface IntegrationsTabProps {
 export function IntegrationsTab({
   defaultIntegration,
   hasWhatsAppModule,
+  hasAIModule,
   hasWebhooksModule,
   hasAPIModule,
 }: IntegrationsTabProps) {
@@ -264,6 +267,18 @@ export function IntegrationsTab({
         icon: <MessageCircle className="h-7 w-7 text-primary" />,
       },
       {
+        key: "ai" as const,
+        title: "IA de atendimento",
+        description: "Atenda, qualifique e direcione leads no WhatsApp com contexto do CRM.",
+        enabled: hasAIModule,
+        connected: whatsappSessions.some((item) => {
+          const settings = item.advanced_settings;
+          return !!settings && typeof settings === "object" && !Array.isArray(settings) && settings.ai_auto_reply_enabled === true;
+        }),
+        detail: "WhatsApp e CRM",
+        icon: <Bot className="h-7 w-7 text-primary" />,
+      },
+      {
         key: "meta" as const,
         title: "Facebook / Meta",
         description: "Receba leads de formulários do Facebook e Instagram no CRM.",
@@ -321,7 +336,7 @@ export function IntegrationsTab({
         icon: <Key className="h-7 w-7 text-primary" />,
       },
     ].filter((item) => item.enabled);
-  }, [googleCalendarStatus, hasAPIModule, hasWebhooksModule, hasWhatsAppModule, imoviewIntegration, metaIntegrations, vistaIntegration, whatsappSessions]);
+  }, [googleCalendarStatus, hasAIModule, hasAPIModule, hasWebhooksModule, hasWhatsAppModule, imoviewIntegration, metaIntegrations, vistaIntegration, whatsappSessions]);
 
   const filteredIntegrations = integrations.filter((item) => {
     const query = search.trim().toLowerCase();
@@ -439,6 +454,7 @@ export function IntegrationsTab({
             <DialogTitle>{activeTitle ? `Integração com ${activeTitle}` : "Integração"}</DialogTitle>
           </DialogHeader>
           {effectiveActiveIntegration === "whatsapp" && <WhatsAppTab embedded />}
+          {effectiveActiveIntegration === "ai" && <AIAssistantTab />}
           {effectiveActiveIntegration === "meta" && (
             <MetaIntegrationSettings
               oauthPayload={metaOAuthPayload}
@@ -458,7 +474,7 @@ export function IntegrationsTab({
 }
 
 function isIntegrationKey(value?: string): value is IntegrationKey {
-  return value === "whatsapp" || value === "meta" || value === "google-calendar" || value === "vista" || value === "imoview" || value === "webhooks" || value === "api";
+  return value === "whatsapp" || value === "ai" || value === "meta" || value === "google-calendar" || value === "vista" || value === "imoview" || value === "webhooks" || value === "api";
 }
 
 function LogoImage({ src, alt }: { src: string; alt: string }) {

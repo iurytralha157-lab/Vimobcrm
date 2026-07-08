@@ -399,7 +399,7 @@ func (repo Repository) GetDashboardDealsEvolution(ctx context.Context, tenantCon
 		return []DealsEvolutionPoint{}, nil
 	}
 
-	return buildDealsEvolutionPoints(leads, from, to), nil
+	return buildDealsEvolutionPoints(leads, from, to, filter.Granularity), nil
 }
 
 func (repo Repository) GetDashboardExtraCounts(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (DashboardExtraCounts, error) {
@@ -1321,8 +1321,8 @@ func normalizeDashboardTaskType(value string) string {
 	}
 }
 
-func buildDealsEvolutionPoints(leads []dashboardEvolutionLead, from time.Time, to time.Time) []DealsEvolutionPoint {
-	intervals, labels := dashboardEvolutionIntervals(from, to)
+func buildDealsEvolutionPoints(leads []dashboardEvolutionLead, from time.Time, to time.Time, granularity string) []DealsEvolutionPoint {
+	intervals, labels := dashboardEvolutionIntervals(from, to, granularity)
 	result := make([]DealsEvolutionPoint, 0, len(intervals))
 	for index, start := range intervals {
 		end := to
@@ -1357,15 +1357,14 @@ func buildDealsEvolutionPoints(leads []dashboardEvolutionLead, from time.Time, t
 	return result
 }
 
-func dashboardEvolutionIntervals(from time.Time, to time.Time) ([]time.Time, []string) {
-	if sameDashboardDay(from, to) {
-		start := startOfDashboardDay(from)
+func dashboardEvolutionIntervals(from time.Time, to time.Time, granularity string) ([]time.Time, []string) {
+	if granularity == "hour" || sameDashboardDay(from, to) || isSingleDashboardDayRange(from, to) {
 		intervals := make([]time.Time, 0, 24)
 		labels := make([]string, 0, 24)
 		for hour := 0; hour < 24; hour++ {
-			current := start.Add(time.Duration(hour) * time.Hour)
+			current := from.Add(time.Duration(hour) * time.Hour)
 			intervals = append(intervals, current)
-			labels = append(labels, current.Format("15:04"))
+			labels = append(labels, fmt.Sprintf("%02d:00", hour))
 		}
 		return intervals, labels
 	}
@@ -1428,6 +1427,11 @@ func dateInRange(value time.Time, start time.Time, end time.Time) bool {
 
 func sameDashboardDay(left time.Time, right time.Time) bool {
 	return left.Year() == right.Year() && left.YearDay() == right.YearDay()
+}
+
+func isSingleDashboardDayRange(from time.Time, to time.Time) bool {
+	duration := to.Sub(from)
+	return duration > 0 && duration <= 24*time.Hour
 }
 
 func startOfDashboardDay(value time.Time) time.Time {

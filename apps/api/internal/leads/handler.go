@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
@@ -366,6 +367,10 @@ func writeLeadError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "no_lead_changes", "No lead changes were provided.")
 	case errors.Is(err, ErrTagAlreadyExists):
 		httpserver.WriteError(w, r, http.StatusConflict, "tag_already_exists", "Tag is already attached to this lead.")
+	case errors.Is(err, ErrLeadAlreadyExists):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_already_exists", "Lead already exists in this organization and is assigned to another user.")
+	case errors.Is(err, ErrLeadPropertyUnavailable):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_property_unavailable", leadErrorMessage(err, ErrLeadPropertyUnavailable))
 	case errors.Is(err, ErrInvalidReference):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_lead_reference", "One or more lead references do not belong to this organization.")
 	case errors.Is(err, ErrLeadNotFound):
@@ -385,4 +390,10 @@ func writeLeadError(w http.ResponseWriter, r *http.Request, err error) {
 		)
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "lead_operation_failed", "Unable to complete lead operation.")
 	}
+}
+
+func leadErrorMessage(err error, sentinel error) string {
+	message := strings.TrimSpace(err.Error())
+	prefix := sentinel.Error() + ":"
+	return strings.TrimSpace(strings.TrimPrefix(message, prefix))
 }

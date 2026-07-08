@@ -3,7 +3,9 @@ package leads
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -197,6 +199,54 @@ func TestValidateLostReasonContractRejectsClearingLostReason(t *testing.T) {
 	}
 }
 
+func TestWonPropertyUnavailableMessage(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      string
+		wantBlocked bool
+		wantText    string
+	}{
+		{name: "active is available", status: "active"},
+		{name: "empty defaults to available", status: ""},
+		{name: "available in portuguese is available", status: " disponivel "},
+		{name: "reserved blocks won", status: "reserved", wantBlocked: true, wantText: "ja esta reservado"},
+		{name: "reserved portuguese blocks won", status: "Reservado", wantBlocked: true, wantText: "ja esta reservado"},
+		{name: "sold blocks won", status: "sold", wantBlocked: true, wantText: "ja esta vendido"},
+		{name: "sold portuguese blocks won", status: "vendido", wantBlocked: true, wantText: "ja esta vendido"},
+		{name: "rented blocks won", status: "rented", wantBlocked: true, wantText: "ja esta alugado"},
+		{name: "rented portuguese blocks won", status: "alugado", wantBlocked: true, wantText: "ja esta alugado"},
+		{name: "leased synonym blocks won", status: "locado", wantBlocked: true, wantText: "ja esta alugado"},
+		{name: "archived blocks won", status: "arquivado", wantBlocked: true, wantText: "nao esta disponivel"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			message := wonPropertyUnavailableMessage(test.status)
+			if test.wantBlocked && message == "" {
+				t.Fatalf("wonPropertyUnavailableMessage(%q) returned empty message", test.status)
+			}
+			if !test.wantBlocked && message != "" {
+				t.Fatalf("wonPropertyUnavailableMessage(%q) = %q, want empty", test.status, message)
+			}
+			if test.wantText != "" && !strings.Contains(message, test.wantText) {
+				t.Fatalf("wonPropertyUnavailableMessage(%q) = %q, want text %q", test.status, message, test.wantText)
+			}
+		})
+	}
+}
+
+func TestLeadPropertyUnavailableErrorMessage(t *testing.T) {
+	message := "Este imovel ja esta reservado. Consulte o administrador antes de marcar o lead como ganho."
+	err := fmt.Errorf("%w: %s", ErrLeadPropertyUnavailable, message)
+
+	if !errors.Is(err, ErrLeadPropertyUnavailable) {
+		t.Fatalf("wrapped error should match ErrLeadPropertyUnavailable")
+	}
+	if got := leadErrorMessage(err, ErrLeadPropertyUnavailable); got != message {
+		t.Fatalf("leadErrorMessage() = %q, want %q", got, message)
+	}
+}
+
 func TestStoragePathFromPublicURL(t *testing.T) {
 	publicURL := "https://example.supabase.co/storage/v1/object/public/whatsapp-media/orgs/org-1/leads/lead-1/docs/70.png"
 	if got := storagePathFromPublicURL(publicURL, "70.png"); got != "orgs/org-1/leads/lead-1/docs/70.png" {
@@ -216,8 +266,8 @@ func TestStoragePathFromPublicURL(t *testing.T) {
 
 func TestLeadPermissionHelpers(t *testing.T) {
 	manager := tenant.Context{MemberRole: "manager"}
-	if !canViewAllLeads(manager) || !canManageLeads(manager) {
-		t.Fatal("manager should view all leads and manage leads")
+	if !canViewAllLeads(manager) || !canManageLeads(manager) || !canCreateLeads(manager) {
+		t.Fatal("manager should view all leads, manage leads and create leads")
 	}
 
 	viewAll := tenant.Context{Permissions: []string{"lead_view_all"}}
@@ -231,5 +281,22 @@ func TestLeadPermissionHelpers(t *testing.T) {
 	manage := tenant.Context{Permissions: []string{"lead_manage"}}
 	if !canManageLeads(manage) {
 		t.Fatal("lead_manage permission should manage leads")
+	}
+
+	regular := tenant.Context{UserID: "user-1", OrganizationID: "org-1", MemberRole: "user"}
+	if !canCreateLeads(regular) {
+		t.Fatal("regular organization users should create leads")
+	}
+	if canManageLeads(regular) {
+		t.Fatal("regular organization users should not receive full lead management access")
+	}
+
+	if canCreateLeads(tenant.Context{UserID: "user-1", MemberRole: "user"}) {
+		t.Fatal("users without organization context should not create leads")
+	}
+
+	createPermission := tenant.Context{Permissions: []string{"lead_create"}}
+	if !canCreateLeads(createPermission) {
+		t.Fatal("lead_create permission should create leads")
 	}
 }

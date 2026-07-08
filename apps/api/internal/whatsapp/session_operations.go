@@ -58,12 +58,14 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 		return SessionOperationResponse{}, err
 	}
 
+	initialWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, instanceName, webhookToken)
+	createBody := evolutionWebhookConnectBody(initialWebhookURL)
+	createBody["name"] = instanceName
+	createBody["token"] = token
+
 	createResult, err := repo.functions.invokeEvolution(ctx, "instance.create", map[string]any{
 		"session_id": session.ID,
-		"body": map[string]any{
-			"name":  instanceName,
-			"token": token,
-		},
+		"body":       createBody,
 	})
 	if err != nil {
 		_ = repo.deleteSessionRow(ctx, tenantContext.OrganizationID, session.ID)
@@ -92,11 +94,7 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 		"session_id":  session.ID,
 		"instance_id": evoID,
 		"token":       token,
-		"body": map[string]any{
-			"webhookUrl": configuredWebhookURL,
-			"subscribe":  []string{"ALL"},
-			"immediate":  true,
-		},
+		"body":        evolutionWebhookConnectBody(configuredWebhookURL),
 	})
 	if err != nil {
 		_ = repo.deleteSessionRow(ctx, tenantContext.OrganizationID, session.ID)
@@ -292,12 +290,14 @@ func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant
 		webhookToken = createSecretToken()
 	}
 
+	initialWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, session.InstanceName, webhookToken)
+	createBody := evolutionWebhookConnectBody(initialWebhookURL)
+	createBody["name"] = session.InstanceName
+	createBody["token"] = token
+
 	createResult, err := repo.functions.invokeEvolution(ctx, "instance.create", map[string]any{
 		"session_id": session.ID,
-		"body": map[string]any{
-			"name":  session.InstanceName,
-			"token": token,
-		},
+		"body":       createBody,
 	})
 	if err != nil {
 		return SessionOperationResponse{}, err
@@ -313,11 +313,7 @@ func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant
 		"session_id":  session.ID,
 		"instance_id": evoID,
 		"token":       token,
-		"body": map[string]any{
-			"webhookUrl": configuredWebhookURL,
-			"subscribe":  []string{"ALL"},
-			"immediate":  true,
-		},
+		"body":        evolutionWebhookConnectBody(configuredWebhookURL),
 	})
 	if err != nil {
 		return SessionOperationResponse{}, err
@@ -414,7 +410,7 @@ func (repo Repository) ToggleNotificationSession(ctx context.Context, tenantCont
 	return err
 }
 
-func (repo Repository) ToggleAutoReplySession(ctx context.Context, tenantContext tenant.Context, sessionID string, enabled bool) error {
+func (repo Repository) ToggleAutoReplySession(ctx context.Context, tenantContext tenant.Context, sessionID string, input ToggleAutoReplyRequest) error {
 	sessionID, ok := normalizeUUID(sessionID)
 	if !ok {
 		return ErrSessionNotFound
@@ -422,15 +418,138 @@ func (repo Repository) ToggleAutoReplySession(ctx context.Context, tenantContext
 	if err := repo.ensureCanManageSession(ctx, tenantContext, sessionID); err != nil {
 		return err
 	}
+	agentID := strings.TrimSpace(input.AgentID)
+	if input.Enabled {
+		allowed, err := repo.isOrganizationAIModuleEnabled(ctx, tenantContext.OrganizationID)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return fmt.Errorf("%w: IA nao liberada para esta organizacao.", ErrFeatureUnavailable)
+		}
+		aiSettings, err := repo.organizationAISettings(ctx, tenantContext.OrganizationID)
+		if err != nil {
+			return err
+		}
+		if !aiSettings.Enabled {
+			return fmt.Errorf("%w: IA pausada para esta organizacao.", ErrFeatureUnavailable)
+		}
+		if aiSettings.MaxSessions >= 0 {
+			activeCount, err := repo.activeAISessionCount(ctx, tenantContext.OrganizationID, sessionID)
+			if err != nil {
+				return err
+			}
+			if activeCount >= aiSettings.MaxSessions {
+				return fmt.Errorf("%w: limite de conexoes da IA atingido.", ErrFeatureUnavailable)
+			}
+		}
+		if agentID != "" {
+			agentID, ok = normalizeUUID(agentID)
+			if !ok {
+				return ErrInvalidReference
+			}
+			exists, err := repo.aiAgentAvailable(ctx, tenantContext.OrganizationID, agentID)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				return ErrInvalidReference
+			}
+		}
+	}
+	if input.FollowUpIntervalDays != nil {
+		if *input.FollowUpIntervalDays < 1 || *input.FollowUpIntervalDays > 30 {
+			return ErrInvalidInput
+		}
+	}
+
+	settingsPatch := map[string]any{
+		"ai_auto_reply_enabled":    input.Enabled,
+		"ai_auto_reply_updated_at": time.Now().UTC().Format(time.RFC3339),
+	}
+	if agentID != "" {
+		settingsPatch["ai_auto_reply_agent_id"] = agentID
+	}
+	if input.FollowUpEnabled != nil {
+		settingsPatch["ai_follow_up_enabled"] = *input.FollowUpEnabled
+	}
+	if input.FollowUpIntervalDays != nil {
+		settingsPatch["ai_follow_up_interval_days"] = *input.FollowUpIntervalDays
+	}
+	if input.FollowUpTemplate != nil {
+		settingsPatch["ai_follow_up_template"] = strings.TrimSpace(*input.FollowUpTemplate)
+	}
 
 	_, err := repo.db.Pool().Exec(ctx, `
 		update public.whatsapp_sessions
-		set advanced_settings = coalesce(advanced_settings, '{}'::jsonb) || jsonb_build_object('ai_auto_reply_enabled', $3::boolean),
+		set advanced_settings = coalesce(advanced_settings, '{}'::jsonb) || $3::jsonb,
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
-	`, tenantContext.OrganizationID, sessionID, enabled)
+	`, tenantContext.OrganizationID, sessionID, jsonb(settingsPatch))
 	return err
+}
+
+func (repo Repository) isOrganizationAIModuleEnabled(ctx context.Context, organizationID string) (bool, error) {
+	var enabled bool
+	err := repo.db.Pool().QueryRow(ctx, `
+		select coalesce((
+			select om.is_enabled
+			from public.organization_modules om
+			where om.organization_id = $1::uuid
+			  and om.module_name = any(array['ai_agent', 'ai'])
+			limit 1
+		), false)
+	`, organizationID).Scan(&enabled)
+	return enabled, err
+}
+
+type organizationAISettings struct {
+	Enabled     bool
+	MaxSessions int
+}
+
+func (repo Repository) organizationAISettings(ctx context.Context, organizationID string) (organizationAISettings, error) {
+	var settings organizationAISettings
+	err := repo.db.Pool().QueryRow(ctx, `
+		select
+			coalesce(is_enabled, false),
+			coalesce(max_sessions, 0)
+		from public.organization_ai_settings
+		where organization_id = $1::uuid
+		limit 1
+	`, organizationID).Scan(&settings.Enabled, &settings.MaxSessions)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return organizationAISettings{Enabled: true, MaxSessions: 1}, nil
+	}
+	return settings, err
+}
+
+func (repo Repository) activeAISessionCount(ctx context.Context, organizationID string, excludeSessionID string) (int, error) {
+	var count int
+	err := repo.db.Pool().QueryRow(ctx, `
+		select count(*)::int
+		from public.whatsapp_sessions
+		where organization_id = $1::uuid
+		  and id <> $2::uuid
+		  and coalesce(is_active, true) = true
+		  and lower(coalesce(advanced_settings->>'ai_auto_reply_enabled', 'false')) in ('true', '1', 'yes', 'sim')
+	`, organizationID, excludeSessionID).Scan(&count)
+	return count, err
+}
+
+func (repo Repository) aiAgentAvailable(ctx context.Context, organizationID string, agentID string) (bool, error) {
+	var exists bool
+	err := repo.db.Pool().QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.ai_agents
+			where id = $1::uuid
+			  and status = 'active'
+			  and (organization_id is null or organization_id = $2::uuid)
+		)
+	`, agentID, organizationID).Scan(&exists)
+	return exists, err
 }
 
 func (repo Repository) GetManageableSession(ctx context.Context, tenantContext tenant.Context, sessionID string) (Session, error) {
@@ -447,9 +566,9 @@ func (repo Repository) GetManageableSession(ctx context.Context, tenantContext t
 		  and ws.id = $2::uuid
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') <> 'deleted'
-		  and ($4::boolean or ws.owner_user_id = $3::uuid)
+		  and ws.owner_user_id = $3::uuid
 		limit 1
-	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, canManageWhatsApp(tenantContext)))
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, ErrSessionNotFound
 	}

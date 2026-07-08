@@ -18,6 +18,7 @@ var (
 	ErrConversationNotFound = errors.New("whatsapp conversation not found")
 	ErrMessageNotFound      = errors.New("whatsapp message not found")
 	ErrProviderFailed       = errors.New("whatsapp provider operation failed")
+	ErrFeatureUnavailable   = errors.New("whatsapp feature unavailable")
 )
 
 type Session struct {
@@ -193,6 +194,7 @@ type ConversationListFilter struct {
 	HideGroups         bool
 	ShowArchived       bool
 	AccessibleProvided bool
+	Limit              int
 }
 
 type MessageFilter struct {
@@ -269,7 +271,11 @@ type ToggleNotificationRequest struct {
 }
 
 type ToggleAutoReplyRequest struct {
-	Enabled bool `json:"enabled"`
+	Enabled              bool    `json:"enabled"`
+	AgentID              string  `json:"agentId,omitempty"`
+	FollowUpEnabled      *bool   `json:"followUpEnabled,omitempty"`
+	FollowUpIntervalDays *int    `json:"followUpIntervalDays,omitempty"`
+	FollowUpTemplate     *string `json:"followUpTemplate,omitempty"`
 }
 
 type SendMessageRequest struct {
@@ -384,6 +390,7 @@ func ParseConversationListFilter(values url.Values) (ConversationListFilter, err
 	filter := ConversationListFilter{
 		HideGroups:   parseBool(values.Get("hideGroups")),
 		ShowArchived: parseBool(values.Get("showArchived")),
+		Limit:        80,
 	}
 	if raw := strings.TrimSpace(values.Get("sessionId")); raw != "" {
 		value, ok := normalizeUUID(raw)
@@ -405,6 +412,16 @@ func ParseConversationListFilter(values url.Values) (ConversationListFilter, err
 			}
 			filter.SessionIDs = append(filter.SessionIDs, value)
 		}
+	}
+	if raw := strings.TrimSpace(values.Get("limit")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value <= 0 {
+			return ConversationListFilter{}, fmt.Errorf("%w: limit is invalid", ErrInvalidInput)
+		}
+		filter.Limit = value
+	}
+	if filter.Limit > 120 {
+		filter.Limit = 120
 	}
 
 	return filter, nil
@@ -507,7 +524,7 @@ func (request GrantAccessRequest) Validate() (grantAccessInput, error) {
 	if accessMode == "" {
 		accessMode = "assigned_leads_only"
 	}
-	if !validEnum(accessMode, "assigned_leads_only", "team_leads", "all_leads", "full_inbox") {
+	if !validEnum(accessMode, "assigned_leads_only") {
 		return grantAccessInput{}, fmt.Errorf("%w: accessMode is invalid", ErrInvalidInput)
 	}
 

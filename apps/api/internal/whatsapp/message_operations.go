@@ -222,6 +222,10 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		repo.insertLeadTimelineEvent(ctx, session.OrganizationID, *conversation.LeadID, tenantContext.UserID, messageID, actualContent, messageType, session.ID, session.InstanceName)
 	}
 
+	if !isAIClientMessageID(clientMessageID) {
+		_ = repo.pauseConversationAI(ctx, session.OrganizationID, conversation.ID, aiHumanPauseDuration, "human_message_sent")
+	}
+
 	_, err = repo.db.Pool().Exec(ctx, `
 		update public.whatsapp_conversations
 		set last_message = $3,
@@ -364,22 +368,10 @@ func (repo Repository) resolveAnyConnectedSendSession(ctx context.Context, tenan
 		  and ws.is_active is not false
 		  and ws.status = 'connected'
 		  and coalesce(ws.provider, 'evolution') = 'evolution_go'
-		  and (
-		    $3::boolean
-		    or ws.owner_user_id = $2::uuid
-		    or exists (
-		      select 1
-		      from public.whatsapp_session_access access
-		      where access.session_id = ws.id
-		        and access.organization_id = ws.organization_id
-		        and access.user_id = $2::uuid
-		        and coalesce(access.can_view, access.can_read, true) = true
-		        and coalesce(access.can_send, false) = true
-		    )
-		  )
+		  and ws.owner_user_id = $2::uuid
 		order by ws.last_connected_at desc nulls last, ws.created_at desc
 		limit 2
-	`, tenantContext.OrganizationID, tenantContext.UserID, canManageWhatsApp(tenantContext))
+	`, tenantContext.OrganizationID, tenantContext.UserID)
 	if err != nil {
 		return Session{}, err
 	}
@@ -421,21 +413,9 @@ func (repo Repository) getCanSendSession(ctx context.Context, tenantContext tena
 		  and ws.is_active is not false
 		  and coalesce(ws.status, '') <> 'deleted'
 		  and coalesce(ws.provider, 'evolution') = 'evolution_go'
-		  and (
-		    $4::boolean
-		    or ws.owner_user_id = $3::uuid
-		    or exists (
-		      select 1
-		      from public.whatsapp_session_access access
-		      where access.session_id = ws.id
-		        and access.organization_id = ws.organization_id
-		        and access.user_id = $3::uuid
-		        and coalesce(access.can_view, access.can_read, true) = true
-		        and coalesce(access.can_send, false) = true
-		    )
-		)
+		  and ws.owner_user_id = $3::uuid
 		limit 1
-	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, canManageWhatsApp(tenantContext)))
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, ErrSessionNotFound
 	}

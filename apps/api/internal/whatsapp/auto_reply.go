@@ -49,11 +49,14 @@ type autoReplyInput struct {
 }
 
 type autoReplyContext struct {
-	Tenant       tenant.Context
-	Session      Session
-	Conversation Conversation
-	Message      Message
-	AgentID      string
+	Tenant             tenant.Context
+	Session            Session
+	Conversation       Conversation
+	Message            Message
+	AgentID            string
+	AIModuleEnabled    bool
+	AISettingsEnabled  bool
+	ConversationPaused bool
 }
 
 func (handler Handler) WithAutoReply(runner aiRunner, token string) Handler {
@@ -103,35 +106,70 @@ func (handler Handler) AutoReply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	aiResponse, err := handler.aiRunner.Run(r.Context(), replyContext.Tenant, ai.RunRequest{
+	queued, err := handler.repo.enqueueAutoReplyJob(r.Context(), input)
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+	if !queued {
+		httpserver.WriteJSON(w, http.StatusOK, AutoReplyResponse{OK: true, Skipped: true, Reason: "already_queued"})
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusAccepted, AutoReplyResponse{
+		OK:             true,
+		Reason:         "queued",
+		ConversationID: replyContext.Conversation.ID,
+	})
+}
+
+func (handler Handler) runAutoReplyNow(ctx context.Context, input autoReplyInput) (AutoReplyResponse, error) {
+	if handler.aiRunner == nil {
+		return AutoReplyResponse{}, errors.New("ai auto-reply runner is not configured")
+	}
+
+	replyContext, err := handler.repo.loadAutoReplyContext(ctx, input)
+	if err != nil {
+		return AutoReplyResponse{}, err
+	}
+	if reason := replyContext.skipReason(); reason != "" {
+		return AutoReplyResponse{OK: true, Skipped: true, Reason: reason}, nil
+	}
+	if exists, err := handler.repo.autoReplyExists(ctx, replyContext); err != nil {
+		return AutoReplyResponse{}, err
+	} else if exists {
+		return AutoReplyResponse{OK: true, Skipped: true, Reason: "already_replied"}, nil
+	}
+
+	aiResponse, err := handler.aiRunner.Run(ctx, replyContext.Tenant, ai.RunRequest{
 		Message:        firstNonEmpty(input.Text, pointerValue(replyContext.Message.Content)),
 		AgentID:        replyContext.AgentID,
 		LeadID:         pointerValue(replyContext.Conversation.LeadID),
 		ConversationID: replyContext.Conversation.ID,
+		SessionID:      replyContext.Session.ID,
+		Source:         "whatsapp",
 	})
 	if err != nil {
-		httpserver.WriteError(w, r, http.StatusBadGateway, "ai_autoreply_failed", "Unable to generate AI response.")
-		return
+		handler.repo.saveAutoReplyFailure(ctx, replyContext, "ai_autoreply_failed", err.Error())
+		return AutoReplyResponse{}, err
 	}
 	output := strings.TrimSpace(aiResponse.Output)
 	if output == "" {
-		httpserver.WriteJSON(w, http.StatusOK, AutoReplyResponse{OK: true, Skipped: true, Reason: "empty_ai_output"})
-		return
+		return AutoReplyResponse{OK: true, Skipped: true, Reason: "empty_ai_output"}, nil
 	}
 
 	clientMessageID := autoReplyClientMessagePrefix + replyContext.Message.ID
-	sendResponse, err := handler.repo.SendMessage(r.Context(), replyContext.Tenant, replyContext.Conversation.ID, sendMessageInput{
+	sendResponse, err := handler.repo.SendMessage(ctx, replyContext.Tenant, replyContext.Conversation.ID, sendMessageInput{
 		Text:            output,
 		SendSessionID:   replyContext.Session.ID,
 		ClientMessageID: clientMessageID,
 	})
 	if err != nil {
-		writeWhatsAppError(w, r, err)
-		return
+		handler.repo.saveAutoReplyFailure(ctx, replyContext, "ai_autoreply_send_failed", err.Error())
+		return AutoReplyResponse{}, err
 	}
-	if err := handler.repo.markAutoReplyMessage(r.Context(), replyContext, clientMessageID, aiResponse); err != nil {
-		writeWhatsAppError(w, r, err)
-		return
+	if err := handler.repo.markAutoReplyMessage(ctx, replyContext, clientMessageID, aiResponse); err != nil {
+		return AutoReplyResponse{}, err
 	}
 
 	handler.publishWhatsAppEvent(replyContext.Tenant, "whatsapp.ai_autoreply.sent", sendResponse.ConversationID, replyContext.Conversation.LeadID, map[string]any{
@@ -141,13 +179,14 @@ func (handler Handler) AutoReply(w http.ResponseWriter, r *http.Request) {
 		"agentId":          aiResponse.Agent.ID,
 		"agentType":        aiResponse.Agent.Type,
 	})
-	httpserver.WriteJSON(w, http.StatusOK, AutoReplyResponse{
+
+	return AutoReplyResponse{
 		OK:              true,
 		ConversationID:  sendResponse.ConversationID,
 		ClientMessageID: sendResponse.ClientMessageID,
 		Output:          output,
 		Agent:           aiResponse.Agent,
-	})
+	}, nil
 }
 
 func (request AutoReplyRequest) validate() (autoReplyInput, error) {
@@ -248,13 +287,28 @@ func (repo Repository) loadAutoReplyContext(ctx context.Context, input autoReply
 	if err != nil {
 		return autoReplyContext{}, err
 	}
+	aiModuleEnabled, err := repo.isOrganizationAIModuleEnabled(ctx, session.OrganizationID)
+	if err != nil {
+		return autoReplyContext{}, err
+	}
+	aiSettingsEnabled, err := repo.isOrganizationAISettingsEnabled(ctx, session.OrganizationID)
+	if err != nil {
+		return autoReplyContext{}, err
+	}
+	conversationPaused, err := repo.isConversationAIPaused(ctx, session.OrganizationID, conversation.ID)
+	if err != nil {
+		return autoReplyContext{}, err
+	}
 
 	return autoReplyContext{
-		Tenant:       tenantContext,
-		Session:      session,
-		Conversation: conversation,
-		Message:      message,
-		AgentID:      stringFromObject(session.AdvancedSettings, "ai_auto_reply_agent_id"),
+		Tenant:             tenantContext,
+		Session:            session,
+		Conversation:       conversation,
+		Message:            message,
+		AgentID:            stringFromObject(session.AdvancedSettings, "ai_auto_reply_agent_id"),
+		AIModuleEnabled:    aiModuleEnabled,
+		AISettingsEnabled:  aiSettingsEnabled,
+		ConversationPaused: conversationPaused,
 	}, nil
 }
 
@@ -270,6 +324,15 @@ func (context autoReplyContext) skipReason() string {
 	}
 	if context.Session.Status != "connected" {
 		return "session_not_connected"
+	}
+	if !context.AIModuleEnabled {
+		return "organization_ai_disabled"
+	}
+	if !context.AISettingsEnabled {
+		return "organization_ai_settings_disabled"
+	}
+	if context.ConversationPaused {
+		return "conversation_ai_paused"
 	}
 	if !boolFromObject(context.Session.AdvancedSettings, "ai_auto_reply_enabled") {
 		return "session_autoreply_disabled"
@@ -328,6 +391,31 @@ func (repo Repository) markAutoReplyMessage(ctx context.Context, context autoRep
 		  and client_message_id = $3
 	`, context.Session.OrganizationID, context.Conversation.ID, clientMessageID, jsonb(metadata))
 	return err
+}
+
+func (repo Repository) isOrganizationAISettingsEnabled(ctx context.Context, organizationID string) (bool, error) {
+	var enabled bool
+	err := repo.db.Pool().QueryRow(ctx, `
+		select coalesce((
+			select is_enabled
+			from public.organization_ai_settings
+			where organization_id = $1::uuid
+			limit 1
+		), true)
+	`, organizationID).Scan(&enabled)
+	return enabled, err
+}
+
+func (repo Repository) saveAutoReplyFailure(ctx context.Context, context autoReplyContext, eventType string, message string) {
+	_, _ = repo.db.Pool().Exec(ctx, `
+		insert into public.events (organization_id, event_type, entity_type, entity_id, payload, status, processed_at)
+		values ($1::uuid, $2, 'ai', null, $3::jsonb, 'failed', now())
+	`, context.Session.OrganizationID, eventType, jsonb(map[string]any{
+		"conversationId": context.Conversation.ID,
+		"messageId":      context.Message.ID,
+		"sessionId":      context.Session.ID,
+		"error":          message,
+	}))
 }
 
 func (repo Repository) memberRole(ctx context.Context, organizationID string, userID string) string {

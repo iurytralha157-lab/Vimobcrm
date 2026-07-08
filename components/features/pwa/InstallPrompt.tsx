@@ -35,8 +35,8 @@ export function InstallPrompt() {
     <>
       {/* Install Banner */}
       {!showIOSInstructions && (
-        <div className="fixed inset-x-0 bottom-0 z-50 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] animate-in slide-in-from-bottom duration-300 sm:p-4 sm:pb-4">
-          <div className="mx-auto flex w-full max-w-lg items-center gap-3 rounded-[14px] border border-white/[0.055] bg-[var(--app-surface-solid)] p-3 shadow-[0_18px_44px_rgba(0,0,0,0.38)] backdrop-blur-xl">
+        <div className="pointer-events-none fixed bottom-[calc(0.75rem+env(safe-area-inset-bottom))] left-1/2 z-50 w-[calc(100vw-1.5rem)] max-w-lg -translate-x-1/2 animate-in slide-in-from-bottom duration-300 sm:bottom-4">
+          <div className="pointer-events-auto flex w-full items-center gap-3 rounded-[14px] border border-white/[0.055] bg-[var(--app-surface-solid)] p-3 shadow-[0_10px_26px_rgba(0,0,0,0.18)] backdrop-blur-xl dark:shadow-[0_12px_30px_rgba(0,0,0,0.34)]">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-primary/10 sm:h-12 sm:w-12">
               <NextImage
                 src="/icons/favicon-laranja.png"

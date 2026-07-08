@@ -34,6 +34,14 @@ type ExportColumn = {
   header: string;
   key: string;
   width: number;
+  value?: (contact: Contact) => string | number | boolean | null | undefined;
+};
+
+type JsonScalar = string | number | boolean | null;
+type JsonRecord = Record<string, unknown>;
+type ContactExportExtras = {
+  answers: Record<string, string>;
+  flattened: Record<string, Record<string, string>>;
 };
 
 interface LegacyExportLead {
@@ -104,6 +112,197 @@ function boolLabel(value?: boolean | null) {
 
 function jsonText(value?: string | null) {
   return value && value !== '{}' ? value : '';
+}
+
+function parseJsonRecord(value?: string | null): JsonRecord | null {
+  if (!value || value === '{}') return null;
+
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeDynamicKey(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 90);
+}
+
+function stringifyExportValue(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) {
+    return value.map((item) => stringifyExportValue(item)).filter(Boolean).join(', ');
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function isScalar(value: unknown): value is JsonScalar {
+  return value == null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+}
+
+function flattenJsonScalars(value: unknown, prefix = '', depth = 0, output: Record<string, string> = {}) {
+  if (depth > 4 || value == null) return output;
+
+  if (isScalar(value)) {
+    if (prefix) output[prefix] = stringifyExportValue(value);
+    return output;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.every(isScalar)) {
+      if (prefix) output[prefix] = stringifyExportValue(value);
+      return output;
+    }
+
+    value.slice(0, 20).forEach((item, index) => {
+      flattenJsonScalars(item, `${prefix}.${index + 1}`, depth + 1, output);
+    });
+    return output;
+  }
+
+  if (!isRecord(value)) return output;
+
+  Object.entries(value)
+    .slice(0, 250)
+    .forEach(([key, item]) => {
+      const path = prefix ? `${prefix}.${key}` : key;
+      flattenJsonScalars(item, path, depth + 1, output);
+    });
+
+  return output;
+}
+
+function collectFieldAnswers(value: unknown, output: Record<string, string> = {}) {
+  if (value == null) return output;
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectFieldAnswers(item, output));
+    return output;
+  }
+
+  if (!isRecord(value)) return output;
+
+  const labelCandidate =
+    value.name ??
+    value.question ??
+    value.label ??
+    value.field_label ??
+    value.field_name ??
+    value.key ??
+    value.title;
+  const answerCandidate =
+    value.values ??
+    value.value ??
+    value.answer ??
+    value.response ??
+    value.field_value ??
+    value.text;
+
+  if (typeof labelCandidate === 'string' && answerCandidate != null) {
+    const answer = stringifyExportValue(answerCandidate);
+    if (answer) output[labelCandidate] = answer;
+  }
+
+  Object.values(value).forEach((item) => {
+    if (Array.isArray(item) || isRecord(item)) collectFieldAnswers(item, output);
+  });
+
+  return output;
+}
+
+const jsonSourceDefinitions = [
+  { prefix: 'Metadado', keyPrefix: 'metadata' },
+  { prefix: 'Meta payload', keyPrefix: 'meta_payload' },
+  { prefix: 'Meta raw', keyPrefix: 'meta_raw' },
+] as const;
+
+function contactJsonSources(contact: Contact) {
+  return [
+    { ...jsonSourceDefinitions[0], value: parseJsonRecord(contact.metadata_json) },
+    { ...jsonSourceDefinitions[1], value: parseJsonRecord(contact.meta_payload_json) },
+    { ...jsonSourceDefinitions[2], value: parseJsonRecord(contact.meta_raw_payload_json) },
+  ];
+}
+
+function buildContactExportExtras(contact: Contact): ContactExportExtras {
+  const answers: Record<string, string> = {};
+  const flattened: Record<string, Record<string, string>> = {};
+
+  contactJsonSources(contact).forEach((source) => {
+    if (!source.value) return;
+    Object.assign(answers, collectFieldAnswers(source.value));
+    flattened[source.keyPrefix] = flattenJsonScalars(source.value);
+  });
+
+  return { answers, flattened };
+}
+
+function buildExportExtras(contacts: Contact[]) {
+  return new Map(contacts.map((contact) => [contact.id, buildContactExportExtras(contact)]));
+}
+
+function buildDynamicExportColumns(contacts: Contact[], extrasByContactId: Map<string, ContactExportExtras>): ExportColumn[] {
+  const columns = new Map<string, ExportColumn>();
+
+  const addColumn = (column: ExportColumn) => {
+    if (!columns.has(column.key)) columns.set(column.key, column);
+  };
+
+  contacts.forEach((contact) => {
+    const extras = extrasByContactId.get(contact.id);
+    if (!extras) return;
+
+    Object.keys(extras.answers).forEach((question) => {
+      const normalized = normalizeDynamicKey(question);
+      if (!normalized) return;
+
+      addColumn({
+        header: `Pergunta: ${question}`,
+        key: `question_${normalized}`,
+        width: 34,
+        value: (row) => extrasByContactId.get(row.id)?.answers[question] || '',
+      });
+    });
+
+    jsonSourceDefinitions.forEach((source) => {
+      const flattened = extras.flattened[source.keyPrefix];
+      if (!flattened) return;
+
+      Object.keys(flattened).forEach((path) => {
+        const normalized = normalizeDynamicKey(`${source.keyPrefix}_${path}`);
+        if (!normalized) return;
+
+        addColumn({
+          header: `${source.prefix}: ${path}`,
+          key: `extra_${normalized}`,
+          width: 32,
+          value: (row) => {
+            return extrasByContactId.get(row.id)?.flattened[source.keyPrefix]?.[path] || '';
+          },
+        });
+      });
+    });
+  });
+
+  return Array.from(columns.values()).sort((a, b) => a.header.localeCompare(b.header, 'pt-BR'));
+}
+
+function buildExportColumns(contacts: Contact[], extrasByContactId: Map<string, ContactExportExtras>) {
+  return [...contactExportColumns, ...buildDynamicExportColumns(contacts, extrasByContactId)];
 }
 
 const contactExportColumns: ExportColumn[] = [
@@ -202,8 +401,8 @@ const contactExportColumns: ExportColumn[] = [
   { header: 'Meta Raw Payload JSON', key: 'meta_raw_payload_json', width: 42 },
 ];
 
-function buildContactExportRow(contact: Contact): ContactExportRow {
-  return {
+function buildContactExportRow(contact: Contact, columns: ExportColumn[] = contactExportColumns): ContactExportRow {
+  const row: ContactExportRow = {
     id: contact.id,
     nome: contact.name,
     telefone: contact.phone || '',
@@ -298,11 +497,17 @@ function buildContactExportRow(contact: Contact): ContactExportRow {
     meta_payload_json: jsonText(contact.meta_payload_json),
     meta_raw_payload_json: jsonText(contact.meta_raw_payload_json),
   };
+
+  columns.forEach((column) => {
+    if (column.value) row[column.key] = column.value(contact);
+  });
+
+  return row;
 }
 
-function addContactWorksheetRows(worksheet: ExcelJS.Worksheet, contacts: Contact[]) {
+function addContactWorksheetRows(worksheet: ExcelJS.Worksheet, contacts: Contact[], columns: ExportColumn[]) {
   contacts.forEach((contact) => {
-    worksheet.addRow(buildContactExportRow(contact));
+    worksheet.addRow(buildContactExportRow(contact, columns));
   });
 }
 
@@ -318,17 +523,20 @@ export async function exportContactsFiltered({
     throw new Error('Nenhum contato encontrado para exportar');
   }
 
+  const extrasByContactId = buildExportExtras(contacts);
+  const columns = buildExportColumns(contacts, extrasByContactId);
+
   if (exportFormat === 'csv') {
-    downloadCSV(contacts, filename);
+    downloadCSV(contacts, filename, columns);
     return contacts.length;
   }
 
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet('Contatos');
 
-  worksheet.columns = contactExportColumns;
+  worksheet.columns = columns;
 
-  addContactWorksheetRows(worksheet, contacts);
+  addContactWorksheetRows(worksheet, contacts, columns);
   styleHeader(worksheet);
 
   await downloadWorkbook(workbook, filename, exportFormat);
@@ -365,11 +573,11 @@ async function fetchAllFilteredContacts(filters: ExportFilters, organizationId?:
   return contacts;
 }
 
-function downloadCSV(contacts: Contact[], filename: string) {
-  const headers = contactExportColumns.map((column) => column.header);
+function downloadCSV(contacts: Contact[], filename: string, columns: ExportColumn[]) {
+  const headers = columns.map((column) => column.header);
   const rows = contacts.map((contact) => {
-    const row = buildContactExportRow(contact);
-    return contactExportColumns.map((column) => row[column.key]);
+    const row = buildContactExportRow(contact, columns);
+    return columns.map((column) => row[column.key]);
   });
   const csv = [headers, ...rows]
     .map((row) => row.map(escapeCSVCell).join(';'))

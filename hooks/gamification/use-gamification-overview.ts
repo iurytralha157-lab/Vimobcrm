@@ -90,6 +90,11 @@ export function useGamificationOverview() {
       )
       .on(
         'postgres_changes',
+        { event: '*', schema: 'public', table: 'gamification_activity_logs', filter: `organization_id=eq.${organizationId}` },
+        invalidateOverview,
+      )
+      .on(
+        'postgres_changes',
         { event: '*', schema: 'public', table: 'user_gamification_stats', filter: `organization_id=eq.${organizationId}` },
         invalidateOverview,
       )

@@ -50,7 +50,7 @@ func (repo Repository) ListCities(ctx context.Context, tenantContext tenant.Cont
 }
 
 func (repo Repository) CreateCity(ctx context.Context, tenantContext tenant.Context, input CityInput) (Location, error) {
-	if !canManageProperties(tenantContext) {
+	if !canCreateProperties(tenantContext) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -128,7 +128,7 @@ func (repo Repository) ListNeighborhoods(ctx context.Context, tenantContext tena
 }
 
 func (repo Repository) CreateNeighborhood(ctx context.Context, tenantContext tenant.Context, input NeighborhoodInput) (Location, error) {
-	if !canManageProperties(tenantContext) {
+	if !canCreateProperties(tenantContext) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -228,7 +228,7 @@ func (repo Repository) ListCondominiums(ctx context.Context, tenantContext tenan
 }
 
 func (repo Repository) CreateCondominium(ctx context.Context, tenantContext tenant.Context, input CondominiumInput) (Location, error) {
-	if !canManageProperties(tenantContext) {
+	if !canCreateProperties(tenantContext) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 

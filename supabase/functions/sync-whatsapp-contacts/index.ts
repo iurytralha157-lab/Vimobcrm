@@ -72,24 +72,6 @@ async function assertSessionAccess(session: JsonRecord, userId: string) {
   if (userId === "service_role") return;
   if (session.owner_user_id === userId) return;
 
-  const { data: member } = await supabase
-    .from("organization_members")
-    .select("role")
-    .eq("organization_id", session.organization_id)
-    .eq("user_id", userId)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  if (member?.role && ["owner", "admin", "manager"].includes(String(member.role).toLowerCase())) return;
-
-  const { data: access } = await supabase
-    .from("whatsapp_session_access")
-    .select("can_view, can_read")
-    .eq("session_id", session.id)
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (access?.can_view || access?.can_read) return;
   throw new Error("Forbidden");
 }
 

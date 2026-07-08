@@ -2,8 +2,6 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useAuth } from "@/contexts/AuthContext";
 import { settingsAPI, type UpdateOrganizationInput } from "@/lib/api/settings";
 import { Building2, Eye, Loader2, PencilLine } from "lucide-react";
@@ -117,18 +115,22 @@ function PropertySettingsForm({
                 <p className="text-xs text-muted-foreground">Controle quem pode alterar dados dos imoveis.</p>
               </div>
             </div>
-            <RadioGroup value={editPolicy} onValueChange={(value) => setEditPolicy(value as PropertyEditPolicy)} className="space-y-2">
+            <div className="space-y-2">
               <PolicyOption
                 value="responsible_or_admin"
                 label="Responsaveis e administradores"
                 description="Somente captador/responsavel, gestores e admins podem editar."
+                selected={editPolicy === "responsible_or_admin"}
+                onSelect={() => setEditPolicy("responsible_or_admin")}
               />
               <PolicyOption
                 value="everyone"
                 label="Todos os usuarios"
                 description="Qualquer usuario ativo da organizacao pode editar imoveis."
+                selected={editPolicy === "everyone"}
+                onSelect={() => setEditPolicy("everyone")}
               />
-            </RadioGroup>
+            </div>
           </div>
 
           <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-4">
@@ -139,18 +141,22 @@ function PropertySettingsForm({
                 <p className="text-xs text-muted-foreground">Proteja telefone e contato do proprietario.</p>
               </div>
             </div>
-            <RadioGroup value={ownerVisibility} onValueChange={(value) => setOwnerVisibility(value as OwnerVisibility)} className="space-y-2">
+            <div className="space-y-2">
               <PolicyOption
                 value="visible"
                 label="Mostrar contato"
                 description="Corretores podem ver nome, telefone e e-mail do proprietario."
+                selected={ownerVisibility === "visible"}
+                onSelect={() => setOwnerVisibility("visible")}
               />
               <PolicyOption
                 value="hidden"
                 label="Ocultar contato"
                 description="Corretores veem o nome, mas telefone e e-mail ficam ocultos."
+                selected={ownerVisibility === "hidden"}
+                onSelect={() => setOwnerVisibility("hidden")}
               />
-            </RadioGroup>
+            </div>
           </div>
         </div>
 
@@ -169,21 +175,36 @@ function PolicyOption({
   value,
   label,
   description,
+  selected,
+  onSelect,
 }: {
   value: string;
   label: string;
   description: string;
+  selected: boolean;
+  onSelect: () => void;
 }) {
   return (
-    <Label
-      htmlFor={`property-setting-${value}`}
-      className="flex cursor-pointer items-start gap-3 rounded-[6px] bg-background/60 p-3 transition hover:bg-background"
+    <button
+      type="button"
+      aria-pressed={selected}
+      data-value={value}
+      onClick={onSelect}
+      className={`flex w-full cursor-pointer items-start gap-3 rounded-[6px] p-3 text-left transition ${
+        selected
+          ? "bg-primary/10 text-foreground"
+          : "bg-background/60 text-foreground hover:bg-background"
+      }`}
     >
-      <RadioGroupItem id={`property-setting-${value}`} value={value} className="mt-0.5" />
+      <span
+        className={`mt-1 h-2.5 w-2.5 flex-shrink-0 rounded-full ${
+          selected ? "bg-primary" : "bg-muted-foreground/35"
+        }`}
+      />
       <span className="space-y-0.5">
         <span className="block text-sm font-medium">{label}</span>
         <span className="block text-xs leading-relaxed text-muted-foreground">{description}</span>
       </span>
-    </Label>
+    </button>
   );
 }

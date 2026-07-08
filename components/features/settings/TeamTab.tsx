@@ -38,7 +38,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { useOrganizationUsers, useUpdateUser } from '@/hooks/use-users';
+import { useDeleteUser, useDeleteUserImpact, useOrganizationUsers, useUpdateUser } from '@/hooks/use-users';
 import { 
   useOrganizationRoles, 
   useUserOrganizationRoles, 
@@ -65,12 +65,15 @@ export function TeamTab() {
   const { data: userOrgRoles = [] } = useUserOrganizationRoles();
   
   const updateUser = useUpdateUser();
+  const deleteUser = useDeleteUser();
   const assignUserRole = useAssignUserRole();
 
   const [userDialogOpen, setUserDialogOpen] = useState(false);
   const [deleteUserDialogOpen, setDeleteUserDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<{ id: string; name: string } | null>(null);
   const [deletingUser, setDeletingUser] = useState(false);
+  const [transferLeadsToUserId, setTransferLeadsToUserId] = useState<string>('');
+  const [transferPropertiesToUserId, setTransferPropertiesToUserId] = useState<string>('');
   const [creatingUser, setCreatingUser] = useState(false);
 
   // Form state for new user
@@ -81,8 +84,26 @@ export function TeamTab() {
   const [newUserRole, setNewUserRole] = useState<'admin' | 'user'>('user');
 
   const isAdmin = profile?.role === 'admin' || isSuperAdmin;
+  const { data: deleteImpact, isLoading: deleteImpactLoading, isError: deleteImpactFailed } = useDeleteUserImpact(
+    userToDelete?.id,
+    deleteUserDialogOpen && !!userToDelete,
+  );
+  const transferCandidates = users.filter(
+    (user) => user.id !== userToDelete?.id && user.is_active && user.role !== 'super_admin',
+  );
+  const impactLeads = deleteImpact?.leads ?? 0;
+  const impactProperties = deleteImpact?.properties ?? 0;
+  const impactWhatsAppSessions = deleteImpact?.whatsapp_sessions ?? 0;
+  const requiresLeadTransfer = impactLeads > 0;
+  const requiresPropertyTransfer = impactProperties > 0;
+  const canConfirmDelete =
+    !deleteImpactLoading &&
+    !deleteImpactFailed &&
+    !deletingUser &&
+    (!requiresLeadTransfer || !!transferLeadsToUserId) &&
+    (!requiresPropertyTransfer || !!transferPropertiesToUserId);
 
-  // Helper para obter a funÃ§Ã£o customizada de um usuÃ¡rio
+  // Helper para obter a função customizada de um usuário
   const getUserCustomRole = (userId: string): OrganizationRole | undefined => {
     const assignment = userOrgRoles.find(uor => uor.user_id === userId);
     if (!assignment) return undefined;
@@ -104,19 +125,30 @@ export function TeamTab() {
 
   const handleDeleteUser = async () => {
     if (!userToDelete) return;
+    if (requiresLeadTransfer && !transferLeadsToUserId) {
+      toast.error('Escolha para quem transferir os leads antes de excluir.');
+      return;
+    }
+    if (requiresPropertyTransfer && !transferPropertiesToUserId) {
+      toast.error('Escolha para quem transferir os imóveis antes de excluir.');
+      return;
+    }
+
     setDeletingUser(true);
     try {
-      const { data, error } = await supabase.functions.invoke('delete-user', {
-        body: { userId: userToDelete.id }
+      await deleteUser.mutateAsync({
+        userId: userToDelete.id,
+        transferLeadsToUserId: transferLeadsToUserId || null,
+        transferPropertiesToUserId: transferPropertiesToUserId || null,
       });
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || 'Erro ao excluir usuÃ¡rio');
-      toast.success('UsuÃ¡rio excluÃ­do com sucesso!');
+      toast.success('Usuário excluído com sucesso!');
       queryClient.invalidateQueries({ queryKey: ['organization-users'] });
       setDeleteUserDialogOpen(false);
       setUserToDelete(null);
+      setTransferLeadsToUserId('');
+      setTransferPropertiesToUserId('');
     } catch (error: unknown) {
-      toast.error('Erro ao excluir usuÃ¡rio: ' + getErrorMessage(error, 'Erro desconhecido'));
+      toast.error('Erro ao excluir usuário: ' + getErrorMessage(error, 'Erro desconhecido'));
     } finally {
       setDeletingUser(false);
     }
@@ -149,15 +181,15 @@ export function TeamTab() {
           role: newUserRole
         }
       });
-      if (error) throw new Error(error.message || 'Erro ao criar usuÃ¡rio');
+      if (error) throw new Error(error.message || 'Erro ao criar usuário');
 
       if (result.wasMultiOrg || result.wasOrphan) {
-        toast.success(result.message || 'UsuÃ¡rio vinculado Ã  organizaÃ§Ã£o! Acesso com senha existente.');
+        toast.success(result.message || 'Usuário vinculado à organização! Acesso com senha existente.');
       } else if (result.whatsappSent) {
-        toast.success('UsuÃ¡rio criado! Credenciais de acesso enviadas via WhatsApp.');
+        toast.success('Usuário criado! Credenciais de acesso enviadas via WhatsApp.');
       } else {
         toast.success(
-          `UsuÃ¡rio criado! Senha gerada: ${result.generatedPassword}. âš ï¸ WhatsApp nÃ£o enviado â€” copie a senha agora.`,
+          `Usuário criado! Senha gerada: ${result.generatedPassword}. WhatsApp não enviado; copie a senha agora.`,
           { duration: 15000 }
         );
       }
@@ -255,15 +287,15 @@ export function TeamTab() {
                     <div className="space-y-2">
                       <Label>{t.common.address}</Label>
                       <Input
-                        placeholder="EndereÃ§o completo"
+                        placeholder="Endereço completo"
                         value={newUserEndereco}
                         onChange={e => setNewUserEndereco(e.target.value)}
                       />
                     </div>
                     <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
                       <p className="text-xs text-foreground">
-                        ðŸ” Uma <strong>senha aleatÃ³ria segura</strong> serÃ¡ gerada automaticamente e enviada
-                        ao novo usuÃ¡rio via <strong>WhatsApp</strong>, junto com o link de acesso e o login.
+                        Uma <strong>senha aleatória segura</strong> será gerada automaticamente e enviada
+                        ao novo usuário via <strong>WhatsApp</strong>, junto com o link de acesso e o login.
                       </p>
                     </div>
                     <div className="flex justify-end gap-2 pt-4">
@@ -305,7 +337,7 @@ export function TeamTab() {
                           {!user.is_active && (
                             <Badge variant="secondary" className="text-xs">{t.common.inactive}</Badge>
                           )}
-                          {/* Mostrar funÃ§Ã£o customizada */}
+                          {/* Mostrar função customizada */}
                           {user.role !== 'admin' && getUserCustomRole(user.id) && (
                             <Badge 
                               variant="outline" 
@@ -340,7 +372,7 @@ export function TeamTab() {
                             </SelectContent>
                           </Select>
                           
-                          {/* FunÃ§Ã£o customizada (apenas para nÃ£o-admins) */}
+                          {/* Função customizada (apenas para não-admins) */}
                           {user.role !== 'admin' && organizationRoles.length > 0 && (
                             <Select 
                               value={getUserCustomRole(user.id)?.id || 'none'} 
@@ -348,10 +380,10 @@ export function TeamTab() {
                               disabled={user.id === profile?.id}
                             >
                               <SelectTrigger className="w-28 h-8 text-xs">
-                                <SelectValue placeholder="FunÃ§Ã£o..." />
+                                <SelectValue placeholder="Função..." />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="none">Sem funÃ§Ã£o</SelectItem>
+                                <SelectItem value="none">Sem função</SelectItem>
                                 {organizationRoles.map(role => (
                                   <SelectItem key={role.id} value={role.id}>
                                     <div className="flex items-center gap-2">
@@ -378,6 +410,8 @@ export function TeamTab() {
                             className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10" 
                             onClick={() => {
                               setUserToDelete({ id: user.id, name: user.name });
+                              setTransferLeadsToUserId('');
+                              setTransferPropertiesToUserId('');
                               setDeleteUserDialogOpen(true);
                             }} 
                             disabled={user.id === profile?.id}
@@ -416,20 +450,106 @@ export function TeamTab() {
       </div>
 
       {/* Delete User Confirmation Dialog */}
-      <AlertDialog open={deleteUserDialogOpen} onOpenChange={setDeleteUserDialogOpen}>
+      <AlertDialog
+        open={deleteUserDialogOpen}
+        onOpenChange={(open) => {
+          setDeleteUserDialogOpen(open);
+          if (!open) {
+            setUserToDelete(null);
+            setTransferLeadsToUserId('');
+            setTransferPropertiesToUserId('');
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Excluir usuÃ¡rio</AlertDialogTitle>
+            <AlertDialogTitle>Excluir usuário</AlertDialogTitle>
             <AlertDialogDescription>
-              Tem certeza que deseja excluir o usuÃ¡rio <strong>{userToDelete?.name}</strong>? 
-              Esta aÃ§Ã£o nÃ£o pode ser desfeita.
+              Antes de excluir <strong>{userToDelete?.name}</strong>, revise o que precisa ser transferido. O
+              histórico de leads e imóveis continua intacto.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="space-y-4">
+            {deleteImpactLoading ? (
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Carregando impacto do usuário...
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-2">
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Leads</p>
+                  <p className="text-lg font-semibold">{impactLeads}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Imóveis</p>
+                  <p className="text-lg font-semibold">{impactProperties}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">WhatsApp</p>
+                  <p className="text-lg font-semibold">{impactWhatsAppSessions}</p>
+                </div>
+              </div>
+            )}
+
+            {requiresLeadTransfer && (
+              <div className="space-y-2">
+                <Label>Transferir leads para</Label>
+                <Select value={transferLeadsToUserId} onValueChange={setTransferLeadsToUserId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione um responsável" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {transferCandidates.map((user) => (
+                      <SelectItem key={user.id} value={user.id}>
+                        {user.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {requiresPropertyTransfer && (
+              <div className="space-y-2">
+                <Label>Transferir imóveis para</Label>
+                <Select value={transferPropertiesToUserId} onValueChange={setTransferPropertiesToUserId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione um responsável" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {transferCandidates.map((user) => (
+                      <SelectItem key={user.id} value={user.id}>
+                        {user.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {(requiresLeadTransfer || requiresPropertyTransfer) && transferCandidates.length === 0 && (
+              <p className="rounded-lg border border-destructive/25 bg-destructive/10 p-3 text-sm text-destructive">
+                Não há outro usuário ativo para receber leads ou imóveis. Ative ou crie um usuário antes de excluir.
+              </p>
+            )}
+
+            {impactWhatsAppSessions > 0 && (
+              <p className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-200">
+                As conexões WhatsApp deste usuário serão desconectadas. Elas não serão transferidas.
+              </p>
+            )}
+            {deleteImpactFailed && (
+              <p className="rounded-lg border border-destructive/25 bg-destructive/10 p-3 text-sm text-destructive">
+                Não foi possível calcular o impacto deste usuário. Tente novamente antes de excluir.
+              </p>
+            )}
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deletingUser}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={handleDeleteUser} 
-              disabled={deletingUser} 
+            <AlertDialogAction
+              onClick={handleDeleteUser}
+              disabled={!canConfirmDelete}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {deletingUser && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}

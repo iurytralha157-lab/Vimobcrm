@@ -18,6 +18,10 @@ type Repository struct {
 	authAdmin authAdminClient
 }
 
+type queryRower interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 func NewRepository(db *dbpkg.Postgres, authConfig AuthAdminConfig) Repository {
 	return Repository{
 		db:        db,
@@ -42,8 +46,11 @@ func (repo Repository) ListOrganizationUsers(ctx context.Context, tenantContext 
 		left join public.organization_members om
 		  on om.user_id = u.id
 		 and om.organization_id = $1::uuid
-		where (u.organization_id = $1::uuid or om.id is not null)
-		  and coalesce(u.is_active, false) = true
+		where coalesce(u.is_active, false) = true
+		  and (
+			(om.id is not null and coalesce(om.is_active, false) = true)
+			or (u.organization_id = $1::uuid and coalesce(om.is_active, true) = true)
+		  )
 		order by u.id, u.name
 	`, tenantContext.OrganizationID)
 	if err != nil {
@@ -284,32 +291,106 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 	return user, nil
 }
 
-func (repo Repository) DeleteOrganizationUser(ctx context.Context, tenantContext tenant.Context, userID string) error {
+func (repo Repository) GetDeleteUserImpact(ctx context.Context, tenantContext tenant.Context, userID string) (DeleteUserImpact, error) {
 	if !canManageUsers(tenantContext) {
-		return tenant.ErrOrganizationAccessDenied
+		return DeleteUserImpact{}, tenant.ErrOrganizationAccessDenied
 	}
 
 	userID, ok := normalizeUUID(userID)
 	if !ok {
-		return ErrInvalidInput
-	}
-	if userID == tenantContext.UserID {
-		return ErrInvalidInput
+		return DeleteUserImpact{}, ErrInvalidInput
 	}
 
 	existing, err := repo.getOrganizationUser(ctx, tenantContext.OrganizationID, userID)
 	if err != nil {
-		return err
+		return DeleteUserImpact{}, err
 	}
 	if existing.Role == "super_admin" {
-		return tenant.ErrOrganizationAccessDenied
+		return DeleteUserImpact{}, tenant.ErrOrganizationAccessDenied
+	}
+
+	return repo.getDeleteUserImpact(ctx, repo.db.Pool(), tenantContext.OrganizationID, userID)
+}
+
+func (repo Repository) DeleteOrganizationUser(ctx context.Context, tenantContext tenant.Context, userID string, input DeleteUserInput) (DeleteUserResult, error) {
+	if !canManageUsers(tenantContext) {
+		return DeleteUserResult{}, tenant.ErrOrganizationAccessDenied
+	}
+
+	userID, ok := normalizeUUID(userID)
+	if !ok {
+		return DeleteUserResult{}, ErrInvalidInput
+	}
+	if userID == tenantContext.UserID {
+		return DeleteUserResult{}, ErrInvalidInput
+	}
+
+	existing, err := repo.getOrganizationUser(ctx, tenantContext.OrganizationID, userID)
+	if err != nil {
+		return DeleteUserResult{}, err
+	}
+	if existing.Role == "super_admin" {
+		return DeleteUserResult{}, tenant.ErrOrganizationAccessDenied
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
-		return err
+		return DeleteUserResult{}, err
 	}
 	defer tx.Rollback(ctx)
+
+	impact, err := repo.getDeleteUserImpact(ctx, tx, tenantContext.OrganizationID, userID)
+	if err != nil {
+		return DeleteUserResult{}, err
+	}
+
+	if impact.Leads > 0 {
+		targetID, err := repo.normalizeTransferTarget(ctx, tenantContext.OrganizationID, userID, input.TransferLeadsToUserID)
+		if err != nil {
+			return DeleteUserResult{}, err
+		}
+		if _, err := tx.Exec(ctx, `
+			update public.leads
+			set assigned_user_id = $3::uuid,
+			    updated_at = now()
+			where organization_id = $1::uuid
+			  and assigned_user_id = $2::uuid
+		`, tenantContext.OrganizationID, userID, targetID); err != nil {
+			return DeleteUserResult{}, err
+		}
+	}
+
+	if impact.Properties > 0 {
+		targetID, err := repo.normalizeTransferTarget(ctx, tenantContext.OrganizationID, userID, input.TransferPropertiesToUserID)
+		if err != nil {
+			return DeleteUserResult{}, err
+		}
+		if _, err := tx.Exec(ctx, `
+			update public.properties
+			set responsible_user_id = $3::uuid,
+			    cadastrado_por = $3::uuid,
+			    updated_at = now()
+			where organization_id = $1::uuid
+			  and responsible_user_id = $2::uuid
+		`, tenantContext.OrganizationID, userID, targetID); err != nil {
+			return DeleteUserResult{}, err
+		}
+	}
+
+	if impact.WhatsAppSessions > 0 {
+		if _, err := tx.Exec(ctx, `
+			update public.whatsapp_sessions
+			set status = 'disconnected',
+			    is_active = false,
+			    is_notification_session = false,
+			    updated_at = now()
+			where organization_id = $1::uuid
+			  and owner_user_id = $2::uuid
+			  and coalesce(status, '') <> 'deleted'
+		`, tenantContext.OrganizationID, userID); err != nil {
+			return DeleteUserResult{}, err
+		}
+	}
 
 	if _, err := tx.Exec(ctx, `
 		update public.organization_members
@@ -318,7 +399,7 @@ func (repo Repository) DeleteOrganizationUser(ctx context.Context, tenantContext
 		where organization_id = $1::uuid
 		  and user_id = $2::uuid
 	`, tenantContext.OrganizationID, userID); err != nil {
-		return err
+		return DeleteUserResult{}, err
 	}
 
 	var fallbackOrganizationID pgtype.UUID
@@ -348,10 +429,66 @@ func (repo Repository) DeleteOrganizationUser(ctx context.Context, tenantContext
 		`, userID, fallbackOrganizationID.String(), tenantContext.OrganizationID)
 	}
 	if err != nil {
-		return err
+		return DeleteUserResult{}, err
 	}
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return DeleteUserResult{}, err
+	}
+
+	return DeleteUserResult{Success: true, Impact: impact}, nil
+}
+
+func (repo Repository) getDeleteUserImpact(ctx context.Context, runner queryRower, organizationID string, userID string) (DeleteUserImpact, error) {
+	var impact DeleteUserImpact
+	err := runner.QueryRow(ctx, `
+		select
+			(
+				select count(*)
+				from public.leads
+				where organization_id = $1::uuid
+				  and assigned_user_id = $2::uuid
+			) as leads,
+			(
+				select count(*)
+				from public.properties
+				where organization_id = $1::uuid
+				  and responsible_user_id = $2::uuid
+			) as properties,
+			(
+				select count(*)
+				from public.whatsapp_sessions
+				where organization_id = $1::uuid
+				  and owner_user_id = $2::uuid
+				  and coalesce(is_active, true) = true
+				  and coalesce(status, '') <> 'deleted'
+			) as whatsapp_sessions
+	`, organizationID, userID).Scan(&impact.Leads, &impact.Properties, &impact.WhatsAppSessions)
+	if err != nil {
+		return DeleteUserImpact{}, err
+	}
+
+	return impact, nil
+}
+
+func (repo Repository) normalizeTransferTarget(ctx context.Context, organizationID string, sourceUserID string, value *string) (string, error) {
+	if value == nil {
+		return "", ErrInvalidInput
+	}
+	targetID, ok := normalizeUUID(*value)
+	if !ok || targetID == sourceUserID {
+		return "", ErrInvalidInput
+	}
+
+	target, err := repo.getOrganizationUser(ctx, organizationID, targetID)
+	if err != nil {
+		return "", err
+	}
+	if target.Role == "super_admin" || !target.IsActive {
+		return "", ErrInvalidInput
+	}
+
+	return targetID, nil
 }
 
 func (repo Repository) ListSummaries(ctx context.Context, tenantContext tenant.Context, userIDs []string) ([]Summary, error) {
@@ -526,6 +663,15 @@ func (repo Repository) insertNewUser(ctx context.Context, tenantContext tenant.C
 			is_active
 		)
 		values ($1::uuid, $2::uuid, $3, $4, $5, $6, true)
+		on conflict (id)
+		do update set
+			organization_id = excluded.organization_id,
+			name = excluded.name,
+			email = excluded.email,
+			role = excluded.role,
+			whatsapp = excluded.whatsapp,
+			is_active = true,
+			updated_at = now()
 	`, authUserID, tenantContext.OrganizationID, input.Name, input.Email, input.Role, firstNonNilString(input.Whatsapp, input.Phone)); err != nil {
 		return User{}, err
 	}
@@ -631,6 +777,13 @@ func normalizeUpdateUserInput(request UpdateUserRequest) (UpdateUserInput, error
 	}
 
 	return input, nil
+}
+
+func normalizeDeleteUserInput(request DeleteUserRequest) (DeleteUserInput, error) {
+	return DeleteUserInput{
+		TransferLeadsToUserID:      cleanStringPointer(request.TransferLeadsToUserID),
+		TransferPropertiesToUserID: cleanStringPointer(request.TransferPropertiesToUserID),
+	}, nil
 }
 
 func normalizeEmail(value string) (string, error) {

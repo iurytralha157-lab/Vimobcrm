@@ -12,7 +12,7 @@ import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
-import { Plus, Loader2, ArrowLeft, Save, User, MapPin, Home, Settings2, Image, Globe, DollarSign, Lock, Tag, AlertTriangle } from 'lucide-react';
+import { Plus, Loader2, Save, User, MapPin, Home, Settings2, Image, Globe, DollarSign, Lock, Tag, AlertTriangle } from 'lucide-react';
 import { type Property, useProperty, useCreateProperty, useUpdateProperty } from '@/hooks/use-properties';
 import { usePropertyTypes, useCreatePropertyType } from '@/hooks/use-property-types';
 import { usePropertyFeatures, useCreatePropertyFeature, useSeedDefaultFeatures, DEFAULT_FEATURES } from '@/hooks/use-property-features';
@@ -109,6 +109,9 @@ interface PropertyFormData {
   usou_fgts: boolean;
   aceita_financiamento: boolean;
   aceita_permuta: boolean;
+  financing_details: string;
+  exchange_details: string;
+  hidden_site_image_urls: string[];
   zoneamento: string;
   valor_venda_avaliado: string;
   valor_locacao_avaliado: string;
@@ -156,7 +159,8 @@ const initialFormData: PropertyFormData = {
   valor_seguro_fianca: '',
   padrao: '', posicao_localizacao: '', situacao_imovel: '', ocupacao: '',
   autorizado_comercializacao: true, exclusividade: false, ano_reforma: '',
-  usou_fgts: false, aceita_financiamento: true, aceita_permuta: false, zoneamento: '',
+  usou_fgts: false, aceita_financiamento: true, aceita_permuta: false,
+  financing_details: '', exchange_details: '', hidden_site_image_urls: [], zoneamento: '',
   valor_venda_avaliado: '', valor_locacao_avaliado: '', comentarios_internos: '', marcadores: [],
   local_chaves: '',
   anunciar: true, super_destaque: false, tour_virtual: '', descricao_site: '',
@@ -176,6 +180,7 @@ const formatCurrencyDisplay = (value: string): string => {
 };
 
 const parseCurrencyInput = (value: string): string => value.replace(/\D/g, '');
+const parseDecimalInput = (value: string): string => value.replace(/[^\d,.]/g, '');
 const onlyCepDigits = (value: string) => value.replace(/\D/g, '').slice(0, 8);
 const formatCep = (value: string) => {
   const digits = onlyCepDigits(value);
@@ -201,16 +206,37 @@ type ValidationIssue = {
 
 const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 const isLandType = (value: string) => ['terreno', 'lote'].includes(normalize(value));
-const isRentalType = (value: string) => ['aluguel', 'locacao', 'temporada', 'venda e aluguel'].includes(normalize(value));
-const isSaleType = (value: string) => ['venda', 'venda e aluguel'].includes(normalize(value));
+const isRentalType = (value: string) => ['aluguel', 'locacao', 'temporada', 'venda e aluguel', 'venda e locacao'].includes(normalize(value));
+const isSaleType = (value: string) => ['venda', 'venda e aluguel', 'venda e locacao', 'lancamento'].includes(normalize(value));
 
-type PropertyMutationInput = Omit<Partial<Property>, 'id' | 'code' | 'organization_id' | 'created_at' | 'updated_at'>;
+type PropertyMutationInput = Omit<Partial<Property>, 'id' | 'code' | 'organization_id' | 'created_at' | 'updated_at'> & {
+  metadata?: Record<string, unknown>;
+};
+type PropertyOwnership = Property & {
+  created_by?: string | null;
+  responsible_user_id?: string | null;
+};
+type PropertyMetadata = {
+  financing_details?: unknown;
+  exchange_details?: unknown;
+  hidden_site_image_urls?: unknown;
+};
 
 function toStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
+function getPropertyMetadata(property: Property): PropertyMetadata {
+  const raw = (property as Property & { metadata?: unknown }).metadata;
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as PropertyMetadata : {};
+}
+
+function metadataString(value: unknown) {
+  return typeof value === 'string' ? value : '';
+}
+
 function propertyToFormData(p: Property): PropertyFormData {
+  const metadata = getPropertyMetadata(p);
   return {
     title: p.title || '', tipo_de_imovel: p.tipo_de_imovel || 'Apartamento',
     tipo_de_negocio: p.tipo_de_negocio || 'Venda', status: p.status || 'ativo',
@@ -246,6 +272,9 @@ function propertyToFormData(p: Property): PropertyFormData {
     exclusividade: p.exclusividade || false, ano_reforma: p.ano_reforma?.toString() || '',
     usou_fgts: p.usou_fgts || false, aceita_financiamento: p.aceita_financiamento ?? true,
     aceita_permuta: p.aceita_permuta || false,
+    financing_details: metadataString(metadata.financing_details),
+    exchange_details: metadataString(metadata.exchange_details),
+    hidden_site_image_urls: toStringArray(metadata.hidden_site_image_urls),
     zoneamento: p.zoneamento || '', valor_venda_avaliado: p.valor_venda_avaliado?.toString() || '',
     valor_locacao_avaliado: p.valor_locacao_avaliado?.toString() || '',
     comentarios_internos: p.comentarios_internos || '', marcadores: p.marcadores || [],
@@ -277,7 +306,7 @@ export default function PropertyForm() {
   const rawId = params.id;
   const propertyId = Array.isArray(rawId) ? rawId[0] ?? null : rawId ?? null;
   const isEditing = !!propertyId;
-  const { user, profile, isSuperAdmin } = useAuth();
+  const { user, profile, organization, isSuperAdmin } = useAuth();
 
   const [formData, setFormData] = useState<PropertyFormData>(() => {
     if (!propertyId && typeof window !== "undefined") {
@@ -341,8 +370,14 @@ export default function PropertyForm() {
 
   // Permission check: only admin or the creator can edit
   const isAdmin = profile?.role === 'admin' || isSuperAdmin;
-  const isCreator = property && property.cadastrado_por === user?.id;
+  const propertyOwnership = property as PropertyOwnership | undefined;
+  const isCreator = propertyOwnership && (
+    propertyOwnership.cadastrado_por === user?.id ||
+    propertyOwnership.responsible_user_id === user?.id ||
+    propertyOwnership.created_by === user?.id
+  );
   const canEdit = !isEditing || isAdmin || isCreator;
+  const activeOrganizationId = property?.organization_id || organization?.id || profile?.organization_id || undefined;
 
   const set = <K extends keyof PropertyFormData>(field: K, value: PropertyFormData[K]) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -503,6 +538,13 @@ export default function PropertyForm() {
   const isLand = isLandType(formData.tipo_de_imovel);
   const isRental = isRentalType(formData.tipo_de_negocio);
   const isSale = isSaleType(formData.tipo_de_negocio) || !isRental;
+  const statusOptions = [
+    { value: 'ativo', label: 'Ativo' },
+    { value: 'reservado', label: 'Reservado' },
+    ...(isSale ? [{ value: 'vendido', label: 'Vendido' }] : []),
+    ...(isRental ? [{ value: 'alugado', label: 'Alugado' }] : []),
+    { value: 'inativo', label: 'Inativo' },
+  ];
   const hasOwnerContact = [
     formData.owner_cellphone,
     formData.owner_phone_residential,
@@ -537,7 +579,12 @@ export default function PropertyForm() {
       return;
     }
 
-    const parseNum = (v: string) => v ? parseFloat(v.replace(/\D/g, '')) || null : null;
+    const parseNum = (v: string) => {
+      if (!v) return null;
+      const normalized = v.trim().replace(/\./g, '').replace(',', '.').replace(/[^\d.-]/g, '');
+      const parsed = Number(normalized);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
     const parseInt2 = (v: string) => v ? parseInt(v) || null : null;
 
     const propertyData: PropertyMutationInput = {
@@ -580,6 +627,11 @@ export default function PropertyForm() {
       exclusividade: formData.exclusividade, ano_reforma: parseInt2(formData.ano_reforma),
       usou_fgts: formData.usou_fgts, aceita_financiamento: formData.aceita_financiamento,
       aceita_permuta: formData.aceita_permuta,
+      metadata: {
+        financing_details: formData.financing_details.trim() || null,
+        exchange_details: formData.exchange_details.trim() || null,
+        hidden_site_image_urls: formData.hidden_site_image_urls,
+      },
       zoneamento: formData.zoneamento || null, valor_venda_avaliado: parseNum(formData.valor_venda_avaliado),
       valor_locacao_avaliado: parseNum(formData.valor_locacao_avaliado),
       comentarios_internos: formData.comentarios_internos || null, marcadores: formData.marcadores,
@@ -723,35 +775,15 @@ export default function PropertyForm() {
   return (
     <AppLayout title={isEditing ? 'Editar Imóvel' : 'Novo Imóvel'} disableMainScroll>
       <form data-tour="property-form" onSubmit={handleSubmit} className="h-full min-h-0 flex flex-col gap-3 animate-in">
-        {/* Top bar */}
-        <div className="flex flex-col gap-3 flex-shrink-0 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-center gap-2">
-            <Button type="button" variant="ghost" onClick={() => router.push('/properties')}>
-              <ArrowLeft className="h-4 w-4 mr-2" /> Voltar
-            </Button>
+        {((isEditing && property) || (hasDraft && !isEditing)) && (
+          <div className="text-sm text-muted-foreground flex-shrink-0 flex items-center gap-2">
+            {isEditing && property && (
+              <span>Código: <span className="font-mono font-medium text-foreground">{property.code}</span></span>
+            )}
             {hasDraft && !isEditing && (
-              <span className="min-w-0 text-xs text-muted-foreground">Rascunho restaurado</span>
+              <span className="text-xs text-muted-foreground/80 bg-[var(--app-surface-soft)] px-2 py-0.5 rounded">Rascunho restaurado</span>
             )}
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
-            <Button
-              type="button"
-              variant="ghost"
-              className="min-w-0 border-0 bg-[var(--app-surface-soft)] text-foreground hover:bg-[var(--app-surface-hover)]"
-              onClick={() => { clearDraft(); router.push('/properties'); }}
-            >
-              Cancelar
-            </Button>
-            <Button data-tour="property-save-button" type="submit" className="min-w-0" disabled={createProperty.isPending || updateProperty.isPending || !canEdit}>
-              {(createProperty.isPending || updateProperty.isPending) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              <Save className="h-4 w-4 mr-2" />
-              {isEditing ? 'Salvar' : 'Cadastrar Imóvel'}
-            </Button>
-          </div>
-        </div>
-
-        {isEditing && property && (
-          <div className="text-sm text-muted-foreground flex-shrink-0">Código: <span className="font-mono font-medium text-foreground">{property.code}</span></div>
         )}
 
         {visibleValidationIssues.length > 0 && (
@@ -776,40 +808,62 @@ export default function PropertyForm() {
         )}
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col gap-3">
-          <nav data-tour="property-form-tabs" className="app-card app-scrollbar flex flex-nowrap gap-1.5 overflow-x-auto overflow-y-hidden p-1.5">
-            {tabs.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.value;
-              const tabHasIssue = visibleValidationIssues.some(issue => issue.tab === tab.value);
+          <div className="flex items-center gap-3 flex-shrink-0">
+            <nav data-tour="property-form-tabs" className="app-card app-scrollbar flex flex-nowrap gap-1.5 overflow-x-auto overflow-y-hidden p-1.5 flex-1 min-w-0">
+              {tabs.map((tab) => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.value;
+                const tabHasIssue = visibleValidationIssues.some(issue => issue.tab === tab.value);
 
-              return (
-                <button
-                  key={tab.value}
-                  type="button"
-                  data-tour={`property-tab-${tab.value}`}
-                  title={`${tab.label} - ${tab.description}`}
-                  onClick={() => setActiveTab(tab.value)}
-                  className={cn(
-                    "relative flex h-11 w-11 shrink-0 items-center justify-center rounded-[6px] transition-colors",
-                    isActive
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground"
-                  )}
-                >
-                  <span className={cn(
-                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px]",
-                    isActive ? "bg-white/15" : "bg-[var(--app-surface-soft)]"
-                  )}>
-                    <Icon className="h-4 w-4" />
-                  </span>
-                  {tabHasIssue && (
-                    <span className={cn("absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full", isActive ? "bg-white" : "bg-primary")} />
-                  )}
-                  <span className="sr-only">{tab.label}</span>
-                </button>
-              );
-            })}
-          </nav>
+                return (
+                  <button
+                    key={tab.value}
+                    type="button"
+                    data-tour={`property-tab-${tab.value}`}
+                    title={`${tab.label} - ${tab.description}`}
+                    onClick={() => setActiveTab(tab.value)}
+                    className={cn(
+                      "relative flex h-11 w-11 shrink-0 items-center justify-center rounded-[6px] transition-colors",
+                      isActive
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground"
+                    )}
+                  >
+                    <span className={cn(
+                      "flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px]",
+                      isActive ? "bg-white/15" : "bg-[var(--app-surface-soft)]"
+                    )}>
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    {tabHasIssue && (
+                      <span className={cn("absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full", isActive ? "bg-white" : "bg-primary")} />
+                    )}
+                    <span className="sr-only">{tab.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Button
+                type="button"
+                variant="ghost"
+                className="min-w-0 border-0 bg-[var(--app-surface-soft)] text-foreground hover:bg-[var(--app-surface-hover)] h-11 px-4 rounded-[6px]"
+                onClick={() => { clearDraft(); router.push('/properties'); }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                data-tour="property-save-button"
+                type="submit"
+                className="min-w-0 h-11 px-4 rounded-[6px]"
+                disabled={createProperty.isPending || updateProperty.isPending || !canEdit}
+              >
+                {(createProperty.isPending || updateProperty.isPending) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                <Save className="h-4 w-4 mr-2" />
+                {isEditing ? 'Salvar' : 'Cadastrar'}
+              </Button>
+            </div>
+          </div>
 
           <div className="app-scrollbar flex-1 min-h-0 overflow-y-auto pr-1 space-y-4">
           {/* 1. Proprietário */}
@@ -843,7 +897,7 @@ export default function PropertyForm() {
                   </div>
                 </div>
                 <div className="app-card-soft border-0 p-4">
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto] md:items-end">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_184px] md:items-end">
                     <div className="space-y-2">
                       <Label>Proprietário cadastrado</Label>
                       <Select
@@ -871,9 +925,10 @@ export default function PropertyForm() {
                     </div>
                     <Button
                       type="button"
-                      variant="outline"
+                      variant="ghost"
                       onClick={handleCreateOwner}
                       disabled={createPropertyOwner.isPending || !formData.owner_name.trim()}
+                      className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface)] px-5 shadow-none hover:bg-primary hover:text-primary-foreground disabled:hover:bg-[var(--app-surface)] disabled:hover:text-muted-foreground"
                     >
                       {createPropertyOwner.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                       <Plus className="mr-2 h-4 w-4" />
@@ -891,7 +946,7 @@ export default function PropertyForm() {
                     <Input type="email" value={formData.owner_email} onChange={e => set('owner_email', e.target.value)} placeholder="email@exemplo.com" />
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div className="space-y-2">
                     <Label>Tel. Residencial</Label>
                     <Input value={formData.owner_phone_residential} onChange={e => set('owner_phone_residential', e.target.value)} placeholder="(00) 0000-0000" />
@@ -908,7 +963,7 @@ export default function PropertyForm() {
                 <p className="text-xs text-muted-foreground">
                   Informe pelo menos um contato do proprietário <RequiredMark />: celular, telefone ou e-mail.
                 </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-[1fr_1.25fr] gap-4">
                   <div className="space-y-2">
                     <Label>Mídia de Origem</Label>
                     <Select value={formData.owner_media_source} onValueChange={v => set('owner_media_source', v)}>
@@ -941,7 +996,7 @@ export default function PropertyForm() {
                   <Label>Título do Imóvel <RequiredMark /></Label>
                   <Input value={formData.title} onChange={e => set('title', e.target.value)} placeholder="Ex: Apartamento 3 quartos..." />
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div className="space-y-2">
                     <Label>Finalidade</Label>
                     <Select value={formData.finalidade} onValueChange={v => set('finalidade', v)}>
@@ -955,9 +1010,9 @@ export default function PropertyForm() {
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
                       <Label>Tipo de Imóvel <RequiredMark /></Label>
-                      <Button type="button" variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setShowAddType(!showAddType)}>
+                      <Button type="button" variant="ghost" size="sm" className="h-6 border-0 px-2 text-xs shadow-none hover:bg-primary hover:text-primary-foreground" onClick={() => setShowAddType(!showAddType)}>
                         <Plus className="h-3 w-3 mr-1" /> Novo
                       </Button>
                     </div>
@@ -983,6 +1038,7 @@ export default function PropertyForm() {
                         <SelectItem value="Aluguel">Locação</SelectItem>
                         <SelectItem value="Venda e Aluguel">Venda e Locação</SelectItem>
                         <SelectItem value="Temporada">Temporada</SelectItem>
+                        <SelectItem value="Lançamento">Lançamento</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -993,10 +1049,9 @@ export default function PropertyForm() {
                     <Select value={formData.status} onValueChange={v => set('status', v)}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="ativo">Ativo</SelectItem>
-                        <SelectItem value="inativo">Inativo</SelectItem>
-                        <SelectItem value="vendido">Vendido</SelectItem>
-                        <SelectItem value="alugado">Alugado</SelectItem>
+                        {statusOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -1014,7 +1069,7 @@ export default function PropertyForm() {
             <Card data-tour="property-location-section" className="app-card">
               <CardHeader><CardTitle className="text-lg">Localização do Imóvel</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_96px_minmax(0,1fr)]">
                   <div className="space-y-2">
                     <Label>País</Label>
                     <Input value={formData.pais} onChange={e => set('pais', e.target.value)} />
@@ -1024,9 +1079,9 @@ export default function PropertyForm() {
                     <Input maxLength={2} value={formData.uf} onChange={e => set('uf', e.target.value.toUpperCase())} placeholder="SP" />
                   </div>
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
                       <Label>Cidade</Label>
-                      <Button type="button" variant="ghost" size="sm" className="h-6 text-xs" onClick={() => {
+                      <Button type="button" variant="ghost" size="sm" className="h-6 border-0 px-2 text-xs shadow-none hover:bg-primary hover:text-primary-foreground" onClick={() => {
                         setNewCityName(formData.cidade);
                         setNewCityUf(formData.uf);
                         setShowAddCity(open => !open);
@@ -1070,48 +1125,48 @@ export default function PropertyForm() {
                     )}
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Como o endereço aparece no site público? <RequiredMark /></Label>
-                  <Select value={formData.public_address_visibility} onValueChange={v => set('public_address_visibility', v)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione a visibilidade do endereço" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="completo">Completo - rua, número, bairro, cidade, UF e CEP</SelectItem>
-                      <SelectItem value="parcial">Parcial - bairro, cidade e UF</SelectItem>
-                      <SelectItem value="minimo">Mínimo - cidade e UF</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Essa configuração controla apenas o site público. No CRM, a equipe continua vendo o endereço cadastrado conforme suas permissões.
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label>CEP</Label>
-                  <div className="relative">
-                    <Input
-                      value={formData.cep}
-                      onChange={e => {
-                        const digits = onlyCepDigits(e.target.value);
-                        const formatted = formatCep(digits);
-                        set('cep', formatted);
-                        if (digits.length === 8) {
-                          void lookupCep(digits);
-                        }
-                      }}
-                      onBlur={() => void lookupCep(formData.cep)}
-                      placeholder="00000-000"
-                      className="pr-9"
-                    />
-                    {isCepLoading && (
-                      <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
-                    )}
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_180px] md:items-start">
+                  <div className="space-y-2">
+                    <Label>Como o endereço aparece no site público? <RequiredMark /></Label>
+                    <Select value={formData.public_address_visibility} onValueChange={v => set('public_address_visibility', v)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecione a visibilidade do endereço" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="completo">Completo - rua, número, bairro, cidade, UF e CEP</SelectItem>
+                        <SelectItem value="parcial">Parcial - bairro, cidade e UF</SelectItem>
+                        <SelectItem value="minimo">Mínimo - cidade e UF</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Controla apenas o site público. No CRM, a equipe segue vendo o endereço conforme permissões.
+                    </p>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Ao completar o CEP, rua, bairro, cidade e UF são preenchidos automaticamente.
-                  </p>
+                  <div className="space-y-2">
+                    <Label>CEP</Label>
+                    <div className="relative">
+                      <Input
+                        value={formData.cep}
+                        onChange={e => {
+                          const digits = onlyCepDigits(e.target.value);
+                          const formatted = formatCep(digits);
+                          set('cep', formatted);
+                          if (digits.length === 8) {
+                            void lookupCep(digits);
+                          }
+                        }}
+                        onBlur={() => void lookupCep(formData.cep)}
+                        placeholder="00000-000"
+                        className="pr-9"
+                      />
+                      {isCepLoading && (
+                        <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Preenche rua, bairro, cidade e UF.</p>
+                  </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_140px]">
                   <div className="space-y-2 md:col-span-2">
                     <Label>Logradouro</Label>
                     <Input value={formData.endereco} onChange={e => set('endereco', e.target.value)} placeholder="Rua, Avenida..." />
@@ -1121,15 +1176,15 @@ export default function PropertyForm() {
                     <Input value={formData.numero} onChange={e => set('numero', e.target.value)} placeholder="123" />
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div className="space-y-2">
                     <Label>Complemento</Label>
                     <Input value={formData.complemento} onChange={e => set('complemento', e.target.value)} placeholder="Apto 101, Bloco A..." />
                   </div>
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
                       <Label>Bairro</Label>
-                      <Button type="button" variant="ghost" size="sm" className="h-6 text-xs" onClick={() => {
+                      <Button type="button" variant="ghost" size="sm" className="h-6 border-0 px-2 text-xs shadow-none hover:bg-primary hover:text-primary-foreground" onClick={() => {
                         setNewNeighborhoodName(formData.bairro);
                         setShowAddNeighborhood(open => !open);
                       }}>
@@ -1170,11 +1225,10 @@ export default function PropertyForm() {
                       <Input value={formData.bairro} onChange={e => set('bairro', e.target.value)} placeholder="Jardins" />
                     )}
                   </div>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
+                  <div className="space-y-2">
+                  <div className="flex items-center gap-2">
                     <Label>Condomínio</Label>
-                    <Button type="button" variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setShowAddCondominium(open => !open)}>
+                    <Button type="button" variant="ghost" size="sm" className="h-6 border-0 px-2 text-xs shadow-none hover:bg-primary hover:text-primary-foreground" onClick={() => setShowAddCondominium(open => !open)}>
                       <Plus className="mr-1 h-3 w-3" /> Novo
                     </Button>
                   </div>
@@ -1201,8 +1255,10 @@ export default function PropertyForm() {
                       ))}
                     </SelectContent>
                   </Select>
-                  {showAddCondominium && (
-                    <div className="app-card-soft mt-2 grid grid-cols-1 gap-3 border-0 p-3 md:grid-cols-2">
+                  </div>
+                </div>
+                {showAddCondominium && (
+                    <div className="app-card-soft grid grid-cols-1 gap-3 border-0 p-3 md:grid-cols-[1.35fr_.85fr]">
                       <div className="space-y-2">
                         <Label>Nome do condomínio</Label>
                         <Input value={newCondominiumName} onChange={e => setNewCondominiumName(e.target.value)} placeholder="Residencial..." />
@@ -1240,8 +1296,7 @@ export default function PropertyForm() {
                         </Button>
                       </div>
                     </div>
-                  )}
-                </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -1318,11 +1373,11 @@ export default function PropertyForm() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Área Útil (m²)</Label>
-                      <Input type="number" value={formData.area_util} onChange={e => set('area_util', e.target.value)} placeholder="120" />
+                      <Input inputMode="decimal" value={formData.area_util} onChange={e => set('area_util', parseDecimalInput(e.target.value))} placeholder="120,5" />
                     </div>
                     <div className="space-y-2">
                       <Label>Área Total (m²){isLand && <RequiredMark />}</Label>
-                      <Input type="number" value={formData.area_total} onChange={e => set('area_total', e.target.value)} placeholder="150" />
+                      <Input inputMode="decimal" value={formData.area_total} onChange={e => set('area_total', parseDecimalInput(e.target.value))} placeholder="150,5" />
                     </div>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1339,6 +1394,32 @@ export default function PropertyForm() {
                       <Input type="number" value={formData.ano_reforma} onChange={e => set('ano_reforma', e.target.value)} placeholder="2023" />
                     </div>
                   </div>
+                  {(formData.aceita_financiamento || formData.aceita_permuta) && (
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      {formData.aceita_financiamento && (
+                        <div className="space-y-2">
+                          <Label>Detalhes do financiamento</Label>
+                          <Textarea
+                            value={formData.financing_details}
+                            onChange={e => set('financing_details', e.target.value)}
+                            placeholder="Ex: aceita carta de crédito, bancos preferenciais, restrições..."
+                            rows={3}
+                          />
+                        </div>
+                      )}
+                      {formData.aceita_permuta && (
+                        <div className="space-y-2">
+                          <Label>Detalhes da permuta</Label>
+                          <Textarea
+                            value={formData.exchange_details}
+                            onChange={e => set('exchange_details', e.target.value)}
+                            placeholder="Ex: aceita imóvel menor, veículo, lote, região de interesse..."
+                            rows={3}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Padrão</Label>
@@ -1499,7 +1580,7 @@ export default function PropertyForm() {
             <Card data-tour="property-values-section" className="app-card">
               <CardHeader><CardTitle className="text-lg">Valores</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
                   {isSale && (
                     <div className="space-y-2">
                       <Label>Preço de venda (R$) <RequiredMark /></Label>
@@ -1513,8 +1594,6 @@ export default function PropertyForm() {
                       <p className="text-xs text-muted-foreground">Obrigatório para imóveis de locação ou temporada.</p>
                     </div>
                   )}
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Condomínio (R$)</Label>
                     <Input value={formatCurrencyDisplay(formData.condominio)} onChange={e => set('condominio', parseCurrencyInput(e.target.value))} placeholder="800" />
@@ -1523,8 +1602,6 @@ export default function PropertyForm() {
                     <Label>IPTU (R$)</Label>
                     <Input value={formatCurrencyDisplay(formData.iptu)} onChange={e => set('iptu', parseCurrencyInput(e.target.value))} placeholder="200" />
                   </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Taxa de Serviço (R$)</Label>
                     <Input value={formatCurrencyDisplay(formData.taxa_de_servico)} onChange={e => set('taxa_de_servico', parseCurrencyInput(e.target.value))} placeholder="100" />
@@ -1543,7 +1620,9 @@ export default function PropertyForm() {
                   images={formData.fotos}
                   mainImage={formData.imagem_principal}
                   onImagesChange={handleImagesChange}
-                  organizationId={property?.organization_id}
+                  hiddenSiteImages={formData.hidden_site_image_urls}
+                  onHiddenSiteImagesChange={(images) => set('hidden_site_image_urls', images)}
+                  organizationId={activeOrganizationId}
                   propertyId={property?.id}
                 />
                 <Separator />

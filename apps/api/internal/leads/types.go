@@ -20,11 +20,13 @@ const (
 )
 
 var (
-	ErrInvalidInput     = errors.New("invalid lead input")
-	ErrInvalidReference = errors.New("invalid lead reference")
-	ErrLeadNotFound     = errors.New("lead not found")
-	ErrNoLeadChanges    = errors.New("no lead changes provided")
-	ErrTagAlreadyExists = errors.New("tag already exists on lead")
+	ErrInvalidInput            = errors.New("invalid lead input")
+	ErrInvalidReference        = errors.New("invalid lead reference")
+	ErrLeadPropertyUnavailable = errors.New("lead property unavailable")
+	ErrLeadAlreadyExists       = errors.New("lead already exists")
+	ErrLeadNotFound            = errors.New("lead not found")
+	ErrNoLeadChanges           = errors.New("no lead changes provided")
+	ErrTagAlreadyExists        = errors.New("tag already exists on lead")
 )
 
 type Lead struct {

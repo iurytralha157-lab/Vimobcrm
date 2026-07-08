@@ -98,6 +98,23 @@ type MutateUserResult struct {
 	User    User `json:"user"`
 }
 
+type DeleteUserRequest struct {
+	TransferLeadsToUserID      *string `json:"transfer_leads_to_user_id"`
+	TransferPropertiesToUserID *string `json:"transfer_properties_to_user_id"`
+}
+
+type DeleteUserInput struct {
+	TransferLeadsToUserID      *string
+	TransferPropertiesToUserID *string
+}
+
+type DeleteUserImpact struct {
+	Leads            int64 `json:"leads"`
+	Properties       int64 `json:"properties"`
+	WhatsAppSessions int64 `json:"whatsapp_sessions"`
+}
+
 type DeleteUserResult struct {
-	Success bool `json:"success"`
+	Success bool             `json:"success"`
+	Impact  DeleteUserImpact `json:"impact"`
 }

@@ -50,7 +50,7 @@ func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder
 }
 
 func (repo Repository) ListSessions(ctx context.Context, tenantContext tenant.Context) ([]Session, error) {
-	args := []any{tenantContext.OrganizationID, tenantContext.UserID, canManageWhatsApp(tenantContext)}
+	args := []any{tenantContext.OrganizationID, tenantContext.UserID}
 	rows, err := repo.db.Pool().Query(ctx, `
 		select `+sessionSelectFields()+`
 		from public.whatsapp_sessions ws
@@ -59,18 +59,7 @@ func (repo Repository) ListSessions(ctx context.Context, tenantContext tenant.Co
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') <> 'deleted'
 		  and ws.provider = 'evolution_go'
-		  and (
-		    $3::boolean
-		    or ws.owner_user_id = $2::uuid
-		    or exists (
-		      select 1
-		      from public.whatsapp_session_access access
-		      where access.session_id = ws.id
-		        and access.organization_id = ws.organization_id
-		        and access.user_id = $2::uuid
-		        and coalesce(access.can_view, access.can_read, true) = true
-		    )
-		  )
+		  and ws.owner_user_id = $2::uuid
 		order by ws.created_at desc, ws.id desc
 	`, args...)
 	if err != nil {
@@ -108,20 +97,9 @@ func (repo Repository) GetSession(ctx context.Context, tenantContext tenant.Cont
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') <> 'deleted'
 		  and ws.provider = 'evolution_go'
-		  and (
-		    $4::boolean
-		    or ws.owner_user_id = $3::uuid
-		    or exists (
-		      select 1
-		      from public.whatsapp_session_access access
-		      where access.session_id = ws.id
-		        and access.organization_id = ws.organization_id
-		        and access.user_id = $3::uuid
-		        and coalesce(access.can_view, access.can_read, true) = true
-		    )
-		  )
+		  and ws.owner_user_id = $3::uuid
 		limit 1
-	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, canManageWhatsApp(tenantContext)))
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, ErrSessionNotFound
 	}
@@ -141,45 +119,7 @@ func (repo Repository) ListSessionAccess(ctx context.Context, tenantContext tena
 		return nil, err
 	}
 
-	rows, err := repo.db.Pool().Query(ctx, `
-		select
-			access.id::text,
-			access.session_id::text,
-			access.user_id::text,
-			coalesce(access.access_mode, 'assigned_leads_only'),
-			coalesce(access.can_view, access.can_read, true),
-			coalesce(access.can_read, access.can_view, true),
-			coalesce(access.can_send, false),
-			coalesce(access.only_leads_access, true),
-			access.granted_by::text,
-			access.created_at,
-			u.id::text,
-			u.name,
-			u.email
-		from public.whatsapp_session_access access
-		left join public.users u on u.id = access.user_id
-		where access.organization_id = $1::uuid
-		  and access.session_id = $2::uuid
-		order by u.name asc, access.created_at asc
-	`, tenantContext.OrganizationID, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	access := []SessionAccess{}
-	for rows.Next() {
-		item, err := scanSessionAccess(rows)
-		if err != nil {
-			return nil, err
-		}
-		access = append(access, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return access, nil
+	return []SessionAccess{}, nil
 }
 
 func (repo Repository) GrantSessionAccess(ctx context.Context, tenantContext tenant.Context, sessionID string, input grantAccessInput) error {
@@ -190,43 +130,8 @@ func (repo Repository) GrantSessionAccess(ctx context.Context, tenantContext ten
 	if err := repo.ensureCanManageSession(ctx, tenantContext, sessionID); err != nil {
 		return err
 	}
-	if err := repo.validateUser(ctx, tenantContext.OrganizationID, input.UserID); err != nil {
-		return err
-	}
 
-	_, err := repo.db.Pool().Exec(ctx, `
-		insert into public.whatsapp_session_access (
-			organization_id,
-			session_id,
-			user_id,
-			can_view,
-			can_read,
-			can_send,
-			access_mode,
-			only_leads_access,
-			granted_by
-		)
-		values (
-			$1::uuid,
-			$2::uuid,
-			$3::uuid,
-			$4::boolean,
-			$4::boolean,
-			$5::boolean,
-			$6,
-			$7::boolean,
-			$8::uuid
-		)
-		on conflict (session_id, user_id)
-		do update set
-			can_view = excluded.can_view,
-			can_read = excluded.can_read,
-			can_send = excluded.can_send,
-			access_mode = excluded.access_mode,
-			only_leads_access = excluded.only_leads_access,
-			granted_by = excluded.granted_by
-	`, tenantContext.OrganizationID, sessionID, input.UserID, input.CanView, input.CanSend, input.AccessMode, input.AccessMode != "full_inbox", tenantContext.UserID)
-	return err
+	return fmt.Errorf("%w: compartilhamento de conexoes WhatsApp desativado por privacidade", ErrFeatureUnavailable)
 }
 
 func (repo Repository) RevokeSessionAccess(ctx context.Context, tenantContext tenant.Context, sessionID string, userID string) error {
@@ -285,6 +190,8 @@ func (repo Repository) ListConversations(ctx context.Context, tenantContext tena
 	if !filter.ShowArchived {
 		where = append(where, "wc.archived_at is null")
 	}
+	args = append(args, filter.Limit)
+	limitArg := len(args)
 
 	rows, err := repo.db.Pool().Query(ctx, `
 		select `+conversationSelectFields()+`
@@ -295,6 +202,7 @@ func (repo Repository) ListConversations(ctx context.Context, tenantContext tena
 		left join public.stages stage on stage.id = l.stage_id
 		where `+strings.Join(where, " and ")+`
 		order by wc.last_message_at desc nulls last, wc.created_at desc, wc.id desc
+		limit $`+fmt.Sprint(limitArg)+`::integer
 	`, args...)
 	if err != nil {
 		return nil, err
@@ -306,13 +214,6 @@ func (repo Repository) ListConversations(ctx context.Context, tenantContext tena
 		conversation, err := scanConversation(rows)
 		if err != nil {
 			return nil, err
-		}
-		if conversation.LeadID == nil && !conversation.IsGroup {
-			resolved, err := repo.resolveConversationLead(ctx, tenantContext, conversation)
-			if err != nil {
-				return nil, err
-			}
-			conversation = resolved
 		}
 		conversations = append(conversations, conversation)
 	}
@@ -573,9 +474,9 @@ func (repo Repository) ensureCanManageSession(ctx context.Context, tenantContext
 			  and coalesce(ws.is_active, true) = true
 			  and coalesce(ws.status, '') <> 'deleted'
 			  and ws.provider = 'evolution_go'
-			  and ($4::boolean or ws.owner_user_id = $3::uuid)
+			  and ws.owner_user_id = $3::uuid
 		)
-	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID, canManageWhatsApp(tenantContext)).Scan(&ok)
+	`, tenantContext.OrganizationID, sessionID, tenantContext.UserID).Scan(&ok)
 	if err != nil {
 		return err
 	}
@@ -618,27 +519,16 @@ func (repo Repository) ensureCanEditConversation(ctx context.Context, tenantCont
 			select 1
 			from public.whatsapp_conversations wc
 			left join public.whatsapp_sessions ws on ws.id = wc.session_id
+			left join public.leads l on l.id = wc.lead_id
 			where wc.organization_id = $1::uuid
 			  and wc.deleted_at is null
 			  and wc.id = $2::uuid
 			  and ws.provider = 'evolution_go'
 			  and coalesce(ws.is_active, true) = true
 			  and coalesce(ws.status, '') <> 'deleted'
-			  and (
-			    $4::boolean
-			    or ws.owner_user_id = $3::uuid
-			    or exists (
-			      select 1
-			      from public.whatsapp_session_access access
-			      where access.session_id = wc.session_id
-			        and access.organization_id = wc.organization_id
-			        and access.user_id = $3::uuid
-			        and coalesce(access.can_view, access.can_read, true) = true
-			        and coalesce(access.can_send, false) = true
-			    )
-			  )
+			  and ws.owner_user_id = $3::uuid
 		)
-	`, tenantContext.OrganizationID, conversationID, tenantContext.UserID, canManageWhatsApp(tenantContext)).Scan(&ok)
+	`, tenantContext.OrganizationID, conversationID, tenantContext.UserID).Scan(&ok)
 	if err != nil {
 		return err
 	}
@@ -1048,9 +938,9 @@ func baseConversationArgs(tenantContext tenant.Context) []any {
 	return []any{
 		tenantContext.OrganizationID,
 		tenantContext.UserID,
-		canManageWhatsApp(tenantContext),
-		canViewAllLeads(tenantContext),
-		tenantContext.HasPermission("lead_view_team"),
+		false,
+		false,
+		false,
 	}
 }
 
@@ -1061,49 +951,8 @@ func conversationVisibilitySQL() string {
 		and coalesce(ws.is_active, true) = true
 		and coalesce(ws.status, '') <> 'deleted'
 		and (
-			$3::boolean
+			(($3::boolean or $4::boolean or $5::boolean) and false)
 			or ws.owner_user_id = $2::uuid
-			or exists (
-				select 1
-				from public.whatsapp_session_access access
-				where access.session_id = wc.session_id
-				  and access.organization_id = wc.organization_id
-				  and access.user_id = $2::uuid
-				  and coalesce(access.can_view, access.can_read, true) = true
-				  and (
-					coalesce(access.access_mode, 'assigned_leads_only') = 'full_inbox'
-					or (coalesce(access.access_mode, 'assigned_leads_only') = 'all_leads' and wc.lead_id is not null)
-					or (
-						coalesce(access.access_mode, 'assigned_leads_only') in ('assigned_leads_only', 'team_leads')
-						and wc.lead_id is not null
-						and ` + leadVisibilitySQL() + `
-					)
-				)
-			)
-		)
-	)`
-}
-
-func leadVisibilitySQL() string {
-	return `(
-		$4::boolean
-		or l.assigned_user_id = $2::uuid
-		or (
-			$5::boolean
-			and l.assigned_user_id is not null
-			and exists (
-				select 1
-				from public.team_members leader
-				join public.team_members member
-				  on member.organization_id = leader.organization_id
-				 and member.team_id = leader.team_id
-				 and member.is_active = true
-				where leader.organization_id = l.organization_id
-				  and leader.user_id = $2::uuid
-				  and leader.is_active = true
-				  and leader.is_leader = true
-				  and member.user_id = l.assigned_user_id
-			)
 		)
 	)`
 }
@@ -1113,12 +962,6 @@ func canManageWhatsApp(tenantContext tenant.Context) bool {
 		tenantContext.HasRole("owner", "admin") ||
 		tenantContext.HasPermission("whatsapp_manage") ||
 		tenantContext.HasPermission("settings_manage")
-}
-
-func canViewAllLeads(tenantContext tenant.Context) bool {
-	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin", "manager") ||
-		tenantContext.HasPermission("lead_view_all")
 }
 
 func textValue(value pgtype.Text) string {

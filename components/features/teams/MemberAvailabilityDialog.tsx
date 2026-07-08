@@ -138,7 +138,7 @@ export function MemberAvailabilityDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[92%] max-h-[85vh] overflow-hidden border-0 bg-black/82 p-0 text-white shadow-2xl backdrop-blur-xl sm:max-w-lg sm:rounded-[20px] [&>button]:hidden">
+      <DialogContent className="w-[92%] max-h-[85vh] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none backdrop-blur-xl sm:max-w-lg sm:rounded-[12px] [&_button.absolute]:hidden">
         <div className="p-4 sm:p-5">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -150,12 +150,12 @@ export function MemberAvailabilityDialog({
               </Avatar>
               <div>
                 <DialogTitle className="text-left text-base">Disponibilidade</DialogTitle>
-                <p className="text-xs text-white/50">{memberName}</p>
+                <p className="text-xs text-[var(--app-text-tertiary)]">{memberName}</p>
               </div>
             </div>
             <button
               type="button"
-              className="rounded-full p-1.5 text-white/65 transition hover:bg-white/10 hover:text-white"
+              className="rounded-full p-1.5 text-[var(--app-text-secondary)] transition hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
               onClick={() => onOpenChange(false)}
             >
               <X className="h-4 w-4" />
@@ -164,16 +164,16 @@ export function MemberAvailabilityDialog({
 
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-white/50" />
+              <Loader2 className="h-6 w-6 animate-spin text-[var(--app-text-tertiary)]" />
             </div>
           ) : (
             <div className="max-h-[55vh] space-y-3 overflow-y-auto overflow-x-hidden pr-1">
-              <div className="flex items-center justify-between rounded-xl bg-white/10 p-3">
+              <div className="flex items-center justify-between rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                 <div className="flex items-center gap-2">
                   <Clock className="h-4 w-4 text-primary" />
                   <div>
                     <span className="block text-sm font-medium">Marcar todos como 24h</span>
-                    <span className="text-[10px] text-white/45">Define 24h para todos os dias ativos</span>
+                    <span className="text-[10px] text-[var(--app-text-tertiary)]">Define 24h para todos os dias ativos</span>
                   </div>
                 </div>
                 <Switch checked={globalAllDay} onCheckedChange={toggleGlobalAllDay} />
@@ -181,8 +181,8 @@ export function MemberAvailabilityDialog({
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-xs text-white/45">Dias da semana</Label>
-                  <Badge variant="secondary" className="border-0 bg-white/10 text-xs text-white">
+                  <Label className="text-xs text-[var(--app-text-tertiary)]">Dias da semana</Label>
+                  <Badge variant="secondary" className="border-0 bg-[var(--app-surface-hover)] text-xs text-[var(--app-text-primary)]">
                     {activeDays} {activeDays === 1 ? 'dia' : 'dias'} ativos
                   </Badge>
                 </div>
@@ -191,8 +191,8 @@ export function MemberAvailabilityDialog({
                   {schedules.map((schedule) => (
                     <div
                       key={schedule.day_of_week}
-                      className={`flex items-center gap-2 rounded-xl p-2 transition min-w-0 ${
-                        schedule.is_active ? 'bg-primary/12' : 'bg-white/6 opacity-60'
+                      className={`flex items-center gap-2 rounded-[8px] p-2 transition min-w-0 ${
+                        schedule.is_active ? 'bg-primary/12' : 'bg-[var(--app-surface-soft)] opacity-60'
                       }`}
                     >
                       <Switch
@@ -201,7 +201,7 @@ export function MemberAvailabilityDialog({
                         className="shrink-0"
                       />
 
-                      <span className={`w-10 shrink-0 text-sm font-medium ${schedule.is_active ? '' : 'text-white/45'}`}>
+                      <span className={`w-10 shrink-0 text-sm font-medium ${schedule.is_active ? '' : 'text-[var(--app-text-tertiary)]'}`}>
                         {getDayName(schedule.day_of_week, true)}
                       </span>
 
@@ -216,7 +216,7 @@ export function MemberAvailabilityDialog({
                             />
                             <Label
                               htmlFor={`all-day-${schedule.day_of_week}`}
-                              className="cursor-pointer text-[10px] font-bold uppercase text-white/45"
+                              className="cursor-pointer text-[10px] font-bold uppercase text-[var(--app-text-tertiary)]"
                             >
                               24h
                             </Label>
@@ -228,7 +228,7 @@ export function MemberAvailabilityDialog({
                                 value={schedule.start_time}
                                 onValueChange={(value) => updateDayTime(schedule.day_of_week, 'start_time', value)}
                               >
-                                <SelectTrigger className="h-7 min-w-0 flex-1 border-0 bg-white/10 px-2 text-xs text-white">
+                                <SelectTrigger className="h-7 min-w-0 flex-1 border-0 bg-[var(--app-surface)] px-2 text-xs text-[var(--app-text-primary)] shadow-none">
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -239,12 +239,12 @@ export function MemberAvailabilityDialog({
                                   ))}
                                 </SelectContent>
                               </Select>
-                              <span className="shrink-0 text-xs text-white/45">–</span>
+                              <span className="shrink-0 text-xs text-[var(--app-text-tertiary)]">-</span>
                               <Select
                                 value={schedule.end_time}
                                 onValueChange={(value) => updateDayTime(schedule.day_of_week, 'end_time', value)}
                               >
-                                <SelectTrigger className="h-7 min-w-0 flex-1 border-0 bg-white/10 px-2 text-xs text-white">
+                                <SelectTrigger className="h-7 min-w-0 flex-1 border-0 bg-[var(--app-surface)] px-2 text-xs text-[var(--app-text-primary)] shadow-none">
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -258,14 +258,14 @@ export function MemberAvailabilityDialog({
                             </div>
                           ) : (
                             <div className="flex flex-1 justify-center">
-                              <Badge variant="secondary" className="h-5 border-0 bg-white/10 px-2 py-0 text-[10px] text-white">
+                              <Badge variant="secondary" className="h-5 border-0 bg-[var(--app-surface-hover)] px-2 py-0 text-[10px] text-[var(--app-text-primary)]">
                                 Dia inteiro
                               </Badge>
                             </div>
                           )}
                         </div>
                       ) : (
-                        <span className="text-xs text-white/45">Não recebe leads</span>
+                        <span className="text-xs text-[var(--app-text-tertiary)]">Não recebe leads</span>
                       )}
                     </div>
                   ))}
@@ -275,10 +275,10 @@ export function MemberAvailabilityDialog({
           )}
 
           <div className="flex gap-3 pt-4">
-            <Button className="h-10 w-[30%] rounded-xl bg-white/10 text-white hover:bg-white/15" onClick={() => onOpenChange(false)}>
+            <Button className="h-10 w-[30%] rounded-[8px] bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]" onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>
-            <Button className="h-10 w-[70%] rounded-xl" onClick={handleSave} disabled={bulkUpdate.isPending}>
+            <Button className="h-10 w-[70%] rounded-[8px] shadow-none" onClick={handleSave} disabled={bulkUpdate.isPending}>
               {bulkUpdate.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Salvar
             </Button>

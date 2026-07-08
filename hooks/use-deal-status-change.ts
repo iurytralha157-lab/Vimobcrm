@@ -34,6 +34,10 @@ export function useDealStatusChange() {
         deal_status: newStatus,
         lost_reason: validatedLostReason,
       };
+      if (params.propertyId) {
+        updateData.property_id = params.propertyId;
+        updateData.interest_property_id = params.propertyId;
+      }
 
       const { data: lead, error } = await leadsAPI.updateLead(leadId, updateData, params.organizationId);
 
@@ -52,6 +56,15 @@ export function useDealStatusChange() {
       queryClient.invalidateQueries({ queryKey: ['enhanced-dashboard-stats'] });
 
       if (newStatus === 'won') {
+        queryClient.invalidateQueries({ queryKey: ['properties'] });
+        queryClient.invalidateQueries({ queryKey: ['properties-infinite'] });
+        queryClient.invalidateQueries({ queryKey: ['property'] });
+        queryClient.invalidateQueries({ queryKey: ['notifications'] });
+        queryClient.invalidateQueries({ queryKey: ['unread-notifications-count'] });
+        if (variables.propertyId) {
+          queryClient.invalidateQueries({ queryKey: ['property', variables.organizationId, variables.propertyId] });
+        }
+
         if (variables.valorInteresse && variables.valorInteresse > 0) {
           try {
             await createCommission.mutateAsync({

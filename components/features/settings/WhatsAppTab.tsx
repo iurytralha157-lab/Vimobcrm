@@ -2,23 +2,18 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import NextImage from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Checkbox } from "@/components/ui/checkbox";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Plus,
   Smartphone,
   QrCode,
   LogOut,
-  Users,
   RefreshCw,
   Trash2,
   CheckCircle,
@@ -33,16 +28,10 @@ import {
   useGetQRCode,
   useGetConnectionStatus,
   useLogoutSession,
-  useSessionAccess,
-  useGrantSessionAccess,
-  useRevokeSessionAccess,
   useRecreateWhatsAppInstance,
   useToggleNotificationSession,
-  type WhatsAppAccessMode,
-  type WhatsAppSession,
-  type WhatsAppSessionAccess } from
+  type WhatsAppSession } from
   "@/hooks/use-whatsapp-sessions";
-import { type User, useOrganizationUsers } from "@/hooks/use-users";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
@@ -79,7 +68,6 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
   const { profile } = useAuth();
   const queryClient = useQueryClient();
   const { data: sessions, isLoading } = useWhatsAppSessions();
-  const { data: users } = useOrganizationUsers();
   const createSession = useCreateWhatsAppSession();
   const deleteSession = useDeleteWhatsAppSession();
   const getQRCode = useGetQRCode();
@@ -87,10 +75,8 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
   const logoutSession = useLogoutSession();
   const recreateSession = useRecreateWhatsAppInstance();
   const toggleNotification = useToggleNotificationSession();
-  const isAdmin = profile?.role === 'admin' || profile?.role === 'super_admin';
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
-  const [accessDialogOpen, setAccessDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [instanceName, setInstanceName] = useState("");
   const [selectedSession, setSelectedSession] = useState<WhatsAppSession | null>(null);
@@ -335,12 +321,6 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
     }
   };
 
-
-  const handleOpenAccessDialog = (session: WhatsAppSession) => {
-    setSelectedSession(session);
-    setAccessDialogOpen(true);
-  };
-
   const handleVerifyConnection = async (session: WhatsAppSession) => {
     setVerifyingSessionId(session.id);
     try {
@@ -467,7 +447,10 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
           </div> :
 
         <div className={embedded ? "grid gap-3 sm:grid-cols-2" : "grid gap-3 sm:grid-cols-2 lg:grid-cols-3 px-[10px]"}>
-            {sessions?.map((session, index) =>
+            {sessions?.map((session, index) => {
+              const canManageThisSession = session.owner_user_id === profile?.id;
+
+              return (
           <Card key={session.id} data-tour={index === 0 ? "whatsapp-session-card" : undefined} className="border">
                 <CardContent className="p-3 space-y-2.5">
                   {/* Row 1: Avatar + name + status badge */}
@@ -502,7 +485,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                         {session.owner?.name || "-"}
                       </span>
                     </div>
-                    {isAdmin &&
+                    {canManageThisSession &&
                 <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -526,10 +509,6 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                   </div>
                   {/* Row 3: Action buttons */}
                   <div className="flex items-center justify-end gap-2">
-                    <Button data-tour={index === 0 ? "whatsapp-users-button" : undefined} variant="outline" size="sm" className="h-8 gap-1.5 px-3 text-xs" onClick={() => handleOpenAccessDialog(session)}>
-                      <Users className="w-3.5 h-3.5" />
-                      Usuários
-                    </Button>
                     <Button
                       data-tour={index === 0 ? "whatsapp-verify-button" : undefined}
                       variant="outline"
@@ -541,7 +520,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                       <RefreshCw className={`w-3.5 h-3.5 ${verifyingSessionId === session.id ? "animate-spin" : ""}`} />
                       Verificar
                     </Button>
-                    {session.status !== "connected" ? (
+                    {canManageThisSession && session.status !== "connected" ? (
                       <>
                         <Button data-tour={index === 0 ? "whatsapp-qr-button" : undefined} variant="outline" size="sm" className="h-8 gap-1.5 px-3 text-xs" onClick={() => handleOpenQRDialog(session)}>
                           <QrCode className="w-3.5 h-3.5" />
@@ -558,7 +537,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </>
-                    ) : (
+                    ) : canManageThisSession ? (
                       <>
                         <Button data-tour={index === 0 ? "whatsapp-disconnect-button" : undefined} variant="destructive" size="sm" className="h-8 gap-1.5 px-3 text-xs" onClick={() => handleLogout(session)}>
                           <LogOut className="w-3.5 h-3.5" />
@@ -575,10 +554,11 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </>
-                    )}
+                    ) : null}
                   </div></CardContent>
               </Card>
-          )}
+              );
+            })}
           </div>
         }
 
@@ -676,13 +656,6 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
           </DialogContent>
         </Dialog>
 
-        {/* Access Control Dialog */}
-        <AccessControlDialog
-          open={accessDialogOpen}
-          onOpenChange={setAccessDialogOpen}
-          session={selectedSession}
-          users={users || []} />
-
         <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
           <DialogContent className="w-[95%] max-w-[400px] rounded-lg">
             <DialogHeader>
@@ -711,118 +684,5 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
 
       </CardContent>
     </Card>);
-
-}
-
-// Access Control Dialog Component
-function AccessControlDialog({
-  open,
-  onOpenChange,
-  session,
-  users
-
-
-
-
-
-}: {open: boolean;onOpenChange: (open: boolean) => void;session: WhatsAppSession | null;users: User[];}) {
-  const { data: accessList } = useSessionAccess(session?.id || null);
-  const grantAccess = useGrantSessionAccess();
-  const revokeAccess = useRevokeSessionAccess();
-
-  const handleToggleAccess = async (userId: string, hasAccess: boolean) => {
-    if (!session) return;
-    if (hasAccess) {
-      await revokeAccess.mutateAsync({ sessionId: session.id, userId });
-    } else {
-      await grantAccess.mutateAsync({ sessionId: session.id, userId, accessMode: "assigned_leads_only" });
-    }
-  };
-
-  const handleChangeMode = async (userId: string, mode: WhatsAppAccessMode) => {
-    if (!session) return;
-    await grantAccess.mutateAsync({ sessionId: session.id, userId, accessMode: mode });
-  };
-
-  const getAccess = (userId: string): WhatsAppSessionAccess | undefined => {
-    return accessList?.find((access) => access.user_id === userId);
-  };
-
-  const MODE_LABELS: Record<WhatsAppAccessMode, string> = {
-    assigned_leads_only: "Apenas leads atribuídos a este usuário",
-    team_leads: "Leads da equipe do usuário",
-    all_leads: "Todas as conversas vinculadas a leads",
-    full_inbox: "Inbox completo (todas as conversas)",
-  };
-
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-[90%] sm:w-[650px] sm:max-w-[650px] p-6 flex flex-col">
-        <SheetHeader>
-          <SheetTitle>Gerenciar Acessos</SheetTitle>
-          <SheetDescription>
-            Defina quais usuários podem operar esta conexão e o nível de visibilidade das conversas
-          </SheetDescription>
-        </SheetHeader>
-        <ScrollArea className="max-h-[500px]">
-          <div className="space-y-4 py-4">
-            {users.map((user) => {
-              const access = getAccess(user.id);
-              const hasAccess = !!access;
-              const mode = access?.access_mode || "assigned_leads_only";
-              const isOwner = user.id === session?.owner_user_id;
-
-              return (
-                <div key={user.id} className="flex flex-col gap-3 py-3 border-b last:border-0 border-white/[0.055]">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Avatar className="h-8 w-8">
-                        <AvatarImage src={user.avatar_url ?? undefined} />
-                        <AvatarFallback>{user.name?.[0] || "U"}</AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{user.name}</p>
-                        <p className="text-xs text-muted-foreground truncate">{user.email}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      {isOwner && <Badge variant="secondary">Proprietário</Badge>}
-                      <div className="flex items-center gap-2">
-                        <Label htmlFor={`access-${user.id}`} className="text-[10px] uppercase font-bold text-muted-foreground cursor-pointer">
-                          Acesso
-                        </Label>
-                        <Checkbox
-                          id={`access-${user.id}`}
-                          checked={hasAccess}
-                          onCheckedChange={() => handleToggleAccess(user.id, hasAccess)}
-                          disabled={grantAccess.isPending || revokeAccess.isPending}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {hasAccess && !isOwner && (
-                    <div className="pl-11">
-                      <Label className="text-[10px] uppercase font-bold text-muted-foreground mb-1.5 block">
-                        Visibilidade
-                      </Label>
-                      <Select value={mode} onValueChange={(v) => handleChangeMode(user.id, v as WhatsAppAccessMode)}>
-                        <SelectTrigger className="h-9 text-sm">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {Object.entries(MODE_LABELS).map(([k, v]) => (
-                            <SelectItem key={k} value={k}>{v}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-                </div>);
-            })}
-          </div>
-        </ScrollArea>
-      </SheetContent>
-    </Sheet>);
 
 }

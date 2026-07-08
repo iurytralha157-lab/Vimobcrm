@@ -97,6 +97,21 @@ function getXInterval(chartWidth: number, totalPoints: number) {
   return Math.ceil(totalPoints / maxLabels) - 1;
 }
 
+function isHourlyEvolution(data: DealsEvolutionPoint[]) {
+  return data.length > 0 && data.every((point) => /^\d{2}:00$/.test(point.date));
+}
+
+function getHourlyXInterval(chartWidth: number, isMobile: boolean) {
+  if (isMobile) return 3;
+  if (chartWidth < 560) return 3;
+  if (chartWidth < 820) return 2;
+  return 1;
+}
+
+function formatHourlyTick(value: string | number) {
+  return String(value).replace(':00', 'h');
+}
+
 export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProps) {
   const isMobile = useIsMobile();
   const [chartSize, setChartSize] = useState({ width: 600, height: 250 });
@@ -143,7 +158,10 @@ export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProp
   }
 
   const maxValue = Math.max(...data.map(d => Math.max(d.ganhos, d.perdas, d.abertos)), 1);
-  const tickInterval = getXInterval(chartSize.width, data.length);
+  const hourlyEvolution = isHourlyEvolution(data);
+  const tickInterval = hourlyEvolution
+    ? getHourlyXInterval(chartSize.width, isMobile)
+    : getXInterval(chartSize.width, data.length);
   const yTickCount = getYTickCount(chartSize.height, maxValue);
 
   return (
@@ -192,8 +210,10 @@ export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProp
                 axisLine={false}
                 tickLine={false}
                 tick={chartTickStyle}
+                tickFormatter={hourlyEvolution ? formatHourlyTick : undefined}
                 tickMargin={8}
                 interval={tickInterval}
+                minTickGap={5}
               />
               <YAxis
                 axisLine={false}
@@ -205,7 +225,7 @@ export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProp
                 tickCount={yTickCount}
                 domain={[0, 'auto']}
               />
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip content={<CustomTooltip />} cursor={false} />
               <Area
                 type="monotone"
                 dataKey="abertos"

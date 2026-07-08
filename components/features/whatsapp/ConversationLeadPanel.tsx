@@ -102,6 +102,7 @@ type ConversationLeadDetail = Pick<
 type PropertyLeadUpdate = {
   id: string;
   property_id: string;
+  interest_property_id: string;
   valor_interesse?: number | null;
 };
 
@@ -189,7 +190,7 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
       organizationId: profile?.organization_id || organization?.id || "",
       organizationName: organization?.name || null,
       userId: detailLead.assigned_user_id ?? null,
-      propertyId: detailLead.property_id || null,
+      propertyId: detailLead.interest_property_id || detailLead.property_id || null,
       valorInteresse: lead.valor_interesse ?? null,
       commissionPercentage: detailLead.commission_percentage ?? null,
       leadName: lead.name || "Lead",
@@ -203,7 +204,7 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
       organizationId: profile?.organization_id || organization?.id || "",
       organizationName: organization?.name || null,
       userId: detailLead.assigned_user_id ?? null,
-      propertyId: detailLead.property_id || null,
+      propertyId: detailLead.interest_property_id || detailLead.property_id || null,
       valorInteresse: lead.valor_interesse ?? null,
       commissionPercentage: detailLead.commission_percentage ?? null,
       leadName: lead.name || "Lead",
@@ -234,7 +235,7 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
 
   const handlePropertyChange = (propertyId: string) => {
     const prop = (properties || []).find((p) => p.id === propertyId);
-    const updates: PropertyLeadUpdate = { id: leadId, property_id: propertyId };
+    const updates: PropertyLeadUpdate = { id: leadId, property_id: propertyId, interest_property_id: propertyId };
     if (prop?.preco) {
       updates.valor_interesse = prop.preco;
       setValorLocal(Number(prop.preco).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));

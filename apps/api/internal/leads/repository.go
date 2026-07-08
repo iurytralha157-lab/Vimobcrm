@@ -58,16 +58,19 @@ type existingLeadMatch struct {
 }
 
 type leadSnapshot struct {
-	ID             string
-	Name           string
-	Phone          string
-	AssignedUserID string
-	PipelineID     string
-	StageID        string
-	StageName      string
-	DealStatus     string
-	LostReason     string
-	InterestValue  string
+	ID                 string
+	Name               string
+	Phone              string
+	AssignedUserID     string
+	PipelineID         string
+	StageID            string
+	StageName          string
+	DealStatus         string
+	LostReason         string
+	InterestValue      string
+	PropertyID         string
+	InterestPropertyID string
+	PropertyCode       string
 }
 
 func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder, storageConfigs ...StorageConfig) Repository {
@@ -197,8 +200,16 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, le
 }
 
 func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context, input createInput) (CreateResult, error) {
-	if !canManageLeads(tenantContext) {
+	if !canCreateLeads(tenantContext) {
 		return CreateResult{}, tenant.ErrOrganizationAccessDenied
+	}
+	if !canAssignLeads(tenantContext) {
+		if input.AssignedUserID == nil || strings.TrimSpace(*input.AssignedUserID) == "" {
+			assignedUserID := tenantContext.UserID
+			input.AssignedUserID = &assignedUserID
+		} else if strings.TrimSpace(*input.AssignedUserID) != tenantContext.UserID {
+			return CreateResult{}, tenant.ErrOrganizationAccessDenied
+		}
 	}
 
 	resolvedDestination, err := repo.resolveDestination(ctx, tenantContext.OrganizationID, input.PipelineID, input.StageID)
@@ -423,6 +434,10 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		"assigned_user_id": nullableString(current.AssignedUserID),
 	}), jsonb(input.auditData()))
 	if err != nil {
+		return Lead{}, err
+	}
+
+	if err := repo.reserveWonLeadProperty(ctx, tx, tenantContext, current, input); err != nil {
 		return Lead{}, err
 	}
 
@@ -1047,6 +1062,14 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 }
 
 func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant.Context, input createInput, resolvedDestination destination, existingLead existingLeadMatch) (CreateResult, error) {
+	canViewExisting, err := repo.canViewExistingLead(ctx, tenantContext, existingLead.AssignedUserID)
+	if err != nil {
+		return CreateResult{}, err
+	}
+	if !canViewExisting {
+		return CreateResult{}, ErrLeadAlreadyExists
+	}
+
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return CreateResult{}, err
@@ -1358,6 +1381,9 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 	err = tx.QueryRow(ctx, `
 		select rrm.id::text, rrm.user_id::text
 		from public.round_robin_members rrm
+		join public.round_robins rr
+		  on rr.id = rrm.round_robin_id
+		 and rr.organization_id = rrm.organization_id
 		join public.organization_members om
 		  on om.organization_id = rrm.organization_id
 		 and om.user_id = rrm.user_id
@@ -1365,9 +1391,42 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 		join public.users u
 		  on u.id = rrm.user_id
 		 and u.is_active = true
+		left join public.team_members tm
+		  on tm.organization_id = rrm.organization_id
+		 and tm.team_id = rrm.team_id
+		 and tm.user_id = rrm.user_id
+		 and coalesce(tm.is_active, true) = true
 		where rrm.organization_id = $1::uuid
 		  and rrm.round_robin_id = $2::uuid
 		  and rrm.is_active = true
+		  and (
+		    tm.id is null
+		    or not exists (
+		      select 1
+		      from public.member_availability ma_any
+		      where ma_any.organization_id = rrm.organization_id
+		        and ma_any.team_member_id = tm.id
+		    )
+		    or exists (
+		      select 1
+		      from public.member_availability ma
+		      where ma.organization_id = rrm.organization_id
+		        and ma.team_member_id = tm.id
+		        and ma.day_of_week = extract(dow from now() at time zone 'America/Sao_Paulo')::int
+		        and coalesce(ma.is_active, true) = true
+		        and (
+		          coalesce(ma.is_all_day, false) = true
+		          or (
+		            ma.start_time is not null
+		            and ma.end_time is not null
+		            and (
+		              (ma.start_time <= ma.end_time and (now() at time zone 'America/Sao_Paulo')::time >= ma.start_time and (now() at time zone 'America/Sao_Paulo')::time <= ma.end_time)
+		              or (ma.start_time > ma.end_time and ((now() at time zone 'America/Sao_Paulo')::time >= ma.start_time or (now() at time zone 'America/Sao_Paulo')::time <= ma.end_time))
+		            )
+		          )
+		        )
+		    )
+		  )
 		order by rrm.position asc, rrm.created_at asc
 		limit 1
 	`, organizationID, roundRobinID).Scan(&selection.MemberID, &selection.UserID)
@@ -1501,7 +1560,7 @@ func (repo Repository) validateProperty(ctx context.Context, tx pgx.Tx, organiza
 
 func (repo Repository) getLeadSnapshotForUpdate(ctx context.Context, tx pgx.Tx, organizationID string, leadID string) (leadSnapshot, error) {
 	var snapshot leadSnapshot
-	var phone, assignedUserID, pipelineID, stageID, stageName, lostReason, interestValue pgtype.Text
+	var phone, assignedUserID, pipelineID, stageID, stageName, lostReason, interestValue, propertyID, interestPropertyID, propertyCode pgtype.Text
 
 	err := tx.QueryRow(ctx, `
 		select
@@ -1514,7 +1573,10 @@ func (repo Repository) getLeadSnapshotForUpdate(ctx context.Context, tx pgx.Tx, 
 			s.name,
 			l.deal_status,
 			l.lost_reason,
-			l.valor_interesse::text
+			l.valor_interesse::text,
+			l.property_id::text,
+			l.interest_property_id::text,
+			l.property_code
 		from public.leads l
 		left join public.stages s
 		  on s.id = l.stage_id
@@ -1523,7 +1585,7 @@ func (repo Repository) getLeadSnapshotForUpdate(ctx context.Context, tx pgx.Tx, 
 		  and l.id = $2::uuid
 		limit 1
 		for update of l
-	`, organizationID, leadID).Scan(&snapshot.ID, &snapshot.Name, &phone, &assignedUserID, &pipelineID, &stageID, &stageName, &snapshot.DealStatus, &lostReason, &interestValue)
+	`, organizationID, leadID).Scan(&snapshot.ID, &snapshot.Name, &phone, &assignedUserID, &pipelineID, &stageID, &stageName, &snapshot.DealStatus, &lostReason, &interestValue, &propertyID, &interestPropertyID, &propertyCode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return leadSnapshot{}, ErrLeadNotFound
 	}
@@ -1538,6 +1600,9 @@ func (repo Repository) getLeadSnapshotForUpdate(ctx context.Context, tx pgx.Tx, 
 	snapshot.StageName = textValue(stageName)
 	snapshot.LostReason = textValue(lostReason)
 	snapshot.InterestValue = textValue(interestValue)
+	snapshot.PropertyID = textValue(propertyID)
+	snapshot.InterestPropertyID = textValue(interestPropertyID)
+	snapshot.PropertyCode = textValue(propertyCode)
 
 	return snapshot, nil
 }
@@ -1673,6 +1738,46 @@ func (repo Repository) findExistingLeadByPhone(ctx context.Context, organization
 	return &match, nil
 }
 
+func (repo Repository) canViewExistingLead(ctx context.Context, tenantContext tenant.Context, assignedUserID string) (bool, error) {
+	if canViewAllLeads(tenantContext) {
+		return true, nil
+	}
+
+	if assignedUserID == "" || tenantContext.UserID == "" || tenantContext.OrganizationID == "" {
+		return false, nil
+	}
+
+	if assignedUserID == tenantContext.UserID {
+		return true, nil
+	}
+
+	if !tenantContext.HasPermission("lead_view_team") {
+		return false, nil
+	}
+
+	var canView bool
+	err := repo.db.Pool().QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.team_members leader
+			join public.team_members member
+			  on member.organization_id = leader.organization_id
+			 and member.team_id = leader.team_id
+			 and member.is_active = true
+			where leader.organization_id = $1::uuid
+			  and leader.user_id = $2::uuid
+			  and leader.is_active = true
+			  and leader.is_leader = true
+			  and member.user_id = $3::uuid
+		)
+	`, tenantContext.OrganizationID, tenantContext.UserID, assignedUserID).Scan(&canView)
+	if err != nil {
+		return false, err
+	}
+
+	return canView, nil
+}
+
 func (repo Repository) insertLeadTags(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, tagIDs []string) error {
 	for _, tagID := range tagIDs {
 		if _, err := repo.getTagName(ctx, tx, organizationID, tagID); err != nil {
@@ -1774,6 +1879,209 @@ func (repo Repository) insertDealStatusActivities(ctx context.Context, tx pgx.Tx
 		"to_status":       "won",
 		"valor_interesse": nullableString(interestValue),
 	})
+}
+
+func (repo Repository) reserveWonLeadProperty(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, input updateInput) error {
+	if !input.DealStatus.Set || input.DealStatus.Value == nil || *input.DealStatus.Value != "won" || current.DealStatus == "won" {
+		return nil
+	}
+
+	propertyID := current.InterestPropertyID
+	if propertyID == "" {
+		propertyID = current.PropertyID
+	}
+	if input.PropertyID.Set && input.PropertyID.Value != nil {
+		propertyID = *input.PropertyID.Value
+	}
+	if input.InterestPropertyID.Set && input.InterestPropertyID.Value != nil {
+		propertyID = *input.InterestPropertyID.Value
+	}
+	if propertyID == "" {
+		return nil
+	}
+
+	var title, code, oldStatus string
+	err := tx.QueryRow(ctx, `
+		select coalesce(title, 'Imovel') as title,
+		       coalesce(code, '') as code,
+		       coalesce(status, 'active') as old_status
+		from public.properties
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		for update
+	`, tenantContext.OrganizationID, propertyID).Scan(&title, &code, &oldStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("%w: propertyId is invalid", ErrInvalidReference)
+	}
+	if err != nil {
+		return err
+	}
+
+	if message := wonPropertyUnavailableMessage(oldStatus); message != "" {
+		return fmt.Errorf("%w: %s", ErrLeadPropertyUnavailable, message)
+	}
+
+	tag, err := tx.Exec(ctx, `
+		update public.properties
+		set status = 'reserved',
+		    published_on_site = false,
+		    anunciar = false,
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+	`, tenantContext.OrganizationID, propertyID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: propertyId is invalid", ErrInvalidReference)
+	}
+
+	actorName := tenantContext.UserID
+	if value, err := repo.getUserDisplayName(ctx, tx, tenantContext.UserID); err == nil && strings.TrimSpace(value) != "" {
+		actorName = value
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+
+	if err := repo.notifyInterestedLeadsForReservedProperty(ctx, tx, tenantContext, current, propertyID, title, code, oldStatus); err != nil {
+		return err
+	}
+
+	var hasEventsTable bool
+	if err := tx.QueryRow(ctx, `select to_regclass('public.events') is not null`).Scan(&hasEventsTable); err != nil {
+		return err
+	}
+	if !hasEventsTable {
+		return nil
+	}
+
+	_, err = tx.Exec(ctx, `
+		insert into public.events (
+			organization_id,
+			event_type,
+			entity_type,
+			entity_id,
+			payload,
+			status
+		)
+		values (
+			$1::uuid,
+			'property_reserved_by_won_lead',
+			'property',
+			$2::uuid,
+			$3::jsonb,
+			'processed'
+		)
+	`, tenantContext.OrganizationID, propertyID, jsonb(map[string]any{
+		"user_id":               tenantContext.UserID,
+		"user_name":             actorName,
+		"reserved_by_user_id":   tenantContext.UserID,
+		"reserved_by_user_name": actorName,
+		"reserved_by_lead_id":   current.ID,
+		"reserved_by_lead_name": current.Name,
+		"lead_id":               current.ID,
+		"lead_name":             current.Name,
+		"property_id":           propertyID,
+		"property_code":         code,
+		"title":                 title,
+		"old_status":            oldStatus,
+		"new_status":            "reserved",
+		"organization_id":       tenantContext.OrganizationID,
+		"message":               fmt.Sprintf(`Imovel "%s" reservado por "%s" ao marcar o lead "%s" como ganho`, title, actorName, current.Name),
+	}))
+	return err
+}
+
+func wonPropertyUnavailableMessage(status string) string {
+	switch normalizeLeadPropertyStatus(status) {
+	case "reserved", "reservado":
+		return "Este imovel ja esta reservado. Consulte o administrador antes de marcar o lead como ganho."
+	case "sold", "vendido":
+		return "Este imovel ja esta vendido e nao pode ser marcado como ganho."
+	case "rented", "alugado", "locado":
+		return "Este imovel ja esta alugado e nao pode ser marcado como ganho."
+	case "draft", "rascunho", "inactive", "inativo", "archived", "arquivado":
+		return "Este imovel nao esta disponivel para ser marcado como ganho."
+	default:
+		return ""
+	}
+}
+
+func normalizeLeadPropertyStatus(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	replacer := strings.NewReplacer(
+		"\u00e1", "a", "\u00e0", "a", "\u00e2", "a", "\u00e3", "a",
+		"\u00e9", "e", "\u00ea", "e",
+		"\u00ed", "i",
+		"\u00f3", "o", "\u00f4", "o", "\u00f5", "o",
+		"\u00fa", "u",
+		"\u00e7", "c",
+	)
+	return replacer.Replace(value)
+}
+
+func (repo Repository) notifyInterestedLeadsForReservedProperty(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, propertyID string, propertyTitle string, propertyCode string, oldStatus string) error {
+	rows, err := tx.Query(ctx, `
+		select distinct on (l.id)
+			l.id::text,
+			l.name,
+			l.assigned_user_id::text
+		from public.leads l
+		where l.organization_id = $1::uuid
+		  and l.id <> $2::uuid
+		  and l.assigned_user_id is not null
+		  and coalesce(l.deal_status, 'open') not in ('won', 'lost')
+		  and (
+		    l.interest_property_id = $3::uuid
+		    or l.property_id = $3::uuid
+		  )
+		order by l.id, l.created_at desc
+	`, tenantContext.OrganizationID, current.ID, propertyID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	propertyLabel := propertyTitle
+	if strings.TrimSpace(propertyLabel) == "" {
+		propertyLabel = "Imovel"
+	}
+	if strings.TrimSpace(propertyCode) != "" {
+		propertyLabel = fmt.Sprintf("%s (%s)", propertyLabel, propertyCode)
+	}
+
+	for rows.Next() {
+		var leadID, leadName, assignedUserID string
+		if err := rows.Scan(&leadID, &leadName, &assignedUserID); err != nil {
+			return err
+		}
+
+		content := fmt.Sprintf(`O imovel de interesse "%s" foi reservado pelo lead "%s". Revise este atendimento.`, propertyLabel, current.Name)
+		metadata := map[string]any{
+			"property_id":           propertyID,
+			"property_title":        propertyTitle,
+			"property_code":         propertyCode,
+			"old_status":            oldStatus,
+			"new_status":            "reserved",
+			"reserved_by_lead_id":   current.ID,
+			"reserved_by_lead_name": current.Name,
+			"affected_lead_id":      leadID,
+			"affected_lead_name":    leadName,
+			"event_key":             "interest_property_reserved",
+			"notification_reason":   "same_interest_property_reserved",
+			"source":                "deal_won_property_reservation",
+		}
+
+		if err := repo.insertActivity(ctx, tx, tenantContext.OrganizationID, leadID, tenantContext.UserID, "property_interest_reserved", content, metadata); err != nil {
+			return err
+		}
+		if err := repo.insertNotificationWithType(ctx, tx, tenantContext.OrganizationID, assignedUserID, leadID, "Imovel de interesse reservado", content, "interest_property_reserved", "warning", metadata); err != nil {
+			return err
+		}
+	}
+
+	return rows.Err()
 }
 
 func (repo Repository) dispatchDealWonNotification(ctx context.Context, tenantContext tenant.Context, current leadSnapshot, input updateInput) {
@@ -1924,8 +2232,17 @@ func (repo Repository) insertActivity(ctx context.Context, tx pgx.Tx, organizati
 }
 
 func (repo Repository) insertNotification(ctx context.Context, tx pgx.Tx, organizationID string, userID string, leadID string, title string, content string, eventKey string, metadata map[string]any) error {
+	return repo.insertNotificationWithType(ctx, tx, organizationID, userID, leadID, title, content, eventKey, "lead", metadata)
+}
+
+func (repo Repository) insertNotificationWithType(ctx context.Context, tx pgx.Tx, organizationID string, userID string, leadID string, title string, content string, eventKey string, notificationType string, metadata map[string]any) error {
 	if userID == "" {
 		return nil
+	}
+
+	notificationType = strings.TrimSpace(notificationType)
+	if notificationType == "" {
+		notificationType = "lead"
 	}
 
 	if metadata == nil {
@@ -1952,13 +2269,13 @@ func (repo Repository) insertNotification(ctx context.Context, tx pgx.Tx, organi
 			$3,
 			$4,
 			$4,
-			'lead',
+			$7,
 			'in_app',
 			$5::uuid,
 			$6,
-			$7::jsonb
+			$8::jsonb
 		)
-	`, organizationID, userID, title, content, leadID, "/leads", jsonb(metadata))
+	`, organizationID, userID, title, content, leadID, "/leads", notificationType, jsonb(metadata))
 	return err
 }
 
@@ -2335,6 +2652,13 @@ func canManageLeads(tenantContext tenant.Context) bool {
 	return tenantContext.IsSuperAdmin ||
 		tenantContext.HasRole("owner", "admin", "manager") ||
 		tenantContext.HasPermission("lead_manage")
+}
+
+func canCreateLeads(tenantContext tenant.Context) bool {
+	if canManageLeads(tenantContext) || tenantContext.HasPermission("lead_create") {
+		return true
+	}
+	return tenantContext.IsOrganizationMember()
 }
 
 func canEditAllLeads(tenantContext tenant.Context) bool {

@@ -62,6 +62,7 @@ export const en = {
     settingsBilling: 'Payments',
     settingsProperties: 'Properties',
     settingsIntegrations: 'Integrations',
+    settingsAI: 'AI',
     help: 'Help',
     superAdmin: 'Super Admin',
     systemSettings: 'System Settings',

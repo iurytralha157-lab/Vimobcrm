@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -40,7 +41,7 @@ func (repo Repository) UploadImage(ctx context.Context, tenantContext tenant.Con
 	propertyFolder := "temp"
 	propertyID := strings.TrimSpace(input.PropertyID)
 	if propertyID == "" {
-		if !canManageProperties(tenantContext) {
+		if !canCreateProperties(tenantContext) {
 			return PropertyImageUploadResponse{}, tenant.ErrOrganizationAccessDenied
 		}
 	} else {
@@ -76,21 +77,37 @@ func (repo Repository) UploadImage(ctx context.Context, tenantContext tenant.Con
 }
 
 func (repo Repository) ensureCanUploadImage(ctx context.Context, tenantContext tenant.Context, propertyID string) error {
-	var creatorID pgtype.Text
+	var creatorID, responsibleUserID pgtype.Text
 	err := repo.db.Pool().QueryRow(ctx, `
-		select coalesce(responsible_user_id::text, created_by::text, '')
+		select
+			coalesce(created_by::text, ''),
+			coalesce(responsible_user_id::text, '')
 		from public.properties
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 		limit 1
-	`, tenantContext.OrganizationID, propertyID).Scan(&creatorID)
+	`, tenantContext.OrganizationID, propertyID).Scan(&creatorID, &responsibleUserID)
 	if err == pgx.ErrNoRows {
 		return ErrPropertyNotFound
 	}
 	if err != nil {
 		return err
 	}
-	if !canEditProperty(tenantContext, textValue(creatorID)) {
+
+	var editPolicy string
+	err = repo.db.Pool().QueryRow(ctx, `
+		select coalesce(nullif(property_edit_policy, ''), 'responsible_or_admin')
+		from public.organizations
+		where id = $1::uuid
+	`, tenantContext.OrganizationID).Scan(&editPolicy)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if err == pgx.ErrNoRows {
+		editPolicy = "responsible_or_admin"
+	}
+
+	if !canEditProperty(tenantContext, textValue(creatorID), textValue(responsibleUserID), editPolicy) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 

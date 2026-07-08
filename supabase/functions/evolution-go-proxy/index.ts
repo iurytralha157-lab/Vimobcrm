@@ -259,33 +259,11 @@ async function getSession(payload: JsonRecord) {
   return data;
 }
 
-async function assertSessionAccess(session: any, userId: string, requireSend: boolean) {
+async function assertSessionAccess(session: any, userId: string) {
   if (!session?.id) throw new Error("WhatsApp session is required");
   if (userId === "service_role") return;
 
   if (session.owner_user_id === userId) return;
-
-  const { data: member } = await supabase
-    .from("organization_members")
-    .select("role")
-    .eq("organization_id", session.organization_id)
-    .eq("user_id", userId)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  if (member?.role && ["owner", "admin", "manager"].includes(member.role)) return;
-
-  const { data: access } = await supabase
-    .from("whatsapp_session_access")
-    .select("can_view, can_read, can_send")
-    .eq("session_id", session.id)
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  const canView = access?.can_view ?? access?.can_read ?? false;
-  const canSend = access?.can_send ?? false;
-
-  if (canView && (!requireSend || canSend)) return;
 
   throw new Error("Forbidden");
 }
@@ -358,11 +336,16 @@ function endpointFor(action: string, body: JsonRecord, instanceKey: string) {
         path: "/instance/create",
         body: {
           name: firstPresent(body.name, body.instanceName, instanceKey),
+          instanceName: firstPresent(body.instanceName, body.name, instanceKey),
           token: body.token || "default_token",
+          webhookUrl: firstPresent(body.webhookUrl, body.webhook_url, body.url),
+          webhook_url: firstPresent(body.webhook_url, body.webhookUrl, body.url),
+          subscribe: body.subscribe,
+          events: body.events,
           advancedSettings: {
             rejectCall: false,
             groupsIgnore: false,
-            alwaysOnline: false,
+            alwaysOnline: true,
             readMessages: false,
             readStatus: false,
             syncFullHistory: false,
@@ -412,6 +395,8 @@ function endpointFor(action: string, body: JsonRecord, instanceKey: string) {
       return { method: "POST", path: "/chat/mute", body };
     case "chat.pin":
       return { method: "POST", path: "/chat/pin", body };
+    case "chat.historySync":
+      return { method: "POST", path: "/chat/historySync", body };
     case "label.list":
       return { method: "GET", path: "/label" };
     case "label.addChat":
@@ -463,7 +448,7 @@ Deno.serve(async (req) => {
     }
 
     if (session) {
-      await assertSessionAccess(session, auth.userId!, isSendAction(action));
+      await assertSessionAccess(session, auth.userId!);
     } else if (!auth.serviceRole) {
       return json({ ok: false, error: "WhatsApp session is required" }, 400);
     }

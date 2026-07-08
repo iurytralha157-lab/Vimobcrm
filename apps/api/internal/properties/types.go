@@ -31,12 +31,32 @@ type ListResponse struct {
 	Offset int        `json:"offset"`
 }
 
+type StatsResponse struct {
+	Total     int64 `json:"total"`
+	Sale      int64 `json:"sale"`
+	Rental    int64 `json:"rental"`
+	Available int64 `json:"available"`
+	Reserved  int64 `json:"reserved"`
+	Sold      int64 `json:"sold"`
+	Rented    int64 `json:"rented"`
+	Private   int64 `json:"private"`
+}
+
+type HistoryEvent struct {
+	ID        string         `json:"id"`
+	Type      string         `json:"type"`
+	Title     string         `json:"title"`
+	Metadata  map[string]any `json:"metadata"`
+	CreatedAt string         `json:"created_at"`
+}
+
 type propertyRequest map[string]any
 
 type ListFilter struct {
 	Limit           int
 	Offset          int
 	Search          string
+	Status          string
 	DealType        string
 	PropertyType    string
 	City            string
@@ -48,6 +68,7 @@ type ListFilter struct {
 	PriceMin        float64
 	PriceMax        float64
 	AcceptsExchange *bool
+	PublishedOnSite *bool
 }
 
 type fieldKind string
@@ -224,6 +245,7 @@ func ParseListFilter(values url.Values) (ListFilter, error) {
 		Limit:         limit,
 		Offset:        offset,
 		Search:        trimMax(values.Get("search"), 120),
+		Status:        normalizedPropertyStatusForFilter(values.Get("status")),
 		DealType:      trimMax(values.Get("tipo_de_negocio"), 80),
 		PropertyType:  trimMax(values.Get("tipo_de_imovel"), 80),
 		City:          trimMax(values.Get("cidade"), 120),
@@ -242,6 +264,9 @@ func ParseListFilter(values url.Values) (ListFilter, error) {
 	filter.PriceMax = parseOptionalPositiveFloat(values.Get("valor_max"))
 	if acceptsExchange, ok := parseOptionalBool(values.Get("aceita_permuta")); ok {
 		filter.AcceptsExchange = &acceptsExchange
+	}
+	if publishedOnSite, ok := parseOptionalBool(values.Get("published_on_site")); ok {
+		filter.PublishedOnSite = &publishedOnSite
 	}
 
 	return filter, nil
@@ -295,6 +320,36 @@ func sanitizePayload(request propertyRequest) (propertyRequest, error) {
 			return nil, fmt.Errorf("%w: %s is invalid", ErrInvalidInput, key)
 		}
 		out[def.column] = normalized
+
+		switch key {
+		case "cadastrado_por", "responsible_user_id":
+			out["responsible_user_id"] = normalized
+			out["cadastrado_por"] = normalized
+		case "tipo_de_imovel", "tipo":
+			out["tipo"] = normalized
+			out["tipo_de_imovel"] = normalized
+		case "anunciar", "published_on_site":
+			out["published_on_site"] = normalized
+			out["anunciar"] = normalized
+		case "arquivos", "documents":
+			out["documents"] = normalized
+			out["arquivos"] = normalized
+		case "destaque", "is_featured":
+			out["is_featured"] = normalized
+			out["destaque"] = normalized
+		case "fotos", "image_urls":
+			out["image_urls"] = normalized
+			out["fotos"] = normalized
+		case "owner_media_source", "origin_media":
+			out["origin_media"] = normalized
+			out["owner_media_source"] = normalized
+		case "public_address_visibility", "address_visibility":
+			out["address_visibility"] = normalized
+			out["public_address_visibility"] = normalized
+		case "tipo_de_negocio", "finalidade":
+			out["finalidade"] = normalized
+			out["tipo_de_negocio"] = normalized
+		}
 	}
 
 	if _, hasImages := out["image_urls"]; !hasImages && mainImage != nil {
@@ -308,8 +363,21 @@ func sanitizePayload(request propertyRequest) (propertyRequest, error) {
 	}
 
 	mirrorPropertyCompatibilityFields(out)
+	applyPropertyAvailabilityContract(out)
 
 	return out, nil
+}
+
+func applyPropertyAvailabilityContract(out propertyRequest) {
+	status, ok := out["status"].(string)
+	if !ok {
+		return
+	}
+	switch status {
+	case "reserved", "sold", "rented":
+		out["published_on_site"] = false
+		out["anunciar"] = false
+	}
 }
 
 func mirrorPropertyCompatibilityFields(out propertyRequest) {
@@ -435,10 +503,15 @@ func normalizeFloat(value any) (any, error) {
 		parsed, err := typed.Float64()
 		return parsed, err
 	case string:
-		if strings.TrimSpace(typed) == "" {
+		text := strings.TrimSpace(typed)
+		if text == "" {
 			return nil, nil
 		}
-		parsed, err := strconv.ParseFloat(typed, 64)
+		if strings.Contains(text, ",") {
+			text = strings.ReplaceAll(text, ".", "")
+			text = strings.ReplaceAll(text, ",", ".")
+		}
+		parsed, err := strconv.ParseFloat(text, 64)
 		return parsed, err
 	default:
 		return nil, errors.New("expected number")
@@ -487,6 +560,8 @@ func normalizeDealType(value any) (string, error) {
 		return "locacao", nil
 	case "temporada", "season":
 		return "temporada", nil
+	case "lancamento", "launch", "release":
+		return "lancamento", nil
 	case "venda e aluguel", "venda locacao", "venda/locacao", "venda/aluguel", "venda_locacao":
 		return "venda_locacao", nil
 	default:
@@ -505,6 +580,17 @@ func normalizedDealTypeForFilter(value string) string {
 	return normalized
 }
 
+func normalizedPropertyStatusForFilter(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	normalized, err := normalizePropertyStatus(value)
+	if err != nil {
+		return ""
+	}
+	return normalized
+}
+
 func normalizePropertyStatus(value any) (string, error) {
 	text, ok := value.(string)
 	if !ok {
@@ -512,8 +598,10 @@ func normalizePropertyStatus(value any) (string, error) {
 	}
 	text = normalizeASCII(text)
 	switch text {
-	case "", "ativo", "active", "disponivel", "reservado":
+	case "", "ativo", "active", "disponivel":
 		return "active", nil
+	case "reservado", "reserved":
+		return "reserved", nil
 	case "draft", "rascunho":
 		return "draft", nil
 	case "vendido", "sold":

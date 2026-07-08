@@ -3,6 +3,7 @@ package roundrobin
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
@@ -306,6 +307,7 @@ func writeRoundRobinError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	default:
+		slog.ErrorContext(r.Context(), "round robin operation failed", "error", err)
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "round_robin_operation_failed", "Unable to complete round-robin operation.")
 	}
 }

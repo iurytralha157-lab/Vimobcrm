@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 
 const DEFAULT_API_URL = "http://localhost:8081";
 const PUBLIC_SITE_REVALIDATE_SECONDS = 60;
+const PUBLIC_SITE_STALE_FALLBACK_MS = 1000 * 60 * 60 * 24;
 
 type PublicSiteQuery = Record<string, string | number | boolean | null | undefined>;
 
@@ -153,6 +154,11 @@ type Envelope<T> = {
   data?: T;
 };
 
+type FallbackCacheEntry = {
+  value: unknown;
+  updatedAt: number;
+};
+
 const emptyHomeData: PublicHomeData = {
   featured: [],
   exclusive: [],
@@ -160,6 +166,8 @@ const emptyHomeData: PublicHomeData = {
   types: [],
   cities: [],
 };
+
+const publicSiteFallbackCache = new Map<string, FallbackCacheEntry>();
 
 export function getAPIBaseURL() {
   return (process.env.VIMOB_API_URL || process.env.NEXT_PUBLIC_VIMOB_API_URL || DEFAULT_API_URL).replace(/\/+$/, "");
@@ -182,21 +190,29 @@ export async function resolvePublicSite(domain: string): Promise<PublicSiteResol
   const candidates = normalized.startsWith("www.")
     ? [normalized, normalized.slice(4)]
     : [normalized, `www.${normalized}`];
+  const uniqueCandidates = Array.from(new Set(candidates));
 
   try {
-    for (const candidate of Array.from(new Set(candidates))) {
+    for (const candidate of uniqueCandidates) {
       const response = await requestPublicAPI<ResolveResponse>("/v1/public/site/resolve", {
         query: { domain: candidate },
         tags: [`public-site-domain:${candidate}`],
       });
 
       if (response.found && response.site_config?.organization_id) {
-        return { status: "found", site: normalizeSiteConfig(response.site_config) };
+        const site = normalizeSiteConfig(response.site_config);
+        rememberResolvedSite(uniqueCandidates, site);
+        return { status: "found", site };
       }
     }
 
     return { status: "not-found" };
   } catch {
+    const cachedSite = getCachedResolvedSite(uniqueCandidates);
+    if (cachedSite) {
+      return { status: "found", site: cachedSite };
+    }
+
     return { status: "unavailable" };
   }
 }
@@ -239,26 +255,34 @@ export async function getPublicProperty(organizationId: string, propertyCode: st
 }
 
 export async function getPublicMenuItems(organizationId: string) {
+  const cacheKey = publicCacheKey(["menu", organizationId]);
+
   try {
     const response = await requestPublicAPI<Envelope<SiteMenuItem[]>>("/v1/public/site/menu-items", {
       query: { organization_id: organizationId },
       tags: [`public-site:${organizationId}:menu`],
     });
-    return response.data || [];
+    const items = response.data || [];
+    writeFallbackCache(cacheKey, items);
+    return items;
   } catch {
-    return [];
+    return readFallbackCache<SiteMenuItem[]>(cacheKey) || [];
   }
 }
 
 export async function getPublicSearchFilters(organizationId: string) {
+  const cacheKey = publicCacheKey(["filters", organizationId]);
+
   try {
     const response = await requestPublicAPI<Envelope<SiteSearchFilter[]>>("/v1/public/site/search-filters", {
       query: { organization_id: organizationId },
       tags: [`public-site:${organizationId}:filters`],
     });
-    return response.data || [];
+    const filters = response.data || [];
+    writeFallbackCache(cacheKey, filters);
+    return filters;
   } catch {
-    return [];
+    return readFallbackCache<SiteSearchFilter[]>(cacheKey) || [];
   }
 }
 
@@ -268,8 +292,10 @@ async function safePublicData<T>(
   query: PublicSiteQuery,
   fallback: T,
 ) {
+  const cacheKey = publicCacheKey(["data", organizationId, endpoint, stableQueryKey(query)]);
+
   try {
-    return await requestPublicAPI<T>("/v1/public/site/data", {
+    const data = await requestPublicAPI<T>("/v1/public/site/data", {
       query: {
         organization_id: organizationId,
         endpoint,
@@ -277,8 +303,10 @@ async function safePublicData<T>(
       },
       tags: [`public-site:${organizationId}`, `public-site:${organizationId}:${endpoint}`],
     });
+    writeFallbackCache(cacheKey, data);
+    return data;
   } catch {
-    return fallback;
+    return readFallbackCache<T>(cacheKey) ?? fallback;
   }
 }
 
@@ -331,6 +359,66 @@ function normalizeSiteConfig(site: PublicSiteConfig): PublicSiteConfig {
     text_color: site.text_color || "#111827",
     card_color: site.card_color || "#ffffff",
   };
+}
+
+function rememberResolvedSite(candidates: string[], site: PublicSiteConfig) {
+  const domains = new Set(
+    [
+      ...candidates,
+      site.custom_domain || "",
+      site.subdomain || "",
+    ]
+      .map(normalizePublicDomain)
+      .filter(Boolean),
+  );
+
+  domains.forEach((domain) => writeFallbackCache(publicCacheKey(["resolve", domain]), site));
+}
+
+function getCachedResolvedSite(candidates: string[]) {
+  for (const candidate of candidates) {
+    const site = readFallbackCache<PublicSiteConfig>(
+      publicCacheKey(["resolve", normalizePublicDomain(candidate)]),
+    );
+
+    if (site) return site;
+  }
+
+  return null;
+}
+
+function publicCacheKey(parts: Array<string | number | boolean | null | undefined>) {
+  return parts
+    .filter((part) => part !== undefined && part !== null && part !== "")
+    .map(String)
+    .join("|");
+}
+
+function stableQueryKey(query: PublicSiteQuery) {
+  return JSON.stringify(
+    Object.entries(query || {})
+      .filter(([, value]) => value !== undefined && value !== null && value !== "")
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function writeFallbackCache(key: string, value: unknown) {
+  publicSiteFallbackCache.set(key, {
+    value,
+    updatedAt: Date.now(),
+  });
+}
+
+function readFallbackCache<T>(key: string): T | null {
+  const entry = publicSiteFallbackCache.get(key);
+  if (!entry) return null;
+
+  if (Date.now() - entry.updatedAt > PUBLIC_SITE_STALE_FALLBACK_MS) {
+    publicSiteFallbackCache.delete(key);
+    return null;
+  }
+
+  return entry.value as T;
 }
 
 export function normalizePublicDomain(value: string) {

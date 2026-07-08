@@ -25,7 +25,35 @@ type OwnerInput struct {
 }
 
 func (repo Repository) ListOwners(ctx context.Context, tenantContext tenant.Context) ([]Owner, error) {
-	rows, err := repo.db.Pool().Query(ctx, `
+	args := []any{tenantContext.OrganizationID}
+	propertyScope := ""
+	ownerScope := ""
+	if !canManageProperties(tenantContext) {
+		if tenantContext.UserID == "" {
+			return []Owner{}, nil
+		}
+		args = append(args, tenantContext.UserID)
+		userIndex := len(args)
+		propertyScope = fmt.Sprintf(" and (p.responsible_user_id = $%d::uuid or p.created_by = $%d::uuid)", userIndex, userIndex)
+		ownerScope = fmt.Sprintf(`
+		  and exists (
+			select 1
+			from public.properties p_scope
+			where p_scope.organization_id = po.organization_id
+			  and (
+				p_scope.owner_id = po.id
+				or (
+					p_scope.owner_id is null
+					and nullif(trim(p_scope.owner_name), '') is not null
+					and lower(trim(p_scope.owner_name)) = lower(trim(po.name))
+				)
+			  )
+			  and (p_scope.responsible_user_id = $%d::uuid or p_scope.created_by = $%d::uuid)
+		  )
+		`, userIndex, userIndex)
+	}
+
+	rows, err := repo.db.Pool().Query(ctx, fmt.Sprintf(`
 		select (
 			to_jsonb(po)
 			|| jsonb_build_object(
@@ -38,14 +66,15 @@ func (repo Repository) ListOwners(ctx context.Context, tenantContext tenant.Cont
 			select count(*)::int as property_count
 			from public.properties p
 			where p.organization_id = po.organization_id
-			  and (
-				p.owner_id = po.id
-				or (
-					p.owner_id is null
-					and nullif(trim(p.owner_name), '') is not null
-					and lower(trim(p.owner_name)) = lower(trim(po.name))
-				)
-			  )
+				  and (
+					p.owner_id = po.id
+					or (
+						p.owner_id is null
+						and nullif(trim(p.owner_name), '') is not null
+						and lower(trim(p.owner_name)) = lower(trim(po.name))
+					)
+				  )
+				  %s
 		) property_totals on true
 		left join lateral (
 			select jsonb_agg(
@@ -78,14 +107,16 @@ func (repo Repository) ListOwners(ctx context.Context, tenantContext tenant.Cont
 						and lower(trim(p.owner_name)) = lower(trim(po.name))
 					)
 				  )
+				  %s
 				order by p.created_at desc, p.id desc
 				limit 3
 			) property_rows
 		) property_preview on true
 		where po.organization_id = $1::uuid
 		  and coalesce(po.is_active, true) = true
+		  %s
 		order by lower(po.name), po.created_at desc
-	`, tenantContext.OrganizationID)
+	`, propertyScope, propertyScope, ownerScope), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +134,7 @@ func (repo Repository) ListOwners(ctx context.Context, tenantContext tenant.Cont
 }
 
 func (repo Repository) CreateOwner(ctx context.Context, tenantContext tenant.Context, input OwnerInput) (Owner, error) {
-	if !canManageProperties(tenantContext) {
+	if !canCreatePropertyOwners(tenantContext) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -155,7 +186,8 @@ func (repo Repository) CreateOwner(ctx context.Context, tenantContext tenant.Con
 			email,
 			media_source,
 			notify_email,
-			notes
+			notes,
+			created_by
 		)
 		values (
 			$1::uuid,
@@ -166,10 +198,11 @@ func (repo Repository) CreateOwner(ctx context.Context, tenantContext tenant.Con
 			nullif($6, ''),
 			nullif($7, ''),
 			$8,
-			nullif($9, '')
+			nullif($9, ''),
+			nullif($10, '')::uuid
 		)
 		returning to_jsonb(property_owners)::text
-	`, tenantContext.OrganizationID, input.Name, input.PhoneResidential, input.PhoneCommercial, input.Cellphone, input.Email, input.MediaSource, input.NotifyEmail, input.Notes))
+	`, tenantContext.OrganizationID, input.Name, input.PhoneResidential, input.PhoneCommercial, input.Cellphone, input.Email, input.MediaSource, input.NotifyEmail, input.Notes, tenantContext.UserID))
 	if err != nil {
 		return nil, err
 	}
@@ -178,9 +211,6 @@ func (repo Repository) CreateOwner(ctx context.Context, tenantContext tenant.Con
 }
 
 func (repo Repository) UpdateOwner(ctx context.Context, tenantContext tenant.Context, ownerID string, input OwnerInput) (Owner, error) {
-	if !canManageProperties(tenantContext) {
-		return nil, tenant.ErrOrganizationAccessDenied
-	}
 	ownerID, ok := normalizeUUID(ownerID)
 	if !ok {
 		return nil, ErrPropertyNotFound
@@ -202,6 +232,14 @@ func (repo Repository) UpdateOwner(ctx context.Context, tenantContext tenant.Con
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+
+	allowed, err := repo.canEditOwner(ctx, tx, tenantContext, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
 
 	var owner Owner
 	err = tx.QueryRow(ctx, `
@@ -246,6 +284,38 @@ func (repo Repository) UpdateOwner(ctx context.Context, tenantContext tenant.Con
 	}
 
 	return owner, tx.Commit(ctx)
+}
+
+func (repo Repository) canEditOwner(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, ownerID string) (bool, error) {
+	if canManageProperties(tenantContext) {
+		return true, nil
+	}
+	if tenantContext.UserID == "" {
+		return false, nil
+	}
+
+	var exists bool
+	err := tx.QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.property_owners po
+			join public.properties p
+			  on p.organization_id = po.organization_id
+			 and (
+				p.owner_id = po.id
+				or (
+					p.owner_id is null
+					and nullif(trim(p.owner_name), '') is not null
+					and lower(trim(p.owner_name)) = lower(trim(po.name))
+				)
+			 )
+			where po.organization_id = $1::uuid
+			  and po.id = $2::uuid
+			  and coalesce(po.is_active, true) = true
+			  and (p.responsible_user_id = $3::uuid or p.created_by = $3::uuid)
+		)
+	`, tenantContext.OrganizationID, ownerID, tenantContext.UserID).Scan(&exists)
+	return exists, err
 }
 
 func scanOwner(row scanner) (Owner, error) {

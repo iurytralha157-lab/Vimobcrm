@@ -249,6 +249,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	if err := repo.insertRules(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.Rules); err != nil {
 		return RoundRobin{}, err
 	}
+	if err := repo.syncMetaFormConfigLinks(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return RoundRobin{}, err
+	}
 	if _, err := repo.insertMembers(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.Members); err != nil {
 		return RoundRobin{}, err
 	}
@@ -371,6 +374,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		if err := repo.insertRules(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.Rules); err != nil {
 			return RoundRobin{}, err
 		}
+		if err := repo.syncMetaFormConfigLinks(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+			return RoundRobin{}, err
+		}
 	}
 
 	if input.MembersSet {
@@ -465,6 +471,9 @@ func (repo Repository) CreateRule(ctx context.Context, tenantContext tenant.Cont
 		insert into public.round_robin_rules (
 			organization_id,
 			round_robin_id,
+			match_type,
+			match_value,
+			match,
 			name,
 			conditions,
 			is_active,
@@ -474,13 +483,20 @@ func (repo Repository) CreateRule(ctx context.Context, tenantContext tenant.Cont
 			$1::uuid,
 			$2::uuid,
 			$3,
-			$4::jsonb,
-			$5,
-			$6
+			$4,
+			$5::jsonb,
+			$3,
+			$6::jsonb,
+			$7,
+			$8
 		)
 		returning id::text
-	`, tenantContext.OrganizationID, input.RoundRobinID, input.MatchType, jsonb(rulePayload(input.MatchType, input.MatchValue, input.Match)), input.IsActive, input.Priority).Scan(&ruleID)
+	`, tenantContext.OrganizationID, input.RoundRobinID, input.MatchType, input.MatchValue, jsonb(normalizeObject(input.Match)), jsonb(rulePayload(input.MatchType, input.MatchValue, input.Match)), input.IsActive, input.Priority).Scan(&ruleID)
 	if err != nil {
+		return Rule{}, err
+	}
+
+	if err := repo.syncMetaFormConfigLinks(ctx, repo.db.Pool(), tenantContext.OrganizationID, input.RoundRobinID); err != nil {
 		return Rule{}, err
 	}
 
@@ -542,6 +558,12 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 		setClauses = append(setClauses, fmt.Sprintf("conditions = $%d::jsonb", len(args)))
 		args = append(args, matchType)
 		setClauses = append(setClauses, fmt.Sprintf("name = $%d", len(args)))
+		args = append(args, matchType)
+		setClauses = append(setClauses, fmt.Sprintf("match_type = $%d", len(args)))
+		args = append(args, matchValue)
+		setClauses = append(setClauses, fmt.Sprintf("match_value = $%d", len(args)))
+		args = append(args, jsonb(normalizeObject(match)))
+		setClauses = append(setClauses, fmt.Sprintf("match = $%d::jsonb", len(args)))
 	}
 	if input.Priority != nil {
 		args = append(args, *input.Priority)
@@ -565,6 +587,10 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 		return Rule{}, ErrRuleNotFound
 	}
 
+	if err := repo.syncMetaFormConfigLinks(ctx, repo.db.Pool(), tenantContext.OrganizationID, current.RoundRobinID); err != nil {
+		return Rule{}, err
+	}
+
 	return repo.getRule(ctx, tenantContext.OrganizationID, ruleID)
 }
 
@@ -578,6 +604,11 @@ func (repo Repository) DeleteRule(ctx context.Context, tenantContext tenant.Cont
 		return ErrRuleNotFound
 	}
 
+	current, err := repo.getRule(ctx, tenantContext.OrganizationID, ruleID)
+	if err != nil {
+		return err
+	}
+
 	commandTag, err := repo.db.Pool().Exec(ctx, `
 		delete from public.round_robin_rules
 		where organization_id = $1::uuid
@@ -588,6 +619,9 @@ func (repo Repository) DeleteRule(ctx context.Context, tenantContext tenant.Cont
 	}
 	if commandTag.RowsAffected() == 0 {
 		return ErrRuleNotFound
+	}
+	if err := repo.syncMetaFormConfigLinks(ctx, repo.db.Pool(), tenantContext.OrganizationID, current.RoundRobinID); err != nil {
+		return err
 	}
 	return nil
 }
@@ -717,9 +751,9 @@ func (repo Repository) listRules(ctx context.Context, organizationID string, rou
 		select
 			r.id::text,
 			r.round_robin_id::text,
-			coalesce(r.conditions->>'match_type', r.name, ''),
-			coalesce(r.conditions->>'match_value', ''),
-			coalesce(r.conditions->'match', '{}'::jsonb)::text,
+			coalesce(nullif(r.match_type, ''), r.conditions->>'match_type', r.name, ''),
+			coalesce(nullif(r.match_value, ''), r.conditions->>'match_value', ''),
+			coalesce(r.match, r.conditions->'match', '{}'::jsonb)::text,
 			coalesce(r.priority, 0),
 			coalesce(r.is_active, true),
 			r.created_at,
@@ -799,9 +833,9 @@ func (repo Repository) getRule(ctx context.Context, organizationID string, ruleI
 		select
 			r.id::text,
 			r.round_robin_id::text,
-			coalesce(r.conditions->>'match_type', r.name, ''),
-			coalesce(r.conditions->>'match_value', ''),
-			coalesce(r.conditions->'match', '{}'::jsonb)::text,
+			coalesce(nullif(r.match_type, ''), r.conditions->>'match_type', r.name, ''),
+			coalesce(nullif(r.match_value, ''), r.conditions->>'match_value', ''),
+			coalesce(r.match, r.conditions->'match', '{}'::jsonb)::text,
 			coalesce(r.priority, 0),
 			coalesce(r.is_active, true),
 			r.created_at,
@@ -953,6 +987,9 @@ func (repo Repository) insertRules(ctx context.Context, tx pgx.Tx, organizationI
 			insert into public.round_robin_rules (
 				organization_id,
 				round_robin_id,
+				match_type,
+				match_value,
+				match,
 				name,
 				conditions,
 				is_active,
@@ -962,15 +999,91 @@ func (repo Repository) insertRules(ctx context.Context, tx pgx.Tx, organizationI
 				$1::uuid,
 				$2::uuid,
 				$3,
-				$4::jsonb,
-				$5,
-				$6
+				$4,
+				$5::jsonb,
+				$3,
+				$6::jsonb,
+				$7,
+				$8
 			)
-		`, organizationID, roundRobinID, rule.MatchType, jsonb(rulePayload(rule.MatchType, rule.MatchValue, rule.Match)), rule.IsActive, priority); err != nil {
+		`, organizationID, roundRobinID, rule.MatchType, rule.MatchValue, jsonb(normalizeObject(rule.Match)), jsonb(rulePayload(rule.MatchType, rule.MatchValue, rule.Match)), rule.IsActive, priority); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (repo Repository) syncMetaFormConfigLinks(ctx context.Context, q queryer, organizationID string, roundRobinID string) error {
+	formIDs, err := repo.metaFormRuleValues(ctx, q, organizationID, roundRobinID)
+	if err != nil {
+		return err
+	}
+
+	if len(formIDs) == 0 {
+		_, err = q.Exec(ctx, `
+			update public.meta_form_configs
+			set round_robin_id = null,
+			    updated_at = now()
+			where organization_id = $1::uuid
+			  and round_robin_id = $2::uuid
+		`, organizationID, roundRobinID)
+		return err
+	}
+
+	if _, err := q.Exec(ctx, `
+		update public.meta_form_configs
+		set round_robin_id = null,
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and round_robin_id = $2::uuid
+		  and not (form_id = any($3::text[]))
+	`, organizationID, roundRobinID, formIDs); err != nil {
+		return err
+	}
+
+	_, err = q.Exec(ctx, `
+		update public.meta_form_configs
+		set round_robin_id = $2::uuid,
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and form_id = any($3::text[])
+	`, organizationID, roundRobinID, formIDs)
+	return err
+}
+
+func (repo Repository) metaFormRuleValues(ctx context.Context, q queryer, organizationID string, roundRobinID string) ([]string, error) {
+	rows, err := q.Query(ctx, `
+		select coalesce(nullif(match_value, ''), conditions->>'match_value', '')
+		from public.round_robin_rules
+		where organization_id = $1::uuid
+		  and round_robin_id = $2::uuid
+		  and coalesce(is_active, true) = true
+		  and coalesce(nullif(match_type, ''), conditions->>'match_type', name, '') = 'meta_form'
+	`, organizationID, roundRobinID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	seen := map[string]struct{}{}
+	formIDs := []string{}
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		for _, formID := range splitValues(raw) {
+			if _, exists := seen[formID]; exists {
+				continue
+			}
+			seen[formID] = struct{}{}
+			formIDs = append(formIDs, formID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return formIDs, nil
 }
 
 func (repo Repository) insertMembers(ctx context.Context, tx pgx.Tx, organizationID string, roundRobinID string, members []memberInput) ([]string, error) {
@@ -1003,6 +1116,7 @@ func (repo Repository) insertMembers(ctx context.Context, tx pgx.Tx, organizatio
 				insert into public.round_robin_members (
 					organization_id,
 					round_robin_id,
+					team_id,
 					user_id,
 					weight,
 					position,
@@ -1012,12 +1126,13 @@ func (repo Repository) insertMembers(ctx context.Context, tx pgx.Tx, organizatio
 					$1::uuid,
 					$2::uuid,
 					$3::uuid,
-					$4,
+					$4::uuid,
 					$5,
+					$6,
 					true
 				)
 				returning id::text
-			`, organizationID, roundRobinID, userID, member.Weight, nextPosition).Scan(&insertedID)
+			`, organizationID, roundRobinID, nullable(member.TeamID), userID, member.Weight, nextPosition).Scan(&insertedID)
 			if err != nil {
 				return nil, err
 			}
@@ -1043,16 +1158,19 @@ func (repo Repository) resolveMemberUserIDs(ctx context.Context, tx pgx.Tx, orga
 	rows, err := tx.Query(ctx, `
 		select tm.user_id::text
 		from public.team_members tm
-		join public.organization_members om
-		  on om.organization_id = tm.organization_id
-		 and om.user_id = tm.user_id
-		 and om.is_active = true
 		join public.users u
 		  on u.id = tm.user_id
-		 and u.is_active = true
+		 and coalesce(u.is_active, true) = true
+		left join public.organization_members om
+		  on om.organization_id = tm.organization_id
+		 and om.user_id = tm.user_id
 		where tm.organization_id = $1::uuid
 		  and tm.team_id = $2::uuid
 		  and coalesce(tm.is_active, true) = true
+		  and (
+			(om.id is not null and coalesce(om.is_active, false) = true)
+			or (u.organization_id = $1::uuid and coalesce(om.is_active, true) = true)
+		  )
 		order by tm.created_at asc
 	`, organizationID, *member.TeamID)
 	if err != nil {
@@ -1082,13 +1200,16 @@ func (repo Repository) validateUser(ctx context.Context, q queryer, organization
 	err := q.QueryRow(ctx, `
 		select exists (
 			select 1
-			from public.organization_members om
-			join public.users u
-			  on u.id = om.user_id
-			 and u.is_active = true
-			where om.organization_id = $1::uuid
-			  and om.user_id = $2::uuid
-			  and om.is_active = true
+			from public.users u
+			left join public.organization_members om
+			  on om.user_id = u.id
+			 and om.organization_id = $1::uuid
+			where u.id = $2::uuid
+			  and coalesce(u.is_active, true) = true
+			  and (
+				(om.id is not null and coalesce(om.is_active, false) = true)
+				or (u.organization_id = $1::uuid and coalesce(om.is_active, true) = true)
+			  )
 		)
 	`, organizationID, userID).Scan(&exists)
 	if err != nil {
@@ -1118,7 +1239,11 @@ func (repo Repository) checkConditionConflicts(ctx context.Context, q queryer, o
 		select
 			rrr.round_robin_id::text,
 			rr.name,
-			coalesce(rrr.conditions, '{}'::jsonb)::text
+			jsonb_build_object(
+				'match_type', coalesce(nullif(rrr.match_type, ''), rrr.conditions->>'match_type', rrr.name, ''),
+				'match_value', coalesce(nullif(rrr.match_value, ''), rrr.conditions->>'match_value', ''),
+				'match', coalesce(rrr.match, rrr.conditions->'match', '{}'::jsonb)
+			)::text
 		from public.round_robin_rules rrr
 		join public.round_robins rr
 		  on rr.organization_id = rrr.organization_id

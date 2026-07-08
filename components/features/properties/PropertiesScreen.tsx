@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { AppLayout } from '@/components/shared/layout/AppLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -13,9 +13,7 @@ import {
   Plus,
   Search,
   Loader2,
-  Star,
   Building2,
-  CheckCircle,
   LayoutGrid,
   AlertTriangle,
   RefreshCw,
@@ -24,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useInfiniteProperties, useUpdateProperty, useDeleteProperty, type Property, type PropertyFilters } from '@/hooks/use-properties';
 import { PropertyCard } from '@/components/features/properties/PropertyCard';
+import { PropertyHistoryDialog } from '@/components/features/properties/PropertyHistoryDialog';
 import { PropertyPreviewDialog } from '@/components/features/properties/PropertyPreviewDialog';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useAuth } from '@/contexts/AuthContext';
@@ -31,6 +30,7 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useUsers } from '@/hooks/use-users';
 import { usePropertyTypes } from '@/hooks/use-property-types';
 import { cn } from '@/lib/utils';
+import { propertiesAPI } from '@/lib/api/properties';
 import { getPropertySiteInfo } from '@/lib/api/property-support';
 import { toast } from 'sonner';
 
@@ -50,28 +50,26 @@ const GRID_OPTIONS = [
 const ALL_FILTER_VALUE = '__all__';
 const EMPTY_FILTERS: PropertyFilters = {};
 
+type KpiFilter = 'total' | 'sale' | 'rental' | 'available' | 'reserved' | 'sold' | 'rented' | 'private';
+
 type PropertyWithCreator = Property & {
   cadastrado_por?: string | null;
+  created_by?: string | null;
+  responsible_user_id?: string | null;
 };
 
-const normalizePropertyText = (value?: string | null) =>
-  (value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-
-const isRentalDeal = (dealType?: string | null) => {
-  const normalized = (dealType || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  return normalized === 'aluguel' || normalized === 'locacao' || normalized === 'venda e aluguel' || normalized === 'venda e locacao' || normalized === 'temporada';
-};
-
-const isRentalProperty = (property: Property) => {
-  const title = normalizePropertyText(property.title);
-  return (
-    isRentalDeal(property.tipo_de_negocio) ||
-    title.includes('locacao') ||
-    title.includes('aluguel') ||
-    title.includes('alugar') ||
-    (Number(property.valor_locacao) > 0 && property.preco == null)
-  );
-};
+const getStatsFilters = (current: PropertyFilters) => ({
+  tipo_de_imovel: current.tipo_de_imovel,
+  cidade: current.cidade,
+  bairro: current.bairro,
+  responsavel_id: current.responsavel_id,
+  quartos_min: current.quartos_min,
+  suites_min: current.suites_min,
+  banheiros_min: current.banheiros_min,
+  valor_min: current.valor_min,
+  valor_max: current.valor_max,
+  aceita_permuta: current.aceita_permuta === 'true' ? true : current.aceita_permuta === 'false' ? false : undefined,
+});
 
 export default function Properties() {
   const router = useRouter();
@@ -79,8 +77,11 @@ export default function Properties() {
   const [filters, setFilters] = useState<PropertyFilters>(EMPTY_FILTERS);
   const [previewProperty, setPreviewProperty] = useState<Property | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [historyProperty, setHistoryProperty] = useState<Property | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [gridCols, setGridCols] = useState('3');
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [activeKpiFilter, setActiveKpiFilter] = useState<KpiFilter>('total');
   const isMobile = useIsMobile();
   const { profile, organization, isSuperAdmin } = useAuth();
   const isAdmin = profile?.role === 'admin' || isSuperAdmin;
@@ -96,6 +97,7 @@ export default function Properties() {
 
   const debouncedSearch = useDebouncedValue(search.trim(), 350);
   const debouncedFilters = useDebouncedValue(filters, 350);
+  const statsFilters = useMemo(() => getStatsFilters(debouncedFilters), [debouncedFilters]);
 
   const {
     data,
@@ -110,6 +112,31 @@ export default function Properties() {
 
   const properties = data?.pages.flatMap(page => page.properties) || [];
   const totalCount = data?.pages[0]?.totalCount || 0;
+  const { data: statsData, isFetching: isStatsFetching } = useQuery({
+    queryKey: ['properties-stats', organizationId, debouncedSearch, statsFilters],
+    queryFn: async () => {
+      if (!organizationId) {
+        return {
+          total: 0,
+          sale: 0,
+          rental: 0,
+          available: 0,
+          reserved: 0,
+          sold: 0,
+          rented: 0,
+          private: 0,
+        };
+      }
+
+      return propertiesAPI.getPropertyStats(organizationId, {
+        search: debouncedSearch,
+        ...statsFilters,
+      });
+    },
+    enabled: !!organizationId,
+    staleTime: 1000 * 30,
+    placeholderData: keepPreviousData,
+  });
   const updateProperty = useUpdateProperty();
   const deleteProperty = useDeleteProperty();
 
@@ -121,9 +148,19 @@ export default function Properties() {
     await deleteProperty.mutateAsync(id);
   };
 
-  const handleMarkSold = async (id: string) => {
-    await updateProperty.mutateAsync({ id, status: 'vendido' });
-    toast.success('Imóvel marcado como vendido!');
+  const handleChangeStatus = async (id: string, status: 'ativo' | 'reservado' | 'vendido' | 'alugado') => {
+    await updateProperty.mutateAsync({
+      id,
+      status,
+      ...(status === 'ativo' ? { anunciar: true } : { anunciar: false }),
+    });
+    const labels = {
+      ativo: 'disponivel',
+      reservado: 'reservado',
+      vendido: 'vendido',
+      alugado: 'alugado',
+    };
+    toast.success(`Imovel marcado como ${labels[status]}!`);
   };
 
   const handleToggleVisibility = async (id: string, isPublic: boolean) => {
@@ -135,12 +172,18 @@ export default function Properties() {
   };
 
   const stats = {
-    total: totalCount,
-    destaque: properties.filter(p => p.destaque).length,
-    vendidos: properties.filter(p => p.status === 'vendido').length,
-    venda: properties.filter(p => p.tipo_de_negocio === 'Venda' && p.status !== 'vendido').length,
-    aluguel: properties.filter(isRentalProperty).length,
+    total: statsData?.total ?? totalCount,
+    venda: statsData?.sale ?? 0,
+    locacao: statsData?.rental ?? 0,
+    disponiveis: statsData?.available ?? 0,
+    reservados: statsData?.reserved ?? 0,
+    vendidos: statsData?.sold ?? 0,
+    alugados: statsData?.rented ?? 0,
+    privados: statsData?.private ?? 0,
   };
+  const isFilterSettling = search.trim() !== debouncedSearch || filters !== debouncedFilters;
+  const isListUpdating = Boolean(data) && !isFetchingNextPage && (isFetching || isFilterSettling);
+  const isFilterUpdating = isListUpdating || isStatsFetching || isFilterSettling;
   const propertyListErrorMessage = error instanceof Error ? error.message : '';
   const isMissingPropertiesSchema =
     propertyListErrorMessage.includes('properties') &&
@@ -156,6 +199,7 @@ export default function Properties() {
   };
 
   const updateFilter = (field: keyof PropertyFilters, value: string) => {
+    setActiveKpiFilter('total');
     setFilters((current) => ({
       ...current,
       [field]: value && value !== ALL_FILTER_VALUE ? value : undefined,
@@ -165,6 +209,29 @@ export default function Properties() {
   const clearFilters = () => {
     setSearch('');
     setFilters({});
+    setActiveKpiFilter('total');
+  };
+
+  const applyKpiFilter = (filter: KpiFilter) => {
+    setActiveKpiFilter(filter);
+    setFilters((current) => {
+      const next: PropertyFilters = {
+        ...current,
+        status: undefined,
+        tipo_de_negocio: undefined,
+        published_on_site: undefined,
+      };
+
+      if (filter === 'sale') next.tipo_de_negocio = 'Venda';
+      if (filter === 'rental') next.tipo_de_negocio = 'Aluguel';
+      if (filter === 'available') next.status = 'ativo';
+      if (filter === 'reserved') next.status = 'reservado';
+      if (filter === 'sold') next.status = 'vendido';
+      if (filter === 'rented') next.status = 'alugado';
+      if (filter === 'private') next.published_on_site = 'false';
+
+      return next;
+    });
   };
 
   const activeFilterCount = Object.values(filters).filter(Boolean).length + (search.trim() ? 1 : 0);
@@ -192,8 +259,33 @@ export default function Properties() {
     <AppLayout title="Imóveis">
       <div className="space-y-4 sm:space-y-6 animate-in">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div data-tour="properties-stats" className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1">
+            {[
+              { key: 'total' as const, label: 'Total', value: stats.total },
+              { key: 'sale' as const, label: 'À venda', value: stats.venda },
+              { key: 'rental' as const, label: 'Locação', value: stats.locacao },
+              { key: 'available' as const, label: 'Disponíveis', value: stats.disponiveis },
+              { key: 'reserved' as const, label: 'Reservados', value: stats.reservados },
+              { key: 'sold' as const, label: 'Vendidos', value: stats.vendidos },
+              { key: 'rented' as const, label: 'Alugados', value: stats.alugados },
+              { key: 'private' as const, label: 'Privados', value: stats.privados },
+            ].map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => applyKpiFilter(item.key)}
+                className={cn(
+                  "h-11 min-w-[92px] shrink-0 rounded-md border-0 bg-[var(--app-surface-soft)] px-3 text-left transition-colors hover:bg-[var(--app-surface-hover)]",
+                  activeKpiFilter === item.key && "bg-primary/10 text-primary"
+                )}
+              >
+                <span className="block text-base font-semibold leading-none">{item.value}</span>
+                <span className="mt-1 block truncate text-[11px] leading-none text-muted-foreground">{item.label}</span>
+              </button>
+            ))}
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             <Button
               data-tour="properties-filter-button"
               type="button"
@@ -204,7 +296,11 @@ export default function Properties() {
                 filtersOpen && "bg-[var(--app-surface-hover)] text-primary"
               )}
             >
-              <SlidersHorizontal className="h-4 w-4" />
+              {isFilterUpdating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <SlidersHorizontal className="h-4 w-4" />
+              )}
               {activeFilterCount > 0 ? `Filtros (${activeFilterCount})` : 'Filtros'}
             </Button>
             {activeFilterCount > 0 && (
@@ -218,8 +314,7 @@ export default function Properties() {
                 Limpar
               </Button>
             )}
-          </div>
-          <div className="flex gap-2 w-full sm:w-auto">
+
             {!isMobile && (
               <div className="flex items-center gap-2">
                 <LayoutGrid className="h-4 w-4 text-muted-foreground" />
@@ -242,83 +337,34 @@ export default function Properties() {
           </div>
         </div>
 
-        {/* Stats */}
-        <div data-tour="properties-stats" className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 sm:gap-3">
-          <Card className="app-card">
-            <CardContent className="min-h-[64px] p-2.5 sm:p-3 flex items-center gap-2.5">
-              <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                <Building2 className="h-4 w-4 text-primary" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-lg sm:text-xl font-bold leading-none">{stats.total}</p>
-                <p className="mt-1 text-xs text-muted-foreground truncate">Total</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="app-card">
-            <CardContent className="min-h-[64px] p-2.5 sm:p-3 flex items-center gap-2.5">
-              <div className="h-8 w-8 rounded-lg bg-warning/10 flex items-center justify-center flex-shrink-0">
-                <Star className="h-4 w-4 text-warning" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-lg sm:text-xl font-bold leading-none">{stats.destaque}</p>
-                <p className="mt-1 text-xs text-muted-foreground truncate">Destaque</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="app-card">
-            <CardContent className="min-h-[64px] p-2.5 sm:p-3 flex items-center gap-2.5">
-              <div className="h-8 w-8 rounded-lg bg-success/10 flex items-center justify-center flex-shrink-0">
-                <CheckCircle className="h-4 w-4 text-success" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-lg sm:text-xl font-bold leading-none">{stats.vendidos}</p>
-                <p className="mt-1 text-xs text-muted-foreground truncate">Vendidos</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="app-card">
-            <CardContent className="min-h-[64px] p-2.5 sm:p-3 flex items-center gap-2.5">
-              <div className="h-8 w-8 rounded-lg bg-chart-1/10 flex items-center justify-center flex-shrink-0">
-                <Building2 className="h-4 w-4 text-chart-1" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-lg sm:text-xl font-bold leading-none">{stats.venda}</p>
-                <p className="mt-1 text-xs text-muted-foreground truncate">À venda</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="app-card col-span-2 sm:col-span-1">
-            <CardContent className="min-h-[64px] p-2.5 sm:p-3 flex items-center gap-2.5">
-              <div className="h-8 w-8 rounded-lg bg-chart-2/10 flex items-center justify-center flex-shrink-0">
-                <Building2 className="h-4 w-4 text-chart-2" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-lg sm:text-xl font-bold leading-none">{stats.aluguel}</p>
-                <p className="mt-1 text-xs text-muted-foreground truncate">Aluguel</p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
         {filtersOpen && (
-          <section data-tour="properties-filters-panel" className="app-card p-4">
-            <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="relative z-[90] h-0">
+            <section
+              data-tour="properties-filters-panel"
+              aria-label="Filtros dos imóveis"
+              className="absolute right-0 top-2 flex max-h-[calc(100dvh-280px)] w-[min(720px,calc(100vw-24px))] max-w-full flex-col overflow-hidden rounded-[8px] border border-white/[0.055] bg-[var(--app-surface-solid)] shadow-[0_18px_50px_rgba(0,0,0,0.22)] sm:max-h-[min(620px,calc(100dvh-132px))]"
+            >
+              <div className="flex shrink-0 items-center justify-between gap-3 px-4 py-3">
               <div>
                 <h2 className="flex items-center gap-2 text-sm font-semibold">
                   <SlidersHorizontal className="h-4 w-4 text-primary" />
                   Filtros
                 </h2>
-                <p className="mt-1 text-xs text-muted-foreground">Refine a carteira sem sair da página.</p>
               </div>
               {activeFilterCount > 0 && (
                 <Button type="button" variant="ghost" size="sm" onClick={clearFilters}>
                   Limpar
                 </Button>
               )}
+              {isFilterUpdating && (
+                <span className="ml-auto flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                  Atualizando
+                </span>
+              )}
             </div>
 
-            <div className="space-y-4">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pb-4">
               <div className="space-y-2">
                 <Label>Pesquisar</Label>
                 <div className="relative">
@@ -346,6 +392,22 @@ export default function Properties() {
                       <SelectItem value="Aluguel">Locação</SelectItem>
                       <SelectItem value="Venda e Aluguel">Venda e Locação</SelectItem>
                       <SelectItem value="Temporada">Temporada</SelectItem>
+                      <SelectItem value="Lançamento">Lançamento</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Status</Label>
+                  <Select value={filters.status || ALL_FILTER_VALUE} onValueChange={(value) => updateFilter('status', value)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL_FILTER_VALUE}>Todos</SelectItem>
+                      <SelectItem value="ativo">Disponíveis</SelectItem>
+                      <SelectItem value="reservado">Reservados</SelectItem>
+                      <SelectItem value="vendido">Vendidos</SelectItem>
+                      <SelectItem value="alugado">Alugados</SelectItem>
+                      <SelectItem value="inativo">Inativos</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -422,10 +484,17 @@ export default function Properties() {
                 </div>
               </div>
             </div>
-          </section>
+            </section>
+          </div>
         )}
 
         <div data-tour="properties-list" className="space-y-4">
+            {isListUpdating && (
+              <div className="app-card-soft flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                Atualizando imóveis...
+              </div>
+            )}
             {error && isMissingPropertiesSchema && (
               <div className="app-card-soft flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-start gap-3">
@@ -477,19 +546,32 @@ export default function Properties() {
             {/* Properties Grid */}
             <div className={`grid ${getGridClasses()} gap-4`}>
               {properties.map((property) => {
-                const propertyCreatorId = (property as PropertyWithCreator).cadastrado_por;
-                const canEditProperty = isAdmin || propertyCreatorId === profile?.id;
+                const propertyWithOwner = property as PropertyWithCreator;
+                const activeUserId = profile?.id;
+                const ownerIds = [
+                  propertyWithOwner.cadastrado_por,
+                  propertyWithOwner.created_by,
+                  propertyWithOwner.responsible_user_id,
+                ].filter(Boolean);
+                const canEditProperty =
+                  isAdmin ||
+                  organization?.property_edit_policy === 'everyone' ||
+                  (!!activeUserId && ownerIds.includes(activeUserId));
                 return (
                   <PropertyCard
                     key={property.id}
                     property={property}
                     onEdit={openEdit}
                     onDelete={handleDelete}
-                    onMarkSold={handleMarkSold}
+                    onChangeStatus={handleChangeStatus}
                     onToggleVisibility={handleToggleVisibility}
                     onPreview={(p) => {
                       setPreviewProperty(p);
                       setPreviewOpen(true);
+                    }}
+                    onHistory={(p) => {
+                      setHistoryProperty(p);
+                      setHistoryOpen(true);
                     }}
                     formatPrice={formatPrice}
                     canEdit={canEditProperty}
@@ -527,6 +609,11 @@ export default function Properties() {
           open={previewOpen}
           onOpenChange={setPreviewOpen}
           formatPrice={formatPrice}
+        />
+        <PropertyHistoryDialog
+          property={historyProperty}
+          open={historyOpen}
+          onOpenChange={setHistoryOpen}
         />
       </div>
     </AppLayout>
