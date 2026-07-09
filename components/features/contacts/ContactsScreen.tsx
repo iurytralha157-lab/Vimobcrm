@@ -48,6 +48,7 @@ import {
   ChevronsRight,
   Trophy,
   XCircle,
+  Loader2,
 } from "lucide-react";
 import { CreateLeadDialog } from "@/components/features/leads/CreateLeadDialog";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -89,11 +90,22 @@ function SortIcon({
   return sortDir === "asc" ? <ArrowUp className="h-3 w-3 ml-1" /> : <ArrowDown className="h-3 w-3 ml-1" />;
 }
 
-function LeadCountBadge({ isLoading, totalCount }: { isLoading: boolean; totalCount: number }) {
+function LeadCountBadge({
+  isLoading,
+  totalCount,
+  className,
+}: {
+  isLoading: boolean;
+  totalCount: number;
+  className?: string;
+}) {
   return (
     <div
       data-tour="contacts-count"
-      className="flex h-9 shrink-0 items-center rounded-md bg-[var(--app-surface-soft)] px-3 text-sm font-semibold text-[var(--app-text-primary)]"
+      className={cn(
+        "flex h-9 shrink-0 items-center rounded-md bg-[var(--app-surface-soft)] px-3 text-sm font-semibold text-[var(--app-text-primary)]",
+        className,
+      )}
       aria-label="Total de leads filtrados"
     >
       {isLoading ? "..." : totalCount.toLocaleString("pt-BR")} leads
@@ -160,6 +172,7 @@ export default function Contacts() {
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [shiftPressed, setShiftPressed] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const openLeadDetails = (contactId: string) => setSelectedContactId(contactId);
 
   useEffect(() => {
     const handleKeyDown = (e: globalThis.KeyboardEvent) => {
@@ -223,11 +236,12 @@ export default function Contacts() {
   const { data: users = [] } = useOrganizationUsers();
   const { data: tags = [] } = useTags();
 
-  const { data: selectedLead } = useLead(selectedContactId);
+  const { data: selectedLead, isFetching: isFetchingSelectedLead } = useLead(selectedContactId);
   const deleteLead = useDeleteLead();
 
   const totalCount = contacts[0]?.total_count || 0;
   const totalPages = Math.ceil(totalCount / pageSize);
+  const isOpeningLeadDetails = Boolean(selectedContactId && !selectedLead && isFetchingSelectedLead);
 
   const sourceLabels: Record<string, string> = {
     manual: "Manual",
@@ -406,89 +420,99 @@ export default function Contacts() {
     <AppLayout title="Contatos">
       <div className="space-y-6 animate-in relative">
         {isMobile ? (
-          <div className="flex gap-2 items-center w-full">
-            <Button
-              data-tour="contacts-new"
-              size="icon"
-              onClick={() => setIsCreateDialogOpen(true)}
-              className="shrink-0"
-              title="Novo Lead"
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-            <div data-tour="contacts-filters" className="min-w-0 flex-1">
-              <SharedFilters
-                datePreset={datePreset}
-                onDatePresetChange={setDatePreset}
-                customDateRange={customDateRange}
-                onCustomDateRangeChange={setCustomDateRange}
-                teamId={sharedFilters.teamId}
-                onTeamChange={setTeamId}
-                userId={selectedAssignee}
-                onUserChange={setSelectedAssignee}
-                source={selectedSource}
-                onSourceChange={setSelectedSource}
-                campaignId={sharedFilters.campaignId}
-                onCampaignChange={setCampaignId}
-                adSetId={sharedFilters.adSetId}
-                onAdSetChange={setAdSetId}
-                adId={sharedFilters.adId}
-                onAdChange={setAdId}
-                tagId={selectedTag}
-                onTagChange={setSelectedTag}
-                dealStatus={effectiveDealStatus}
-                onDealStatusChange={(value) => {
-                  setLostLeadsView(false);
-                  setSelectedDealStatus(value);
-                }}
-                searchQuery={search}
-                onSearchChange={setSearch}
-                onClear={handleClearFilters}
-                hasActiveFilters={hasSharedActiveFilters || selectedPipeline !== "all" || selectedStage !== "all" || lostLeadsView}
-                dynamicSources={dynamicSources}
-                campaigns={campaigns}
-                adSets={adSets}
-                ads={ads}
-                tags={allTagsFromHook}
-                isLoadingSources={isLoadingSources}
-                isLoadingCampaigns={isLoadingCampaigns}
-                isLoadingAdSets={isLoadingAdSets}
-                isLoadingAds={isLoadingAds}
-                datePosition="end"
-                tourPrefix="contacts"
-              />
+          <div className="app-toolbar flex flex-col gap-2 p-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <div data-tour="contacts-filters" className="min-w-0 flex-1">
+                <SharedFilters
+                  datePreset={datePreset}
+                  onDatePresetChange={setDatePreset}
+                  customDateRange={customDateRange}
+                  onCustomDateRangeChange={setCustomDateRange}
+                  teamId={sharedFilters.teamId}
+                  onTeamChange={setTeamId}
+                  userId={selectedAssignee}
+                  onUserChange={setSelectedAssignee}
+                  source={selectedSource}
+                  onSourceChange={setSelectedSource}
+                  campaignId={sharedFilters.campaignId}
+                  onCampaignChange={setCampaignId}
+                  adSetId={sharedFilters.adSetId}
+                  onAdSetChange={setAdSetId}
+                  adId={sharedFilters.adId}
+                  onAdChange={setAdId}
+                  tagId={selectedTag}
+                  onTagChange={setSelectedTag}
+                  dealStatus={effectiveDealStatus}
+                  onDealStatusChange={(value) => {
+                    setLostLeadsView(false);
+                    setSelectedDealStatus(value);
+                  }}
+                  searchQuery={search}
+                  onSearchChange={setSearch}
+                  onClear={handleClearFilters}
+                  hasActiveFilters={hasSharedActiveFilters || selectedPipeline !== "all" || selectedStage !== "all" || lostLeadsView}
+                  dynamicSources={dynamicSources}
+                  campaigns={campaigns}
+                  adSets={adSets}
+                  ads={ads}
+                  tags={allTagsFromHook}
+                  isLoadingSources={isLoadingSources}
+                  isLoadingCampaigns={isLoadingCampaigns}
+                  isLoadingAdSets={isLoadingAdSets}
+                  isLoadingAds={isLoadingAds}
+                  datePosition="end"
+                  tourPrefix="contacts"
+                />
+              </div>
+
+              <Button
+                data-tour="contacts-new"
+                size="sm"
+                onClick={() => setIsCreateDialogOpen(true)}
+                className="h-9 shrink-0 gap-1.5 px-3 font-medium"
+                title="Novo Lead"
+              >
+                <Plus className="h-4 w-4" />
+                <span>Novo</span>
+              </Button>
             </div>
 
-            <Button
-              data-tour="contacts-lost"
-              variant={lostLeadsView ? "destructive" : "outline"}
-              size="icon"
-              className="shrink-0"
-              onClick={handleToggleLostLeadsView}
-              title={lostLeadsView ? "Voltar para todos os leads" : "Leads perdidos"}
-            >
-              <XCircle className="h-4 w-4" />
-            </Button>
+            <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
+              <Button
+                data-tour="contacts-lost"
+                variant={lostLeadsView ? "destructive" : "outline"}
+                size="sm"
+                className={cn(
+                  "h-9 min-w-0 justify-center gap-1.5 border-0 bg-[var(--app-surface-soft)] px-2 text-xs font-medium shadow-none hover:bg-[var(--app-surface-hover)]",
+                  lostLeadsView && "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+                )}
+                onClick={handleToggleLostLeadsView}
+                title={lostLeadsView ? "Voltar para todos os leads" : "Leads perdidos"}
+              >
+                <XCircle className="h-4 w-4 shrink-0" />
+                <span className="truncate">Perdidos</span>
+              </Button>
 
-            <LeadCountBadge isLoading={isLoading} totalCount={totalCount} />
+              <LeadCountBadge isLoading={isLoading} totalCount={totalCount} className="justify-center px-2 text-xs" />
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button data-tour="contacts-import" variant="outline" size="icon" className="shrink-0">
-                  <Upload className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent data-tour="contacts-import-menu" align="end" className="w-48">
-                <DropdownMenuItem data-tour="contacts-import-action" onClick={() => setImportDialogOpen(true)} className="py-2.5">
-                  <Upload className="h-4 w-4 mr-2 text-primary" />
-                  Importar CSV/Excel
-                </DropdownMenuItem>
-                <DropdownMenuItem data-tour="contacts-export-action" onClick={handleExport} disabled={isExporting || totalCount === 0} className="py-2.5">
-                  <Download className="h-4 w-4 mr-2 text-primary" />
-                  {isExporting ? "Exportando..." : "Exportar"}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button data-tour="contacts-import" variant="outline" size="icon" className="h-9 w-9 shrink-0 border-0 bg-[var(--app-surface-soft)] shadow-none hover:bg-[var(--app-surface-hover)]">
+                    <Upload className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent data-tour="contacts-import-menu" align="end" className="w-48">
+                  <DropdownMenuItem data-tour="contacts-import-action" onClick={() => setImportDialogOpen(true)} className="py-2.5">
+                    <Upload className="h-4 w-4 mr-2 text-primary" />
+                    Importar CSV/Excel
+                  </DropdownMenuItem>
+                  <DropdownMenuItem data-tour="contacts-export-action" onClick={handleExport} disabled={isExporting || totalCount === 0} className="py-2.5">
+                    <Download className="h-4 w-4 mr-2 text-primary" />
+                    {isExporting ? "Exportando..." : "Exportar"}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
         ) : (
           <div className="app-toolbar overflow-hidden px-3 py-1.5">
@@ -498,7 +522,7 @@ export default function Contacts() {
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button data-tour="contacts-import" variant="outline" size="sm" className="h-9 gap-2 border-0 bg-transparent font-medium hover:bg-white/[0.055]">
+                    <Button data-tour="contacts-import" variant="outline" size="sm" className="h-9 gap-2 border-0 bg-[var(--app-surface-soft)] font-medium shadow-none hover:bg-[var(--app-surface-hover)]">
                       <Upload className="h-4 w-4" />
                       <span className="hidden xl:inline">Importar / Exportar</span>
                       <ChevronDown className="h-4 w-4 opacity-50" />
@@ -526,7 +550,7 @@ export default function Contacts() {
                   variant={lostLeadsView ? "destructive" : "outline"}
                   size="sm"
                   onClick={handleToggleLostLeadsView}
-                  className="h-9 gap-2 border-0 bg-white/[0.035] font-medium shadow-none hover:bg-white/[0.055]"
+                  className="h-9 gap-2 border-0 bg-[var(--app-surface-soft)] font-medium shadow-none hover:bg-[var(--app-surface-hover)]"
                 >
                   <XCircle className="h-4 w-4" />
                   <span>Leads perdidos</span>
@@ -650,7 +674,7 @@ export default function Contacts() {
                       key={contact.id}
                       contact={contact}
                       sourceLabels={sourceLabels}
-                      onViewDetails={() => setSelectedContactId(contact.id)}
+                      onViewDetails={() => openLeadDetails(contact.id)}
                       onDelete={canDeleteLeads ? () => setDeleteContactId(contact.id) : undefined}
                     />
                   ))}
@@ -721,7 +745,7 @@ export default function Contacts() {
                             isWon &&
                               "bg-[var(--lead-status-won-card)] hover:bg-[var(--lead-status-won-card-hover)]",
                           )}
-                          onClick={() => setSelectedContactId(contact.id)}
+                          onClick={() => openLeadDetails(contact.id)}
                         >
                           {canDeleteLeads && (
                             <TableCell onClick={(e) => e.stopPropagation()}>
@@ -771,7 +795,7 @@ export default function Contacts() {
                             </div>
                           </TableCell>
 
-                          <TableCell onClick={() => setSelectedContactId(contact.id)}>
+                          <TableCell onClick={() => openLeadDetails(contact.id)}>
                             {lostLeadsView ? (
                               <p
                                 className="max-w-[260px] text-sm font-medium text-red-700 dark:text-red-300"
@@ -803,7 +827,7 @@ export default function Contacts() {
                             )}
                           </TableCell>
 
-                          <TableCell onClick={() => setSelectedContactId(contact.id)}>
+                          <TableCell onClick={() => openLeadDetails(contact.id)}>
                             <div className="space-y-1">
                               {contact.stage_name && (
                                 <Badge
@@ -817,7 +841,7 @@ export default function Contacts() {
                             </div>
                           </TableCell>
 
-                          <TableCell onClick={() => setSelectedContactId(contact.id)}>
+                          <TableCell onClick={() => openLeadDetails(contact.id)}>
                             {contact.assignee_name ? (
                               <div className="flex min-w-0 items-center gap-2">
                                 <Avatar className="h-6 w-6">
@@ -835,7 +859,7 @@ export default function Contacts() {
                             )}
                           </TableCell>
 
-                          <TableCell className="hidden 2xl:table-cell" onClick={() => setSelectedContactId(contact.id)}>
+                          <TableCell className="hidden 2xl:table-cell" onClick={() => openLeadDetails(contact.id)}>
                             <div className="flex flex-wrap gap-1">
                               {contact.tags?.slice(0, 2).map((tag) => (
                                 <Badge
@@ -859,7 +883,7 @@ export default function Contacts() {
                             </div>
                           </TableCell>
 
-                          <TableCell onClick={() => setSelectedContactId(contact.id)}>
+                          <TableCell onClick={() => openLeadDetails(contact.id)}>
                             <div className="text-sm">
                               <p>{format(new Date(contact.created_at), "dd/MM/yyyy", { locale: ptBR })}</p>
                               <p className="text-xs text-muted-foreground">
@@ -876,7 +900,7 @@ export default function Contacts() {
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => setSelectedContactId(contact.id)}>
+                                <DropdownMenuItem onClick={() => openLeadDetails(contact.id)}>
                                   <ExternalLink className="h-4 w-4 mr-2" />
                                   Ver detalhes
                                 </DropdownMenuItem>
@@ -1025,6 +1049,13 @@ export default function Contacts() {
                 <ChevronsRight className="h-4 w-4" />
               </Button>
             </div>
+          </div>
+        )}
+
+        {isOpeningLeadDetails && (
+          <div className="fixed bottom-5 left-1/2 z-[80] flex -translate-x-1/2 items-center gap-2 rounded-[8px] bg-[var(--app-surface-solid)] px-3 py-2 text-xs font-medium text-[var(--app-text-secondary)] shadow-[0_14px_40px_rgba(0,0,0,0.18)]">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            Abrindo lead...
           </div>
         )}
 

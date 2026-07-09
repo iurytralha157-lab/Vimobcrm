@@ -312,18 +312,11 @@ func (repo Repository) RetryMediaDownload(ctx context.Context, tenantContext ten
 }
 
 func (repo Repository) GetHistoryAccess(ctx context.Context, tenantContext tenant.Context, filter HistoryAccessFilter) (HistoryAccessResponse, error) {
-	conversationID := filter.ConversationID
-	if conversationID == "" && filter.LeadID != "" {
-		found, err := repo.findConversationForLead(ctx, tenantContext, filter.LeadID)
-		if err != nil {
-			return HistoryAccessResponse{}, err
-		}
-		if found == nil {
-			return HistoryAccessResponse{Messages: []Message{}}, nil
-		}
-		conversationID = found.ID
+	if filter.LeadID != "" {
+		return repo.getLeadHistoryAccess(ctx, tenantContext, filter)
 	}
 
+	conversationID := filter.ConversationID
 	conversation, err := repo.GetConversation(ctx, tenantContext, conversationID)
 	if err != nil {
 		return HistoryAccessResponse{}, err
@@ -339,6 +332,131 @@ func (repo Repository) GetHistoryAccess(ctx context.Context, tenantContext tenan
 	}
 
 	return HistoryAccessResponse{Conversation: &conversation, Messages: page.Messages}, nil
+}
+
+func (repo Repository) getLeadHistoryAccess(ctx context.Context, tenantContext tenant.Context, filter HistoryAccessFilter) (HistoryAccessResponse, error) {
+	leadID, ok := normalizeUUID(filter.LeadID)
+	if !ok {
+		return HistoryAccessResponse{}, ErrInvalidReference
+	}
+	if err := repo.validateLead(ctx, tenantContext.OrganizationID, leadID); err != nil {
+		return HistoryAccessResponse{}, err
+	}
+
+	limit := 50
+	if filter.AllMessages {
+		limit = 500
+	}
+
+	conversations, err := repo.listLeadHistoryConversations(ctx, tenantContext.OrganizationID, leadID)
+	if err != nil {
+		return HistoryAccessResponse{}, err
+	}
+
+	messages, err := repo.listLeadHistoryMessages(ctx, tenantContext.OrganizationID, leadID, limit)
+	if err != nil {
+		return HistoryAccessResponse{}, err
+	}
+
+	var conversation *Conversation
+	if len(conversations) > 0 {
+		conversation = &conversations[0]
+	}
+
+	return HistoryAccessResponse{
+		Conversation:  conversation,
+		Conversations: conversations,
+		Messages:      messages,
+	}, nil
+}
+
+func (repo Repository) listLeadHistoryConversations(ctx context.Context, organizationID string, leadID string) ([]Conversation, error) {
+	rows, err := repo.db.Pool().Query(ctx, `
+		select `+conversationSelectFields()+`
+		from public.whatsapp_conversations wc
+		left join public.whatsapp_sessions ws on ws.id = wc.session_id
+		left join public.leads l on l.id = wc.lead_id
+		left join public.pipelines pipeline on pipeline.id = l.pipeline_id
+		left join public.stages stage on stage.id = l.stage_id
+		where wc.organization_id = $1::uuid
+		  and wc.deleted_at is null
+		  and (
+		    wc.lead_id = $2::uuid
+		    or exists (
+		      select 1
+		      from public.whatsapp_messages wm
+		      where wm.organization_id = $1::uuid
+		        and wm.conversation_id = wc.id
+		        and wm.lead_id = $2::uuid
+		    )
+		  )
+		order by wc.last_message_at desc nulls last, wc.created_at desc
+	`, organizationID, leadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	conversations := []Conversation{}
+	for rows.Next() {
+		conversation, err := scanConversation(rows)
+		if err != nil {
+			return nil, err
+		}
+		conversations = append(conversations, conversation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return conversations, nil
+}
+
+func (repo Repository) listLeadHistoryMessages(ctx context.Context, organizationID string, leadID string, limit int) ([]Message, error) {
+	rows, err := repo.db.Pool().Query(ctx, `
+		select `+messageSelectFields()+`
+		from public.whatsapp_messages wm
+		where wm.organization_id = $1::uuid
+		  and (
+		    wm.lead_id = $2::uuid
+		    or exists (
+		      select 1
+		      from public.whatsapp_conversations wc
+		      where wc.organization_id = $1::uuid
+		        and wc.id = wm.conversation_id
+		        and wc.deleted_at is null
+		        and wc.lead_id = $2::uuid
+		    )
+		  )
+		order by coalesce(wm.sent_at, wm.created_at) desc, wm.id desc
+		limit $3::integer
+	`, organizationID, leadID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	descMessages := []Message{}
+	for rows.Next() {
+		message, err := scanMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		descMessages = append(descMessages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	messages := make([]Message, 0, len(descMessages))
+	for index := len(descMessages) - 1; index >= 0; index-- {
+		messages = append(messages, descMessages[index])
+	}
+	if err := repo.hydrateMessageMediaURLs(ctx, messages); err != nil {
+		return nil, err
+	}
+
+	return messages, nil
 }
 
 func (repo Repository) resolveSendSession(ctx context.Context, tenantContext tenant.Context, conversation Conversation, preferredSessionID string) (Session, error) {

@@ -173,8 +173,9 @@ type MessagePage struct {
 }
 
 type HistoryAccessResponse struct {
-	Conversation *Conversation `json:"conversation,omitempty"`
-	Messages     []Message     `json:"messages"`
+	Conversation  *Conversation  `json:"conversation,omitempty"`
+	Conversations []Conversation `json:"conversations,omitempty"`
+	Messages      []Message      `json:"messages"`
 }
 
 type Envelope[T any] struct {

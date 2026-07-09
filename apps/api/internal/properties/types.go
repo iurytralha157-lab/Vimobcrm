@@ -53,22 +53,34 @@ type HistoryEvent struct {
 type propertyRequest map[string]any
 
 type ListFilter struct {
-	Limit           int
-	Offset          int
-	Search          string
-	Status          string
-	DealType        string
-	PropertyType    string
-	City            string
-	Neighborhood    string
-	ResponsibleID   string
-	BedroomsMin     int
-	SuitesMin       int
-	BathroomsMin    int
-	PriceMin        float64
-	PriceMax        float64
-	AcceptsExchange *bool
-	PublishedOnSite *bool
+	Limit            int
+	Offset           int
+	Search           string
+	Status           string
+	DealType         string
+	PropertyType     string
+	City             string
+	Neighborhood     string
+	ResponsibleID    string
+	BedroomsMin      int
+	SuitesMin        int
+	BathroomsMin     int
+	PriceMin         float64
+	PriceMax         float64
+	AcceptsExchange  *bool
+	AcceptsFinancing *bool
+	PublishedOnSite  *bool
+	OwnerID          string
+	CondominiumID    string
+	Furniture        string
+	Exclusive        *bool
+	HasSign          *bool
+	Featured         *bool
+	ParkingSpacesMin int
+	UsableAreaMin    float64
+	UsableAreaMax    float64
+	TotalAreaMin     float64
+	TotalAreaMax     float64
 }
 
 type fieldKind string
@@ -224,9 +236,6 @@ func buildWritableColumns() map[string]fieldDef {
 	for _, def := range writableFields {
 		columns[def.column] = def
 	}
-	for key, def := range compatibilityColumns {
-		columns[key] = def
-	}
 	return columns
 }
 
@@ -251,22 +260,48 @@ func ParseListFilter(values url.Values) (ListFilter, error) {
 		City:          trimMax(values.Get("cidade"), 120),
 		Neighborhood:  trimMax(values.Get("bairro"), 120),
 		ResponsibleID: strings.TrimSpace(values.Get("responsavel_id")),
+		OwnerID:       strings.TrimSpace(values.Get("owner_id")),
+		CondominiumID: strings.TrimSpace(values.Get("condominium_id")),
+		Furniture:     trimMax(values.Get("mobilia"), 80),
 	}
 
 	if filter.ResponsibleID != "" && !isUUID(filter.ResponsibleID) {
 		return ListFilter{}, fmt.Errorf("%w: responsavel_id is invalid", ErrInvalidInput)
 	}
+	if filter.OwnerID != "" && !isUUID(filter.OwnerID) {
+		return ListFilter{}, fmt.Errorf("%w: owner_id is invalid", ErrInvalidInput)
+	}
+	if filter.CondominiumID != "" && !isUUID(filter.CondominiumID) {
+		return ListFilter{}, fmt.Errorf("%w: condominium_id is invalid", ErrInvalidInput)
+	}
 
 	filter.BedroomsMin = parseOptionalPositiveInt(values.Get("quartos_min"))
 	filter.SuitesMin = parseOptionalPositiveInt(values.Get("suites_min"))
 	filter.BathroomsMin = parseOptionalPositiveInt(values.Get("banheiros_min"))
+	filter.ParkingSpacesMin = parseOptionalPositiveInt(values.Get("vagas_min"))
 	filter.PriceMin = parseOptionalPositiveFloat(values.Get("valor_min"))
 	filter.PriceMax = parseOptionalPositiveFloat(values.Get("valor_max"))
+	filter.UsableAreaMin = parseOptionalPositiveFloat(values.Get("area_util_min"))
+	filter.UsableAreaMax = parseOptionalPositiveFloat(values.Get("area_util_max"))
+	filter.TotalAreaMin = parseOptionalPositiveFloat(values.Get("area_total_min"))
+	filter.TotalAreaMax = parseOptionalPositiveFloat(values.Get("area_total_max"))
 	if acceptsExchange, ok := parseOptionalBool(values.Get("aceita_permuta")); ok {
 		filter.AcceptsExchange = &acceptsExchange
 	}
+	if acceptsFinancing, ok := parseOptionalBool(values.Get("aceita_financiamento")); ok {
+		filter.AcceptsFinancing = &acceptsFinancing
+	}
 	if publishedOnSite, ok := parseOptionalBool(values.Get("published_on_site")); ok {
 		filter.PublishedOnSite = &publishedOnSite
+	}
+	if exclusive, ok := parseOptionalBool(values.Get("exclusividade")); ok {
+		filter.Exclusive = &exclusive
+	}
+	if hasSign, ok := parseOptionalBool(values.Get("placa_no_local")); ok {
+		filter.HasSign = &hasSign
+	}
+	if featured, ok := parseOptionalBool(values.Get("destaque")); ok {
+		filter.Featured = &featured
 	}
 
 	return filter, nil
@@ -321,35 +356,6 @@ func sanitizePayload(request propertyRequest) (propertyRequest, error) {
 		}
 		out[def.column] = normalized
 
-		switch key {
-		case "cadastrado_por", "responsible_user_id":
-			out["responsible_user_id"] = normalized
-			out["cadastrado_por"] = normalized
-		case "tipo_de_imovel", "tipo":
-			out["tipo"] = normalized
-			out["tipo_de_imovel"] = normalized
-		case "anunciar", "published_on_site":
-			out["published_on_site"] = normalized
-			out["anunciar"] = normalized
-		case "arquivos", "documents":
-			out["documents"] = normalized
-			out["arquivos"] = normalized
-		case "destaque", "is_featured":
-			out["is_featured"] = normalized
-			out["destaque"] = normalized
-		case "fotos", "image_urls":
-			out["image_urls"] = normalized
-			out["fotos"] = normalized
-		case "owner_media_source", "origin_media":
-			out["origin_media"] = normalized
-			out["owner_media_source"] = normalized
-		case "public_address_visibility", "address_visibility":
-			out["address_visibility"] = normalized
-			out["public_address_visibility"] = normalized
-		case "tipo_de_negocio", "finalidade":
-			out["finalidade"] = normalized
-			out["tipo_de_negocio"] = normalized
-		}
 	}
 
 	if _, hasImages := out["image_urls"]; !hasImages && mainImage != nil {
@@ -376,7 +382,6 @@ func applyPropertyAvailabilityContract(out propertyRequest) {
 	switch status {
 	case "reserved", "sold", "rented":
 		out["published_on_site"] = false
-		out["anunciar"] = false
 	}
 }
 

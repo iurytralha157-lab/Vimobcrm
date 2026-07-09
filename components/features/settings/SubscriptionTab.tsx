@@ -70,6 +70,7 @@ const isCheckoutFailureResult = (result: ChargeResult | null): result is Checkou
 export function SubscriptionTab() {
   const { organization, profile, refreshProfile, isSuperAdmin } = useAuth();
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [data, setData] = useState<SubscriptionData | null>(null);
   const [history, setHistory] = useState<PaymentHistoryItem[]>([]);
@@ -90,10 +91,20 @@ export function SubscriptionTab() {
   });
 
   useEffect(() => {
+    let isMounted = true;
+
     const fetchData = async () => {
-      if (!organization?.id) return;
+      setLoading(true);
+      setErrorMessage(null);
+
+      if (!organization?.id) {
+        if (isMounted) setLoading(false);
+        return;
+      }
+
       try {
         const overview = await settingsAPI.getSubscription(organization.id);
+        if (!isMounted) return;
         setData({ org: overview.org, plan: overview.plan });
         setAvailablePlans(overview.availablePlans || []);
         setHistory(overview.history || []);
@@ -112,9 +123,18 @@ export function SubscriptionTab() {
             telefone: overview.org.telefone || overview.org.whatsapp || '',
           });
         }
-      } catch (error) { console.error(error); } finally { setLoading(false); }
+      } catch (error) {
+        console.error(error);
+        if (isMounted) setErrorMessage(getErrorMessage(error));
+      } finally {
+        if (isMounted) setLoading(false);
+      }
     };
     fetchData();
+
+    return () => {
+      isMounted = false;
+    };
   }, [organization?.id]);
 
   const handleCheckout = async (type: CheckoutBillingType) => {
@@ -236,7 +256,36 @@ export function SubscriptionTab() {
     }
   };
 
-  if (loading) return <Skeleton className="h-[400px] w-full" />;
+  if (loading) {
+    return (
+      <div className="app-card space-y-4 p-5">
+        <Skeleton className="h-6 w-40" />
+        <Skeleton className="h-28 w-full" />
+        <Skeleton className="h-28 w-full" />
+      </div>
+    );
+  }
+
+  if (!organization?.id) {
+    return (
+      <div className="app-card p-5 text-sm text-muted-foreground">
+        Carregando dados da organização...
+      </div>
+    );
+  }
+
+  if (errorMessage) {
+    return (
+      <Card className="app-card">
+        <CardContent className="flex flex-col gap-3 p-5 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <span>Não foi possível carregar os dados de pagamento agora.</span>
+          <Button variant="secondary" size="sm" onClick={() => window.location.reload()}>
+            Tentar novamente
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
 
   const org = data?.org;
   const plan = data?.plan;

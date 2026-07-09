@@ -19,6 +19,7 @@ import { useOrganizationModules, type ModuleName } from '@/hooks/use-organizatio
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useUserAccessScope } from '@/hooks/use-user-access-scope';
 import { canUseFinancialModule } from '@/lib/financial-access';
+import { canManageOrganization } from '@/lib/access/organization';
 import {
   Menu,
   LayoutDashboard,
@@ -199,11 +200,11 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
     id: activeOrganizationId,
     name: organization?.name || activeOrganizationMembership?.organization_name,
   });
-  const canAccessAdminItems =
-    isSuperAdmin ||
-    profile?.role === 'admin' ||
-    activeMemberRole === 'admin' ||
-    activeMemberRole === 'owner';
+  const canAccessAdminItems = canManageOrganization({
+    isSuperAdmin,
+    profileRole: profile?.role,
+    memberRole: activeMemberRole,
+  });
 
   const navItems = useMemo(() => {
     const canAccessAsTeamLeader = (path?: string) =>

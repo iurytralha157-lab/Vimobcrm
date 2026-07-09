@@ -103,10 +103,10 @@ function getOwnerPropertyCount(owner: PropertyOwner) {
   return owner.property_count ?? owner.properties?.length ?? 0;
 }
 
-function CounterBadge({ count }: { count: number }) {
+function CounterBadge({ count, loading = false }: { count: number; loading?: boolean }) {
   return (
-    <span className="ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-medium text-primary-foreground">
-      {count}
+    <span className="ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-[6px] bg-primary px-1.5 text-[11px] font-medium text-primary-foreground">
+      {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : count}
     </span>
   );
 }
@@ -216,6 +216,11 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
   }, [owners, search, canSeeOwnerContact]);
 
   const selectedPropertySet = useMemo(() => new Set(selectedPropertyIds), [selectedPropertyIds]);
+  const pageTitle = useMemo(() => {
+    if (tab === 'condominiums') return 'Condomínios';
+    if (tab === 'owners') return 'Proprietários';
+    return 'Localidades';
+  }, [tab]);
 
   const handleCreateCity = async () => {
     if (!cityForm.name.trim()) {
@@ -399,9 +404,9 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
   };
 
   return (
-    <AppLayout title="Localidades">
+    <AppLayout title={pageTitle}>
       <div className="space-y-4 animate-in">
-        <div className="relative max-w-xs">
+        <div className="relative w-full sm:max-w-xs">
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Buscar..."
@@ -412,24 +417,24 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
         </div>
 
         <Tabs value={tab} onValueChange={(value) => setTab(value as PropertyLocationsTab)}>
-          <TabsList className="grid w-full grid-cols-2 border-0 bg-muted/40 p-1 shadow-none md:grid-cols-4">
-            <TabsTrigger value="cities" className="border-0 shadow-none">
-              Cidades <CounterBadge count={cities.length} />
+          <TabsList className="grid w-full grid-cols-2 rounded-[8px] border-0 bg-muted/40 p-1 shadow-none md:grid-cols-4">
+            <TabsTrigger value="cities" className="h-8 rounded-[6px] border-0 shadow-none data-[state=active]:shadow-none">
+              Cidades <CounterBadge count={cities.length} loading={loadingCities} />
             </TabsTrigger>
-            <TabsTrigger value="neighborhoods" className="border-0 shadow-none">
-              Bairros <CounterBadge count={neighborhoods.length} />
+            <TabsTrigger value="neighborhoods" className="h-8 rounded-[6px] border-0 shadow-none data-[state=active]:shadow-none">
+              Bairros <CounterBadge count={neighborhoods.length} loading={loadingNeighborhoods} />
             </TabsTrigger>
-            <TabsTrigger value="condominiums" className="border-0 shadow-none">
-              Condomínios <CounterBadge count={condominiums.length} />
+            <TabsTrigger value="condominiums" className="h-8 rounded-[6px] border-0 shadow-none data-[state=active]:shadow-none">
+              Condomínios <CounterBadge count={condominiums.length} loading={loadingCondominiums} />
             </TabsTrigger>
-            <TabsTrigger value="owners" className="border-0 shadow-none">
-              Proprietários <CounterBadge count={owners.length} />
+            <TabsTrigger value="owners" className="h-8 rounded-[6px] border-0 shadow-none data-[state=active]:shadow-none">
+              Proprietários <CounterBadge count={owners.length} loading={loadingOwners} />
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value="cities" className="mt-4">
             <section className="rounded-[8px] bg-card p-4">
-              <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="mb-4 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
                 <h2 className="text-base font-medium">Cidades cadastradas</h2>
                 <Dialog open={cityDialog} onOpenChange={setCityDialog}>
                   <DialogTrigger asChild>
@@ -475,7 +480,8 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
               ) : filteredCities.length === 0 ? (
                 <EmptyState text="Nenhuma cidade cadastrada" />
               ) : (
-                <Table className="[&_tr]:border-border/40">
+                <div className="overflow-x-auto">
+                <Table className="min-w-[520px] [&_tr]:border-border/40">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Cidade</TableHead>
@@ -487,7 +493,7 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
                     {filteredCities.map((city) => (
                       <TableRow key={city.id}>
                         <TableCell className="font-medium">{city.name}</TableCell>
-                        <TableCell>{city.uf ? <span className="rounded-full bg-muted px-2 py-1 text-xs">{city.uf}</span> : '-'}</TableCell>
+                        <TableCell>{city.uf ? <span className="rounded-[6px] bg-muted px-2 py-1 text-xs">{city.uf}</span> : '-'}</TableCell>
                         <TableCell>
                           <div className="flex justify-end gap-1">
                             <Button variant="ghost" size="sm" onClick={() => openAssignmentDialog(cityAssignment(city))}>
@@ -503,6 +509,7 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               )}
             </section>
           </TabsContent>
@@ -510,10 +517,10 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
           <TabsContent value="neighborhoods" className="mt-4">
             <section className="rounded-[8px] bg-card p-4">
               <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
-                <div className="flex items-center gap-3">
+                <div className="flex w-full flex-col items-start gap-3 sm:flex-row sm:items-center md:w-auto">
                   <h2 className="text-base font-medium">Bairros</h2>
                   <Select value={selectedCityId || "__all__"} onValueChange={(value) => setSelectedCityId(value === "__all__" ? "" : value)}>
-                    <SelectTrigger className="h-9 w-48 border-0 shadow-none">
+                    <SelectTrigger className="h-9 w-full border-0 shadow-none sm:w-48">
                       <SelectValue placeholder="Filtrar por cidade" />
                     </SelectTrigger>
                     <SelectContent>
@@ -570,7 +577,8 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
               ) : filteredNeighborhoods.length === 0 ? (
                 <EmptyState text="Nenhum bairro cadastrado" />
               ) : (
-                <Table className="[&_tr]:border-border/40">
+                <div className="overflow-x-auto">
+                <Table className="min-w-[560px] [&_tr]:border-border/40">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Bairro</TableHead>
@@ -598,6 +606,7 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               )}
             </section>
           </TabsContent>
@@ -605,10 +614,10 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
           <TabsContent value="condominiums" className="mt-4">
             <section className="rounded-[8px] bg-card p-4">
               <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
-                <div className="flex items-center gap-3">
+                <div className="flex w-full flex-col items-start gap-3 sm:flex-row sm:items-center md:w-auto">
                   <h2 className="text-base font-medium">Condomínios</h2>
                   <Select value={selectedNeighborhoodId || "__all__"} onValueChange={(value) => setSelectedNeighborhoodId(value === "__all__" ? "" : value)}>
-                    <SelectTrigger className="h-9 w-48 border-0 shadow-none">
+                    <SelectTrigger className="h-9 w-full border-0 shadow-none sm:w-48">
                       <SelectValue placeholder="Filtrar por bairro" />
                     </SelectTrigger>
                     <SelectContent>
@@ -712,7 +721,8 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
               ) : filteredCondominiums.length === 0 ? (
                 <EmptyState text="Nenhum condomínio cadastrado" />
               ) : (
-                <Table className="[&_tr]:border-border/40">
+                <div className="overflow-x-auto">
+                <Table className="min-w-[760px] [&_tr]:border-border/40">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Condomínio</TableHead>
@@ -746,13 +756,14 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               )}
             </section>
           </TabsContent>
 
           <TabsContent value="owners" className="mt-4">
             <section className="rounded-[8px] bg-card p-4">
-              <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="mb-4 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
                 <div>
                   <h2 className="text-base font-medium">Proprietários</h2>
                   <p className="text-xs text-muted-foreground">Edite dados e vincule imóveis ao proprietário.</p>
@@ -769,7 +780,7 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
                 <EmptyState text="Nenhum proprietário cadastrado" />
               ) : (
                 <div className="overflow-x-auto">
-                  <Table className="[&_tr]:border-border/40">
+                  <Table className="min-w-[760px] [&_tr]:border-border/40">
                     <TableHeader>
                       <TableRow>
                         <TableHead>Proprietário</TableHead>
@@ -817,7 +828,7 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
                                   type="button"
                                   variant="ghost"
                                   size="sm"
-                                  className="h-7 rounded-full bg-muted px-2.5 text-xs font-medium hover:bg-muted/80"
+                                  className="h-7 rounded-[6px] bg-muted px-2.5 text-xs font-medium hover:bg-muted/80"
                                   onClick={() => setExpandedOwnerId((current) => current === owner.id ? null : owner.id)}
                                   disabled={propertyCount === 0}
                                 >
@@ -846,7 +857,7 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
                                           <div className="flex flex-wrap items-center gap-2 text-sm">
                                             <span className="font-medium">{property.code || 'Sem código'}</span>
                                             {property.tipo_de_negocio ? (
-                                              <span className="rounded-full bg-muted px-2 py-0.5 text-xs">{property.tipo_de_negocio}</span>
+                                              <span className="rounded-[6px] bg-muted px-2 py-0.5 text-xs">{property.tipo_de_negocio}</span>
                                             ) : null}
                                           </div>
                                           <p className="mt-0.5 truncate text-xs text-muted-foreground">{property.title || 'Imóvel sem título'}</p>
@@ -874,7 +885,7 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
         </Tabs>
 
         <Dialog open={ownerDialog} onOpenChange={setOwnerDialog}>
-          <DialogContent className="max-w-2xl border-0">
+          <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto border-0">
             <DialogHeader>
               <DialogTitle>{editingOwner ? 'Editar proprietário' : 'Novo proprietário'}</DialogTitle>
             </DialogHeader>
@@ -905,7 +916,7 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
         </Dialog>
 
         <Dialog open={assignmentOpen} onOpenChange={setAssignmentOpen}>
-          <DialogContent className="max-w-3xl border-0">
+          <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto border-0">
             <DialogHeader>
               <DialogTitle>Vincular imóveis</DialogTitle>
             </DialogHeader>
@@ -952,7 +963,7 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
                             <span>{property.code || 'Sem código'}</span>
-                            <span className="rounded-full bg-background/70 px-2 py-0.5 text-xs">{property.tipo_de_negocio || property.finalidade || 'Imóvel'}</span>
+                            <span className="rounded-[6px] bg-background/70 px-2 py-0.5 text-xs">{property.tipo_de_negocio || property.finalidade || 'Imóvel'}</span>
                           </div>
                           <p className="truncate text-xs text-muted-foreground">{property.title || property.tipo_de_imovel || property.tipo_de_negocio || 'Imóvel sem título'}</p>
                           <p className="truncate text-xs text-muted-foreground">{[property.bairro, property.cidade].filter(Boolean).join(' - ') || 'Localização não informada'}</p>

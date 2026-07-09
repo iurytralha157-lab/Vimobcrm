@@ -1,4 +1,4 @@
-import { useCallback, useState, type ChangeEvent, type CSSProperties } from 'react';
+import { useCallback, useState, type ChangeEvent, type CSSProperties, type ReactNode } from 'react';
 import Image from 'next/image';
 import {
   DragDropContext,
@@ -6,11 +6,13 @@ import {
   Droppable,
   type DropResult,
 } from '@hello-pangea/dnd';
-import { Eye, EyeOff, GripVertical, Image as ImageIcon, Loader2, Star, Upload, X } from 'lucide-react';
+import { Eye, EyeOff, GripVertical, Image as ImageIcon, Loader2, Maximize2, Star, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { uploadPropertyImage } from '@/lib/api/property-images';
 import { cn } from '@/lib/utils';
 
@@ -27,6 +29,39 @@ interface ImageUploaderProps {
 const MAX_IMAGE_SIZE_MB = 10;
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
+interface MediaActionButtonProps {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+  className?: string;
+}
+
+function MediaActionButton({ label, onClick, children, className }: MediaActionButtonProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="secondary"
+          size="icon"
+          aria-label={label}
+          className={cn(
+            'h-8 w-8 rounded-[6px] border-0 bg-white/95 text-zinc-900 shadow-sm hover:bg-white',
+            'dark:bg-zinc-950/90 dark:text-zinc-50 dark:hover:bg-zinc-900',
+            className,
+          )}
+          onClick={onClick}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="text-xs">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -42,6 +77,7 @@ export function ImageUploader({
 }: ImageUploaderProps) {
   const [uploadingMain, setUploadingMain] = useState(false);
   const [uploadingGallery, setUploadingGallery] = useState(false);
+  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
 
   const uploadFile = useCallback(
     async (file: File): Promise<string | null> => {
@@ -186,7 +222,8 @@ export function ImageUploader({
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <TooltipProvider delayDuration={100}>
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <div className="space-y-3">
         <Label className="text-base font-medium">Imagem Principal</Label>
         <p className="text-sm text-muted-foreground">
@@ -194,7 +231,7 @@ export function ImageUploader({
         </p>
 
         {mainImage ? (
-          <div className="relative w-full min-h-[200px] rounded-lg overflow-hidden border-2 border-primary group">
+          <div className="group relative h-[220px] w-full overflow-hidden rounded-[8px] border border-primary/55 bg-[var(--app-surface-soft)]">
             <Image
               src={mainImage}
               alt="Imagem principal"
@@ -203,15 +240,23 @@ export function ImageUploader({
               className="object-cover"
               unoptimized
             />
-            <div className="absolute top-2 left-2 bg-primary text-primary-foreground text-xs px-2 py-1 rounded font-medium flex items-center gap-1">
+            <div className="absolute left-2 top-2 flex items-center gap-1 rounded-[6px] bg-primary px-2 py-1 text-xs font-medium text-primary-foreground shadow-sm">
               <Star className="h-3 w-3 fill-current" />
               Principal
             </div>
-            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-              <label className="cursor-pointer">
-                <Button type="button" variant="secondary" size="sm" asChild>
-                  <span>Trocar imagem</span>
-                </Button>
+            <div className="absolute right-2 top-2 flex items-center gap-1.5">
+              <MediaActionButton label="Ver imagem inteira" onClick={() => setPreviewImage({ url: mainImage, title: 'Imagem principal' })}>
+                <Maximize2 className="h-4 w-4" />
+              </MediaActionButton>
+              <label
+                className={cn(
+                  'inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-[6px] bg-white/95 px-2 text-xs font-medium text-zinc-900 shadow-sm hover:bg-white',
+                  'dark:bg-zinc-950/90 dark:text-zinc-50 dark:hover:bg-zinc-900',
+                )}
+                title="Trocar imagem principal"
+              >
+                <Upload className="h-3.5 w-3.5" />
+                Trocar
                 <input
                   type="file"
                   className="hidden"
@@ -220,9 +265,9 @@ export function ImageUploader({
                   disabled={uploadingMain}
                 />
               </label>
-              <Button type="button" variant="destructive" size="sm" onClick={removeMainImage}>
-                Remover
-              </Button>
+              <MediaActionButton label="Remover imagem principal" onClick={removeMainImage} className="text-primary hover:text-primary">
+                <X className="h-4 w-4" />
+              </MediaActionButton>
             </div>
           </div>
         ) : (
@@ -326,15 +371,16 @@ export function ImageUploader({
                           >
                             <div
                               {...draggableProvided.dragHandleProps}
-                              className="absolute top-1 left-1 z-10 p-1 rounded bg-black/50 cursor-grab active:cursor-grabbing"
+                              className="absolute left-1.5 top-1.5 z-10 rounded-[6px] bg-zinc-950/75 p-1 text-white shadow-sm cursor-grab active:cursor-grabbing"
+                              title="Arrastar foto"
                             >
                               <GripVertical className="h-4 w-4 text-white" />
                             </div>
-                            <div className="absolute top-1 right-1 z-10 px-1.5 py-0.5 rounded bg-black/60 text-white text-xs font-medium">
+                            <div className="absolute right-1.5 top-1.5 z-10 rounded-[6px] bg-zinc-950/75 px-1.5 py-0.5 text-xs font-medium text-white shadow-sm">
                               {index + 1}
                             </div>
                             {isHiddenFromSite && (
-                              <div className="absolute bottom-1 left-1 z-10 rounded bg-zinc-950/75 px-1.5 py-0.5 text-[10px] font-medium uppercase text-white">
+                              <div className="absolute left-1.5 top-8 z-10 rounded-[6px] bg-white/95 px-1.5 py-0.5 text-[10px] font-medium uppercase text-zinc-900 shadow-sm dark:bg-zinc-950/90 dark:text-zinc-50">
                                 Interna
                               </div>
                             )}
@@ -346,40 +392,21 @@ export function ImageUploader({
                               className="object-cover"
                               unoptimized
                             />
-                            <div className="absolute inset-0 bg-black/50 sm:opacity-0 sm:group-hover:opacity-100 opacity-100 transition-opacity flex items-end justify-center gap-1 p-2">
-                              <Button
-                                type="button"
-                                variant="secondary"
-                                size="sm"
-                                className="h-7 text-xs"
-                                onClick={() => promoteToMain(url)}
-                                title="Promover para principal"
-                              >
-                                <Star className="h-3 w-3 mr-1" />
-                                Principal
-                              </Button>
+                            <div className="absolute inset-x-1.5 bottom-1.5 flex justify-end gap-1.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
+                              <MediaActionButton label="Ver foto" onClick={() => setPreviewImage({ url, title: `Foto ${index + 1}` })}>
+                                <Maximize2 className="h-4 w-4" />
+                              </MediaActionButton>
+                              <MediaActionButton label="Definir como principal" onClick={() => promoteToMain(url)}>
+                                <Star className="h-4 w-4" />
+                              </MediaActionButton>
                               {onHiddenSiteImagesChange && (
-                                <Button
-                                  type="button"
-                                  variant="secondary"
-                                  size="icon"
-                                  className="h-7 w-7"
-                                  onClick={() => toggleSiteVisibility(url)}
-                                  title={isHiddenFromSite ? 'Publicar no site' : 'Ocultar do site'}
-                                >
-                                  {isHiddenFromSite ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                                </Button>
+                                <MediaActionButton label={isHiddenFromSite ? 'Publicar no site' : 'Ocultar do site'} onClick={() => toggleSiteVisibility(url)}>
+                                  {isHiddenFromSite ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                                </MediaActionButton>
                               )}
-                              <Button
-                                type="button"
-                                variant="destructive"
-                                size="icon"
-                                className="h-7 w-7"
-                                onClick={() => removeFromGallery(url)}
-                                title="Remover"
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </Button>
+                              <MediaActionButton label="Remover foto" onClick={() => removeFromGallery(url)} className="text-primary hover:text-primary">
+                                <X className="h-4 w-4" />
+                              </MediaActionButton>
                             </div>
                           </div>
                           );
@@ -403,5 +430,26 @@ export function ImageUploader({
         )}
       </div>
     </div>
+
+    <Dialog open={Boolean(previewImage)} onOpenChange={(open) => !open && setPreviewImage(null)}>
+      <DialogContent className="flex h-[85vh] w-[min(960px,calc(100vw-2rem))] max-w-[960px] flex-col overflow-hidden p-0">
+        <DialogHeader className="shrink-0 border-b px-4 py-3">
+          <DialogTitle className="text-base font-medium">{previewImage?.title || 'Visualizar foto'}</DialogTitle>
+        </DialogHeader>
+        <div className="relative min-h-0 flex-1 bg-zinc-950">
+          {previewImage && (
+            <Image
+              src={previewImage.url}
+              alt={previewImage.title}
+              fill
+              sizes="min(960px, 100vw)"
+              className="object-contain"
+              unoptimized
+            />
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+    </TooltipProvider>
   );
 }

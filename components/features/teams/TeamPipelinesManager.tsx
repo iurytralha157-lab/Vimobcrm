@@ -99,7 +99,7 @@ export function TeamPipelinesManager() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Teams Panel */}
-        <Card>
+        <Card className="rounded-lg border-0 bg-[var(--app-surface)] shadow-none">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Users className="h-5 w-5" />
@@ -128,8 +128,8 @@ export function TeamPipelinesManager() {
                       setDialogOpen(true);
                     }}
                     className={cn(
-                      "p-4 rounded-lg border cursor-pointer transition-all hover:border-primary/50 hover:bg-accent/50",
-                      isSelected && "border-primary bg-accent"
+                      "p-4 rounded-lg cursor-pointer bg-[var(--app-surface-soft)] transition-colors hover:bg-[var(--app-surface-hover)]",
+                      isSelected && "bg-primary/10"
                     )}
                   >
                     <div className="flex items-start justify-between">
@@ -169,12 +169,12 @@ export function TeamPipelinesManager() {
 
                       <div className="flex items-center gap-2">
                         {teamPipelines.length > 0 ? (
-                          <Badge variant="secondary" className="gap-1">
+                          <Badge variant="secondary" className="gap-1 rounded-md border-0">
                             <LinkIcon className="h-3 w-3" />
                             {teamPipelines.length}
                           </Badge>
                         ) : (
-                          <Badge variant="outline" className="text-muted-foreground">
+                          <Badge variant="secondary" className="rounded-md border-0 text-muted-foreground">
                             Sem pipelines
                           </Badge>
                         )}
@@ -182,9 +182,9 @@ export function TeamPipelinesManager() {
                     </div>
 
                     {teamPipelines.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t">
+                      <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-[var(--app-border-strong)]">
                         {teamPipelines.map((p) => (
-                          <Badge key={p?.id} variant="outline" className="text-xs">
+                          <Badge key={p?.id} variant="secondary" className="rounded-md border-0 text-xs">
                             <GitBranch className="h-3 w-3 mr-1" />
                             {p?.name}
                           </Badge>
@@ -199,7 +199,7 @@ export function TeamPipelinesManager() {
         </Card>
 
         {/* Pipelines Overview */}
-        <Card>
+        <Card className="rounded-lg border-0 bg-[var(--app-surface)] shadow-none">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <GitBranch className="h-5 w-5" />
@@ -223,8 +223,7 @@ export function TeamPipelinesManager() {
                   <div
                     key={pipeline.id}
                     className={cn(
-                      "p-4 rounded-lg border",
-                      !hasTeams && "border-dashed"
+                      "p-4 rounded-lg bg-[var(--app-surface-soft)]"
                     )}
                   >
                     <div className="flex items-start justify-between">
@@ -233,14 +232,14 @@ export function TeamPipelinesManager() {
                           <GitBranch className="h-4 w-4 text-muted-foreground" />
                           <span className="font-medium">{pipeline.name}</span>
                           {pipeline.is_default && (
-                            <Badge variant="secondary" className="text-xs">Padrão</Badge>
+                            <Badge variant="secondary" className="rounded-md border-0 text-xs">Padrão</Badge>
                           )}
                         </div>
 
                         {hasTeams ? (
                           <div className="flex flex-wrap gap-1.5 mt-2">
                             {pipelineTeams.map((team) => (
-                              <Badge key={team?.id} variant="outline" className="text-xs gap-1">
+                              <Badge key={team?.id} variant="secondary" className="rounded-md border-0 text-xs gap-1">
                                 <Users className="h-3 w-3" />
                                 {team?.name}
                               </Badge>
@@ -255,7 +254,7 @@ export function TeamPipelinesManager() {
                       </div>
 
                       {hasTeams && (
-                        <Badge className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                        <Badge className="rounded-md border-0 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
                           Restrita
                         </Badge>
                       )}
@@ -270,7 +269,7 @@ export function TeamPipelinesManager() {
 
       {/* Pipeline Assignment Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="w-[90%] sm:max-w-md sm:w-full rounded-lg">
+        <DialogContent className="w-[90%] sm:max-w-md sm:w-full rounded-lg border-0 shadow-none max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Users className="h-5 w-5" />
@@ -291,8 +290,8 @@ export function TeamPipelinesManager() {
                   <label
                     key={pipeline.id}
                     className={cn(
-                      "flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all hover:bg-accent",
-                      isAssigned && "border-primary bg-primary/5"
+                      "flex items-center justify-between p-3 rounded-lg cursor-pointer bg-[var(--app-surface-soft)] transition-colors hover:bg-[var(--app-surface-hover)]",
+                      isAssigned && "bg-primary/10"
                     )}
                   >
                     <div className="flex items-center gap-3">
@@ -326,7 +325,7 @@ export function TeamPipelinesManager() {
           </ScrollArea>
 
           <div className="flex gap-2 pt-4">
-            <Button variant="outline" className="w-full rounded-xl" onClick={() => setDialogOpen(false)}>
+            <Button variant="secondary" className="w-full rounded-lg border-0 shadow-none" onClick={() => setDialogOpen(false)}>
               Fechar
             </Button>
           </div>

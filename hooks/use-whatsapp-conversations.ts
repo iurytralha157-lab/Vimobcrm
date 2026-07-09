@@ -112,6 +112,24 @@ type SendWhatsAppMessageResult = Record<string, unknown> & {
   conversationId: string;
 };
 
+const getConversationLeadId = (conversation?: WhatsAppConversation | null) =>
+  conversation?.lead_id || conversation?.lead?.id || null;
+
+const matchesWhatsAppMessagesQuery = (
+  query: Query,
+  conversationId?: string | null,
+  leadId?: string | null,
+) => {
+  if (!Array.isArray(query.queryKey) || query.queryKey[0] !== "whatsapp-messages") {
+    return false;
+  }
+
+  return Boolean(
+    (conversationId && query.queryKey[1] === conversationId) ||
+      (leadId && query.queryKey[2] === leadId),
+  );
+};
+
 export function useWhatsAppConversations(
   sessionId?: string,
   filters?: ConversationFilters,
@@ -261,13 +279,11 @@ export function useSendWhatsAppMessage() {
     },
     onMutate: async (variables) => {
       const conversationId = variables.conversation.id;
+      const leadId = getConversationLeadId(variables.conversation);
       const optimisticId = createClientId('message');
       variables._optimisticId = optimisticId;
 
-      const messagesPredicate = (q: Query) =>
-        Array.isArray(q.queryKey) &&
-        q.queryKey[0] === "whatsapp-messages" &&
-        q.queryKey[1] === conversationId;
+      const messagesPredicate = (q: Query) => matchesWhatsAppMessagesQuery(q, conversationId, leadId);
       await queryClient.cancelQueries({ predicate: messagesPredicate });
 
       const previousMessages =
@@ -337,16 +353,14 @@ export function useSendWhatsAppMessage() {
     onSuccess: (result, variables, context) => {
       const conversationId = result?.conversationId || variables.conversation.id;
       const originalConversationId = context?.conversationId || variables.conversation.id;
+      const leadId = getConversationLeadId(variables.conversation);
       const messageKeys = new Set([conversationId, originalConversationId]);
 
       if (context?.optimisticId) {
         for (const cacheConversationId of messageKeys) {
           queryClient.setQueriesData<WhatsAppMessage[]>(
             {
-              predicate: (q) =>
-                Array.isArray(q.queryKey) &&
-                q.queryKey[0] === "whatsapp-messages" &&
-                q.queryKey[1] === cacheConversationId,
+              predicate: (q) => matchesWhatsAppMessagesQuery(q, cacheConversationId, leadId),
             },
             (old) => old?.map((msg) =>
               msg.id === context.optimisticId
@@ -369,25 +383,29 @@ export function useSendWhatsAppMessage() {
         predicate: (q) =>
           Array.isArray(q.queryKey) &&
           q.queryKey[0] === "whatsapp-messages" &&
-          messageKeys.has(q.queryKey[1] as string),
+          (
+            messageKeys.has(q.queryKey[1] as string) ||
+            Boolean(leadId && q.queryKey[2] === leadId)
+          ),
       });
       if (typeof window === "undefined") {
         refreshMessages();
       } else {
         window.setTimeout(refreshMessages, 4_000);
       }
+      if (leadId && profile?.organization_id) {
+        queryClient.invalidateQueries({ queryKey: ["lead-messages", profile.organization_id, leadId] });
+      }
     },
     onError: (error: Error, variables, context) => {
       const errorMessage = error.message || "";
       const sentButNotPersisted = errorMessage.includes("Mensagem enviada no WhatsApp, mas");
+      const leadId = getConversationLeadId(variables.conversation);
 
       if (sentButNotPersisted && context?.optimisticId) {
         queryClient.setQueriesData<WhatsAppMessage[]>(
           {
-            predicate: (q) =>
-              Array.isArray(q.queryKey) &&
-              q.queryKey[0] === "whatsapp-messages" &&
-              q.queryKey[1] === variables.conversation.id,
+            predicate: (q) => matchesWhatsAppMessagesQuery(q, variables.conversation.id, leadId),
           },
           (old) => old?.map((msg) =>
             msg.id === context.optimisticId
@@ -398,10 +416,7 @@ export function useSendWhatsAppMessage() {
       } else if (context?.previousMessages) {
         queryClient.setQueriesData(
           {
-            predicate: (q) =>
-              Array.isArray(q.queryKey) &&
-              q.queryKey[0] === "whatsapp-messages" &&
-              q.queryKey[1] === variables.conversation.id,
+            predicate: (q) => matchesWhatsAppMessagesQuery(q, variables.conversation.id, leadId),
           },
           context.previousMessages,
         );
@@ -560,45 +575,52 @@ export function useWhatsAppRealtimeConversations(enabled: boolean = true, access
     const invalidateConversations = () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-conversations"] });
     };
-    const invalidateMessages = (conversationId?: unknown) => {
-      if (typeof conversationId !== "string" || !conversationId) {
+    const normalizeRealtimeId = (value: unknown) => typeof value === "string" && value ? value : null;
+    const invalidateMessages = (conversationId?: unknown, leadId?: unknown) => {
+      const scopedConversationId = normalizeRealtimeId(conversationId);
+      const scopedLeadId = normalizeRealtimeId(leadId);
+
+      if (!scopedConversationId && !scopedLeadId) {
         queryClient.invalidateQueries({ queryKey: ["whatsapp-messages"] });
         return;
       }
 
       queryClient.invalidateQueries({
-        predicate: (q) =>
-          Array.isArray(q.queryKey) &&
-          q.queryKey[0] === "whatsapp-messages" &&
-          q.queryKey[1] === conversationId,
+        predicate: (q) => matchesWhatsAppMessagesQuery(q, scopedConversationId, scopedLeadId),
       });
-      queryClient.invalidateQueries({ queryKey: ["whatsapp-messages-paginated", conversationId] });
+      if (scopedConversationId) {
+        queryClient.invalidateQueries({ queryKey: ["whatsapp-messages-paginated", scopedConversationId] });
+      }
+      if (scopedLeadId) {
+        queryClient.invalidateQueries({ queryKey: ["lead-messages", organizationId, scopedLeadId] });
+      }
     };
     const messageRefreshTimers = new Map<string, number>();
-    const scheduleInvalidateMessages = (conversationId?: unknown) => {
-      if (typeof conversationId !== "string" || !conversationId) {
-        invalidateMessages(conversationId);
+    const scheduleInvalidateMessages = (conversationId?: unknown, leadId?: unknown) => {
+      const scopedConversationId = normalizeRealtimeId(conversationId);
+      const scopedLeadId = normalizeRealtimeId(leadId);
+      if (!scopedConversationId && !scopedLeadId) {
+        invalidateMessages(conversationId, leadId);
         return;
       }
 
-      const existingTimer = messageRefreshTimers.get(conversationId);
+      const timerKey = `${scopedConversationId || "conversation:none"}:${scopedLeadId || "lead:none"}`;
+      const existingTimer = messageRefreshTimers.get(timerKey);
       if (existingTimer) window.clearTimeout(existingTimer);
       const timer = window.setTimeout(() => {
-        messageRefreshTimers.delete(conversationId);
-        invalidateMessages(conversationId);
+        messageRefreshTimers.delete(timerKey);
+        invalidateMessages(scopedConversationId, scopedLeadId);
       }, 900);
-      messageRefreshTimers.set(conversationId, timer);
+      messageRefreshTimers.set(timerKey, timer);
     };
     const upsertRealtimeMessage = (row: Record<string, unknown> | null) => {
       if (!row || typeof row.conversation_id !== "string") return;
       const conversationId = row.conversation_id;
+      const leadId = normalizeRealtimeId(row.lead_id);
       const message = row as unknown as WhatsAppMessage;
       queryClient.setQueriesData<WhatsAppMessage[]>(
         {
-          predicate: (q) =>
-            Array.isArray(q.queryKey) &&
-            q.queryKey[0] === "whatsapp-messages" &&
-            q.queryKey[1] === conversationId,
+          predicate: (q) => matchesWhatsAppMessagesQuery(q, conversationId, leadId),
         },
         (old) => {
           if (!old) return old;
@@ -653,7 +675,7 @@ export function useWhatsAppRealtimeConversations(enabled: boolean = true, access
           if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
             upsertRealtimeMessage(row);
           }
-          scheduleInvalidateMessages(row?.conversation_id);
+          scheduleInvalidateMessages(row?.conversation_id, row?.lead_id);
           if (payload.eventType === "INSERT" && typeof window !== "undefined" && row) {
             window.dispatchEvent(new CustomEvent("vimob:whatsapp-message-insert", { detail: row }));
           }

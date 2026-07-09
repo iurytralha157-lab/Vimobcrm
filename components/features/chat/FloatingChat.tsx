@@ -125,10 +125,10 @@ function FloatingConversationFilters({
   onShowArchivedChange
 }: FloatingConversationFiltersProps) {
   return (
-    <div className="shrink-0 space-y-3 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] p-3">
+    <div className="shrink-0 space-y-2 border-b border-black/[0.035] bg-[var(--app-surface-solid)] p-2 dark:border-white/[0.035]">
       {connectedSessions.length > 1 && (
         <Select value={selectedSessionId} onValueChange={onSessionChange}>
-          <SelectTrigger className="h-9">
+          <SelectTrigger className="h-8 rounded-[7px] text-xs">
             <SelectValue placeholder="Selecione canal" />
           </SelectTrigger>
           <SelectContent>
@@ -142,12 +142,12 @@ function FloatingConversationFilters({
       )}
       <div className="flex items-center gap-2">
         <div className="relative min-w-0 flex-1">
-          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Buscar conversas..."
             value={searchTerm}
             onChange={e => onSearchChange(e.target.value)}
-            className="h-10 rounded-[8px] border-0 bg-[var(--app-surface-soft)] pl-8 pr-3 shadow-none focus-visible:ring-1 focus-visible:ring-primary/35"
+            className="h-8 rounded-[7px] border-0 bg-black/[0.035] pl-7 pr-3 text-xs shadow-none focus-visible:ring-1 focus-visible:ring-primary/30 dark:bg-white/[0.035]"
             autoComplete="off"
           />
         </div>
@@ -159,7 +159,7 @@ function FloatingConversationFilters({
                 variant="ghost"
                 size="icon"
                 className={cn(
-                  "h-10 w-10 shrink-0 rounded-[8px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]",
+                  "h-8 w-8 shrink-0 rounded-[7px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]",
                   hideGroups && "bg-primary/15 text-primary ring-1 ring-primary/25"
                 )}
                 onClick={() => onHideGroupsChange(!hideGroups)}
@@ -177,7 +177,7 @@ function FloatingConversationFilters({
                 variant="ghost"
                 size="icon"
                 className={cn(
-                  "h-10 w-10 shrink-0 rounded-[8px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]",
+                  "h-8 w-8 shrink-0 rounded-[7px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]",
                   showArchived && "bg-primary/15 text-primary ring-1 ring-primary/25"
                 )}
                 onClick={() => onShowArchivedChange(!showArchived)}
@@ -274,7 +274,8 @@ export function FloatingChat() {
   }, shouldSyncFloatingChat ? (loadingSessions ? undefined : sessions?.map(s => s.id)) : []);
   const {
     data: messages,
-    isLoading: loadingMessages
+    isLoading: loadingMessages,
+    isFetching: fetchingMessages
   } = useWhatsAppMessages(
     shouldSyncFloatingChat ? activeConversationId || null : null,
     shouldSyncFloatingChat ? activeConversation?.lead_id || activeConversation?.lead?.id || null : null
@@ -317,7 +318,10 @@ export function FloatingChat() {
   const { data: hasWhatsAppAccess } = useHasWhatsAppAccess({ enabled: shouldLoadFloatingChatData });
   const router = useRouter();
 
-  useWhatsAppRealtimeConversations(shouldSyncFloatingChat);
+  useWhatsAppRealtimeConversations(
+    shouldSyncFloatingChat,
+    loadingSessions ? undefined : sessions?.map((session) => session.id) || [],
+  );
 
   const getLeadPipelineUrl = (leadId: string) => {
     navigationNonceRef.current += 1;
@@ -913,7 +917,7 @@ export function FloatingChat() {
             </div>
 
             {/* Acoes */}
-            <div className="flex items-center gap-1 shrink-0">
+            <div className="flex min-w-fit shrink-0 items-center justify-end gap-1 pr-0.5">
               {leadId && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1042,8 +1046,9 @@ export function FloatingChat() {
     <div className="flex-1 overflow-hidden min-h-0 flex flex-col bg-[var(--app-surface-solid)]">
       <ScrollArea className="flex-1" onScrollCapture={handleScrollArea}>
         <div className="px-3 py-3 w-full max-w-full min-w-0 overflow-hidden overflow-x-hidden">
-          {loadingMessages ? <div className="flex items-center justify-center py-8">
+          {(loadingMessages || (fetchingMessages && visibleMessages.length === 0)) ? <div className="flex flex-col items-center justify-center gap-2 py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Carregando mensagens...</span>
             </div> : messages?.length === 0 ? <div className="flex flex-col items-center justify-center py-12">
               <MessageCircle className="h-10 w-10 text-muted-foreground mb-3" />
               <p className="text-muted-foreground text-sm">Nenhuma mensagem</p>
@@ -1151,20 +1156,20 @@ export function FloatingChat() {
               <p className="text-muted-foreground text-sm">Nenhuma conversa</p>
             </div> : filteredConversations.map(conv => {
               const conversationDisplayName = conv.lead?.name || (conv.contact_name && conv.contact_name !== conv.contact_phone ? conv.contact_name : formatPhoneForDisplay(conv.contact_phone || ""));
-              return <div key={conv.id} className="group grid grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-2 px-3 py-2 cursor-pointer hover:bg-white/[0.055] hover:shadow-sm transition-all duration-200 border-b border-white/[0.055] active:bg-white/[0.06] w-full max-w-full overflow-hidden box-border relative" onClick={() => openConversation(conv)}>
-                <Avatar className="h-9 w-9 shrink-0 ring-1 ring-primary/20 shadow-sm">
+              return <div key={conv.id} className="group relative grid w-full max-w-full cursor-pointer grid-cols-[32px_minmax(0,1fr)_48px] items-start gap-2 overflow-hidden border-b border-black/[0.035] px-2.5 py-2 transition-colors hover:bg-black/[0.025] active:bg-black/[0.04] dark:border-white/[0.035] dark:hover:bg-white/[0.04] dark:active:bg-white/[0.055]" onClick={() => openConversation(conv)}>
+                <Avatar className="h-8 w-8 shrink-0">
                   <AvatarImage src={getConversationAvatarUrl(conv)} />
-                  <AvatarFallback className="text-xs bg-primary text-primary-foreground font-bold">
+                  <AvatarFallback className="text-xs bg-white/[0.06] text-muted-foreground">
                     {conv.is_group ? <Users className="w-4 h-4" /> : conversationDisplayName?.[0] || "?"}
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0 overflow-hidden">
                   <div className="flex items-center gap-1.5 w-full overflow-hidden">
                     <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
-                      <p className="font-medium text-sm truncate min-w-0 leading-5">
+                    <p className="min-w-0 truncate font-sans text-xs font-semibold leading-4 text-foreground">
                         {conversationDisplayName}
                       </p>
-                      {conv.is_group && <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">
+                      {conv.is_group && <Badge className="h-4 shrink-0 border-0 bg-orange-500/15 px-1.5 text-[9px] font-medium text-orange-700 shadow-none dark:bg-orange-500/15 dark:text-orange-300">
                           Grupo
                         </Badge>}
                       {conv.lead?.tags?.slice(0, 2).map((lt, idx) => (
@@ -1188,15 +1193,16 @@ export function FloatingChat() {
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center justify-between gap-2 mt-0.5 w-full overflow-hidden">
-                    <p className="text-xs text-muted-foreground truncate flex-1 min-w-0" style={{
-                maxWidth: '285px'
-              }}>
+                  <div className="mt-0.5 flex w-full items-center overflow-hidden">
+                    <p className="text-[11px] text-muted-foreground truncate flex-1 min-w-0">
                       {formatLastMessage(conv.last_message)}
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center justify-end gap-1.5 shrink-0 self-center min-w-[58px] max-w-[104px] overflow-hidden">
+                <div className="flex min-h-[34px] w-12 shrink-0 flex-col items-end justify-start gap-1 overflow-hidden pt-0.5">
+                  <span className="max-w-full truncate text-[10px] leading-3 text-muted-foreground">
+                    {formatConversationTime(conv.last_message_at)}
+                  </span>
                   {conv.unread_count > 0 && <Badge className="h-5 min-w-5 flex items-center justify-center px-1.5 text-[10px] shrink-0">
                     {conv.unread_count}
                   </Badge>}
@@ -1204,16 +1210,13 @@ export function FloatingChat() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="absolute right-2 top-1/2 h-6 w-6 -translate-y-1/2 shrink-0 border-0 bg-background/95 opacity-0 shadow-none transition-opacity hover:bg-[var(--app-surface-hover)] group-hover:opacity-100"
                       onClick={(e) => handleViewLead(conv.lead!.id, e)}
                       title="Ver lead no Pipeline"
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
                     </Button>
                   )}
-                  <span className="text-xs text-muted-foreground whitespace-nowrap shrink-0">
-                    {formatConversationTime(conv.last_message_at)}
-                  </span>
                 </div>
               </div>;
             })}
@@ -1285,7 +1288,23 @@ export function FloatingChat() {
           contactName={activeContactName}
         />
       )}
-      <div className={cn("fixed bottom-4 right-4 z-50", "bg-[var(--app-surface-solid)]", "border border-[var(--app-border)]", "rounded-2xl", "shadow-[0_28px_70px_rgba(0,0,0,0.46)]", "transition-all duration-300 ease-out", "flex flex-col overflow-hidden", "animate-scale-in", isMinimized ? "w-80 h-14" : "w-[420px] h-[600px]")}>
+      <div
+        className={cn(
+          "fixed z-50",
+          "bg-[var(--app-surface-solid)]",
+          "rounded-2xl",
+          "shadow-[0_28px_70px_rgba(0,0,0,0.46)]",
+          "transition-all duration-300 ease-out",
+          "flex flex-col overflow-hidden",
+          "animate-scale-in"
+        )}
+        style={{
+          right: "max(24px, env(safe-area-inset-right))",
+          bottom: "max(24px, env(safe-area-inset-bottom))",
+          width: isMinimized ? "min(20rem, calc(100vw - 48px))" : "min(420px, calc(100vw - 48px))",
+          height: isMinimized ? "3.5rem" : "min(600px, calc(100vh - 48px))",
+        }}
+      >
         {/* Header */}
         {FloatingChatHeader()}
 

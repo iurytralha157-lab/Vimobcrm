@@ -407,7 +407,7 @@ export function CalendarView({
 
     return (
       <div className="flex flex-col h-full overflow-hidden bg-transparent">
-        <div className="grid grid-cols-7 border-b border-white/[0.045] bg-[var(--app-surface-solid)]">
+        <div className="grid grid-cols-7 border-b border-white/[0.025] bg-[var(--app-surface-solid)]">
           {weekDays.map(day => (
             <div key={day} className="text-center text-[10px] font-black text-muted-foreground/60 py-2.5 uppercase tracking-[0.2em]">
               {day}
@@ -481,7 +481,7 @@ export function CalendarView({
                         </button>
                       </PopoverTrigger>
                       <PopoverContent className="app-card w-64 p-2 shadow-2xl z-[100]" align="start">
-                        <div className="text-[10px] font-black uppercase text-muted-foreground mb-2 px-1 border-b border-white/[0.045] pb-1">
+                        <div className="text-[10px] font-black uppercase text-muted-foreground mb-2 px-1 border-b border-white/[0.025] pb-1">
                           {format(day, "dd 'de' MMMM", { locale: ptBR })}
                         </div>
                         <div className="space-y-1 max-h-[300px] overflow-y-auto pr-1">
@@ -536,9 +536,9 @@ export function CalendarView({
         <ScrollArea className="h-full border-0 bg-transparent">
           <div className="relative flex min-h-full">
             {/* Time axis */}
-            <div className="w-16 border-r border-white/[0.045] flex-shrink-0 bg-white/[0.025]">
+            <div className="w-16 border-r border-white/[0.025] flex-shrink-0 bg-white/[0.025]">
               {hours.map(hour => (
-                <div key={hour.toString()} className="h-14 border-b border-white/[0.045] flex items-center justify-center">
+                <div key={hour.toString()} className="h-14 border-b border-white/[0.025] flex items-center justify-center">
                   <span className="text-[10px] text-muted-foreground/60 font-black uppercase tracking-tighter tabular-nums">
                     {format(hour, 'HH:mm')}
                   </span>
@@ -551,7 +551,7 @@ export function CalendarView({
               {hours.map(hour => {
                 const hourStr = format(hour, 'HH');
                 return (
-                  <div key={hour.toString()} className="h-14 border-b border-white/[0.045] w-full relative">
+                  <div key={hour.toString()} className="h-14 border-b border-white/[0.025] w-full relative">
                     <DroppableSlot
                       id={`${format(pivotDate, 'yyyy-MM-dd')}|${hourStr}:00`}
                       className={cn(
@@ -633,10 +633,10 @@ export function CalendarView({
         <ScrollArea className="h-full border-0 bg-transparent">
           <div className="relative flex flex-col min-w-[1000px] min-h-full">
             {/* Header */}
-            <div className="flex border-b border-white/[0.045] sticky top-0 bg-[var(--app-surface-solid)] z-20">
-              <div className="w-16 border-r border-white/[0.045] flex-shrink-0 bg-white/[0.025]" />
+            <div className="flex border-b border-white/[0.025] sticky top-0 bg-[var(--app-surface-solid)] z-20">
+              <div className="w-16 border-r border-white/[0.025] flex-shrink-0 bg-white/[0.025]" />
               {weekDays.map(day => (
-                <div key={day.toString()} className="flex-1 border-r border-white/[0.045] last:border-r-0 py-2.5 text-center">
+                <div key={day.toString()} className="flex-1 border-r border-white/[0.025] last:border-r-0 py-2.5 text-center">
                   <span className="block text-[10px] text-muted-foreground/60 font-black uppercase tracking-[0.2em] mb-1">
                     {format(day, 'EEE', { locale: ptBR })}
                   </span>
@@ -653,9 +653,9 @@ export function CalendarView({
             {/* Grid */}
             <div className="flex relative flex-1">
               {/* Time axis */}
-              <div className="w-16 border-r border-white/[0.045] flex-shrink-0 bg-white/[0.025]">
+              <div className="w-16 border-r border-white/[0.025] flex-shrink-0 bg-white/[0.025]">
                 {hours.map(hour => (
-                  <div key={hour.toString()} className="h-14 border-b border-white/[0.045] flex items-center justify-center">
+                  <div key={hour.toString()} className="h-14 border-b border-white/[0.025] flex items-center justify-center">
                     <span className="text-[10px] text-muted-foreground/60 font-black uppercase tracking-tighter tabular-nums">
                       {format(hour, 'HH:mm')}
                     </span>
@@ -665,11 +665,11 @@ export function CalendarView({
 
               {/* Days columns */}
               {weekDays.map(day => (
-                <div key={day.toString()} className="flex-1 border-r border-white/[0.045] last:border-r-0 relative">
+                <div key={day.toString()} className="flex-1 border-r border-white/[0.025] last:border-r-0 relative">
                   {hours.map(hour => {
                     const hourStr = format(hour, 'HH');
                     return (
-                      <div key={hour.toString()} className="h-14 border-b border-white/[0.045] w-full relative">
+                      <div key={hour.toString()} className="h-14 border-b border-white/[0.025] w-full relative">
                         <DroppableSlot
                           id={`${format(day, 'yyyy-MM-dd')}|${hourStr}:00`}
                           className={cn(

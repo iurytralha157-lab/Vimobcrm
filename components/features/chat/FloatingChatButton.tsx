@@ -6,7 +6,7 @@ import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
 import { usePathname } from 'next/navigation';
 import { useState, useRef, useCallback, useEffect } from "react";
 
-const FLOATING_CHAT_INITIAL_LOAD_DELAY_MS = 12000;
+const FLOATING_CHAT_INITIAL_LOAD_DELAY_MS = 2000;
 
 export function FloatingChatButton() {
   const { state, toggleChat } = useFloatingChat();
@@ -26,7 +26,10 @@ export function FloatingChatButton() {
     conversationSessionIds,
   );
 
-  useWhatsAppRealtimeConversations(shouldLoadFloatingChatData && !isOnConversationsPage);
+  useWhatsAppRealtimeConversations(
+    shouldLoadFloatingChatData && !isOnConversationsPage,
+    loadingSessions ? undefined : accessibleSessionIds,
+  );
 
   const [side, setSide] = useState<'right' | 'left'>('right');
   const [offsetX, setOffsetX] = useState(0);

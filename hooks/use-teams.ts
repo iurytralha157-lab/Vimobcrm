@@ -1,15 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { teamsAPI, type CreateTeamInput, type Team, type TeamMember, type TeamMemberInput, type UpdateTeamInput } from '@/lib/api/teams'
 import { toast } from 'sonner'
+import { useAuth } from '@/contexts/AuthContext'
 
 export type { Team, TeamMember, TeamMemberInput }
 
 export function useTeams(options?: { includeInactive?: boolean }) {
   const includeInactive = options?.includeInactive ?? false
+  const { organization, profile } = useAuth()
+  const organizationId = organization?.id || profile?.organization_id || null
 
   return useQuery({
-    queryKey: ['teams', { includeInactive }],
-    queryFn: () => teamsAPI.listTeams({ includeInactive }),
+    queryKey: ['teams', organizationId, { includeInactive }],
+    queryFn: () => teamsAPI.listTeams({ includeInactive, organizationId }),
+    enabled: Boolean(organizationId),
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,
@@ -18,9 +22,11 @@ export function useTeams(options?: { includeInactive?: boolean }) {
 
 export function useCreateTeam() {
   const queryClient = useQueryClient()
+  const { organization, profile } = useAuth()
+  const organizationId = organization?.id || profile?.organization_id || null
 
   return useMutation({
-    mutationFn: async (data: CreateTeamInput) => teamsAPI.createTeam(data),
+    mutationFn: async (data: CreateTeamInput) => teamsAPI.createTeam(data, organizationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['teams'] })
       queryClient.invalidateQueries({ queryKey: ['lead-visibility'] })
@@ -35,9 +41,11 @@ export function useCreateTeam() {
 
 export function useUpdateTeam() {
   const queryClient = useQueryClient()
+  const { organization, profile } = useAuth()
+  const organizationId = organization?.id || profile?.organization_id || null
 
   return useMutation({
-    mutationFn: async (data: UpdateTeamInput) => teamsAPI.updateTeam(data),
+    mutationFn: async (data: UpdateTeamInput) => teamsAPI.updateTeam(data, organizationId),
     onSuccess: (_, variables) => {
       if (variables.members) {
         const leadershipByUserId = new Map(
@@ -81,9 +89,11 @@ export function useUpdateTeam() {
 
 export function useDeleteTeam() {
   const queryClient = useQueryClient()
+  const { organization, profile } = useAuth()
+  const organizationId = organization?.id || profile?.organization_id || null
 
   return useMutation({
-    mutationFn: async (id: string) => teamsAPI.deleteTeam(id),
+    mutationFn: async (id: string) => teamsAPI.deleteTeam(id, organizationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['teams'] })
       queryClient.invalidateQueries({ queryKey: ['lead-visibility'] })
@@ -98,10 +108,12 @@ export function useDeleteTeam() {
 
 export function useUpdateTeamStatus() {
   const queryClient = useQueryClient()
+  const { organization, profile } = useAuth()
+  const organizationId = organization?.id || profile?.organization_id || null
 
   return useMutation({
     mutationFn: async ({ id, is_active }: { id: string; is_active: boolean }) =>
-      teamsAPI.updateTeamStatus({ id, is_active }),
+      teamsAPI.updateTeamStatus({ id, is_active }, organizationId),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['teams'] })
       queryClient.invalidateQueries({ queryKey: ['lead-visibility'] })

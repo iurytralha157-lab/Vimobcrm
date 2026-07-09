@@ -13,9 +13,10 @@ import { SubscriptionTab } from '@/components/features/settings/SubscriptionTab'
 import { IntegrationsTab } from '@/components/features/settings/IntegrationsTab';
 import { PropertySettingsTab } from '@/components/features/settings/PropertySettingsTab';
 import { isBillingBlockedStatus } from '@/lib/billing-access';
+import { canManageOrganization as canManageOrganizationAccess } from '@/lib/access/organization';
 
 export default function Settings() {
-  const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
+  const { profile, isSuperAdmin, organization, userOrganizations, loading, organizationsLoaded } = useAuth();
   const { hasModule } = useOrganizationModules();
   const { t } = useLanguage();
   const router = useRouter();
@@ -32,15 +33,21 @@ export default function Settings() {
   const isBillingBlocked = !isSuperAdmin && isBillingBlockedStatus(organization?.subscription_status);
   const activeOrganizationId = organization?.id || profile?.organization_id;
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
+  const hasDirectManagementRole = canManageOrganizationAccess({
+    isSuperAdmin,
+    profileRole: profile?.role,
+  });
+  const accessReady = !!profile && (hasDirectManagementRole || (!loading && organizationsLoaded));
   const canManageOrganization =
-    isSuperAdmin ||
-    profile?.role === 'admin' ||
-    activeMemberRole === 'admin' ||
-    activeMemberRole === 'owner';
-  const legacyIntegrationTabs = canManageOrganization
+    accessReady &&
+    (hasDirectManagementRole ||
+      canManageOrganizationAccess({
+        memberRole: activeMemberRole,
+      }));
+  const legacyIntegrationTabs = !accessReady || canManageOrganization
     ? ['webhooks', 'meta', 'whatsapp', 'api', 'ai']
     : ['webhooks', 'meta', 'whatsapp', 'api'];
-  const isUnauthorizedAIRequest = normalizedRequestedTab === 'ai' && !canManageOrganization;
+  const isUnauthorizedAIRequest = accessReady && normalizedRequestedTab === 'ai' && !canManageOrganization;
   const initialIntegration =
     !isUnauthorizedAIRequest && legacyIntegrationTabs.includes(normalizedRequestedTab) ? normalizedRequestedTab : undefined;
   const initialTab = isUnauthorizedAIRequest ? 'account' : initialIntegration ? 'integrations' : requestedTab;
@@ -48,6 +55,8 @@ export default function Settings() {
 
   // Sync tab when URL query param changes (e.g. external navigation)
   useEffect(() => {
+    if (!accessReady) return;
+
     if (isBillingBlocked) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- Sincroniza a aba ativa com bloqueio de faturamento e URL.
       if (activeTab !== 'subscription') setActiveTab('subscription');
@@ -80,7 +89,7 @@ export default function Settings() {
       setActiveTab(normalizedTab);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, isBillingBlocked, activeTab, replaceSearchParams, canManageOrganization]);
+  }, [searchParams, isBillingBlocked, activeTab, replaceSearchParams, canManageOrganization, accessReady]);
 
   const handleTabChange = (value: string) => {
     if (isBillingBlocked && value !== 'subscription') return;
@@ -103,7 +112,13 @@ export default function Settings() {
             <AccountTab />
           </TabsContent>
 
-          {canManageOrganization && (
+          {!accessReady && ['team', 'subscription', 'properties'].includes(activeTab) && (
+            <TabsContent value={activeTab}>
+              <div className="app-card p-6 text-sm text-muted-foreground">Carregando permissões da organização...</div>
+            </TabsContent>
+          )}
+
+          {accessReady && canManageOrganization && (
             <TabsContent value="team">
               <TeamTab />
             </TabsContent>
@@ -119,13 +134,13 @@ export default function Settings() {
             />
           </TabsContent>
 
-          {canManageOrganization && (
+          {accessReady && canManageOrganization && (
             <TabsContent value="properties">
               <PropertySettingsTab />
             </TabsContent>
           )}
 
-          {(canManageOrganization || isBillingBlocked) && (
+          {accessReady && (canManageOrganization || isBillingBlocked) && (
             <TabsContent value="subscription">
               <SubscriptionTab />
             </TabsContent>

@@ -27,6 +27,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { DnsVerificationStatus } from "@/components/features/site/DnsVerificationStatus";
 import { ImageUpload } from "@/components/ui/image-upload";
 import { cn } from "@/lib/utils";
+import { canManageOrganization } from "@/lib/access/organization";
 
 type AboutStat = {
   value: string;
@@ -167,12 +168,11 @@ export default function SiteSettings() {
   const updateSite = useUpdateOrganizationSite();
   const activeOrganizationId = organization?.id || profile?.organization_id;
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
-  const isAdmin =
-    isSuperAdmin ||
-    profile?.role === 'admin' ||
-    profile?.role === 'super_admin' ||
-    activeMemberRole === 'admin' ||
-    activeMemberRole === 'owner';
+  const isAdmin = canManageOrganization({
+    isSuperAdmin,
+    profileRole: profile?.role,
+    memberRole: activeMemberRole,
+  });
 
 
   const [formData, setFormData] = useState<SiteFormData>({

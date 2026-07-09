@@ -20,6 +20,7 @@ import { useVistaIntegration } from "@/hooks/use-vista-integration";
 import { useImoviewIntegration } from "@/hooks/use-imoview-integration";
 import { useGoogleCalendarStatus } from "@/hooks/use-google-calendar";
 import { useAuth } from "@/contexts/AuthContext";
+import { canManageOrganization } from "@/lib/access/organization";
 
 type IntegrationKey = "whatsapp" | "ai" | "meta" | "google-calendar" | "vista" | "imoview" | "webhooks" | "api";
 const ADMIN_ONLY_INTEGRATIONS = new Set<IntegrationKey>(["meta", "vista", "imoview"]);
@@ -104,13 +105,21 @@ export function IntegrationsTab({
   const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
   const activeOrganizationId = organization?.id || profile?.organization_id;
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
-  const canManageAdminIntegrations =
-    isSuperAdmin ||
-    profile?.role === "admin" ||
-    profile?.role === "super_admin" ||
-    activeMemberRole === "admin" ||
-    activeMemberRole === "owner";
+  const canManageAdminIntegrations = canManageOrganization({
+    isSuperAdmin,
+    profileRole: profile?.role,
+    memberRole: activeMemberRole,
+  });
   const defaultIntegrationKey = isIntegrationKey(defaultIntegration) ? defaultIntegration : null;
+  const isIntegrationEnabled = useCallback((key: IntegrationKey) => {
+    if (key === "whatsapp") return hasWhatsAppModule;
+    if (key === "ai") return hasAIModule;
+    if (key === "webhooks") return hasWebhooksModule;
+    if (key === "api") return hasAPIModule;
+    return true;
+  }, [hasAIModule, hasAPIModule, hasWebhooksModule, hasWhatsAppModule]);
+  const defaultIntegrationUnavailable =
+    defaultIntegrationKey !== null && !isIntegrationEnabled(defaultIntegrationKey);
   const defaultIntegrationLocked =
     defaultIntegrationKey !== null &&
     ADMIN_ONLY_INTEGRATIONS.has(defaultIntegrationKey) &&
@@ -119,7 +128,7 @@ export function IntegrationsTab({
   const [metaOAuthPayload, setMetaOAuthPayload] = useState<MetaOAuthPayload | null>(null);
   const [metaOAuthStatus, setMetaOAuthStatus] = useState<MetaOAuthStatus | null>(null);
   const [activeIntegration, setActiveIntegration] = useState<IntegrationKey | null>(
-    defaultIntegrationKey && !defaultIntegrationLocked ? defaultIntegrationKey : null,
+    defaultIntegrationKey && !defaultIntegrationLocked && !defaultIntegrationUnavailable ? defaultIntegrationKey : null,
   );
   const handledMetaOAuthEventRef = useRef<string | number | null>(null);
   const { data: metaIntegrations = [], refetch: refetchMetaIntegrations } = useMetaIntegrations();
@@ -128,6 +137,20 @@ export function IntegrationsTab({
   const { data: imoviewIntegration } = useImoviewIntegration();
   const { data: googleCalendarStatus } = useGoogleCalendarStatus();
   const disabledIntegrations = new Set<IntegrationKey>();
+
+  useEffect(() => {
+    if (!defaultIntegrationKey || defaultIntegrationLocked || defaultIntegrationUnavailable) {
+      if (defaultIntegrationKey && activeIntegration === defaultIntegrationKey) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- Mantem links diretos para modulos indisponiveis sem modal vazio.
+        setActiveIntegration(null);
+      }
+      return;
+    }
+
+    if (activeIntegration !== defaultIntegrationKey) {
+      setActiveIntegration(defaultIntegrationKey);
+    }
+  }, [activeIntegration, defaultIntegrationKey, defaultIntegrationLocked, defaultIntegrationUnavailable]);
 
   const handleMetaOAuthMessage = useCallback((message: MetaOAuthWindowMessage) => {
     if (!message?.type) return;

@@ -72,11 +72,11 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	if filter.DealType != "" {
 		switch dealType {
 		case "venda":
-			addFilter("p.finalidade = any($%d::text[])", []string{"venda", "venda_locacao"})
+			addFilter(dealTypeFilterClause(), dealTypeAliases("venda"))
 		case "locacao":
-			addFilter("p.finalidade = any($%d::text[])", []string{"locacao", "venda_locacao"})
+			addFilter(dealTypeFilterClause(), dealTypeAliases("locacao"))
 		default:
-			addFilter("p.finalidade = $%d", dealType)
+			addFilter(dealTypeFilterClause(), dealTypeAliases(dealType))
 		}
 	}
 	if filter.PropertyType != "" {
@@ -91,8 +91,29 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	if filter.AcceptsExchange != nil {
 		addFilter("coalesce(p.aceita_permuta, false) = $%d::boolean", *filter.AcceptsExchange)
 	}
+	if filter.AcceptsFinancing != nil {
+		addFilter("coalesce(p.aceita_financiamento, false) = $%d::boolean", *filter.AcceptsFinancing)
+	}
 	if filter.PublishedOnSite != nil {
 		addFilter("coalesce(p.published_on_site, false) = $%d::boolean", *filter.PublishedOnSite)
+	}
+	if filter.OwnerID != "" {
+		addFilter("p.owner_id = $%d::uuid", filter.OwnerID)
+	}
+	if filter.CondominiumID != "" {
+		addFilter("p.condominium_id = $%d::uuid", filter.CondominiumID)
+	}
+	if filter.Furniture != "" {
+		addFilter("p.mobilia = $%d", filter.Furniture)
+	}
+	if filter.Exclusive != nil {
+		addFilter("coalesce(p.exclusividade, false) = $%d::boolean", *filter.Exclusive)
+	}
+	if filter.HasSign != nil {
+		addFilter("coalesce(p.placa_no_local, false) = $%d::boolean", *filter.HasSign)
+	}
+	if filter.Featured != nil {
+		addFilter("coalesce(p.is_featured, p.destaque, false) = $%d::boolean", *filter.Featured)
 	}
 	if filter.ResponsibleID != "" {
 		args = append(args, filter.ResponsibleID)
@@ -107,6 +128,21 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	}
 	if filter.BathroomsMin > 0 {
 		addFilter("p.banheiros >= $%d::integer", filter.BathroomsMin)
+	}
+	if filter.ParkingSpacesMin > 0 {
+		addFilter("p.vagas >= $%d::integer", filter.ParkingSpacesMin)
+	}
+	if filter.UsableAreaMin > 0 {
+		addFilter("p.area_util >= $%d::numeric", filter.UsableAreaMin)
+	}
+	if filter.UsableAreaMax > 0 {
+		addFilter("p.area_util <= $%d::numeric", filter.UsableAreaMax)
+	}
+	if filter.TotalAreaMin > 0 {
+		addFilter("p.area_total >= $%d::numeric", filter.TotalAreaMin)
+	}
+	if filter.TotalAreaMax > 0 {
+		addFilter("p.area_total <= $%d::numeric", filter.TotalAreaMax)
 	}
 	if filter.PriceMin > 0 {
 		if dealType == "locacao" || dealType == "temporada" {
@@ -145,10 +181,12 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 				'title', p.title,
 				'tipo', p.tipo,
 				'tipo_de_imovel', p.tipo_de_imovel,
+				'tipo_de_negocio', p.tipo_de_negocio,
 				'finalidade', p.finalidade,
 				'finalidade_uso', p.finalidade_uso,
 				'status', p.status,
 				'owner_id', p.owner_id,
+				'owner_name', p.owner_name,
 				'bairro', p.bairro,
 				'cidade', p.cidade,
 				'uf', p.uf,
@@ -163,13 +201,18 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 				'vagas', p.vagas,
 				'area_util', p.area_util,
 				'area_total', p.area_total,
+				'mobilia', p.mobilia,
 				'preco', p.preco,
 				'valor_locacao', p.valor_locacao,
 				'condominio', p.condominio,
 				'iptu', p.iptu,
 				'aceita_permuta', coalesce(p.aceita_permuta, false),
+				'aceita_financiamento', coalesce(p.aceita_financiamento, false),
+				'exclusividade', coalesce(p.exclusividade, false),
+				'placa_no_local', coalesce(p.placa_no_local, false),
 				'is_featured', p.is_featured,
 				'destaque', p.destaque,
+				'super_destaque', p.super_destaque,
 				'published_on_site', p.published_on_site,
 				'created_by', p.created_by,
 				'responsible_user_id', p.responsible_user_id,
@@ -241,11 +284,11 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 	if filter.DealType != "" {
 		switch dealType {
 		case "venda":
-			addFilter("p.finalidade = any($%d::text[])", []string{"venda", "venda_locacao"})
+			addFilter(dealTypeFilterClause(), dealTypeAliases("venda"))
 		case "locacao":
-			addFilter("p.finalidade = any($%d::text[])", []string{"locacao", "venda_locacao"})
+			addFilter(dealTypeFilterClause(), dealTypeAliases("locacao"))
 		default:
-			addFilter("p.finalidade = $%d", dealType)
+			addFilter(dealTypeFilterClause(), dealTypeAliases(dealType))
 		}
 	}
 	if filter.PropertyType != "" {
@@ -260,8 +303,29 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 	if filter.AcceptsExchange != nil {
 		addFilter("coalesce(p.aceita_permuta, false) = $%d::boolean", *filter.AcceptsExchange)
 	}
+	if filter.AcceptsFinancing != nil {
+		addFilter("coalesce(p.aceita_financiamento, false) = $%d::boolean", *filter.AcceptsFinancing)
+	}
 	if filter.PublishedOnSite != nil {
 		addFilter("coalesce(p.published_on_site, false) = $%d::boolean", *filter.PublishedOnSite)
+	}
+	if filter.OwnerID != "" {
+		addFilter("p.owner_id = $%d::uuid", filter.OwnerID)
+	}
+	if filter.CondominiumID != "" {
+		addFilter("p.condominium_id = $%d::uuid", filter.CondominiumID)
+	}
+	if filter.Furniture != "" {
+		addFilter("p.mobilia = $%d", filter.Furniture)
+	}
+	if filter.Exclusive != nil {
+		addFilter("coalesce(p.exclusividade, false) = $%d::boolean", *filter.Exclusive)
+	}
+	if filter.HasSign != nil {
+		addFilter("coalesce(p.placa_no_local, false) = $%d::boolean", *filter.HasSign)
+	}
+	if filter.Featured != nil {
+		addFilter("coalesce(p.is_featured, p.destaque, false) = $%d::boolean", *filter.Featured)
 	}
 	if filter.ResponsibleID != "" {
 		args = append(args, filter.ResponsibleID)
@@ -276,6 +340,21 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 	}
 	if filter.BathroomsMin > 0 {
 		addFilter("p.banheiros >= $%d::integer", filter.BathroomsMin)
+	}
+	if filter.ParkingSpacesMin > 0 {
+		addFilter("p.vagas >= $%d::integer", filter.ParkingSpacesMin)
+	}
+	if filter.UsableAreaMin > 0 {
+		addFilter("p.area_util >= $%d::numeric", filter.UsableAreaMin)
+	}
+	if filter.UsableAreaMax > 0 {
+		addFilter("p.area_util <= $%d::numeric", filter.UsableAreaMax)
+	}
+	if filter.TotalAreaMin > 0 {
+		addFilter("p.area_total >= $%d::numeric", filter.TotalAreaMin)
+	}
+	if filter.TotalAreaMax > 0 {
+		addFilter("p.area_total <= $%d::numeric", filter.TotalAreaMax)
 	}
 	if filter.PriceMin > 0 {
 		if dealType == "locacao" || dealType == "temporada" {
@@ -300,20 +379,25 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 		}
 	}
 
+	saleAliasIndex := len(args) + 1
+	rentalAliasIndex := len(args) + 2
+	args = append(args, dealTypeAliases("venda"), dealTypeAliases("locacao"))
+
 	var stats StatsResponse
 	err := repo.db.Pool().QueryRow(ctx, `
 		with filtered as (
 			select
 				coalesce(nullif(lower(trim(p.status)), ''), 'active') as status,
-				coalesce(nullif(lower(trim(p.finalidade)), ''), 'venda') as deal_type,
+				lower(trim(coalesce(p.finalidade, ''))) as finalidade,
+				lower(trim(coalesce(p.tipo_de_negocio, ''))) as tipo_de_negocio,
 				p.published_on_site
 			from public.properties p
 			where `+strings.Join(where, " and ")+`
 		)
 		select
 			count(*)::bigint,
-			count(*) filter (where deal_type in ('venda', 'venda_locacao', 'lancamento'))::bigint,
-			count(*) filter (where deal_type in ('locacao', 'venda_locacao'))::bigint,
+			count(*) filter (where finalidade = any($`+fmt.Sprint(saleAliasIndex)+`::text[]) or tipo_de_negocio = any($`+fmt.Sprint(saleAliasIndex)+`::text[]))::bigint,
+			count(*) filter (where finalidade = any($`+fmt.Sprint(rentalAliasIndex)+`::text[]) or tipo_de_negocio = any($`+fmt.Sprint(rentalAliasIndex)+`::text[]))::bigint,
 			count(*) filter (where status not in ('sold', 'vendido', 'rented', 'alugado', 'locado', 'reserved', 'reservado', 'inactive', 'inativo', 'archived', 'arquivado', 'draft', 'rascunho'))::bigint,
 			count(*) filter (where status in ('reserved', 'reservado'))::bigint,
 			count(*) filter (where status in ('sold', 'vendido'))::bigint,
@@ -354,6 +438,65 @@ func propertyStatusAliases(status string) []string {
 		return []string{"draft", "rascunho"}
 	default:
 		return []string{status}
+	}
+}
+
+func dealTypeFilterClause() string {
+	return `(
+		lower(trim(coalesce(p.finalidade, ''))) = any($%[1]d::text[])
+		or lower(trim(coalesce(p.tipo_de_negocio, ''))) = any($%[1]d::text[])
+	)`
+}
+
+func dealTypeAliases(dealType string) []string {
+	switch dealType {
+	case "venda":
+		return []string{
+			"venda",
+			"sale",
+			"venda_locacao",
+			"venda e aluguel",
+			"venda e locacao",
+			"venda e locação",
+			"venda/locacao",
+			"venda/locação",
+			"venda/aluguel",
+		}
+	case "locacao":
+		return []string{
+			"locacao",
+			"locação",
+			"aluguel",
+			"locacao anual",
+			"locação anual",
+			"rent",
+			"venda_locacao",
+			"venda e aluguel",
+			"venda e locacao",
+			"venda e locação",
+			"venda/locacao",
+			"venda/locação",
+			"venda/aluguel",
+		}
+	case "temporada":
+		return []string{"temporada", "season"}
+	case "lancamento":
+		return []string{"lancamento", "lançamento", "launch", "release"}
+	case "venda_locacao":
+		return []string{
+			"venda_locacao",
+			"venda e aluguel",
+			"venda e locacao",
+			"venda e locação",
+			"venda/locacao",
+			"venda/locação",
+			"venda/aluguel",
+		}
+	default:
+		if dealType == "" {
+			return []string{}
+		}
+		return []string{dealType}
 	}
 }
 
@@ -567,6 +710,33 @@ func (repo Repository) ListHistory(ctx context.Context, tenantContext tenant.Con
 			  and e.entity_type = 'property'
 			  and e.entity_id = $2::uuid
 		),
+		property_created_row as (
+			select
+				p.id::text || ':created' as id,
+				'property_created' as event_type,
+				jsonb_build_object(
+					'user_id', coalesce(p.created_by::text, p.cadastrado_por::text, p.responsible_user_id::text, ''),
+					'title', coalesce(nullif(p.title, ''), nullif(p.tipo_de_imovel, ''), 'Imovel'),
+					'property_id', p.id::text,
+					'code', coalesce(p.code, ''),
+					'organization_id', p.organization_id::text,
+					'message', 'Imovel criado',
+					'synthetic', true
+				) as payload,
+				p.created_at,
+				'Imovel criado' as title
+			from public.properties p
+			where p.organization_id = $1::uuid
+			  and p.id = $2::uuid
+			  and not exists (
+				select 1
+				from public.events e
+				where e.organization_id = $1::uuid
+				  and e.entity_type = 'property'
+				  and e.entity_id = $2::uuid
+				  and e.event_type = 'property_created'
+			  )
+		),
 		schedule_rows as (
 			select
 				se.id::text as id,
@@ -594,6 +764,8 @@ func (repo Repository) ListHistory(ctx context.Context, tenantContext tenant.Con
 		select id, event_type, title, payload::text, created_at::text
 		from (
 			select * from property_events
+			union all
+			select * from property_created_row
 			union all
 			select * from schedule_rows
 		) history
@@ -803,6 +975,13 @@ func (repo Repository) insertPropertyCreatedActivity(ctx context.Context, tx pgx
 		return nil
 	}
 
+	actorName := tenantContext.UserID
+	if value, err := repo.getUserDisplayName(ctx, tx, tenantContext.UserID); err == nil && strings.TrimSpace(value) != "" {
+		actorName = value
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+
 	_, err := tx.Exec(ctx, `
 		insert into public.events (
 			organization_id,
@@ -822,11 +1001,12 @@ func (repo Repository) insertPropertyCreatedActivity(ctx context.Context, tx pgx
 		)
 	`, tenantContext.OrganizationID, propertyID, jsonb(map[string]any{
 		"user_id":         tenantContext.UserID,
+		"user_name":       actorName,
 		"title":           title,
 		"property_id":     propertyID,
 		"code":            code,
 		"organization_id": tenantContext.OrganizationID,
-		"message":         fmt.Sprintf(`Imovel "%s" (Cod: %s) foi captado`, title, code),
+		"message":         fmt.Sprintf(`Imovel "%s" (Cod: %s) cadastrado`, title, code),
 	}))
 	return err
 }
@@ -859,6 +1039,10 @@ func (repo Repository) insertPropertyUpdatedActivity(ctx context.Context, tx pgx
 	changes := map[string]any{}
 	eventType := "property_updated"
 	message := fmt.Sprintf(`Imovel "%s" atualizado`, title)
+	updatedFields := propertyHistoryUpdatedFields(input)
+	if len(updatedFields) > 0 {
+		message = fmt.Sprintf(`Imovel "%s" editado: %s`, title, strings.Join(updatedFields, ", "))
+	}
 
 	if value, ok := input["status"].(string); ok {
 		changes["status"] = map[string]any{
@@ -900,6 +1084,13 @@ func (repo Repository) insertPropertyUpdatedActivity(ctx context.Context, tx pgx
 		changes["metadata"] = value
 	}
 
+	actorName := tenantContext.UserID
+	if value, err := repo.getUserDisplayName(ctx, tx, tenantContext.UserID); err == nil && strings.TrimSpace(value) != "" {
+		actorName = value
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+
 	_, err := tx.Exec(ctx, `
 		insert into public.events (
 			organization_id,
@@ -919,14 +1110,88 @@ func (repo Repository) insertPropertyUpdatedActivity(ctx context.Context, tx pgx
 		)
 	`, tenantContext.OrganizationID, eventType, propertyID, jsonb(map[string]any{
 		"user_id":         tenantContext.UserID,
+		"user_name":       actorName,
 		"title":           title,
 		"property_id":     propertyID,
 		"code":            current.Code,
 		"organization_id": tenantContext.OrganizationID,
 		"message":         message,
 		"changes":         changes,
+		"updated_fields":  updatedFields,
 	}))
 	return err
+}
+
+func propertyHistoryUpdatedFields(input propertyRequest) []string {
+	fields := make([]string, 0, len(input))
+	for field := range input {
+		if field == "updated_at" {
+			continue
+		}
+		fields = append(fields, propertyHistoryFieldLabel(field))
+	}
+	sort.Strings(fields)
+	return fields
+}
+
+func propertyHistoryFieldLabel(field string) string {
+	labels := map[string]string{
+		"aceita_financiamento": "Financiamento",
+		"aceita_permuta":       "Permuta",
+		"anunciar":             "Anuncio",
+		"banheiros":            "Banheiros",
+		"bairro":               "Bairro",
+		"cadastrado_por":       "Captador",
+		"cidade":               "Cidade",
+		"code":                 "Codigo",
+		"condominio_id":        "Condominio",
+		"created_by":           "Criado por",
+		"descricao":            "Descricao",
+		"destaque":             "Destaque",
+		"endereco":             "Endereco",
+		"finalidade":           "Finalidade",
+		"iptu":                 "IPTU",
+		"metadata":             "Dados adicionais",
+		"mobiliado":            "Mobilia",
+		"preco":                "Valor de venda",
+		"published_on_site":    "Publicacao no site",
+		"quartos":              "Quartos",
+		"responsible_user_id":  "Responsavel",
+		"status":               "Status",
+		"suites":               "Suites",
+		"tipo":                 "Tipo",
+		"tipo_de_imovel":       "Tipo de imovel",
+		"tipo_de_negocio":      "Modalidade",
+		"title":                "Titulo",
+		"valor_condominio":     "Condominio",
+		"valor_locacao":        "Valor de locacao",
+		"vagas":                "Vagas",
+	}
+	if label, ok := labels[field]; ok {
+		return label
+	}
+	return strings.ReplaceAll(field, "_", " ")
+}
+
+func (repo Repository) getUserDisplayName(ctx context.Context, tx pgx.Tx, userID string) (string, error) {
+	var name, email pgtype.Text
+	err := tx.QueryRow(ctx, `
+		select name, email
+		from public.users
+		where id = $1::uuid
+	`, userID).Scan(&name, &email)
+	if err != nil {
+		return "", err
+	}
+
+	if value := textValue(name); value != "" {
+		return value, nil
+	}
+	if value := textValue(email); value != "" {
+		return value, nil
+	}
+
+	return userID, nil
 }
 
 func (repo Repository) removeDemoProperties(ctx context.Context, tx pgx.Tx, organizationID string) error {
@@ -1057,7 +1322,10 @@ func normalizePropertyOutput(property Property) Property {
 	if _, ok := property["tipo_de_imovel"]; !ok {
 		property["tipo_de_imovel"] = anyString(property["tipo"])
 	}
-	dealType := anyString(property["finalidade"])
+	dealType := anyString(property["tipo_de_negocio"])
+	if normalizedDealTypeForFilter(dealType) == "" {
+		dealType = anyString(property["finalidade"])
+	}
 	property["tipo_de_negocio"] = displayDealType(dealType)
 	if usage := anyString(property["finalidade_uso"]); usage != "" {
 		property["finalidade"] = usage
@@ -1133,7 +1401,11 @@ func anyStringSlice(value any) []string {
 }
 
 func displayDealType(value string) string {
-	switch value {
+	normalized, err := normalizeDealType(value)
+	if err != nil {
+		return "Venda"
+	}
+	switch normalized {
 	case "locacao":
 		return "Aluguel"
 	case "lancamento":

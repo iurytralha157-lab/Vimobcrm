@@ -165,7 +165,11 @@ func (client functionsClient) invokeEvolutionDirect(ctx context.Context, action 
 }
 
 func evolutionInstanceHeader(action string, instanceKey string) string {
-	return ""
+	if instanceKey == "" || evolutionUsesGlobalAPIKey(action) {
+		return ""
+	}
+
+	return instanceKey
 }
 
 func evolutionUsesGlobalAPIKey(action string) bool {

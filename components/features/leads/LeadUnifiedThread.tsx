@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { format, isSameDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Bot, ExternalLink, Loader2, MessageCircle, Paperclip, Timer } from 'lucide-react';
+import { Bot, Loader2, MessageCircle, Paperclip, Timer } from 'lucide-react';
 import { MessageBox } from '@/components/ui/message-box';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { MessageBubble as WhatsAppMessageBubble } from '@/components/features/whatsapp/MessageBubble';
@@ -14,6 +14,7 @@ import {
   useSendWhatsAppMessage,
   useWhatsAppConversations,
   useWhatsAppMessages,
+  useWhatsAppRealtimeConversations,
   type WhatsAppConversation,
   type WhatsAppMessage,
 } from '@/hooks/use-whatsapp-conversations';
@@ -433,7 +434,38 @@ function shouldShowEvent(event: UnifiedHistoryEvent) {
   if (event.type === 'lead_assigned' && text.includes('registro sem fila')) return false;
   if (text.includes('sem fila de distribui')) return false;
   if (text.includes('fila "') && text.includes('sem distribui')) return false;
+  if (isTechnicalMetaAnswerEvent(event)) return false;
   return true;
+}
+
+function isTechnicalMetaAnswerEvent(event: UnifiedHistoryEvent) {
+  if (event.type !== 'meta_form_answer') return false;
+
+  const metadata = event.metadata || {};
+  const question = [
+    metadataText(metadata.question),
+    metadataText(metadata.field_name),
+    metadataText(metadata.fieldName),
+    metadataText(metadata.key),
+    event.label,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ');
+  const answer = `${metadataText(metadata.answer) || ''} ${event.content || ''}`.toLowerCase();
+
+  const technicalFields = [
+    'inbox url',
+    'creative url',
+    'creative video url',
+    'creative instagram url',
+    'link do anuncio',
+    'url do anuncio',
+    'ad url',
+  ];
+
+  return technicalFields.some((field) => question.includes(field)) || answer.includes('business.facebook.com/latest/');
 }
 
 function isWonStatusEvent(event: UnifiedHistoryEvent) {
@@ -581,17 +613,17 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
     return (
       <div className="flex justify-end px-2">
         <div className={cn(
-          "max-w-[88%] rounded-[8px] px-3 py-2 text-right text-white shadow-sm",
+          "min-w-0 max-w-[88%] overflow-hidden rounded-[8px] px-3 py-2 text-right text-white shadow-sm",
           isWebhookAnswer ? "bg-[#FF4529]" : "bg-[#1877F2]",
         )}>
           <div className="text-[9px] font-medium uppercase tracking-wide text-white/70">
             {isWebhookAnswer ? 'Webhook' : 'Meta Lead Ads'}
           </div>
-          <div className="mt-0.5 text-[10px] font-medium uppercase leading-snug text-white/90">
+          <div className="mt-0.5 break-words text-[10px] font-medium uppercase leading-snug text-white/90">
             {question}
           </div>
           {answer && (
-            <div className="mt-2 rounded-[6px] bg-white/[0.16] px-2.5 py-1.5 text-[12px] font-semibold leading-snug text-white">
+            <div className="mt-2 max-w-full overflow-hidden rounded-[6px] bg-white/[0.16] px-2.5 py-1.5 text-[12px] font-semibold leading-snug text-white [overflow-wrap:anywhere]">
               {answer}
             </div>
           )}
@@ -609,14 +641,6 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
     const videoUrl = metadataText(metadata.creative_video_url);
     const sourceType = metadataText(metadata.source_type);
     const isClickToWhatsApp = sourceType === 'whatsapp_click_to_message' || metadataText(metadata.channel) === 'whatsapp';
-    const linkUrl =
-      metadataText(metadata.creative_link_url) ||
-      metadataText(metadata.creative_instagram_url) ||
-      metadataText(metadata.creative_destination_url) ||
-      imageUrl ||
-      videoUrl;
-    const creativeName = metadataText(metadata.creative_name) || metadataText(metadata.ad_name) || 'Criativo do anuncio';
-    const destinationUrl = metadataText(metadata.creative_destination_url);
 
     return (
       <div className="flex justify-end px-2">
@@ -631,59 +655,28 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
           </div>
 
           {(videoUrl || imageUrl) && (
-            <div className="mt-2 bg-black/15">
+            <div className="mt-2 flex max-h-[260px] items-center justify-center bg-black/15">
               {videoUrl ? (
                 <video
                   src={videoUrl}
                   poster={imageUrl || undefined}
                   controls
                   preload="metadata"
-                  className="max-h-[190px] w-full bg-black object-contain"
+                  className="max-h-[260px] w-full bg-black object-contain"
                 />
               ) : imageUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element -- Meta creative URLs are external, signed and not part of Next image config.
                 <img
                   src={imageUrl}
-                  alt={creativeName}
-                  className="max-h-[190px] w-full object-cover"
+                  alt="Criativo Meta"
+                  className="max-h-[260px] w-full object-contain"
                 />
               ) : null}
             </div>
           )}
 
-          <div className="space-y-2 px-3 py-2">
-            <div className="space-y-1 rounded-[6px] bg-white/[0.12] px-2.5 py-2 text-right">
-              <div className="text-[12px] font-semibold leading-snug text-white">
-                {creativeName}
-              </div>
-            </div>
-            <div className="flex flex-wrap justify-end gap-1.5">
-              {linkUrl && (
-                <a
-                  href={linkUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 rounded-[6px] bg-white/[0.16] px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-white/[0.24]"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                  Ver criativo
-                </a>
-              )}
-              {destinationUrl && destinationUrl !== linkUrl && (
-                <a
-                  href={destinationUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 rounded-[6px] bg-white/[0.12] px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-white/[0.2]"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                  Link do anuncio
-                </a>
-              )}
-            </div>
-            <div className="text-[9px] text-white/65">
-              {format(new Date(event.timestamp), 'HH:mm', { locale: ptBR })}
-            </div>
+          <div className="px-3 py-2 text-[9px] text-white/65">
+            {format(new Date(event.timestamp), 'HH:mm', { locale: ptBR })}
           </div>
         </div>
       </div>
@@ -763,8 +756,14 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const { profile } = useAuth();
   const { data: history = [], isLoading: loadingHistory } = useLeadHistory(leadId);
-  const { data: conversations = [] } = useWhatsAppConversations(undefined, { hideGroups: true });
-  const { data: sessions = [] } = useAccessibleSessions();
+  const { data: sessions = [], isLoading: loadingSessions } = useAccessibleSessions();
+  const accessibleSessionIds = useMemo(() => sessions.map((session) => session.id), [sessions]);
+  const { data: conversations = [] } = useWhatsAppConversations(
+    undefined,
+    { hideGroups: true },
+    loadingSessions ? undefined : accessibleSessionIds,
+  );
+  useWhatsAppRealtimeConversations(true, loadingSessions ? undefined : accessibleSessionIds);
 
   const conversation = useMemo<WhatsAppConversation | null>(() => {
     return conversations.find((item) => item.lead_id === leadId || item.lead?.id === leadId) || null;
@@ -990,8 +989,9 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-soft)]">
         <div className="lead-thread-scroll flex-1 space-y-3 overflow-y-auto px-1 pb-3 pt-3">
           {isLoading && (
-            <div className="flex h-full items-center justify-center">
+            <div className="flex h-full flex-col items-center justify-center gap-2">
               <Loader2 className="h-5 w-5 animate-spin text-[var(--app-text-tertiary)]" />
+              <span className="text-[11px] text-[var(--app-text-tertiary)]">Carregando histórico e mensagens...</span>
             </div>
           )}
 

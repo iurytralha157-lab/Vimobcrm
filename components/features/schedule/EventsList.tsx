@@ -90,7 +90,7 @@ export function EventsList({ events, onEditEvent, onAddEvent, showUser = true, s
 
   if (events.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground bg-white/[0.035] rounded-xl border border-dashed border-white/[0.08]">
+      <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground bg-white/[0.035] rounded-xl border border-dashed border-white/[0.045]">
         <div className="h-12 w-12 rounded-full bg-white/[0.06] flex items-center justify-center mb-3">
           <CalendarIcon className="h-6 w-6 opacity-50" />
         </div>
@@ -129,7 +129,7 @@ export function EventsList({ events, onEditEvent, onAddEvent, showUser = true, s
                 <div
                   key={event.id}
                   className={cn(
-                    "group flex items-start gap-4 p-4 rounded-3xl border border-white/[0.055] bg-white/[0.035] transition-all hover:shadow-xl hover:-translate-y-0.5",
+                    "group flex items-start gap-4 p-4 rounded-[8px] border border-white/[0.035] bg-white/[0.035] transition-colors hover:bg-white/[0.05]",
                     isCompleted && "opacity-60 grayscale",
                     isOverdue && "border-destructive/20 bg-destructive/[0.02]"
                   )}
@@ -182,7 +182,7 @@ export function EventsList({ events, onEditEvent, onAddEvent, showUser = true, s
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="rounded-2xl border-white/[0.055] p-2">
+                        <DropdownMenuContent align="end" className="rounded-[8px] border-white/[0.035] p-2">
                           <DropdownMenuItem onClick={() => onEditEvent?.(event)} className="rounded-xl gap-2 font-bold py-2">
                             <Edit2 className="h-4 w-4 text-muted-foreground" />
                             Editar
@@ -199,7 +199,7 @@ export function EventsList({ events, onEditEvent, onAddEvent, showUser = true, s
                     </div>
 
                     {event.description && (
-                      <p className="text-sm text-muted-foreground/80 mt-3 line-clamp-2 leading-relaxed bg-white/[0.045] p-3 rounded-2xl border border-white/[0.055]">
+                      <p className="text-sm text-muted-foreground/80 mt-3 line-clamp-2 leading-relaxed bg-white/[0.045] p-3 rounded-[8px] border border-white/[0.035]">
                         {event.description}
                       </p>
                     )}

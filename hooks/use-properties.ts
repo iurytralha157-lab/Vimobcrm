@@ -27,7 +27,19 @@ export interface PropertyFilters {
   valor_min?: string
   valor_max?: string
   aceita_permuta?: string
+  aceita_financiamento?: string
   published_on_site?: string
+  owner_id?: string
+  condominium_id?: string
+  mobilia?: string
+  exclusividade?: string
+  placa_no_local?: string
+  destaque?: string
+  vagas_min?: string
+  area_util_min?: string
+  area_util_max?: string
+  area_total_min?: string
+  area_total_max?: string
 }
 
 const sanitizeSearchTerm = (value?: string) => value?.trim() || undefined
@@ -52,7 +64,19 @@ function normalizeFilters(filters: PropertyFilters = {}) {
     valor_min: parseNumericFilter(filters.valor_min),
     valor_max: parseNumericFilter(filters.valor_max),
     aceita_permuta: filters.aceita_permuta === 'true' ? true : filters.aceita_permuta === 'false' ? false : undefined,
+    aceita_financiamento: filters.aceita_financiamento === 'true' ? true : filters.aceita_financiamento === 'false' ? false : undefined,
     published_on_site: filters.published_on_site === 'true' ? true : filters.published_on_site === 'false' ? false : undefined,
+    owner_id: filters.owner_id || undefined,
+    condominium_id: filters.condominium_id || undefined,
+    mobilia: filters.mobilia || undefined,
+    exclusividade: filters.exclusividade === 'true' ? true : filters.exclusividade === 'false' ? false : undefined,
+    placa_no_local: filters.placa_no_local === 'true' ? true : filters.placa_no_local === 'false' ? false : undefined,
+    destaque: filters.destaque === 'true' ? true : filters.destaque === 'false' ? false : undefined,
+    vagas_min: parseNumericFilter(filters.vagas_min),
+    area_util_min: parseNumericFilter(filters.area_util_min),
+    area_util_max: parseNumericFilter(filters.area_util_max),
+    area_total_min: parseNumericFilter(filters.area_total_min),
+    area_total_max: parseNumericFilter(filters.area_total_max),
   }
 }
 
@@ -121,6 +145,7 @@ export function useInfiniteProperties(search?: string, pageSize: number = 24, fi
     getNextPageParam: (lastPage) => lastPage.nextPage,
     initialPageParam: 0,
     placeholderData: keepPreviousData,
+    staleTime: 1000 * 30,
     enabled: !!user?.id && !!organizationId,
   })
 }

@@ -1,16 +1,20 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { teamsAPI } from '@/lib/api/teams';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
 
 export function useTeamPipelines(teamId?: string) {
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id || null;
+
   return useQuery({
-    queryKey: ['team-pipelines', teamId],
+    queryKey: ['team-pipelines', organizationId, teamId],
     queryFn: async () => {
       if (!teamId) return [];
 
-      return teamsAPI.listTeamPipelines({ teamId });
+      return teamsAPI.listTeamPipelines({ teamId, organizationId });
     },
-    enabled: !!teamId,
+    enabled: Boolean(organizationId && teamId),
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,
@@ -18,10 +22,13 @@ export function useTeamPipelines(teamId?: string) {
 }
 
 export function useAllTeamPipelines(options?: { enabled?: boolean }) {
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id || null;
+
   return useQuery({
-    queryKey: ['all-team-pipelines'],
-    queryFn: () => teamsAPI.listTeamPipelines(),
-    enabled: options?.enabled ?? true,
+    queryKey: ['all-team-pipelines', organizationId],
+    queryFn: () => teamsAPI.listTeamPipelines({ organizationId }),
+    enabled: Boolean(organizationId) && (options?.enabled ?? true),
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,
@@ -30,10 +37,12 @@ export function useAllTeamPipelines(options?: { enabled?: boolean }) {
 
 export function useAssignPipelineToTeam() {
   const queryClient = useQueryClient();
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id || null;
 
   return useMutation({
     mutationFn: async ({ teamId, pipelineId }: { teamId: string; pipelineId: string }) => {
-      return teamsAPI.assignPipelineToTeam({ teamId, pipelineId });
+      return teamsAPI.assignPipelineToTeam({ teamId, pipelineId }, organizationId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['team-pipelines'] });
@@ -53,10 +62,12 @@ export function useAssignPipelineToTeam() {
 
 export function useRemovePipelineFromTeam() {
   const queryClient = useQueryClient();
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id || null;
 
   return useMutation({
     mutationFn: async ({ teamId, pipelineId }: { teamId: string; pipelineId: string }) => {
-      await teamsAPI.removePipelineFromTeam({ teamId, pipelineId });
+      await teamsAPI.removePipelineFromTeam({ teamId, pipelineId }, organizationId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['team-pipelines'] });
@@ -69,10 +80,12 @@ export function useRemovePipelineFromTeam() {
 
 export function useSetTeamLeader() {
   const queryClient = useQueryClient();
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id || null;
 
   return useMutation({
     mutationFn: async ({ teamId, userId, isLeader }: { teamId: string; userId: string; isLeader: boolean }) => {
-      await teamsAPI.setTeamLeader({ teamId, userId, isLeader });
+      await teamsAPI.setTeamLeader({ teamId, userId, isLeader }, organizationId);
     },
     onSuccess: (_, { isLeader }) => {
       queryClient.invalidateQueries({ queryKey: ['teams'] });

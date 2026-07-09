@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
+import { integrationsAPI } from '@/lib/api'
 import { getFriendlyErrorMessage } from '@/lib/error-handler'
 import {
   scheduleAPI,
@@ -37,6 +38,29 @@ function invalidateScheduleCaches(queryClient: ReturnType<typeof useQueryClient>
     queryClient.invalidateQueries({ queryKey: ['lead-history-v2', leadId] })
     queryClient.invalidateQueries({ queryKey: ['lead-timeline', leadId] })
   }
+}
+
+type GoogleCalendarSyncAction = 'push_upsert' | 'push_delete'
+
+async function syncGoogleCalendarEvent(action: GoogleCalendarSyncAction, eventId: string, organizationId?: string | null) {
+  try {
+    await integrationsAPI.invokeFunction('google-calendar-sync', { action, event_id: eventId }, organizationId)
+  } catch (error) {
+    console.warn('Google Calendar schedule sync skipped:', error)
+  }
+}
+
+function syncGoogleCalendarEventInBackground(
+  queryClient: ReturnType<typeof useQueryClient>,
+  action: GoogleCalendarSyncAction,
+  eventId?: string | null,
+  organizationId?: string | null,
+) {
+  if (!eventId) return
+  void syncGoogleCalendarEvent(action, eventId, organizationId).then(() => {
+    queryClient.invalidateQueries({ queryKey: ['google-calendar-status'] })
+    queryClient.invalidateQueries({ queryKey: ['schedule-events'] })
+  })
 }
 
 export function useScheduleEvents(options: UseScheduleEventsOptions = {}) {
@@ -80,6 +104,7 @@ export function useCreateScheduleEvent() {
     },
     onSuccess: (data) => {
       invalidateScheduleCaches(queryClient, data?.lead_id)
+      syncGoogleCalendarEventInBackground(queryClient, 'push_upsert', data?.id, profile?.organization_id)
       toast.success('Atividade criada com sucesso!')
     },
     onError: (error: Error) => {
@@ -111,6 +136,7 @@ export function useUpdateScheduleEvent() {
     },
     onSuccess: (data) => {
       invalidateScheduleCaches(queryClient, data?.lead_id)
+      syncGoogleCalendarEventInBackground(queryClient, 'push_upsert', data?.id, profile?.organization_id)
       toast.success('Atividade atualizada!')
     },
     onError: (error: Error) => {
@@ -131,6 +157,7 @@ export function useCompleteScheduleEvent() {
     },
     onSuccess: (data) => {
       invalidateScheduleCaches(queryClient, data?.lead_id)
+      syncGoogleCalendarEventInBackground(queryClient, 'push_upsert', data?.id, profile?.organization_id)
       toast.success(data.status === 'completed' ? 'Atividade concluida!' : 'Atividade reaberta')
     },
     onError: (error: Error) => {
@@ -147,10 +174,12 @@ export function useDeleteScheduleEvent() {
   return useMutation({
     mutationFn: async ({ id }: { id: string }) => {
       if (!profile?.organization_id) throw new Error('Organizacao nao encontrada')
+      await syncGoogleCalendarEvent('push_delete', id, profile.organization_id)
       return scheduleAPI.deleteScheduleEvent(id, profile.organization_id)
     },
     onSuccess: (data) => {
       invalidateScheduleCaches(queryClient, data?.lead_id)
+      queryClient.invalidateQueries({ queryKey: ['google-calendar-status'] })
       toast.success('Atividade removida!')
     },
     onError: (error: Error) => {

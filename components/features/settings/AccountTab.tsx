@@ -33,6 +33,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { usePasswordChangeStatus } from "@/hooks/use-password-change-status";
 import { usePasswordStrength, type PasswordStrength } from "@/hooks/use-password-strength";
 import { settingsAPI } from "@/lib/api/settings";
+import { canManageOrganization } from "@/lib/access/organization";
 import { toast } from "sonner";
 import { Language, languageNames } from "@/i18n";
 
@@ -124,11 +125,11 @@ export function AccountTab() {
   const [editingOrg, setEditingOrg] = useState(false);
   const activeOrganizationId = organization?.id || profile?.organization_id;
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
-  const isAdmin =
-    isSuperAdmin ||
-    profile?.role === "admin" ||
-    activeMemberRole === "admin" ||
-    activeMemberRole === "owner";
+  const isAdmin = canManageOrganization({
+    isSuperAdmin,
+    profileRole: profile?.role,
+    memberRole: activeMemberRole,
+  });
 
   const [profileForm, setProfileForm] = useState<ProfileFormData>({
     name: "",

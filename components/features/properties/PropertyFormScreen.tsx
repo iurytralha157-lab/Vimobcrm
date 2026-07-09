@@ -71,6 +71,11 @@ interface PropertyFormData {
   iptu: string;
   seguro_incendio: string;
   taxa_de_servico: string;
+  condominio_isento: boolean;
+  iptu_isento: boolean;
+  iptu_period: string;
+  rent_adjustment_index: string;
+  financing_mode: string;
   commission_percentage: string;
   descricao: string;
   imagem_principal: string;
@@ -149,7 +154,9 @@ const initialFormData: PropertyFormData = {
   destaque: false, endereco: '', numero: '', complemento: '', bairro: '', cidade: '',
    city_id: '', neighborhood_id: '', condominium_id: '', uf: '', cep: '', public_address_visibility: 'parcial', quartos: '', suites: '', banheiros: '', vagas: '', area_util: '',
   area_total: '', mobilia: '', regra_pet: false, andar: '', ano_construcao: '', preco: '',
-  valor_locacao: '', condominio: '', iptu: '', seguro_incendio: '', taxa_de_servico: '', commission_percentage: '',
+  valor_locacao: '', condominio: '', iptu: '', seguro_incendio: '', taxa_de_servico: '',
+  condominio_isento: false, iptu_isento: false, iptu_period: 'mensal',
+  rent_adjustment_index: '', financing_mode: 'sim', commission_percentage: '',
   descricao: '', imagem_principal: '', fotos: [], video_imovel: '', detalhes_extras: [],
   proximidades: [],
   owner_id: '', owner_name: '', owner_phone_residential: '', owner_phone_commercial: '', owner_cellphone: '',
@@ -172,11 +179,26 @@ const initialFormData: PropertyFormData = {
   observacoes_documentacao: '',
 };
 
+const DEFAULT_PURPOSE_OPTIONS = ['Residencial', 'Comercial', 'Industrial', 'Rural'];
+const DEFAULT_DEAL_OPTIONS = ['Venda', 'Aluguel', 'Venda e Aluguel', 'Temporada', 'Lançamento'];
+const RENT_ADJUSTMENT_INDEXES = ['IGP-M', 'IPCA', 'INPC', 'IVAR', 'INCC', 'IPC-FIPE', 'IGP-DI', 'Sem reajuste definido'];
+
+function appendUniqueOption(options: string[], value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return options;
+  if (options.some(option => normalize(option) === normalize(trimmed))) return options;
+  return [...options, trimmed];
+}
+
+function optionsWithCurrent(options: string[], current: string) {
+  return appendUniqueOption(options, current);
+}
+
 const formatCurrencyDisplay = (value: string): string => {
   if (!value) return '';
   const numbers = value.replace(/\D/g, '');
   if (!numbers) return '';
-  return Number(numbers).toLocaleString('pt-BR');
+  return `R$ ${Number(numbers).toLocaleString('pt-BR')}`;
 };
 
 const parseCurrencyInput = (value: string): string => value.replace(/\D/g, '');
@@ -220,6 +242,11 @@ type PropertyMetadata = {
   financing_details?: unknown;
   exchange_details?: unknown;
   hidden_site_image_urls?: unknown;
+  condominio_isento?: unknown;
+  iptu_isento?: unknown;
+  iptu_period?: unknown;
+  rent_adjustment_index?: unknown;
+  financing_mode?: unknown;
 };
 
 function toStringArray(value: unknown) {
@@ -233,6 +260,10 @@ function getPropertyMetadata(property: Property): PropertyMetadata {
 
 function metadataString(value: unknown) {
   return typeof value === 'string' ? value : '';
+}
+
+function metadataBoolean(value: unknown) {
+  return typeof value === 'boolean' ? value : false;
 }
 
 function propertyToFormData(p: Property): PropertyFormData {
@@ -253,6 +284,11 @@ function propertyToFormData(p: Property): PropertyFormData {
     condominio: p.condominio?.toString() || '', iptu: p.iptu?.toString() || '',
     seguro_incendio: p.seguro_incendio?.toString() || '',
     taxa_de_servico: p.taxa_de_servico?.toString() || '',
+    condominio_isento: metadataBoolean(metadata.condominio_isento),
+    iptu_isento: metadataBoolean(metadata.iptu_isento) || normalize(p.tipo_de_negocio || '') === 'temporada',
+    iptu_period: metadataString(metadata.iptu_period) || 'mensal',
+    rent_adjustment_index: metadataString(metadata.rent_adjustment_index),
+    financing_mode: metadataString(metadata.financing_mode) || (p.aceita_financiamento === false ? 'nao' : 'sim'),
     commission_percentage: p.commission_percentage?.toString() || '',
     descricao: cleanPropertyDescription(p.descricao), imagem_principal: p.imagem_principal || '',
     fotos: toStringArray(p.fotos), video_imovel: p.video_imovel || '',
@@ -331,8 +367,14 @@ export default function PropertyForm() {
   );
   const [activeTab, setActiveTab] = useState('owner');
   const [hasTriedSubmit, setHasTriedSubmit] = useState(false);
+  const [purposeOptions, setPurposeOptions] = useState(DEFAULT_PURPOSE_OPTIONS);
+  const [dealOptions, setDealOptions] = useState(DEFAULT_DEAL_OPTIONS);
+  const [newPurposeName, setNewPurposeName] = useState('');
+  const [newDealName, setNewDealName] = useState('');
   const [newTypeName, setNewTypeName] = useState('');
+  const [showAddPurpose, setShowAddPurpose] = useState(false);
   const [showAddType, setShowAddType] = useState(false);
+  const [showAddDeal, setShowAddDeal] = useState(false);
   const [showAddCity, setShowAddCity] = useState(false);
   const [showAddNeighborhood, setShowAddNeighborhood] = useState(false);
   const [showAddCondominium, setShowAddCondominium] = useState(false);
@@ -538,6 +580,20 @@ export default function PropertyForm() {
   const isLand = isLandType(formData.tipo_de_imovel);
   const isRental = isRentalType(formData.tipo_de_negocio);
   const isSale = isSaleType(formData.tipo_de_negocio) || !isRental;
+  const isSeasonal = normalize(formData.tipo_de_negocio) === 'temporada';
+  const supportsRentalContractTerms = isRental && !isSeasonal;
+  const supportsSaleTerms = isSaleType(formData.tipo_de_negocio);
+  const displayedPurposeOptions = optionsWithCurrent(purposeOptions, formData.finalidade);
+  const displayedDealOptions = optionsWithCurrent(dealOptions, formData.tipo_de_negocio);
+  const selectedCity = cities.find(city => city.id === formData.city_id);
+  const selectedNeighborhood = neighborhoods.find(neighborhood => neighborhood.id === formData.neighborhood_id);
+  const selectedCondominium = condominiums.find(condominium => condominium.id === formData.condominium_id);
+  const primaryValuesGridClass = cn(
+    'grid grid-cols-1 gap-3 md:grid-cols-2',
+    isSale && isRental
+      ? 'lg:grid-cols-[minmax(140px,1fr)_minmax(140px,1fr)_minmax(180px,1.15fr)_minmax(160px,1fr)_minmax(150px,.95fr)]'
+      : 'lg:grid-cols-[minmax(190px,1fr)_minmax(220px,1.18fr)_minmax(200px,1.05fr)_minmax(180px,.95fr)]',
+  );
   const statusOptions = [
     { value: 'ativo', label: 'Ativo' },
     { value: 'reservado', label: 'Reservado' },
@@ -603,9 +659,10 @@ export default function PropertyForm() {
       area_util: parseNum(formData.area_util), area_total: parseNum(formData.area_total),
       mobilia: formData.mobilia || null, regra_pet: formData.regra_pet,
       andar: parseInt2(formData.andar), ano_construcao: parseInt2(formData.ano_construcao),
-      preco: parseNum(formData.preco), valor_locacao: parseNum(formData.valor_locacao),
-      condominio: parseNum(formData.condominio),
-      iptu: parseNum(formData.iptu), seguro_incendio: parseNum(formData.seguro_incendio),
+      preco: isSale ? parseNum(formData.preco) : null,
+      valor_locacao: isRental ? parseNum(formData.valor_locacao) : null,
+      condominio: formData.condominio_isento ? null : parseNum(formData.condominio),
+      iptu: formData.iptu_isento ? null : parseNum(formData.iptu), seguro_incendio: parseNum(formData.seguro_incendio),
       taxa_de_servico: parseNum(formData.taxa_de_servico),
       commission_percentage: formData.commission_percentage ? parseFloat(formData.commission_percentage) : null,
       descricao: formData.descricao || null, imagem_principal: formData.imagem_principal || null,
@@ -620,20 +677,28 @@ export default function PropertyForm() {
       finalidade: formData.finalidade || null, pais: formData.pais || null,
       cadastrado_por: formData.cadastrado_por || null, referencia_alternativa: formData.referencia_alternativa || null,
       condicao_pagamento: formData.condicao_pagamento || null,
-      valor_itr: parseNum(formData.valor_itr), valor_seguro_fianca: parseNum(formData.valor_seguro_fianca),
+      valor_itr: parseNum(formData.valor_itr),
+      valor_seguro_fianca: supportsRentalContractTerms ? parseNum(formData.valor_seguro_fianca) : null,
       padrao: formData.padrao || null, posicao_localizacao: formData.posicao_localizacao || null,
       situacao_imovel: formData.situacao_imovel || null, ocupacao: formData.ocupacao || null,
       autorizado_comercializacao: formData.autorizado_comercializacao,
       exclusividade: formData.exclusividade, ano_reforma: parseInt2(formData.ano_reforma),
-      usou_fgts: formData.usou_fgts, aceita_financiamento: formData.aceita_financiamento,
-      aceita_permuta: formData.aceita_permuta,
+      usou_fgts: supportsSaleTerms ? formData.usou_fgts : false,
+      aceita_financiamento: supportsSaleTerms && formData.financing_mode !== 'nao',
+      aceita_permuta: supportsSaleTerms && formData.aceita_permuta,
       metadata: {
-        financing_details: formData.financing_details.trim() || null,
-        exchange_details: formData.exchange_details.trim() || null,
+        financing_details: supportsSaleTerms && formData.financing_mode !== 'nao' ? formData.financing_details.trim() || null : null,
+        exchange_details: supportsSaleTerms && formData.aceita_permuta ? formData.exchange_details.trim() || null : null,
         hidden_site_image_urls: formData.hidden_site_image_urls,
+        condominio_isento: formData.condominio_isento,
+        iptu_isento: formData.iptu_isento,
+        iptu_period: formData.iptu_period || null,
+        rent_adjustment_index: supportsRentalContractTerms ? formData.rent_adjustment_index || null : null,
+        financing_mode: supportsSaleTerms ? formData.financing_mode || null : 'nao',
       },
-      zoneamento: formData.zoneamento || null, valor_venda_avaliado: parseNum(formData.valor_venda_avaliado),
-      valor_locacao_avaliado: parseNum(formData.valor_locacao_avaliado),
+      zoneamento: formData.zoneamento || null,
+      valor_venda_avaliado: isSale ? parseNum(formData.valor_venda_avaliado) : null,
+      valor_locacao_avaliado: isRental ? parseNum(formData.valor_locacao_avaliado) : null,
       comentarios_internos: formData.comentarios_internos || null, marcadores: formData.marcadores,
       local_chaves: formData.local_chaves || null, anunciar: formData.anunciar,
       super_destaque: formData.super_destaque, tour_virtual: formData.tour_virtual || null,
@@ -667,11 +732,45 @@ export default function PropertyForm() {
     setFormData(prev => ({ ...prev, fotos: images, imagem_principal: mainImage }));
   };
 
+  const handleAddPurpose = () => {
+    const name = newPurposeName.trim();
+    if (!name) return;
+    setPurposeOptions(prev => appendUniqueOption(prev, name));
+    set('finalidade', name);
+    setNewPurposeName('');
+    setShowAddPurpose(false);
+  };
+
   const handleAddPropertyType = async () => {
-    if (!newTypeName.trim()) return;
-    await createPropertyType.mutateAsync(newTypeName.trim());
+    const name = newTypeName.trim();
+    if (!name) return;
+    await createPropertyType.mutateAsync(name);
+    set('tipo_de_imovel', name);
     setNewTypeName('');
     setShowAddType(false);
+  };
+
+  const handleAddDealType = () => {
+    const name = newDealName.trim();
+    if (!name) return;
+    setDealOptions(prev => appendUniqueOption(prev, name));
+    handleDealTypeChange(name);
+    setNewDealName('');
+    setShowAddDeal(false);
+  };
+
+  const handleDealTypeChange = (value: string) => {
+    const supportsTerms = isSaleType(value);
+    const isSeasonal = normalize(value) === 'temporada';
+
+    setFormData(prev => ({
+      ...prev,
+      tipo_de_negocio: value,
+      financing_mode: supportsTerms ? prev.financing_mode || 'sim' : 'nao',
+      aceita_financiamento: supportsTerms ? prev.financing_mode !== 'nao' : false,
+      aceita_permuta: supportsTerms ? prev.aceita_permuta : false,
+      iptu_isento: isSeasonal ? true : prev.iptu_isento,
+    }));
   };
 
   const handleCreateCity = async () => {
@@ -808,8 +907,8 @@ export default function PropertyForm() {
         )}
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col gap-3">
-          <div className="flex items-center gap-3 flex-shrink-0">
-            <nav data-tour="property-form-tabs" className="app-card app-scrollbar flex flex-nowrap gap-1.5 overflow-x-auto overflow-y-hidden p-1.5 flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-3 flex-shrink-0">
+            <nav data-tour="property-form-tabs" className="app-card app-scrollbar flex w-fit max-w-[calc(100%-236px)] min-w-0 flex-nowrap gap-1.5 overflow-x-auto overflow-y-hidden p-1.5">
               {tabs.map((tab) => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.value;
@@ -872,32 +971,28 @@ export default function PropertyForm() {
               <CardHeader><CardTitle className="text-lg">Responsável e Proprietário</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <div className="app-card-soft border-0 p-4">
-                  <div className="space-y-2">
-                    <Label>Responsável pela captação <RequiredMark /></Label>
-                    <Select value={formData.cadastrado_por} onValueChange={v => set('cadastrado_por', v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecione o captador responsável" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {user?.id && (
-                          <SelectItem key={user.id} value={user.id}>
-                            {profile?.name || user.email} (Você)
-                          </SelectItem>
-                        )}
-                        {users.filter(u => u.id !== user?.id).map(u => (
-                          <SelectItem key={u.id} value={u.id}>
-                            {u.name || u.email}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Apenas administradores e este responsável poderão editar o imóvel depois.
-                    </p>
-                  </div>
-                </div>
-                <div className="app-card-soft border-0 p-4">
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_184px] md:items-end">
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_184px] lg:items-end">
+                    <div className="space-y-2">
+                      <Label>Responsável pela captação <RequiredMark /></Label>
+                      <Select value={formData.cadastrado_por} onValueChange={v => set('cadastrado_por', v)}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione o captador responsável" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {user?.id && (
+                            <SelectItem key={user.id} value={user.id}>
+                              {profile?.name || user.email} (Você)
+                            </SelectItem>
+                          )}
+                          {users.filter(u => u.id !== user?.id).map(u => (
+                            <SelectItem key={u.id} value={u.id}>
+                              {u.name || u.email}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
                     <div className="space-y-2">
                       <Label>Proprietário cadastrado</Label>
                       <Select
@@ -923,18 +1018,22 @@ export default function PropertyForm() {
                         </SelectContent>
                       </Select>
                     </div>
+
                     <Button
                       type="button"
                       variant="ghost"
                       onClick={handleCreateOwner}
                       disabled={createPropertyOwner.isPending || !formData.owner_name.trim()}
-                      className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface)] px-5 shadow-none hover:bg-primary hover:text-primary-foreground disabled:hover:bg-[var(--app-surface)] disabled:hover:text-muted-foreground"
+                      className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface)] px-5 shadow-none hover:bg-primary hover:text-primary-foreground disabled:hover:bg-[var(--app-surface)] disabled:hover:text-muted-foreground lg:mb-2"
                     >
                       {createPropertyOwner.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                       <Plus className="mr-2 h-4 w-4" />
                       Salvar proprietário
                     </Button>
                   </div>
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Apenas administradores e o responsável pela captação poderão editar o imóvel depois.
+                  </p>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -998,14 +1097,24 @@ export default function PropertyForm() {
                 </div>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div className="space-y-2">
-                    <Label>Finalidade</Label>
+                    <div className="flex items-center gap-2">
+                      <Label>Finalidade</Label>
+                      <Button type="button" variant="ghost" size="sm" className="h-6 border-0 px-2 text-xs shadow-none hover:bg-primary hover:text-primary-foreground" onClick={() => setShowAddPurpose(!showAddPurpose)}>
+                        <Plus className="h-3 w-3 mr-1" /> Nova
+                      </Button>
+                    </div>
+                    {showAddPurpose && (
+                      <div className="flex gap-2 mb-2">
+                        <Input placeholder="Nova finalidade..." value={newPurposeName} onChange={e => setNewPurposeName(e.target.value)} className="h-8 text-sm" />
+                        <Button type="button" size="sm" className="h-8" onClick={handleAddPurpose}>OK</Button>
+                      </div>
+                    )}
                     <Select value={formData.finalidade} onValueChange={v => set('finalidade', v)}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger><span className="truncate">{formData.finalidade || 'Selecione'}</span></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="Residencial">Residencial</SelectItem>
-                        <SelectItem value="Comercial">Comercial</SelectItem>
-                        <SelectItem value="Industrial">Industrial</SelectItem>
-                        <SelectItem value="Rural">Rural</SelectItem>
+                        {displayedPurposeOptions.map(option => (
+                          <SelectItem key={option} value={option}>{option}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -1023,22 +1132,31 @@ export default function PropertyForm() {
                       </div>
                     )}
                     <Select value={formData.tipo_de_imovel} onValueChange={v => set('tipo_de_imovel', v)}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger><span className="truncate">{formData.tipo_de_imovel || 'Selecione'}</span></SelectTrigger>
                       <SelectContent>
                         {propertyTypes.map(type => <SelectItem key={type} value={type}>{type}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>Modalidade <RequiredMark /></Label>
-                    <Select value={formData.tipo_de_negocio} onValueChange={v => set('tipo_de_negocio', v)}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                    <div className="flex items-center gap-2">
+                      <Label>Modalidade <RequiredMark /></Label>
+                      <Button type="button" variant="ghost" size="sm" className="h-6 border-0 px-2 text-xs shadow-none hover:bg-primary hover:text-primary-foreground" onClick={() => setShowAddDeal(!showAddDeal)}>
+                        <Plus className="h-3 w-3 mr-1" /> Nova
+                      </Button>
+                    </div>
+                    {showAddDeal && (
+                      <div className="flex gap-2 mb-2">
+                        <Input placeholder="Nova modalidade..." value={newDealName} onChange={e => setNewDealName(e.target.value)} className="h-8 text-sm" />
+                        <Button type="button" size="sm" className="h-8" onClick={handleAddDealType}>OK</Button>
+                      </div>
+                    )}
+                    <Select value={formData.tipo_de_negocio} onValueChange={handleDealTypeChange}>
+                      <SelectTrigger><span className="truncate">{formData.tipo_de_negocio || 'Selecione'}</span></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="Venda">Venda</SelectItem>
-                        <SelectItem value="Aluguel">Locação</SelectItem>
-                        <SelectItem value="Venda e Aluguel">Venda e Locação</SelectItem>
-                        <SelectItem value="Temporada">Temporada</SelectItem>
-                        <SelectItem value="Lançamento">Lançamento</SelectItem>
+                        {displayedDealOptions.map(option => (
+                          <SelectItem key={option} value={option}>{option}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -1069,68 +1187,12 @@ export default function PropertyForm() {
             <Card data-tour="property-location-section" className="app-card">
               <CardHeader><CardTitle className="text-lg">Localização do Imóvel</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_96px_minmax(0,1fr)]">
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,.9fr)_minmax(240px,1fr)_140px]">
                   <div className="space-y-2">
-                    <Label>País</Label>
-                    <Input value={formData.pais} onChange={e => set('pais', e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Estado (UF)</Label>
-                    <Input maxLength={2} value={formData.uf} onChange={e => set('uf', e.target.value.toUpperCase())} placeholder="SP" />
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Label>Cidade</Label>
-                      <Button type="button" variant="ghost" size="sm" className="h-6 border-0 px-2 text-xs shadow-none hover:bg-primary hover:text-primary-foreground" onClick={() => {
-                        setNewCityName(formData.cidade);
-                        setNewCityUf(formData.uf);
-                        setShowAddCity(open => !open);
-                      }}>
-                        <Plus className="mr-1 h-3 w-3" /> Nova
-                      </Button>
-                    </div>
-                    {showAddCity && (
-                      <div className="mb-2 grid grid-cols-[1fr_72px_auto] gap-2">
-                        <Input value={newCityName} onChange={e => setNewCityName(e.target.value)} placeholder="Cidade" className="h-8 text-sm" />
-                        <Input value={newCityUf} onChange={e => setNewCityUf(e.target.value.toUpperCase())} placeholder="UF" maxLength={2} className="h-8 text-sm" />
-                        <Button type="button" size="sm" className="h-8" onClick={handleCreateCity} disabled={createCity.isPending}>
-                          OK
-                        </Button>
-                      </div>
-                    )}
-                    <Select
-                      value={formData.city_id || '__manual__'}
-                      onValueChange={(value) => {
-                        if (value === '__manual__') {
-                          set('city_id', '');
-                          return;
-                        }
-                        applyCity(cities.find(city => city.id === value) || null);
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecione a cidade" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__manual__">Digitar cidade manualmente</SelectItem>
-                        {cities.map(city => (
-                          <SelectItem key={city.id} value={city.id}>
-                            {city.name}{city.uf ? ` (${city.uf})` : ''}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {!formData.city_id && (
-                      <Input value={formData.cidade} onChange={e => set('cidade', e.target.value)} placeholder="São Paulo" />
-                    )}
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_180px] md:items-start">
-                  <div className="space-y-2">
-                    <Label>Como o endereço aparece no site público? <RequiredMark /></Label>
+                    <Label>Endereço no site público <RequiredMark /></Label>
                     <Select value={formData.public_address_visibility} onValueChange={v => set('public_address_visibility', v)}>
                       <SelectTrigger>
-                        <SelectValue placeholder="Selecione a visibilidade do endereço" />
+                        <SelectValue placeholder="Visibilidade do endereço" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="completo">Completo - rua, número, bairro, cidade, UF e CEP</SelectItem>
@@ -1138,9 +1200,6 @@ export default function PropertyForm() {
                         <SelectItem value="minimo">Mínimo - cidade e UF</SelectItem>
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Controla apenas o site público. No CRM, a equipe segue vendo o endereço conforme permissões.
-                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label>CEP</Label>
@@ -1163,23 +1222,64 @@ export default function PropertyForm() {
                         <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
                       )}
                     </div>
-                    <p className="text-xs text-muted-foreground">Preenche rua, bairro, cidade e UF.</p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_140px]">
-                  <div className="space-y-2 md:col-span-2">
-                    <Label>Logradouro</Label>
-                    <Input value={formData.endereco} onChange={e => set('endereco', e.target.value)} placeholder="Rua, Avenida..." />
                   </div>
                   <div className="space-y-2">
-                    <Label>Número</Label>
-                    <Input value={formData.numero} onChange={e => set('numero', e.target.value)} placeholder="123" />
+                    <Label>País</Label>
+                    <Input value={formData.pais} onChange={e => set('pais', e.target.value)} />
                   </div>
                 </div>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-[84px_minmax(230px,1.2fr)_minmax(220px,1.1fr)_minmax(220px,1.15fr)]">
                   <div className="space-y-2">
-                    <Label>Complemento</Label>
-                    <Input value={formData.complemento} onChange={e => set('complemento', e.target.value)} placeholder="Apto 101, Bloco A..." />
+                    <Label>UF</Label>
+                    <Input maxLength={2} value={formData.uf} onChange={e => set('uf', e.target.value.toUpperCase())} placeholder="SP" />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Label>Cidade</Label>
+                      <Button type="button" variant="ghost" size="sm" className="h-6 border-0 px-2 text-xs shadow-none hover:bg-primary hover:text-primary-foreground" onClick={() => {
+                        setNewCityName(formData.cidade);
+                        setNewCityUf(formData.uf);
+                        setShowAddCity(open => !open);
+                      }}>
+                        <Plus className="mr-1 h-3 w-3" /> Nova
+                      </Button>
+                    </div>
+                    <div className={!formData.city_id ? "grid grid-cols-[92px_minmax(0,1fr)] gap-2" : "grid grid-cols-1 gap-2"}>
+                      <Select
+                        value={formData.city_id || '__manual__'}
+                        onValueChange={(value) => {
+                          if (value === '__manual__') {
+                            set('city_id', '');
+                            return;
+                          }
+                          applyCity(cities.find(city => city.id === value) || null);
+                        }}
+                      >
+                        <SelectTrigger>
+                          <span className="truncate">{formData.city_id ? `${selectedCity?.name || formData.cidade}${selectedCity?.uf ? ` (${selectedCity.uf})` : ''}` : 'Manual'}</span>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__manual__">Manual</SelectItem>
+                          {cities.map(city => (
+                            <SelectItem key={city.id} value={city.id}>
+                              {city.name}{city.uf ? ` (${city.uf})` : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {!formData.city_id && (
+                        <Input value={formData.cidade} onChange={e => set('cidade', e.target.value)} placeholder="Digite a cidade" />
+                      )}
+                    </div>
+                    {showAddCity && (
+                      <div className="grid grid-cols-[minmax(0,1fr)_64px_auto] gap-2">
+                        <Input value={newCityName} onChange={e => setNewCityName(e.target.value)} placeholder="Nova cidade" className="h-8 text-sm" />
+                        <Input value={newCityUf} onChange={e => setNewCityUf(e.target.value.toUpperCase())} placeholder="UF" maxLength={2} className="h-8 text-sm" />
+                        <Button type="button" size="sm" className="h-8" onClick={handleCreateCity} disabled={createCity.isPending}>
+                          OK
+                        </Button>
+                      </div>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
@@ -1191,70 +1291,86 @@ export default function PropertyForm() {
                         <Plus className="mr-1 h-3 w-3" /> Novo
                       </Button>
                     </div>
+                    <div className={!formData.neighborhood_id ? "grid grid-cols-[92px_minmax(0,1fr)] gap-2" : "grid grid-cols-1 gap-2"}>
+                      <Select
+                        value={formData.neighborhood_id || '__manual__'}
+                        onValueChange={(value) => {
+                          if (value === '__manual__') {
+                            set('neighborhood_id', '');
+                            return;
+                          }
+                          applyNeighborhood(neighborhoods.find(neighborhood => neighborhood.id === value) || null);
+                        }}
+                      >
+                        <SelectTrigger>
+                          <span className="truncate">{formData.neighborhood_id ? selectedNeighborhood?.name || formData.bairro : 'Manual'}</span>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__manual__">Manual</SelectItem>
+                          {neighborhoods.map(neighborhood => (
+                            <SelectItem key={neighborhood.id} value={neighborhood.id}>
+                              {neighborhood.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {!formData.neighborhood_id && (
+                        <Input value={formData.bairro} onChange={e => set('bairro', e.target.value)} placeholder="Digite o bairro" />
+                      )}
+                    </div>
                     {showAddNeighborhood && (
-                      <div className="mb-2 flex gap-2">
+                      <div className="flex gap-2">
                         <Input value={newNeighborhoodName} onChange={e => setNewNeighborhoodName(e.target.value)} placeholder="Novo bairro" className="h-8 text-sm" />
                         <Button type="button" size="sm" className="h-8" onClick={handleCreateNeighborhood} disabled={createNeighborhood.isPending}>
                           OK
                         </Button>
                       </div>
                     )}
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Label>Condomínio</Label>
+                      <Button type="button" variant="ghost" size="sm" className="h-6 border-0 px-2 text-xs shadow-none hover:bg-primary hover:text-primary-foreground" onClick={() => setShowAddCondominium(open => !open)}>
+                        <Plus className="mr-1 h-3 w-3" /> Novo
+                      </Button>
+                    </div>
                     <Select
-                      value={formData.neighborhood_id || '__manual__'}
+                      value={formData.condominium_id || '__none__'}
                       onValueChange={(value) => {
-                        if (value === '__manual__') {
-                          set('neighborhood_id', '');
+                        if (value === '__none__') {
+                          applyCondominium(null);
                           return;
                         }
-                        applyNeighborhood(neighborhoods.find(neighborhood => neighborhood.id === value) || null);
+                        applyCondominium(condominiums.find(condominium => condominium.id === value) || null);
                       }}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Selecione o bairro" />
+                        <span className="truncate">{formData.condominium_id ? selectedCondominium?.name || 'Condomínio' : 'Sem condomínio'}</span>
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="__manual__">Digitar bairro manualmente</SelectItem>
-                        {neighborhoods.map(neighborhood => (
-                          <SelectItem key={neighborhood.id} value={neighborhood.id}>
-                            {neighborhood.name}
+                        <SelectItem value="__none__">Sem condomínio</SelectItem>
+                        {condominiums.map(condominium => (
+                          <SelectItem key={condominium.id} value={condominium.id}>
+                            {condominium.name}
+                            {condominium.default_condominium_fee ? ` - R$ ${Number(condominium.default_condominium_fee).toLocaleString('pt-BR')}` : ''}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    {!formData.neighborhood_id && (
-                      <Input value={formData.bairro} onChange={e => set('bairro', e.target.value)} placeholder="Jardins" />
-                    )}
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_112px_minmax(220px,.55fr)]">
+                  <div className="space-y-2">
+                    <Label>Logradouro</Label>
+                    <Input value={formData.endereco} onChange={e => set('endereco', e.target.value)} placeholder="Rua, Avenida..." />
                   </div>
                   <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Label>Condomínio</Label>
-                    <Button type="button" variant="ghost" size="sm" className="h-6 border-0 px-2 text-xs shadow-none hover:bg-primary hover:text-primary-foreground" onClick={() => setShowAddCondominium(open => !open)}>
-                      <Plus className="mr-1 h-3 w-3" /> Novo
-                    </Button>
+                    <Label>Número</Label>
+                    <Input value={formData.numero} onChange={e => set('numero', e.target.value)} placeholder="123" />
                   </div>
-                  <Select
-                    value={formData.condominium_id || '__none__'}
-                    onValueChange={(value) => {
-                      if (value === '__none__') {
-                        applyCondominium(null);
-                        return;
-                      }
-                      applyCondominium(condominiums.find(condominium => condominium.id === value) || null);
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione o condomínio" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">Sem condomínio</SelectItem>
-                      {condominiums.map(condominium => (
-                        <SelectItem key={condominium.id} value={condominium.id}>
-                          {condominium.name}
-                          {condominium.default_condominium_fee ? ` - R$ ${Number(condominium.default_condominium_fee).toLocaleString('pt-BR')}` : ''}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="space-y-2">
+                    <Label>Complemento</Label>
+                    <Input value={formData.complemento} onChange={e => set('complemento', e.target.value)} placeholder="Apto, bloco..." />
                   </div>
                 </div>
                 {showAddCondominium && (
@@ -1304,39 +1420,6 @@ export default function PropertyForm() {
           {/* 4. Características */}
           <TabsContent value="characteristics">
             <div className="space-y-4">
-              {/* Custos recorrentes */}
-              <Card className="app-card">
-                <CardHeader><CardTitle className="text-lg">Custos recorrentes</CardTitle></CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Tipo de tributo</Label>
-                      <Select value={formData.condicao_pagamento} onValueChange={v => set('condicao_pagamento', v)}>
-                        <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="iptu">IPTU</SelectItem>
-                          <SelectItem value="itr">ITR</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="space-y-2">
-                      <Label>Valor IPTU / ITR (R$)</Label>
-                      <Input value={formatCurrencyDisplay(formData.valor_itr)} onChange={e => set('valor_itr', parseCurrencyInput(e.target.value))} placeholder="0" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Valor Seguro Fiança (R$)</Label>
-                      <Input value={formatCurrencyDisplay(formData.valor_seguro_fianca)} onChange={e => set('valor_seguro_fianca', parseCurrencyInput(e.target.value))} placeholder="0" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Seguro Incêndio (R$)</Label>
-                      <Input value={formatCurrencyDisplay(formData.seguro_incendio)} onChange={e => set('seguro_incendio', parseCurrencyInput(e.target.value))} placeholder="0" />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
               {/* Detalhes do imóvel */}
               <Card className="app-card">
                 <CardHeader><CardTitle className="text-lg">Detalhes do Imóvel</CardTitle></CardHeader>
@@ -1394,32 +1477,6 @@ export default function PropertyForm() {
                       <Input type="number" value={formData.ano_reforma} onChange={e => set('ano_reforma', e.target.value)} placeholder="2023" />
                     </div>
                   </div>
-                  {(formData.aceita_financiamento || formData.aceita_permuta) && (
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                      {formData.aceita_financiamento && (
-                        <div className="space-y-2">
-                          <Label>Detalhes do financiamento</Label>
-                          <Textarea
-                            value={formData.financing_details}
-                            onChange={e => set('financing_details', e.target.value)}
-                            placeholder="Ex: aceita carta de crédito, bancos preferenciais, restrições..."
-                            rows={3}
-                          />
-                        </div>
-                      )}
-                      {formData.aceita_permuta && (
-                        <div className="space-y-2">
-                          <Label>Detalhes da permuta</Label>
-                          <Textarea
-                            value={formData.exchange_details}
-                            onChange={e => set('exchange_details', e.target.value)}
-                            placeholder="Ex: aceita imóvel menor, veículo, lote, região de interesse..."
-                            rows={3}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Padrão</Label>
@@ -1500,45 +1557,23 @@ export default function PropertyForm() {
                 </CardContent>
               </Card>
 
-              {/* Extras do imóvel */}
+              {/* Controle interno */}
               <Card className="app-card">
-                <CardHeader><CardTitle className="text-lg">Financiamento e Outros</CardTitle></CardHeader>
+                <CardHeader><CardTitle className="text-lg">Controle interno</CardTitle></CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className={togglePanelClass}>
-                      <Label>Usou FGTS nos últimos 3 anos?</Label>
-                      <Switch checked={formData.usou_fgts} onCheckedChange={v => set('usou_fgts', v)} />
-                    </div>
-                    <div className={togglePanelClass}>
-                      <Label>Aceita Financiamento</Label>
-                      <Switch checked={formData.aceita_financiamento} onCheckedChange={v => set('aceita_financiamento', v)} />
-                    </div>
-                    <div className={togglePanelClass}>
-                      <Label>Aceita permuta</Label>
-                      <Switch checked={formData.aceita_permuta} onCheckedChange={v => set('aceita_permuta', v)} />
-                    </div>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                     <div className="space-y-2">
                       <Label>Zoneamento</Label>
                       <Input value={formData.zoneamento} onChange={e => set('zoneamento', e.target.value)} placeholder="ZR-1, ZC-2..." />
                     </div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>Valor de Venda Avaliado (R$)</Label>
-                      <Input value={formatCurrencyDisplay(formData.valor_venda_avaliado)} onChange={e => set('valor_venda_avaliado', parseCurrencyInput(e.target.value))} placeholder="0" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Valor de Locação Avaliado (R$)</Label>
-                      <Input value={formatCurrencyDisplay(formData.valor_locacao_avaliado)} onChange={e => set('valor_locacao_avaliado', parseCurrencyInput(e.target.value))} placeholder="0" />
+                      <Label>Local das Chaves</Label>
+                      <Input value={formData.local_chaves} onChange={e => set('local_chaves', e.target.value)} placeholder="Ex: Na portaria, no escritório..." />
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label>Comentários Internos</Label>
                     <Textarea value={formData.comentarios_internos} onChange={e => set('comentarios_internos', e.target.value)} placeholder="Observações internas..." rows={3} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Local das Chaves</Label>
-                    <Input value={formData.local_chaves} onChange={e => set('local_chaves', e.target.value)} placeholder="Ex: Na portaria, no escritório..." />
                   </div>
                 </CardContent>
               </Card>
@@ -1580,33 +1615,173 @@ export default function PropertyForm() {
             <Card data-tour="property-values-section" className="app-card">
               <CardHeader><CardTitle className="text-lg">Valores</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+                <div className={primaryValuesGridClass}>
                   {isSale && (
                     <div className="space-y-2">
                       <Label>Preço de venda (R$) <RequiredMark /></Label>
-                      <Input value={formatCurrencyDisplay(formData.preco)} onChange={e => set('preco', parseCurrencyInput(e.target.value))} placeholder="500.000" className="text-lg font-semibold" />
+                      <Input value={formatCurrencyDisplay(formData.preco)} onChange={e => set('preco', parseCurrencyInput(e.target.value))} placeholder="R$ 1" className="text-lg font-semibold" />
                     </div>
                   )}
                   {isRental && (
                     <div className="space-y-2">
                       <Label>Valor de locação (R$) <RequiredMark /></Label>
-                      <Input value={formatCurrencyDisplay(formData.valor_locacao)} onChange={e => set('valor_locacao', parseCurrencyInput(e.target.value))} placeholder="2.500" className="text-lg font-semibold" />
-                      <p className="text-xs text-muted-foreground">Obrigatório para imóveis de locação ou temporada.</p>
+                      <Input value={formatCurrencyDisplay(formData.valor_locacao)} onChange={e => set('valor_locacao', parseCurrencyInput(e.target.value))} placeholder="R$ 1" className="text-lg font-semibold" />
                     </div>
                   )}
                   <div className="space-y-2">
                     <Label>Condomínio (R$)</Label>
-                    <Input value={formatCurrencyDisplay(formData.condominio)} onChange={e => set('condominio', parseCurrencyInput(e.target.value))} placeholder="800" />
+                    <div className="grid grid-cols-[minmax(0,1fr)_78px] gap-2">
+                      <Input
+                        value={formatCurrencyDisplay(formData.condominio)}
+                        onChange={e => set('condominio', parseCurrencyInput(e.target.value))}
+                        placeholder="R$ 1"
+                        disabled={formData.condominio_isento}
+                      />
+                      <label className="flex h-10 cursor-pointer items-center justify-center gap-1.5 rounded-[6px] px-1 text-xs text-muted-foreground">
+                        <Switch checked={formData.condominio_isento} onCheckedChange={v => set('condominio_isento', v)} />
+                        Isento
+                      </label>
+                    </div>
+                    {selectedCondominium?.default_condominium_fee && (
+                      <p className="text-xs text-muted-foreground">Preenchido pelo condomínio selecionado.</p>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label>IPTU (R$)</Label>
-                    <Input value={formatCurrencyDisplay(formData.iptu)} onChange={e => set('iptu', parseCurrencyInput(e.target.value))} placeholder="200" />
+                    <div className="grid grid-cols-[minmax(0,1fr)_78px] gap-2">
+                      <Input
+                        value={formatCurrencyDisplay(formData.iptu)}
+                        onChange={e => set('iptu', parseCurrencyInput(e.target.value))}
+                        placeholder="R$ 1"
+                        disabled={formData.iptu_isento}
+                      />
+                      <label className="flex h-10 cursor-pointer items-center justify-center gap-1.5 rounded-[6px] px-1 text-xs text-muted-foreground">
+                        <Switch checked={formData.iptu_isento} onCheckedChange={v => set('iptu_isento', v)} />
+                        Isento
+                      </label>
+                    </div>
                   </div>
                   <div className="space-y-2">
-                    <Label>Taxa de Serviço (R$)</Label>
-                    <Input value={formatCurrencyDisplay(formData.taxa_de_servico)} onChange={e => set('taxa_de_servico', parseCurrencyInput(e.target.value))} placeholder="100" />
+                    <Label>Período do IPTU</Label>
+                    <Select value={formData.iptu_period || 'mensal'} onValueChange={v => set('iptu_period', v)}>
+                      <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="mensal">Mensal</SelectItem>
+                        <SelectItem value="anual">Anual</SelectItem>
+                        <SelectItem value="parcelado">Parcelado</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
+
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+                  <div className="space-y-2">
+                    <Label>ITR rural (R$)</Label>
+                    <Input value={formatCurrencyDisplay(formData.valor_itr)} onChange={e => set('valor_itr', parseCurrencyInput(e.target.value))} placeholder="R$ 1" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Seguro incêndio (R$)</Label>
+                    <Input value={formatCurrencyDisplay(formData.seguro_incendio)} onChange={e => set('seguro_incendio', parseCurrencyInput(e.target.value))} placeholder="R$ 1" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Taxa de limpeza/serviço (R$)</Label>
+                    <Input value={formatCurrencyDisplay(formData.taxa_de_servico)} onChange={e => set('taxa_de_servico', parseCurrencyInput(e.target.value))} placeholder="R$ 1" />
+                  </div>
+                  {isSale && (
+                    <div className="space-y-2">
+                      <Label>Valor venda avaliado (R$)</Label>
+                      <Input value={formatCurrencyDisplay(formData.valor_venda_avaliado)} onChange={e => set('valor_venda_avaliado', parseCurrencyInput(e.target.value))} placeholder="R$ 1" />
+                    </div>
+                  )}
+                  {isRental && (
+                    <div className="space-y-2">
+                      <Label>Valor locação avaliado (R$)</Label>
+                      <Input value={formatCurrencyDisplay(formData.valor_locacao_avaliado)} onChange={e => set('valor_locacao_avaliado', parseCurrencyInput(e.target.value))} placeholder="R$ 1" />
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+                  {supportsRentalContractTerms && (
+                    <div className="space-y-2">
+                      <Label>Seguro fiança (R$)</Label>
+                      <Input value={formatCurrencyDisplay(formData.valor_seguro_fianca)} onChange={e => set('valor_seguro_fianca', parseCurrencyInput(e.target.value))} placeholder="R$ 1" />
+                    </div>
+                  )}
+                  {supportsRentalContractTerms && (
+                    <div className="space-y-2">
+                      <Label>Índice de reajuste</Label>
+                      <Select value={formData.rent_adjustment_index || 'none'} onValueChange={v => set('rent_adjustment_index', v === 'none' ? '' : v)}>
+                        <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Não informado</SelectItem>
+                          {RENT_ADJUSTMENT_INDEXES.map(index => (
+                            <SelectItem key={index} value={index}>{index}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
+
+                {supportsSaleTerms && (
+                <div className="app-card-soft border-0 p-4">
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(220px,.75fr)_minmax(180px,.55fr)_minmax(180px,.55fr)]">
+                    <div className="space-y-2">
+                      <Label>Financiável</Label>
+                      <Select
+                        value={formData.financing_mode || (formData.aceita_financiamento ? 'sim' : 'nao')}
+                        onValueChange={v => {
+                          set('financing_mode', v);
+                          set('aceita_financiamento', v !== 'nao');
+                        }}
+                      >
+                        <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="sim">Sim</SelectItem>
+                          <SelectItem value="nao">Não</SelectItem>
+                          <SelectItem value="mcmv">Minha Casa Minha Vida</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className={togglePanelClass}>
+                      <Label>Usou FGTS nos últimos 3 anos?</Label>
+                      <Switch checked={formData.usou_fgts} onCheckedChange={v => set('usou_fgts', v)} />
+                    </div>
+                    <div className={togglePanelClass}>
+                      <Label>Aceita permuta</Label>
+                      <Switch checked={formData.aceita_permuta} onCheckedChange={v => set('aceita_permuta', v)} />
+                    </div>
+                  </div>
+
+                  {(formData.financing_mode !== 'nao' || formData.aceita_permuta) && (
+                    <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                      {formData.financing_mode !== 'nao' && (
+                        <div className="space-y-2">
+                          <Label>Detalhes do financiamento</Label>
+                          <Textarea
+                            value={formData.financing_details}
+                            onChange={e => set('financing_details', e.target.value)}
+                            placeholder="Ex: aceita carta de crédito, bancos preferenciais, MCMV, restrições..."
+                            rows={3}
+                          />
+                        </div>
+                      )}
+                      {formData.aceita_permuta && (
+                        <div className="space-y-2">
+                          <Label>Recebe como permuta</Label>
+                          <Textarea
+                            value={formData.exchange_details}
+                            onChange={e => set('exchange_details', e.target.value)}
+                            placeholder="Ex: aceita imóvel menor, veículo, lote, região de interesse..."
+                            rows={3}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -1655,7 +1830,7 @@ export default function PropertyForm() {
             <Card data-tour="property-publication-section" className="app-card">
               <CardHeader><CardTitle className="text-lg">Publicação na Web</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                   <div className={togglePanelClass}>
                     <Label>Anunciar</Label>
                     <Switch checked={formData.anunciar} onCheckedChange={v => set('anunciar', v)} />
@@ -1668,10 +1843,10 @@ export default function PropertyForm() {
                     <Label>Super Destaque</Label>
                     <Switch checked={formData.super_destaque} onCheckedChange={v => set('super_destaque', v)} />
                   </div>
-                </div>
-                <div className={togglePanelClass}>
-                  <Label>Placa no Local</Label>
-                  <Switch checked={formData.placa_no_local} onCheckedChange={v => set('placa_no_local', v)} />
+                  <div className={togglePanelClass}>
+                    <Label>Placa no Local</Label>
+                    <Switch checked={formData.placa_no_local} onCheckedChange={v => set('placa_no_local', v)} />
+                  </div>
                 </div>
               </CardContent>
             </Card>

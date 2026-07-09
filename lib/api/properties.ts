@@ -22,7 +22,19 @@ type PropertyAPIOptions = {
   valor_min?: string | number
   valor_max?: string | number
   aceita_permuta?: boolean
+  aceita_financiamento?: boolean
   published_on_site?: boolean
+  owner_id?: string
+  condominium_id?: string
+  mobilia?: string
+  exclusividade?: boolean
+  placa_no_local?: boolean
+  destaque?: boolean
+  vagas_min?: string | number
+  area_util_min?: string | number
+  area_util_max?: string | number
+  area_total_min?: string | number
+  area_total_max?: string | number
 }
 
 type PropertyListResponse = {
@@ -80,7 +92,19 @@ export const propertiesAPI = {
         valor_min: options?.valor_min,
         valor_max: options?.valor_max,
         aceita_permuta: options?.aceita_permuta,
+        aceita_financiamento: options?.aceita_financiamento,
         published_on_site: options?.published_on_site,
+        owner_id: options?.owner_id,
+        condominium_id: options?.condominium_id,
+        mobilia: options?.mobilia,
+        exclusividade: options?.exclusividade,
+        placa_no_local: options?.placa_no_local,
+        destaque: options?.destaque,
+        vagas_min: options?.vagas_min,
+        area_util_min: options?.area_util_min,
+        area_util_max: options?.area_util_max,
+        area_total_min: options?.area_total_min,
+        area_total_max: options?.area_total_max,
       },
     })
 
@@ -110,7 +134,19 @@ export const propertiesAPI = {
         valor_min: options?.valor_min,
         valor_max: options?.valor_max,
         aceita_permuta: options?.aceita_permuta,
+        aceita_financiamento: options?.aceita_financiamento,
         published_on_site: options?.published_on_site,
+        owner_id: options?.owner_id,
+        condominium_id: options?.condominium_id,
+        mobilia: options?.mobilia,
+        exclusividade: options?.exclusividade,
+        placa_no_local: options?.placa_no_local,
+        destaque: options?.destaque,
+        vagas_min: options?.vagas_min,
+        area_util_min: options?.area_util_min,
+        area_util_max: options?.area_util_max,
+        area_total_min: options?.area_total_min,
+        area_total_max: options?.area_total_max,
       },
     })
   },

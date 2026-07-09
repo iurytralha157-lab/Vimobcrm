@@ -164,6 +164,8 @@ type LeadDetailLead = Omit<PipelineLead, 'stage' | 'assignee' | 'tags'> & Omit<P
 type CampaignTrackingDetails = Omit<Partial<LeadMeta>, 'lead_id' | 'created_at'> & {
   lead_id?: string | null;
   created_at?: string | null;
+  page_name?: string | null;
+  leadgen_id?: string | null;
 };
 
 type SelectableLeadProperty = {
@@ -240,6 +242,12 @@ function firstTrackingText(...values: unknown[]) {
   return null;
 }
 
+function trackingRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 function normalizeTrackingKey(value: unknown) {
   return metaText(value)?.toLowerCase().replace(/[\s-]+/g, '_') || '';
 }
@@ -275,19 +283,25 @@ function buildCampaignTrackingDetails(
 
   const source = metaText(lead?.source);
   const inferredPlatform = isTrackedLeadSource(source) ? normalizeTrackingKey(source) : null;
+  const leadRecord = trackingRecord(lead);
+  const boardMetaRecord = trackingRecord(boardMeta);
+  const rawPayload = trackingRecord(leadMeta?.raw_payload);
+  const rawDetails = trackingRecord(rawPayload?.lead_details);
 
   const details: CampaignTrackingDetails = {
     lead_id: firstTrackingText(leadMeta?.lead_id, lead?.id),
-    campaign_name: firstTrackingText(leadMeta?.campaign_name, boardMeta?.campaign_name),
+    campaign_name: firstTrackingText(leadMeta?.campaign_name, boardMeta?.campaign_name, rawDetails?.campaign_name, rawPayload?.campaign_name),
     campaign_id: firstTrackingText(leadMeta?.campaign_id, boardMeta?.campaign_id, lead?.meta_campaign_id),
-    adset_name: firstTrackingText(leadMeta?.adset_name, boardMeta?.adset_name),
+    adset_name: firstTrackingText(leadMeta?.adset_name, boardMeta?.adset_name, rawDetails?.adset_name, rawPayload?.adset_name),
     adset_id: firstTrackingText(leadMeta?.adset_id, boardMeta?.adset_id, lead?.meta_adset_id),
-    ad_name: firstTrackingText(leadMeta?.ad_name, boardMeta?.ad_name),
+    ad_name: firstTrackingText(leadMeta?.ad_name, boardMeta?.ad_name, rawDetails?.ad_name, rawPayload?.ad_name),
     ad_id: firstTrackingText(leadMeta?.ad_id, boardMeta?.ad_id, lead?.meta_ad_id),
-    form_name: firstTrackingText(leadMeta?.form_name),
-    form_id: firstTrackingText(leadMeta?.form_id, lead?.meta_form_id),
-    page_id: firstTrackingText(leadMeta?.page_id),
-    platform: firstTrackingText(leadMeta?.platform, boardMeta?.platform, inferredPlatform),
+    form_name: firstTrackingText(leadMeta?.form_name, boardMetaRecord?.form_name, rawDetails?.form_name, rawPayload?.form_name, leadRecord?.utm_term),
+    form_id: firstTrackingText(leadMeta?.form_id, rawDetails?.form_id, rawPayload?.form_id, lead?.meta_form_id),
+    page_id: firstTrackingText(leadMeta?.page_id, rawDetails?.page_id, rawPayload?.page_id),
+    page_name: firstTrackingText(rawDetails?.page_name, rawPayload?.page_name),
+    leadgen_id: firstTrackingText(rawDetails?.leadgen_id, rawPayload?.leadgen_id),
+    platform: firstTrackingText(leadMeta?.platform, boardMeta?.platform, rawDetails?.platform, rawPayload?.platform, inferredPlatform),
     source_type: firstTrackingText(leadMeta?.source_type, source),
     created_at: firstTrackingText(leadMeta?.created_at, lead?.created_at),
     utm_source: firstTrackingText(leadMeta?.utm_source, lead?.utm_source),
@@ -317,6 +331,8 @@ function hasLeadTrackingData(leadMeta: CampaignTrackingDetails | null | undefine
     leadMeta.form_name,
     leadMeta.form_id,
     leadMeta.page_id,
+    leadMeta.page_name,
+    leadMeta.leadgen_id,
     leadMeta.utm_source,
     leadMeta.utm_medium,
     leadMeta.utm_campaign,
@@ -346,6 +362,9 @@ function CampaignTrackingHover({ leadMeta }: { leadMeta: CampaignTrackingDetails
     ['Conjunto', leadMeta?.adset_name],
     ['Anuncio', leadMeta?.ad_name],
     ['Formulario', leadMeta?.form_name],
+    ['ID do formulario', leadMeta?.form_id],
+    ['Pagina', leadMeta?.page_name || leadMeta?.page_id],
+    ['Leadgen', leadMeta?.leadgen_id],
     ['Plataforma', trackingSourceLabel(leadMeta?.platform) || leadMeta?.platform],
     ['Origem', trackingSourceLabel(leadMeta?.source_type) || leadMeta?.utm_source],
     ['Capturado em', leadMeta?.created_at ? format(new Date(leadMeta.created_at), "dd/MM/yyyy 'as' HH:mm", { locale: ptBR }) : null],

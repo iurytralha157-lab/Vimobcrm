@@ -24,6 +24,7 @@ import { useTheme } from 'next-themes';
 import { isBillingBlockedStatus } from '@/lib/billing-access';
 import { canUseFinancialModule } from '@/lib/financial-access';
 import { Button } from '@/components/ui/button';
+import { canManageOrganization } from '@/lib/access/organization';
 
 const DEFAULT_BRAND_LOGO_DARK = "/images/logo-white.png";
 const DEFAULT_BRAND_LOGO_LIGHT = "/images/logo-black.png";
@@ -294,11 +295,11 @@ export const AppSidebar = React.memo(function AppSidebar() {
     id: activeOrganizationId,
     name: organization?.name || activeOrganizationMembership?.organization_name,
   });
-  const canAccessAdminItems =
-    isSuperAdmin ||
-    profile?.role === 'admin' ||
-    activeMemberRole === 'admin' ||
-    activeMemberRole === 'owner';
+  const canAccessAdminItems = canManageOrganization({
+    isSuperAdmin,
+    profileRole: profile?.role,
+    memberRole: activeMemberRole,
+  });
 
   const navItems = useMemo<NavItem[]>(() => {
     if (isBillingBlocked) {

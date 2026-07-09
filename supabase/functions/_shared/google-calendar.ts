@@ -376,15 +376,20 @@ export async function getConnectionById(connectionId: string) {
   return data as JsonRecord;
 }
 
-export async function getConnectionForUser(userId: string) {
-  const { data, error } = await supabase
+export async function getConnectionForUser(userId: string, options: { requireSyncEnabled?: boolean } = {}) {
+  const query = supabase
     .from("google_calendar_tokens")
     .select("*")
     .eq("user_id", userId)
-    .eq("sync_enabled", true)
     .is("disconnected_at", null)
     .order("created_at", { ascending: false })
-    .limit(1)
+    .limit(1);
+
+  if (options.requireSyncEnabled !== false) {
+    query.eq("sync_enabled", true);
+  }
+
+  const { data, error } = await query
     .maybeSingle();
   if (error) throw error;
   return data as JsonRecord | null;

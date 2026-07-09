@@ -241,6 +241,7 @@ export default function Agenda() {
           <div
             data-tour="agenda-period"
             className="flex items-center gap-2 border-b border-[var(--app-border)] px-3 py-2 md:px-[18px] md:py-3"
+            style={{ borderBottomColor: "color-mix(in srgb, var(--app-border) 58%, transparent)" }}
           >
             {!isMobile && (
               <button

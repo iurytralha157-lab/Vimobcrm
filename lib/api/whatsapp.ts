@@ -395,7 +395,11 @@ export const whatsappAPI = {
     allMessages?: boolean
     organizationId?: string | null
   }) {
-    const response = await vimobAPIRequest<Envelope<{ conversation?: WhatsAppConversation; messages: WhatsAppMessage[] }>>(
+    const response = await vimobAPIRequest<Envelope<{
+      conversation?: WhatsAppConversation
+      conversations?: WhatsAppConversation[]
+      messages: WhatsAppMessage[]
+    }>>(
       '/v1/whatsapp/history',
       {
         organizationId: params.organizationId,

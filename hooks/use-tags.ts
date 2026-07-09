@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
+import { useAuth } from '@/contexts/AuthContext';
 import { tagsAPI } from '@/lib/api/tags';
 
 export interface Tag {
@@ -14,18 +15,23 @@ export interface Tag {
 }
 
 export function useTags(options?: { enabled?: boolean }) {
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id || null;
+
   return useQuery({
-    queryKey: ['tags'],
-    enabled: options?.enabled ?? true,
-    queryFn: () => tagsAPI.list(),
+    queryKey: ['tags', organizationId],
+    enabled: Boolean(organizationId) && (options?.enabled ?? true),
+    queryFn: () => tagsAPI.list(organizationId),
   });
 }
 
 export function useCreateTag() {
   const queryClient = useQueryClient();
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id || null;
 
   return useMutation({
-    mutationFn: (tag: { name: string; color: string; description?: string }) => tagsAPI.create(tag),
+    mutationFn: (tag: { name: string; color: string; description?: string }) => tagsAPI.create(tag, organizationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tags'] });
       toast.success('Tag criada com sucesso!');
@@ -38,10 +44,12 @@ export function useCreateTag() {
 
 export function useUpdateTag() {
   const queryClient = useQueryClient();
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id || null;
 
   return useMutation({
     mutationFn: ({ id, ...updates }: { id: string; name?: string; color?: string; description?: string }) =>
-      tagsAPI.update(id, updates),
+      tagsAPI.update(id, updates, organizationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tags'] });
       toast.success('Tag atualizada!');
@@ -54,9 +62,11 @@ export function useUpdateTag() {
 
 export function useDeleteTag() {
   const queryClient = useQueryClient();
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id || null;
 
   return useMutation({
-    mutationFn: (id: string) => tagsAPI.delete(id),
+    mutationFn: (id: string) => tagsAPI.delete(id, organizationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tags'] });
       toast.success('Tag excluida!');

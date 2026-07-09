@@ -72,10 +72,24 @@ function unique<T>(values: T[]) {
 function normalizeJid(value: unknown, forceGroup = false) {
   const raw = normalizeText(value).trim();
   if (!raw) return "";
-  if (raw.includes("@")) return raw;
+  if (raw.includes("@")) {
+    const [left, domain] = raw.split("@", 2);
+    const normalizedLeft = /^\d+:\d+$/.test(left) ? left.split(":")[0] : left;
+    const normalizedDomain = domain === "c.us" ? "s.whatsapp.net" : domain;
+    return `${normalizedLeft}@${normalizedDomain}`;
+  }
   const digits = normalizeDigits(raw);
   if (!digits) return raw;
   return `${digits}@${forceGroup ? "g.us" : "s.whatsapp.net"}`;
+}
+
+function preferCanonicalJid(primary: string, ...fallbacks: unknown[]) {
+  if (primary && !primary.endsWith("@lid")) return primary;
+  for (const fallback of fallbacks) {
+    const normalized = normalizeJid(fallback, false);
+    if (normalized && !normalized.endsWith("@lid") && !normalized.endsWith("@g.us")) return normalized;
+  }
+  return primary;
 }
 
 function parseBoolean(value: unknown) {
@@ -634,10 +648,13 @@ function normalizeMessage(message: any) {
   const media = detectMediaBlock(messageNode, message);
   const mediaBlock = media.block || {};
   const isGroupHint = normalizeText(firstPresent(info.IsGroup, message.isGroup, message.is_group)).toLowerCase() === "true";
+  const fromMe = parseBoolean(firstPresent(info.IsFromMe, info.fromMe, key.fromMe, message.fromMe, message.from_me));
 
-  const remoteJid = normalizeJid(firstPresent(
+  const rawRemoteJid = firstPresent(
     info.Chat,
     info.chat,
+    info.JID,
+    info.jid,
     key.remoteJid,
     key.RemoteJID,
     message.remoteJid,
@@ -647,12 +664,67 @@ function normalizeMessage(message: any) {
     message.from,
     message.to,
     message.jid,
-  ), isGroupHint);
+  );
+
+  const receivedFallbackJids = [
+    info.Sender,
+    info.sender,
+    info.SenderPN,
+    info.senderPN,
+    info.SenderPn,
+    message.sender,
+    message.senderJid,
+    message.from,
+    message.phone,
+    message.number,
+  ];
+  const sentFallbackJids = [
+    info.Recipient,
+    info.recipient,
+    info.RecipientPN,
+    info.recipientPN,
+    info.RecipientPn,
+    message.recipient,
+    message.recipientJid,
+    message.to,
+    message.phone,
+    message.number,
+  ];
+
+  const remoteJid = preferCanonicalJid(
+    normalizeJid(rawRemoteJid, isGroupHint),
+    ...(fromMe ? sentFallbackJids : receivedFallbackJids),
+    ...(fromMe ? receivedFallbackJids : sentFallbackJids),
+  );
 
   if (!remoteJid) return null;
 
   const isGroup = remoteJid.endsWith("@g.us") || isGroupHint;
-  const fromMe = parseBoolean(firstPresent(info.IsFromMe, info.fromMe, key.fromMe, message.fromMe, message.from_me));
+  const groupInfo = firstPresent(
+    message.groupData,
+    message.GroupData,
+    message.group_data,
+    message.group,
+    message.Group,
+    message.groupInfo,
+    message.GroupInfo,
+    message.chatInfo,
+    message.ChatInfo,
+    {},
+  );
+  const groupName = isGroup
+    ? (normalizeText(firstPresent(
+        info.GroupName,
+        info.groupName,
+        info.GroupSubject,
+        info.groupSubject,
+        message.groupName,
+        message.group_name,
+        message.groupSubject,
+        message.group_subject,
+        isRecord(groupInfo) ? firstPresent(groupInfo.Name, groupInfo.name, groupInfo.Subject, groupInfo.subject, groupInfo.Topic, groupInfo.topic) : null,
+      )).trim() || null)
+    : null;
   const senderJid = normalizeJid(firstPresent(
     info.Sender,
     info.sender,
@@ -732,7 +804,8 @@ function normalizeMessage(message: any) {
     remoteJid,
     senderJid,
     senderName: normalizeText(firstPresent(info.PushName, info.pushName, message.pushName, message.senderName, message.notifyName)) || null,
-    contactName: normalizeText(firstPresent(info.PushName, info.pushName, message.pushName, message.contactName, message.notifyName)) || null,
+    contactName: isGroup ? null : (normalizeText(firstPresent(info.PushName, info.pushName, message.pushName, message.contactName, message.notifyName)) || null),
+    groupName,
     fromMe,
     isGroup,
     sentAt: timestamp,
@@ -1214,9 +1287,29 @@ async function logCreativeActivity(
   if (error) throw error;
 }
 
+async function resolveGroupName(session: JsonRecord, remoteJid: string, incomingName?: string | null) {
+  if (incomingName?.trim()) return incomingName.trim();
+
+  const { data, error } = await supabase
+    .from("whatsapp_groups")
+    .select("name, subject")
+    .eq("organization_id", session.organization_id)
+    .eq("session_id", session.id)
+    .eq("remote_jid", remoteJid)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[evolution-go-webhook] group name lookup failed", error.message);
+    return null;
+  }
+
+  return cleanText(data?.name) || cleanText(data?.subject) || null;
+}
+
 async function ensureConversation(session: JsonRecord, message: ReturnType<typeof normalizeMessage>, lead: JsonRecord | null) {
   if (!message) throw new Error("Missing normalized message");
   const attribution = whatsappAttribution(message);
+  const resolvedGroupName = message.isGroup ? await resolveGroupName(session, message.remoteJid, message.groupName) : null;
 
   const { data: existing, error: existingError } = await supabase
     .from("whatsapp_conversations")
@@ -1228,8 +1321,11 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
 
   if (existingError) throw existingError;
   if (existing) {
+    const contactName = message.isGroup
+      ? (resolvedGroupName || existing.contact_name || "Grupo WhatsApp")
+      : (message.contactName || existing.contact_name);
     const updates: JsonRecord = {
-      contact_name: message.contactName || existing.contact_name,
+      contact_name: contactName,
       contact_phone: existing.contact_phone || (message.isGroup ? null : normalizeDigits(message.remoteJid)),
       contact_picture: message.avatarUrl || existing.contact_picture,
       lead_id: existing.lead_id || lead?.id || null,
@@ -1238,6 +1334,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       metadata: {
         ...(existing.metadata || {}),
         last_webhook_at: new Date().toISOString(),
+        ...(message.isGroup && resolvedGroupName ? { group_name: resolvedGroupName } : {}),
         ...(attribution ? { whatsapp_attribution: attribution } : {}),
       },
     };
@@ -1259,7 +1356,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       lead_id: lead?.id || null,
       assigned_user_id: lead?.assigned_user_id || session.owner_user_id || null,
       remote_jid: message.remoteJid,
-      contact_name: message.contactName || (message.isGroup ? "Grupo WhatsApp" : normalizeDigits(message.remoteJid)),
+      contact_name: message.isGroup ? (resolvedGroupName || "Grupo WhatsApp") : (message.contactName || normalizeDigits(message.remoteJid)),
       contact_phone: message.isGroup ? null : normalizeDigits(message.remoteJid),
       contact_picture: message.avatarUrl,
       is_group: message.isGroup,
@@ -1267,6 +1364,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       metadata: {
         source: "evolution_go",
         created_from_webhook: true,
+        ...(message.isGroup && resolvedGroupName ? { group_name: resolvedGroupName } : {}),
         ...(attribution ? { whatsapp_attribution: attribution } : {}),
       },
     })
@@ -1470,8 +1568,31 @@ async function handleMessages(session: JsonRecord, payload: any) {
     const message = normalizeMessage(rawMessage);
     if (!message) continue;
 
-    const rule = !message.fromMe && !message.isGroup ? await findInboundRule(session, message) : null;
-    const lead = await ensureLead(session, message, rule);
+    let rule: JsonRecord | null = null;
+    let lead: JsonRecord | null = null;
+
+    if (!message.fromMe && !message.isGroup) {
+      try {
+        rule = await findInboundRule(session, message);
+      } catch (error) {
+        console.warn("[evolution-go-webhook] inbound rule lookup failed; message will still be stored", {
+          session_id: session.id,
+          remote_jid: message.remoteJid,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      try {
+        lead = await ensureLead(session, message, rule);
+      } catch (error) {
+        console.warn("[evolution-go-webhook] lead resolution failed; message will still be stored", {
+          session_id: session.id,
+          remote_jid: message.remoteJid,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     const conversation = await ensureConversation(session, message, lead);
     const result = await insertMessage(session, conversation, lead, message);
     await updateConversationAfterMessage(conversation, message, result.inserted);
@@ -1644,6 +1765,20 @@ async function upsertGroups(session: JsonRecord, payload: any) {
       .upsert(row, { onConflict: "organization_id,session_id,remote_jid" });
     if (error) throw error;
     processed += 1;
+
+    const { error: conversationUpdateError } = await supabase
+      .from("whatsapp_conversations")
+      .update({
+        contact_name: row.name,
+        contact_picture: row.picture_url,
+      })
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .eq("remote_jid", groupJid)
+      .eq("is_group", true);
+    if (conversationUpdateError) {
+      console.warn("[evolution-go-webhook] group conversation name sync failed", conversationUpdateError.message);
+    }
   }
   return processed;
 }

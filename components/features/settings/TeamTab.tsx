@@ -49,6 +49,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import { RolesTab } from './RolesTab';
+import { canManageOrganization } from '@/lib/access/organization';
 
 const getErrorMessage = (error: unknown, fallback: string) => {
   if (error instanceof Error) return error.message;
@@ -56,7 +57,7 @@ const getErrorMessage = (error: unknown, fallback: string) => {
 };
 
 export function TeamTab() {
-  const { profile, isSuperAdmin } = useAuth();
+  const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
   const { t } = useLanguage();
   const queryClient = useQueryClient();
   
@@ -83,7 +84,13 @@ export function TeamTab() {
   const [newUserEndereco, setNewUserEndereco] = useState('');
   const [newUserRole, setNewUserRole] = useState<'admin' | 'user'>('user');
 
-  const isAdmin = profile?.role === 'admin' || isSuperAdmin;
+  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
+  const isAdmin = canManageOrganization({
+    isSuperAdmin,
+    profileRole: profile?.role,
+    memberRole: activeMemberRole,
+  });
   const { data: deleteImpact, isLoading: deleteImpactLoading, isError: deleteImpactFailed } = useDeleteUserImpact(
     userToDelete?.id,
     deleteUserDialogOpen && !!userToDelete,

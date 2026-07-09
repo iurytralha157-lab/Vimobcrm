@@ -154,12 +154,8 @@ export function ContactCard({ contact, sourceLabels, onViewDetails, onDelete }: 
 
         {contact.stage_name && (
           <Badge
-            variant="outline"
-            className="gap-1.5 text-xs"
-            style={{
-              borderColor: contact.stage_color || undefined,
-              color: contact.stage_color || undefined
-            }}
+            variant="secondary"
+            className="gap-1.5 rounded-md border-0 bg-[var(--app-surface-soft)] px-2 py-0.5 text-xs font-medium text-[var(--app-text-primary)]"
           >
             <div
               className="h-2 w-2 rounded-full"
@@ -223,7 +219,10 @@ export function ContactCard({ contact, sourceLabels, onViewDetails, onDelete }: 
         )}
 
         {/* Source */}
-        <Badge variant="outline" className="text-xs">
+        <Badge
+          variant="secondary"
+          className="rounded-md border-0 bg-[var(--app-surface-soft)] px-2 py-0.5 text-xs font-medium text-[var(--app-text-primary)]"
+        >
           {sourceLabels[contact.source] || contact.source}
         </Badge>
 

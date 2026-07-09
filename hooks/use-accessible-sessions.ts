@@ -25,11 +25,12 @@ export function useAccessibleSessions(options: UseAccessibleSessionsOptions = {}
       );
     },
     enabled: shouldFetch && !!profile?.id && !!profile?.organization_id,
-    refetchInterval: 60_000,
+    refetchInterval: 30_000,
     refetchIntervalInBackground: false,
-    staleTime: 60_000,
+    staleTime: 30_000,
     gcTime: 10 * 60_000,
     retry: false,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 }

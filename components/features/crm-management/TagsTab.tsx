@@ -25,6 +25,7 @@ import {
   Pencil,
   Trash2,
   Loader2,
+  Check,
   Tags as TagsIcon,
   Search,
   TrendingUp,
@@ -113,7 +114,7 @@ export function TagsTab() {
     <div className="space-y-6">
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card className="p-4">
+        <Card className="rounded-lg border-0 bg-[var(--app-surface)] p-4 shadow-none">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
               <TagsIcon className="h-5 w-5 text-primary" />
@@ -124,7 +125,7 @@ export function TagsTab() {
             </div>
           </div>
         </Card>
-        <Card className="p-4">
+        <Card className="rounded-lg border-0 bg-[var(--app-surface)] p-4 shadow-none">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
               <Users className="h-5 w-5 text-blue-500" />
@@ -135,7 +136,7 @@ export function TagsTab() {
             </div>
           </div>
         </Card>
-        <Card className="p-4">
+        <Card className="rounded-lg border-0 bg-[var(--app-surface)] p-4 shadow-none">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-lg bg-green-500/10 flex items-center justify-center">
               <TrendingUp className="h-5 w-5 text-green-500" />
@@ -148,7 +149,7 @@ export function TagsTab() {
             </div>
           </div>
         </Card>
-        <Card className="p-4">
+        <Card className="rounded-lg border-0 bg-[var(--app-surface)] p-4 shadow-none">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
               <Hash className="h-5 w-5 text-amber-500" />
@@ -172,7 +173,7 @@ export function TagsTab() {
               placeholder="Buscar tags..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9"
+              className="border-0 bg-[var(--app-surface)] pl-9 shadow-none"
             />
           </div>
         </div>
@@ -184,12 +185,12 @@ export function TagsTab() {
           }
         }}>
           <DialogTrigger asChild>
-            <Button className="w-full sm:w-auto">
+            <Button className="w-full gap-2 rounded-lg shadow-none sm:w-auto">
               <Plus className="h-4 w-4 mr-2" />
               Nova Tag
             </Button>
           </DialogTrigger>
-          <DialogContent className="w-[90%] sm:max-w-md sm:w-full rounded-lg max-h-[90vh] overflow-y-auto">
+          <DialogContent className="w-[90%] sm:max-w-md sm:w-full rounded-lg border-0 shadow-none max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{editingTag ? 'Editar Tag' : 'Nova Tag'}</DialogTitle>
             </DialogHeader>
@@ -213,16 +214,16 @@ export function TagsTab() {
                       key={color}
                       type="button"
                       title={name}
-                      className={`w-10 h-10 rounded-lg transition-all flex items-center justify-center ${
+                      className={`w-9 h-9 rounded-lg transition-all flex items-center justify-center ${
                         formData.color === color
-                          ? 'scale-110 ring-2 ring-offset-2 ring-primary shadow-lg'
+                          ? 'ring-2 ring-primary ring-offset-2 ring-offset-background'
                           : 'hover:scale-105'
                       }`}
                       style={{ backgroundColor: color }}
                       onClick={() => setFormData({ ...formData, color })}
                     >
                       {formData.color === color && (
-                        <span className="text-white text-lg">✓</span>
+                        <Check className="h-4 w-4 text-white" />
                       )}
                     </button>
                   ))}
@@ -240,10 +241,10 @@ export function TagsTab() {
               </div>
 
               <div className="flex gap-2 pt-4">
-                <Button type="button" variant="outline" className="w-[40%] rounded-xl" onClick={() => setDialogOpen(false)}>
+                <Button type="button" variant="secondary" className="w-[40%] rounded-lg border-0 shadow-none" onClick={() => setDialogOpen(false)}>
                   Cancelar
                 </Button>
-                <Button type="submit" className="w-[60%] rounded-xl" disabled={createTag.isPending || updateTag.isPending}>
+                <Button type="submit" className="w-[60%] rounded-lg shadow-none" disabled={createTag.isPending || updateTag.isPending}>
                   {(createTag.isPending || updateTag.isPending) && (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   )}
@@ -257,16 +258,16 @@ export function TagsTab() {
 
       {/* Empty State */}
       {tags.length === 0 && (
-        <Card className="app-card">
+        <Card className="rounded-lg border-0 bg-[var(--app-surface)] shadow-none">
           <CardContent className="py-12 text-center">
-            <div className="h-16 w-16 rounded-full bg-white/[0.06] flex items-center justify-center mx-auto mb-4">
+            <div className="h-16 w-16 rounded-lg bg-primary/10 flex items-center justify-center mx-auto mb-4">
               <TagsIcon className="h-8 w-8 text-muted-foreground" />
             </div>
             <h3 className="font-medium text-lg mb-2">Nenhuma tag criada</h3>
             <p className="text-muted-foreground mb-6 max-w-sm mx-auto">
               Crie tags para categorizar e organizar seus leads de forma eficiente
             </p>
-            <Button onClick={() => setDialogOpen(true)} size="lg">
+            <Button onClick={() => setDialogOpen(true)} size="lg" className="gap-2 rounded-lg shadow-none">
               <Plus className="h-4 w-4 mr-2" />
               Criar primeira tag
             </Button>
@@ -281,12 +282,12 @@ export function TagsTab() {
             const percentage = maxLeadCount > 0 ? ((tag.lead_count || 0) / maxLeadCount) * 100 : 0;
 
             return (
-              <Card key={tag.id} className="group hover:shadow-md transition-all">
+              <Card key={tag.id} className="group rounded-lg border-0 bg-[var(--app-surface)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)]">
                 <CardContent className="p-5">
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex items-center gap-3">
                       <div
-                        className="w-12 h-12 rounded-xl flex items-center justify-center shadow-sm"
+                        className="w-12 h-12 rounded-lg flex items-center justify-center"
                         style={{ backgroundColor: `${tag.color}20` }}
                       >
                         <TagsIcon className="h-6 w-6" style={{ color: tag.color }} />
@@ -295,7 +296,7 @@ export function TagsTab() {
                         <Badge
                           variant="secondary"
                           style={{ backgroundColor: tag.color, color: '#FFFFFF' }}
-                          className="text-sm font-semibold border-0"
+                          className="rounded-md text-sm font-semibold border-0"
                         >
                           {tag.name}
                         </Badge>
@@ -306,7 +307,7 @@ export function TagsTab() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="h-8 w-8 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100"
                         >
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
@@ -355,7 +356,7 @@ export function TagsTab() {
 
       {/* No Results */}
       {tags.length > 0 && filteredTags.length === 0 && (
-        <Card>
+        <Card className="rounded-lg border-0 bg-[var(--app-surface)] shadow-none">
           <CardContent className="py-8 text-center">
             <Search className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
             <p className="text-muted-foreground">

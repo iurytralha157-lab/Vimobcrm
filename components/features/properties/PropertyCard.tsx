@@ -199,7 +199,7 @@ export function PropertyCard({
 
         {isUnavailable && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/25">
-            <Badge className={cn("border-0 px-3 py-1.5 text-xs font-semibold uppercase shadow-sm backdrop-blur-sm", statusBadgeClass)}>
+            <Badge className={cn("rounded-[6px] border-0 px-3 py-1.5 text-xs font-semibold uppercase shadow-sm backdrop-blur-sm", statusBadgeClass)}>
               <StatusIcon className="h-3.5 w-3.5 mr-1.5" />
               {statusLabel}
             </Badge>
@@ -219,16 +219,22 @@ export function PropertyCard({
               Destaque
             </Badge>
           )}
-          {isPrivate && (
-            <Badge variant="secondary" className="ml-2 bg-black/70 text-white">
+        </div>
+
+        {/* Top right badges */}
+        <div className="absolute right-2 top-2 flex items-start gap-1">
+          {isPrivate && !isInactive && (
+            <Badge variant="secondary" className="rounded-[6px] bg-black/70 text-white">
               <Lock className="h-3 w-3 mr-1" />
               Privado
             </Badge>
           )}
-        </div>
-
-        {/* Top right badges */}
-        <div className="absolute top-2 right-2 flex gap-1">
+          {isInactive && (
+            <Badge variant="secondary" className="rounded-[6px] bg-black/70 text-white">
+              <Clock className="h-3 w-3 mr-1" />
+              Inativo
+            </Badge>
+          )}
           {propertySiteUrl && (
             <button
               type="button"
@@ -238,9 +244,6 @@ export function PropertyCard({
             >
               <Share2 className="h-4 w-4" />
             </button>
-          )}
-          {isInactive && (
-            <Badge variant="outline" className="bg-background">Inativo</Badge>
           )}
         </div>
 
@@ -256,7 +259,7 @@ export function PropertyCard({
       </div>
       <CardContent className="p-4">
         <div className="flex items-start justify-between mb-2">
-          <Badge variant={property.tipo_de_negocio === 'Venda' ? 'default' : 'secondary'}>
+          <Badge className="rounded-[6px] border-0 bg-primary text-primary-foreground hover:bg-primary/90">
             {property.tipo_de_negocio}
           </Badge>
           <DropdownMenu>
