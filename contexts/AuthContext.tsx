@@ -7,6 +7,23 @@ import type { Tables } from '@/integrations/supabase/types';
 import { logAuditAction } from '@/hooks/use-audit-logs';
 import { performanceTracker } from '@/lib/performance';
 import { performFullCacheClear } from '@/lib/cache-utils';
+import { ROUTES, getPublicAppUrl } from '@/config/constants';
+
+const isAuthDebugEnabled =
+  process.env.NODE_ENV !== 'production' ||
+  process.env.NEXT_PUBLIC_AUTH_DEBUG === 'true';
+
+function authDebug(...args: unknown[]) {
+  if (isAuthDebugEnabled) {
+    console.debug(...args);
+  }
+}
+
+function authDebugWarn(...args: unknown[]) {
+  if (isAuthDebugEnabled) {
+    console.warn(...args);
+  }
+}
 
 interface UserProfile {
   id: string;
@@ -140,10 +157,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     if (organization) {
-      console.log('[AuthContext] active organization changed:', organization.id);
+      authDebug('[AuthContext] active organization changed:', organization.id);
       if (user) {
         localStorage.setItem(`vimob_active_organization_${user.id}`, organization.id);
-        console.log('[AuthContext] saved active organization to localStorage:', organization.id);
+        authDebug('[AuthContext] saved active organization to localStorage:', organization.id);
       }
     }
   }, [organization, user]);
@@ -198,7 +215,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           // Block inactive users (super_admins bypass this check)
           if (!profileData.is_active && !superAdmin) {
-            console.warn('User is deactivated, signing out');
+            authDebugWarn('User is deactivated, signing out');
             await supabase.auth.signOut();
             // Removed intrusive alert to prevent blocking the UI
             // toast handles this in the UI
@@ -225,7 +242,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             if (orgData) {
               if (!orgData.is_active && !superAdmin && !activeImpersonation) {
-                console.warn('Organization is deactivated, signing out');
+                authDebugWarn('Organization is deactivated, signing out');
                 await supabase.auth.signOut();
                 // Removed intrusive alert
                 return false;
@@ -312,7 +329,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!activeUser) return;
 
     localStorage.setItem(`vimob_active_organization_${activeUser.id}`, orgId);
-    console.log('[AuthContext] switching organization to:', orgId);
+    authDebug('[AuthContext] switching organization to:', orgId);
 
     await supabase
       .from('users')
@@ -362,7 +379,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   ) => {
     return performanceTracker.trackTimed('checkMultiOrg', async () => {
       try {
-        console.log('[AuthContext] checking organizations for userId:', userId);
+        authDebug('[AuthContext] checking organizations for userId:', userId);
 
         const { data, error } = await supabase
           .from('organization_members')
@@ -406,13 +423,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const uniqueOrgs = Array.from(orgsMap.values());
         setUserOrganizations(uniqueOrgs);
         const count = uniqueOrgs.length;
-        console.log('[AuthContext] found', count, 'active organizations');
+        authDebug('[AuthContext] found', count, 'active organizations');
 
         if (count === 1) {
           const onlyOrgId = uniqueOrgs[0].organization_id;
           
           if (!organization || organization.id !== onlyOrgId) {
-            console.log('[AuthContext] auto-selecting single org:', onlyOrgId);
+            authDebug('[AuthContext] auto-selecting single org:', onlyOrgId);
             setIsInitializingOrg(true);
             try {
               await switchOrganization(onlyOrgId);
@@ -422,7 +439,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         } else if (count > 1) {
           if (options?.forceSelectorForMultiOrg) {
-            console.log('[AuthContext] multiple organizations found; forcing organization selector');
+            authDebug('[AuthContext] multiple organizations found; forcing organization selector');
             setOrganization(null);
             setProfile(prev => prev ? { ...prev, organization_id: null } : prev);
             return;
@@ -434,7 +451,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const isValid = uniqueOrgs.some(o => o.organization_id === savedOrgId);
             
             if (isValid) {
-              console.log('[AuthContext] loading last used org for multi-org user:', savedOrgId);
+              authDebug('[AuthContext] loading last used org for multi-org user:', savedOrgId);
               setIsInitializingOrg(true);
               try {
                 await switchOrganization(savedOrgId);
@@ -442,11 +459,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 setIsInitializingOrg(false);
               }
             } else {
-              console.warn('[AuthContext] saved organization no longer valid:', savedOrgId);
+              authDebugWarn('[AuthContext] saved organization no longer valid:', savedOrgId);
               localStorage.removeItem(`vimob_active_organization_${userId}`);
             }
           } else if (!savedOrgId) {
-            console.log('[AuthContext] multiple organizations found but none active/saved');
+            authDebug('[AuthContext] multiple organizations found but none active/saved');
           }
         }
       } catch (err) {
@@ -467,10 +484,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     let isMounted = true;
-    console.log('AuthProvider mounted');
+    authDebug('AuthProvider mounted');
 
     const clearAllStates = () => {
-      console.log('Cleaning auth states');
+      authDebug('Cleaning auth states');
       const currentUserId = userRef.current?.id;
       if (currentUserId) {
         localStorage.removeItem(`vimob_active_organization_${currentUserId}`);
@@ -492,7 +509,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const safetyTimeout = setTimeout(() => {
       const state = authStateRef.current;
       if (isMounted && (!state.authInitialized || !state.organizationsLoaded)) {
-        console.warn('Auth safety timeout reached - forcing all loading states to complete');
+        authDebugWarn('Auth safety timeout reached - forcing all loading states to complete');
         setLoading(false);
         setAuthInitialized(true);
         setOrganizationsLoaded(true);
@@ -500,24 +517,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }, 15000);
 
-    console.log('getSession started');
+    authDebug('getSession started');
     supabase.auth.getSession().then(async ({ data: { session }, error }) => {
       if (!isMounted) return;
-      console.log('getSession finished, session:', !!session, 'error:', error?.message);
+      authDebug('getSession finished, session:', !!session, 'error:', error?.message);
 
       if (error || !session) {
         clearAllStates();
         setLoading(false);
         setAuthInitialized(true);
         setOrganizationsLoaded(true); // Must set this even without session
-        console.log('Auth initialization complete naturally (no session)');
+        authDebug('Auth initialization complete naturally (no session)');
         return;
       }
 
       setSession(session);
       setUser(session.user);
       userRef.current = session.user;
-      console.log('[AuthContext] login user loaded:', session.user.id);
+      authDebug('[AuthContext] login user loaded:', session.user.id);
 
       try {
         // Sequencial to ensure organizations are loaded before setting initialized
@@ -529,7 +546,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (isMounted) {
           setLoading(false);
           setAuthInitialized(true);
-          console.log('[AuthContext] Auth initialization complete naturally');
+          authDebug('[AuthContext] Auth initialization complete naturally');
         }
       }
     });
@@ -539,7 +556,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!isMounted) return;
 
         const authEvent = event as string;
-        console.log('Auth event:', authEvent, 'Session:', !!session);
+        authDebug('Auth event:', authEvent, 'Session:', !!session);
 
         // CRITICAL: Never use async/await with Supabase calls inside this callback.
         // Doing so deadlocks getSession() and other queries. Only update local state
@@ -547,7 +564,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // Initial session is handled by the getSession() block above
         if (authEvent === 'INITIAL_SESSION') {
-          console.log('Ignoring INITIAL_SESSION event');
+          authDebug('Ignoring INITIAL_SESSION event');
           return;
         }
 
@@ -558,7 +575,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setOrganizationsLoaded(true);
 
           if (isLoggingOutRef.current) {
-            console.log('[AuthContext] SIGNED_OUT event ignored (explicit signOut in progress)');
+            authDebug('[AuthContext] SIGNED_OUT event ignored (explicit signOut in progress)');
             return;
           }
 
@@ -574,7 +591,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ].some(route => window.location.pathname.startsWith(route));
 
           if (isPublicRoute) {
-            console.log('[AuthContext] SIGNED_OUT on public route, skipping redirect');
+            authDebug('[AuthContext] SIGNED_OUT on public route, skipping redirect');
             return;
           }
 
@@ -692,8 +709,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const resetPassword = async (email: string) => {
     try {
-      const redirectUrl = `${window.location.origin}/reset-password`;
-      console.log('[AuthContext] Resetting password for:', email, 'redirectUrl:', redirectUrl);
+      const redirectUrl = getPublicAppUrl(ROUTES.RESET_PASSWORD);
+      authDebug('[AuthContext] Resetting password for:', email, 'redirectUrl:', redirectUrl);
 
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: redirectUrl,
@@ -729,7 +746,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await supabase.auth.signOut({ scope: 'global' });
     } catch (error) {
-      console.log('Logout server-side falhou (sessão provavelmente já expirada):', error);
+      authDebug('Logout server-side falhou (sessão provavelmente já expirada):', error);
     }
 
     // Executar limpeza profunda e redirecionar para login com cache bust

@@ -25,7 +25,8 @@ func (repo Repository) resolveConversationLead(ctx context.Context, tenantContex
 		return conversation, nil
 	}
 
-	match, err := repo.findLeadByPhone(ctx, tenantContext.OrganizationID, pointerValue(conversation.ContactPhone), conversation.RemoteJID)
+	identity := newWhatsAppContactIdentity(pointerValue(conversation.ContactPhone), conversation.RemoteJID, conversation.IsGroup)
+	match, err := repo.findLeadByPhone(ctx, tenantContext.OrganizationID, identity.LeadMatchValues()...)
 	if err != nil || match == nil {
 		return conversation, err
 	}

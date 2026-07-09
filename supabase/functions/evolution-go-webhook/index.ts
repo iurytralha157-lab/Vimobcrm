@@ -83,13 +83,150 @@ function normalizeJid(value: unknown, forceGroup = false) {
   return `${digits}@${forceGroup ? "g.us" : "s.whatsapp.net"}`;
 }
 
-function preferCanonicalJid(primary: string, ...fallbacks: unknown[]) {
-  if (primary && !primary.endsWith("@lid")) return primary;
-  for (const fallback of fallbacks) {
-    const normalized = normalizeJid(fallback, false);
-    if (normalized && !normalized.endsWith("@lid") && !normalized.endsWith("@g.us")) return normalized;
+function isGroupJid(value: string) {
+  return value.endsWith("@g.us");
+}
+
+function isLidJid(value: string) {
+  return value.endsWith("@lid");
+}
+
+function normalizeJidList(values: unknown[], forceGroup = false) {
+  return unique(values.map((value) => normalizeJid(value, forceGroup)).filter(Boolean));
+}
+
+function phoneFromJidLike(value: unknown) {
+  const raw = normalizeText(value).trim();
+  if (!raw) return "";
+  const lower = raw.toLowerCase();
+  if (lower.includes("@g.us") || lower.includes("@lid")) return "";
+
+  const hasDomain = lower.includes("@");
+  let left = raw;
+  if (hasDomain) left = raw.split("@", 1)[0];
+  if (left.includes(":")) left = left.split(":", 1)[0];
+
+  const digits = normalizeDigits(left);
+  if (digits.length < 8) return "";
+  if (hasDomain) return digits;
+  if (digits.startsWith("55")) return digits;
+  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+  return digits;
+}
+
+function phoneMatchVariantsForWhatsApp(...values: unknown[]) {
+  const variants: string[] = [];
+  for (const value of values) {
+    const raw = normalizeText(value).trim().toLowerCase();
+    const phone = phoneFromJidLike(value);
+    const rawDigits = raw.includes("@g.us") || raw.includes("@lid") ? "" : normalizeDigits(value);
+
+    for (const candidate of [phone, rawDigits]) {
+      if (!candidate || candidate.length < 8) continue;
+      variants.push(candidate);
+      if (candidate.startsWith("55")) variants.push(candidate.slice(2));
+      if (!candidate.startsWith("55") && (candidate.length === 10 || candidate.length === 11)) {
+        variants.push(`55${candidate}`);
+      }
+      if (candidate.startsWith("55") && candidate.length === 13) {
+        variants.push(`55${candidate.slice(2, 4)}${candidate.slice(5)}`);
+      }
+      if (candidate.startsWith("55") && candidate.length === 12) {
+        variants.push(`55${candidate.slice(2, 4)}9${candidate.slice(4)}`);
+      }
+    }
   }
-  return primary;
+  return unique(variants.filter((value) => value.length >= 8));
+}
+
+function whatsappIdentityForMessage(message: any) {
+  if (!message) {
+    return {
+      remoteJid: "",
+      contactPhone: "",
+      isGroup: false,
+      remoteAliases: [] as string[],
+      phoneVariants: [] as string[],
+    };
+  }
+
+  if (message.isGroup) {
+    const groupJid = normalizeJid(message.remoteJid, true);
+    return {
+      remoteJid: groupJid,
+      contactPhone: "",
+      isGroup: true,
+      remoteAliases: unique([groupJid, message.remoteJid].filter(Boolean)),
+      phoneVariants: [] as string[],
+    };
+  }
+
+  const contactPhone = phoneFromJidLike(message.remoteJid) || phoneFromJidLike(message.senderJid);
+  const remoteJid = contactPhone ? `${contactPhone}@s.whatsapp.net` : normalizeJid(message.remoteJid, false);
+  const remoteAliases = unique([
+    remoteJid,
+    contactPhone ? `${contactPhone}@c.us` : "",
+    normalizeJid(message.remoteJid, false),
+    normalizeJid(message.senderJid, false),
+    message.remoteJid,
+    message.senderJid,
+  ].filter(Boolean));
+
+  return {
+    remoteJid,
+    contactPhone,
+    isGroup: false,
+    remoteAliases,
+    phoneVariants: phoneMatchVariantsForWhatsApp(contactPhone, message.remoteJid, message.senderJid),
+  };
+}
+
+function firstStableJid(values: string[], options: { allowGroup?: boolean; allowLid?: boolean } = {}) {
+  for (const value of values) {
+    if (!value) continue;
+    if (!options.allowGroup && isGroupJid(value)) continue;
+    if (!options.allowLid && isLidJid(value)) continue;
+    return value;
+  }
+  return "";
+}
+
+function resolveRemoteJid(params: {
+  fromMe: boolean;
+  isGroupHint: boolean;
+  chatCandidates: unknown[];
+  inboundCandidates: unknown[];
+  outboundCandidates: unknown[];
+}) {
+  const chatJids = normalizeJidList(params.chatCandidates, params.isGroupHint);
+  const inboundJids = normalizeJidList(params.inboundCandidates, false);
+  const outboundJids = normalizeJidList(params.outboundCandidates, false);
+
+  const groupJid = firstStableJid(
+    [...chatJids, ...outboundJids, ...inboundJids].filter(isGroupJid),
+    { allowGroup: true },
+  );
+  if (params.isGroupHint || groupJid) {
+    return groupJid || firstStableJid(chatJids, { allowGroup: true });
+  }
+
+  if (params.fromMe) {
+    return (
+      firstStableJid(outboundJids) ||
+      firstStableJid(chatJids) ||
+      firstStableJid(inboundJids) ||
+      firstStableJid(outboundJids, { allowLid: true }) ||
+      firstStableJid(chatJids, { allowLid: true })
+    );
+  }
+
+  return (
+    firstStableJid(chatJids) ||
+    firstStableJid(inboundJids) ||
+    firstStableJid(outboundJids) ||
+    firstStableJid(chatJids, { allowLid: true }) ||
+    firstStableJid(inboundJids, { allowLid: true })
+  );
 }
 
 function parseBoolean(value: unknown) {
@@ -650,22 +787,6 @@ function normalizeMessage(message: any) {
   const isGroupHint = normalizeText(firstPresent(info.IsGroup, message.isGroup, message.is_group)).toLowerCase() === "true";
   const fromMe = parseBoolean(firstPresent(info.IsFromMe, info.fromMe, key.fromMe, message.fromMe, message.from_me));
 
-  const rawRemoteJid = firstPresent(
-    info.Chat,
-    info.chat,
-    info.JID,
-    info.jid,
-    key.remoteJid,
-    key.RemoteJID,
-    message.remoteJid,
-    message.remote_jid,
-    message.chat,
-    message.chatId,
-    message.from,
-    message.to,
-    message.jid,
-  );
-
   const receivedFallbackJids = [
     info.Sender,
     info.sender,
@@ -691,11 +812,25 @@ function normalizeMessage(message: any) {
     message.number,
   ];
 
-  const remoteJid = preferCanonicalJid(
-    normalizeJid(rawRemoteJid, isGroupHint),
-    ...(fromMe ? sentFallbackJids : receivedFallbackJids),
-    ...(fromMe ? receivedFallbackJids : sentFallbackJids),
-  );
+  const remoteJid = resolveRemoteJid({
+    fromMe,
+    isGroupHint,
+    chatCandidates: [
+      info.Chat,
+      info.chat,
+      info.JID,
+      info.jid,
+      key.remoteJid,
+      key.RemoteJID,
+      message.remoteJid,
+      message.remote_jid,
+      message.chat,
+      message.chatId,
+      message.jid,
+    ],
+    inboundCandidates: receivedFallbackJids,
+    outboundCandidates: sentFallbackJids,
+  });
 
   if (!remoteJid) return null;
 
@@ -783,28 +918,44 @@ function normalizeMessage(message: any) {
     message.Base64,
     message.media,
     message.file,
+    message.thumbnail,
+    message.thumbnailBase64,
+    message.jpegThumbnail,
     messageNode?.base64,
     messageNode?.Base64,
     messageNode?.media,
     messageNode?.file,
+    messageNode?.thumbnail,
+    messageNode?.thumbnailBase64,
+    messageNode?.jpegThumbnail,
     messageNode?.data?.base64,
     messageNode?.Data?.Base64,
     mediaBlock.base64,
     mediaBlock.Base64,
     mediaBlock.media,
     mediaBlock.file,
+    mediaBlock.thumbnail,
+    mediaBlock.thumbnailBase64,
+    mediaBlock.jpegThumbnail,
   ));
 
   const reaction = firstPresent(messageNode?.reactionMessage, messageNode?.ReactionMessage, message.reaction, null);
   const isReaction = isRecord(reaction);
   const referral = extractWhatsAppReferral(messageNode, message, mediaBlock);
 
+  const senderName = normalizeText(firstPresent(info.PushName, info.pushName, message.pushName, message.senderName, message.notifyName)) || null;
+  const directContactName = isGroup
+    ? null
+    : (fromMe
+        ? (normalizeText(firstPresent(message.contactName, message.chatName, message.name, message.contact?.name)) || null)
+        : (normalizeText(firstPresent(info.PushName, info.pushName, message.pushName, message.contactName, message.notifyName)) || null));
+
   return {
     messageId,
     remoteJid,
     senderJid,
-    senderName: normalizeText(firstPresent(info.PushName, info.pushName, message.pushName, message.senderName, message.notifyName)) || null,
-    contactName: isGroup ? null : (normalizeText(firstPresent(info.PushName, info.pushName, message.pushName, message.contactName, message.notifyName)) || null),
+    senderName,
+    contactName: directContactName,
     groupName,
     fromMe,
     isGroup,
@@ -1032,7 +1183,8 @@ async function resolvePropertyByCode(organizationId: string, propertyCode: strin
 async function ensureLead(session: JsonRecord, message: ReturnType<typeof normalizeMessage>, rule: JsonRecord | null) {
   if (!message || message.isGroup) return null;
 
-  const phone = normalizeDigits(message.remoteJid);
+  const identity = whatsappIdentityForMessage(message);
+  const phone = identity.contactPhone || normalizeDigits(message.remoteJid);
   if (!phone) return null;
 
   const existing = await findLeadByPhone(session.organization_id, phone);
@@ -1051,7 +1203,7 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
         ...(existing.metadata || {}),
         ...(attribution ? { whatsapp_attribution: attribution } : {}),
         last_whatsapp_session_id: session.id,
-        last_whatsapp_remote_jid: message.remoteJid,
+        last_whatsapp_remote_jid: identity.remoteJid || message.remoteJid,
       },
     };
     if (avatarUrl && !existing.whatsapp_avatar_url) {
@@ -1100,7 +1252,7 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
       metadata: {
         source: "whatsapp",
         whatsapp_session_id: session.id,
-        remote_jid: message.remoteJid,
+        remote_jid: identity.remoteJid || message.remoteJid,
         matched_rule_id: rule?.id || null,
         target_team_id: rule?.target_team_id || null,
         target_round_robin_id: rule?.target_round_robin_id || null,
@@ -1144,7 +1296,7 @@ async function upsertLeadMetaAttribution(session: JsonRecord, lead: JsonRecord |
     source: "whatsapp",
     source_type: "whatsapp_click_to_message",
     message_id: message.messageId,
-    remote_jid: message.remoteJid,
+    remote_jid: conversation.remote_jid || message.remoteJid,
     whatsapp_session_id: session.id,
     received_at: message.sentAt,
     property_id: lead.property_id || lead.interest_property_id || null,
@@ -1213,7 +1365,7 @@ async function logLeadEntryAttribution(
     message_id: message.messageId,
     conversation_id: conversation.id,
     whatsapp_session_id: session.id,
-    remote_jid: message.remoteJid,
+    remote_jid: conversation.remote_jid || message.remoteJid,
     property_id: lead.property_id || lead.interest_property_id || null,
   };
 
@@ -1261,7 +1413,7 @@ async function logCreativeActivity(
     message_id: message.messageId,
     conversation_id: conversation.id,
     whatsapp_session_id: session.id,
-    remote_jid: message.remoteJid,
+    remote_jid: conversation.remote_jid || message.remoteJid,
     property_id: lead.property_id || lead.interest_property_id || null,
   };
 
@@ -1308,25 +1460,52 @@ async function resolveGroupName(session: JsonRecord, remoteJid: string, incoming
 
 async function ensureConversation(session: JsonRecord, message: ReturnType<typeof normalizeMessage>, lead: JsonRecord | null) {
   if (!message) throw new Error("Missing normalized message");
+  const identity = whatsappIdentityForMessage(message);
+  const remoteJid = identity.remoteJid || message.remoteJid;
+  const contactPhone = message.isGroup ? null : (identity.contactPhone || null);
   const attribution = whatsappAttribution(message);
-  const resolvedGroupName = message.isGroup ? await resolveGroupName(session, message.remoteJid, message.groupName) : null;
+  const resolvedGroupName = message.isGroup ? await resolveGroupName(session, remoteJid, message.groupName) : null;
 
-  const { data: existing, error: existingError } = await supabase
-    .from("whatsapp_conversations")
-    .select("*")
-    .eq("organization_id", session.organization_id)
-    .eq("session_id", session.id)
-    .eq("remote_jid", message.remoteJid)
-    .maybeSingle();
+  let existing: JsonRecord | null = null;
+  let canonicalConflict = false;
 
-  if (existingError) throw existingError;
+  if (identity.remoteAliases.length > 0) {
+    const { data, error } = await supabase
+      .from("whatsapp_conversations")
+      .select("*")
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .in("remote_jid", identity.remoteAliases)
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .limit(10);
+    if (error) throw error;
+
+    const matches = data || [];
+    const canonical = matches.find((conversation) => conversation.remote_jid === remoteJid) || null;
+    existing = canonical || matches[0] || null;
+    canonicalConflict = Boolean(canonical && existing && canonical.id !== existing.id);
+  }
+
+  if (!existing && !message.isGroup && identity.phoneVariants.length > 0) {
+    const { data, error } = await supabase
+      .from("whatsapp_conversations")
+      .select("*")
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .in("contact_phone", identity.phoneVariants)
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .limit(10);
+    if (error) throw error;
+    existing = data?.[0] || null;
+  }
+
   if (existing) {
     const contactName = message.isGroup
       ? (resolvedGroupName || existing.contact_name || "Grupo WhatsApp")
-      : (message.contactName || existing.contact_name);
+      : (!message.fromMe && message.contactName ? message.contactName : existing.contact_name);
     const updates: JsonRecord = {
       contact_name: contactName,
-      contact_phone: existing.contact_phone || (message.isGroup ? null : normalizeDigits(message.remoteJid)),
+      contact_phone: existing.contact_phone || contactPhone,
       contact_picture: message.avatarUrl || existing.contact_picture,
       lead_id: existing.lead_id || lead?.id || null,
       assigned_user_id: existing.assigned_user_id || lead?.assigned_user_id || session.owner_user_id || null,
@@ -1338,6 +1517,9 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
         ...(attribution ? { whatsapp_attribution: attribution } : {}),
       },
     };
+    if (!canonicalConflict && remoteJid && existing.remote_jid !== remoteJid) {
+      updates.remote_jid = remoteJid;
+    }
     const { data, error } = await supabase
       .from("whatsapp_conversations")
       .update(updates)
@@ -1345,6 +1527,15 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       .select("*")
       .single();
     if (error) throw error;
+
+    if (lead?.id && !existing.lead_id) {
+      await supabase
+        .from("whatsapp_messages")
+        .update({ lead_id: lead.id })
+        .eq("conversation_id", existing.id)
+        .is("lead_id", null);
+    }
+
     return data;
   }
 
@@ -1355,9 +1546,9 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       session_id: session.id,
       lead_id: lead?.id || null,
       assigned_user_id: lead?.assigned_user_id || session.owner_user_id || null,
-      remote_jid: message.remoteJid,
-      contact_name: message.isGroup ? (resolvedGroupName || "Grupo WhatsApp") : (message.contactName || normalizeDigits(message.remoteJid)),
-      contact_phone: message.isGroup ? null : normalizeDigits(message.remoteJid),
+      remote_jid: remoteJid,
+      contact_name: message.isGroup ? (resolvedGroupName || "Grupo WhatsApp") : (message.contactName || contactPhone || normalizeDigits(remoteJid)),
+      contact_phone: contactPhone,
       contact_picture: message.avatarUrl,
       is_group: message.isGroup,
       unread_count: 0,
@@ -1380,8 +1571,9 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
 
   const { data: existing, error: existingError } = await supabase
     .from("whatsapp_messages")
-    .select("id")
-    .eq("conversation_id", conversation.id)
+    .select("id, conversation_id, media_storage_path, media_status, media_error")
+    .eq("organization_id", session.organization_id)
+    .eq("session_id", session.id)
     .eq("message_id", message.messageId)
     .maybeSingle();
 
@@ -1416,7 +1608,7 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
     media_status: mediaStatus,
     media_error: mediaError,
     media_size: message.mediaSize,
-    remote_jid: message.remoteJid,
+    remote_jid: conversation.remote_jid || message.remoteJid,
     sender_jid: message.senderJid,
     sender_name: message.senderName,
     reaction_to_message_id: message.reactionToMessageId,
@@ -1435,20 +1627,21 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
   };
 
   if (existing) {
+    const movedConversation = existing.conversation_id && existing.conversation_id !== conversation.id;
     const { data, error } = await supabase
       .from("whatsapp_messages")
       .update({
         ...row,
-        media_storage_path: mediaStoragePath || undefined,
-        media_status: mediaStatus || undefined,
-        media_error: mediaError || undefined,
+        media_storage_path: mediaStoragePath || existing.media_storage_path || null,
+        media_status: mediaStatus || existing.media_status || null,
+        media_error: mediaStoragePath ? null : (mediaError || existing.media_error || null),
         updated_at: undefined,
       })
       .eq("id", existing.id)
       .select("*")
       .single();
     if (error) throw error;
-    return { inserted: false, message: data };
+    return { inserted: Boolean(movedConversation), message: data };
   }
 
   const { data, error } = await supabase
@@ -1486,7 +1679,7 @@ async function logInbound(session: JsonRecord, conversation: JsonRecord, lead: J
     matched_rule_id: rule?.id || null,
     assigned_user_id: lead?.assigned_user_id || null,
     match_details: {
-      remote_jid: message.remoteJid,
+      remote_jid: conversation.remote_jid || message.remoteJid,
       message_id: message.messageId,
       match_field: rule?.match_field || null,
       match_value: rule?.match_value || null,
@@ -1567,6 +1760,8 @@ async function handleMessages(session: JsonRecord, payload: any) {
   for (const rawMessage of messages) {
     const message = normalizeMessage(rawMessage);
     if (!message) continue;
+    const messageIdentity = whatsappIdentityForMessage(message);
+    const diagnosticRemoteJid = messageIdentity.remoteJid || message.remoteJid;
 
     let rule: JsonRecord | null = null;
     let lead: JsonRecord | null = null;
@@ -1577,7 +1772,7 @@ async function handleMessages(session: JsonRecord, payload: any) {
       } catch (error) {
         console.warn("[evolution-go-webhook] inbound rule lookup failed; message will still be stored", {
           session_id: session.id,
-          remote_jid: message.remoteJid,
+          remote_jid: diagnosticRemoteJid,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -1587,7 +1782,7 @@ async function handleMessages(session: JsonRecord, payload: any) {
       } catch (error) {
         console.warn("[evolution-go-webhook] lead resolution failed; message will still be stored", {
           session_id: session.id,
-          remote_jid: message.remoteJid,
+          remote_jid: diagnosticRemoteJid,
           error: error instanceof Error ? error.message : String(error),
         });
       }

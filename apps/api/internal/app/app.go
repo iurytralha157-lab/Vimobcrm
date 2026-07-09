@@ -96,8 +96,22 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			APIURL: cfg.EvolutionGo.APIURL,
 			APIKey: cfg.EvolutionGo.APIKey,
 		},
+		Email: leads.EmailConfig{
+			ResendAPIKey: cfg.Email.ResendAPIKey,
+			FromEmail:    cfg.Email.FromEmail,
+			ReplyTo:      cfg.Email.ReplyTo,
+			SupportEmail: cfg.Email.SupportEmail,
+			AppURL:       cfg.Email.AppURL,
+		},
+		Push: leads.PushConfig{
+			VAPIDPublicKey:  cfg.Push.VAPIDPublicKey,
+			VAPIDPrivateKey: cfg.Push.VAPIDPrivateKey,
+			VAPIDSubject:    cfg.Push.VAPIDSubject,
+			FCMServerKey:    cfg.Push.FCMServerKey,
+		},
 	})
 	leadsRepository.StartRedistributionWorker(ctx, logger)
+	leadsRepository.StartNotificationDispatchWorker(ctx, logger)
 	leadsHandler := leads.NewHandler(leadsRepository, realtimeHub)
 	pipelinesHandler := pipelines.NewHandler(pipelines.NewRepository(postgres))
 	propertiesHandler := properties.NewHandler(properties.NewRepository(postgres, properties.StorageConfig{

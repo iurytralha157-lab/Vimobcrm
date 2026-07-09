@@ -71,7 +71,7 @@ function VimobLogo({ theme }: { theme: AuthTheme }) {
       alt="Vimob"
       width={1228}
       height={429}
-      priority
+      loading="eager"
       className="mx-auto"
       style={{ width: "148px", height: "auto" }}
     />
@@ -194,6 +194,18 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
 
   useEffect(() => {
     sanitizeLoginUrl();
+    if (typeof window === "undefined") return;
+
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("passwordReset") === "success") {
+      url.searchParams.delete("passwordReset");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      const messageTimer = window.setTimeout(() => {
+        setRecoveryMessage("Senha alterada com sucesso. Entre usando sua nova senha.");
+      }, 0);
+
+      return () => window.clearTimeout(messageTimer);
+    }
   }, []);
 
   useEffect(() => {
@@ -495,6 +507,12 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
             {loginError ? (
               <p className="text-center text-sm font-extralight leading-5 text-[#FF4529]" aria-live="polite">
                 {loginError}
+              </p>
+            ) : null}
+
+            {!loginError && recoveryMessage ? (
+              <p className={`text-center text-sm font-extralight leading-5 ${subtleTextClass}`} aria-live="polite">
+                {recoveryMessage}
               </p>
             ) : null}
           </form>

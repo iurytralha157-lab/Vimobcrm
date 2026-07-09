@@ -528,6 +528,7 @@ function buildNotificationDispatchValue(row: AdminRecord | undefined, form: Noti
     token: form.instanceToken.trim(),
     phone_number: form.senderNumber.trim(),
     webhook_url: form.webhookUrl.trim(),
+    allow_organization_session: false,
     method: "POST",
     headers,
     timeout_seconds: Math.max(3, Math.min(Number(form.timeoutSeconds) || 10, 60)),

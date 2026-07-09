@@ -35,15 +35,16 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 		leadID = value
 	}
 
-	cleanPhone := formatPhoneForWhatsApp(request.Phone)
-	remoteJID := cleanPhone
-	if !strings.Contains(remoteJID, "@") {
-		remoteJID += "@c.us"
+	identity := newWhatsAppContactIdentity(request.Phone, request.Phone, false)
+	cleanPhone := identity.ContactPhone
+	remoteJID := identity.RemoteJID
+	if cleanPhone == "" || remoteJID == "" {
+		return Conversation{}, fmt.Errorf("%w: Telefone invalido para WhatsApp", ErrInvalidInput)
 	}
 
 	matchedLeadName := ""
 	if leadID == "" {
-		match, err := repo.findLeadByPhone(ctx, tenantContext.OrganizationID, cleanPhone, remoteJID)
+		match, err := repo.findLeadByPhone(ctx, tenantContext.OrganizationID, identity.LeadMatchValues()...)
 		if err != nil {
 			return Conversation{}, err
 		}
@@ -87,7 +88,7 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 		}
 	}
 
-	if conversation, err := repo.findConversationByPhoneVariants(ctx, tenantContext, phoneVariants(cleanPhone), session.ID); err != nil {
+	if conversation, err := repo.findConversationByPhoneVariants(ctx, tenantContext, identity.ConversationMatchValues(), session.ID); err != nil {
 		return Conversation{}, err
 	} else if conversation != nil {
 		_, err := repo.db.Pool().Exec(ctx, `
@@ -183,11 +184,18 @@ func (repo Repository) FindConversation(ctx context.Context, tenantContext tenan
 		return nil, fmt.Errorf("%w: Telefone invalido para WhatsApp", ErrInvalidInput)
 	}
 
-	return repo.findConversationByPhoneVariants(ctx, tenantContext, phoneVariants(formatPhoneForWhatsApp(filter.Phone)), filter.SessionID)
+	identity := newWhatsAppContactIdentity(filter.Phone, filter.Phone, false)
+	return repo.findConversationByPhoneVariants(ctx, tenantContext, identity.ConversationMatchValues(), filter.SessionID)
 }
 
 func (repo Repository) findConversationByExactSessionJID(ctx context.Context, tenantContext tenant.Context, sessionID string, remoteJID string) (*Conversation, error) {
-	args := append(baseConversationArgs(tenantContext), sessionID, remoteJID)
+	identity := newWhatsAppContactIdentity("", remoteJID, strings.Contains(strings.ToLower(remoteJID), "@g.us"))
+	aliases := identity.RemoteAliases()
+	if len(aliases) == 0 {
+		return nil, nil
+	}
+
+	args := append(baseConversationArgs(tenantContext), sessionID, aliases, identity.RemoteJID)
 	conversation, err := scanConversation(repo.db.Pool().QueryRow(ctx, `
 		select `+conversationSelectFields()+`
 		from public.whatsapp_conversations wc
@@ -199,7 +207,11 @@ func (repo Repository) findConversationByExactSessionJID(ctx context.Context, te
 		  and wc.deleted_at is null
 		  and `+conversationVisibilitySQL()+`
 		  and wc.session_id = $6::uuid
-		  and wc.remote_jid = $7
+		  and wc.remote_jid = any($7::text[])
+		order by
+		  case when wc.remote_jid = $8 then 0 else 1 end,
+		  wc.last_message_at desc nulls last,
+		  wc.created_at desc
 		limit 1
 	`, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -240,6 +252,7 @@ func (repo Repository) findConversationByLeadAndSession(ctx context.Context, ten
 }
 
 func (repo Repository) findConversationByPhoneVariants(ctx context.Context, tenantContext tenant.Context, variants []string, sessionID string) (*Conversation, error) {
+	variants = uniqueStrings(variants...)
 	if len(variants) == 0 {
 		return nil, nil
 	}

@@ -6,12 +6,16 @@ export interface PerformanceMetric {
   timestamp: number;
 }
 
+const isPerformanceDebugEnabled =
+  process.env.NODE_ENV !== 'production' ||
+  process.env.NEXT_PUBLIC_PERFORMANCE_DEBUG === 'true';
+
 class PerformanceTracker {
   private metrics: PerformanceMetric[] = [];
   private static instance: PerformanceTracker;
 
   private constructor() {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && isPerformanceDebugEnabled) {
       this.initWebVitals();
     }
   }
@@ -50,10 +54,12 @@ class PerformanceTracker {
       unit,
       timestamp: Date.now()
     });
-    console.log(`[Performance] ${name}: ${value}${unit}`);
+    if (isPerformanceDebugEnabled) {
+      console.debug(`[Performance] ${name}: ${value}${unit}`);
+    }
 
     // Dispatch custom event for the UI to update
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && isPerformanceDebugEnabled) {
       window.dispatchEvent(new CustomEvent('performance-metric-added', { detail: name }));
     }
   }

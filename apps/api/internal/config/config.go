@@ -23,6 +23,7 @@ type Config struct {
 	Database    dbpkg.Config
 	Storage     StorageConfig
 	Email       EmailConfig
+	Push        PushConfig
 	AI          AIConfig
 	EvolutionGo EvolutionGoConfig
 	Meta        MetaConfig
@@ -62,6 +63,13 @@ type EmailConfig struct {
 	ReplyTo      string
 	SupportEmail string
 	AppURL       string
+}
+
+type PushConfig struct {
+	VAPIDPublicKey  string
+	VAPIDPrivateKey string
+	VAPIDSubject    string
+	FCMServerKey    string
 }
 
 type AIConfig struct {
@@ -121,6 +129,15 @@ func Load() (Config, error) {
 			ReplyTo:      getEnv("RESEND_REPLY_TO", "contato@vimobcrm.com.br"),
 			SupportEmail: getEnv("SUPPORT_EMAIL", getEnv("RESEND_REPLY_TO", "contato@vimobcrm.com.br")),
 			AppURL:       getEnv("APP_PUBLIC_URL", getEnv("NEXT_PUBLIC_SITE_URL", "https://vimobcrm.com.br")),
+		},
+		Push: PushConfig{
+			VAPIDPublicKey: getEnv("WEB_PUSH_VAPID_PUBLIC_KEY", getEnv("NEXT_PUBLIC_VAPID_PUBLIC_KEY", "")),
+			VAPIDPrivateKey: getEnv(
+				"WEB_PUSH_VAPID_PRIVATE_KEY",
+				getEnv("VAPID_PRIVATE_KEY", getEnv("WEB_PUSH_PRIVATE_KEY", "")),
+			),
+			VAPIDSubject: getEnv("WEB_PUSH_VAPID_SUBJECT", getEnv("RESEND_REPLY_TO", "mailto:contato@vimobcrm.com.br")),
+			FCMServerKey: getEnv("FCM_SERVER_KEY", getEnv("FIREBASE_SERVER_KEY", "")),
 		},
 		AI: AIConfig{
 			OpenAIAPIKey:   os.Getenv("OPENAI_API_KEY"),

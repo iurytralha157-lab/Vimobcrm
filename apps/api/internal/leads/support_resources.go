@@ -374,13 +374,15 @@ type DispatchNotificationRequest struct {
 }
 
 type DispatchNotificationResult struct {
-	Success      bool                   `json:"success"`
-	Notification *Notification          `json:"notification,omitempty"`
-	WhatsApp     DispatchWhatsAppResult `json:"whatsapp"`
-	Error        string                 `json:"error,omitempty"`
+	Success      bool                  `json:"success"`
+	Notification *Notification         `json:"notification,omitempty"`
+	WhatsApp     DispatchChannelResult `json:"whatsapp"`
+	Push         DispatchChannelResult `json:"push"`
+	Email        DispatchChannelResult `json:"email"`
+	Error        string                `json:"error,omitempty"`
 }
 
-type DispatchWhatsAppResult struct {
+type DispatchChannelResult struct {
 	Enabled    bool   `json:"enabled"`
 	Attempted  bool   `json:"attempted"`
 	OK         bool   `json:"ok"`
@@ -389,7 +391,11 @@ type DispatchWhatsAppResult struct {
 	Provider   string `json:"provider,omitempty"`
 	SessionID  string `json:"session_id,omitempty"`
 	InstanceID string `json:"instance_id,omitempty"`
+	Sent       int    `json:"sent,omitempty"`
+	Skipped    int    `json:"skipped,omitempty"`
 }
+
+type DispatchWhatsAppResult = DispatchChannelResult
 
 type notificationRecipient struct {
 	ID       string
@@ -1620,6 +1626,8 @@ func (repo Repository) CreateNotification(ctx context.Context, tenantContext ten
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
+	eventKey := firstNotificationText(stringFromMap(metadata, "event_key"), notificationType)
+	metadata = applyNotificationDispatchMetadata(metadata, eventKey, nil)
 	return scanNotification(repo.db.Pool().QueryRow(ctx, `
 		insert into public.notifications (user_id, organization_id, title, content, type, lead_id, is_read, metadata)
 		values ($1::uuid, $2::uuid, $3, $4, $5, $6, false, $7::jsonb)
@@ -1669,17 +1677,14 @@ func (repo Repository) DispatchNotification(ctx context.Context, tenantContext t
 		if existing, found, err := repo.findRecentNotificationByDedupeKey(ctx, tenantContext.OrganizationID, normalizedUserID, dedupeKey); err != nil {
 			return DispatchNotificationResult{}, err
 		} else if found {
-			whatsAppResult, err := repo.dispatchWhatsAppNotification(ctx, tenantContext, request, recipient, title, content, eventKey, dedupeKey)
-			dispatchError := ""
-			if err != nil {
-				whatsAppResult.Error = err.Error()
-				dispatchError = err.Error()
-			}
+			delivery := repo.dispatchNotificationDeliveries(ctx, existing, request.Channels)
 			return DispatchNotificationResult{
-				Success:      dispatchError == "",
+				Success:      delivery.Error == "",
 				Notification: &existing,
-				WhatsApp:     whatsAppResult,
-				Error:        dispatchError,
+				WhatsApp:     delivery.WhatsApp,
+				Push:         delivery.Push,
+				Email:        delivery.Email,
+				Error:        delivery.Error,
 			}, nil
 		}
 	}
@@ -1693,26 +1698,25 @@ func (repo Repository) DispatchNotification(ctx context.Context, tenantContext t
 		metadata["dedupe_key"] = dedupeKey
 	}
 	if request.Recipient != "" {
-		metadata["recipient"] = trimMax(request.Recipient, 180)
+		metadata["requested_recipient"] = trimMax(request.Recipient, 180)
 	}
+	metadata = applyNotificationDispatchMetadata(metadata, eventKey, request.Channels)
 
 	notification, err := repo.createNotificationRow(ctx, tenantContext.OrganizationID, normalizedUserID, title, content, notificationType, request.LeadID, metadata)
 	if err != nil {
 		return DispatchNotificationResult{}, err
 	}
 
-	whatsAppResult, err := repo.dispatchWhatsAppNotification(ctx, tenantContext, request, recipient, title, content, eventKey, dedupeKey)
-	dispatchError := ""
-	if err != nil {
-		whatsAppResult.Error = err.Error()
-		dispatchError = err.Error()
-	}
+	_ = recipient
+	delivery := repo.dispatchNotificationDeliveries(ctx, notification, request.Channels)
 
 	return DispatchNotificationResult{
-		Success:      dispatchError == "",
+		Success:      delivery.Error == "",
 		Notification: &notification,
-		WhatsApp:     whatsAppResult,
-		Error:        dispatchError,
+		WhatsApp:     delivery.WhatsApp,
+		Push:         delivery.Push,
+		Email:        delivery.Email,
+		Error:        delivery.Error,
 	}, nil
 }
 
@@ -1779,10 +1783,7 @@ func (repo Repository) dispatchWhatsAppNotification(ctx context.Context, tenantC
 		return result, nil
 	}
 
-	to := strings.TrimSpace(request.Recipient)
-	if to == "" || strings.Contains(to, "@") {
-		to = recipient.WhatsApp
-	}
+	to := strings.TrimSpace(recipient.WhatsApp)
 	if strings.TrimSpace(to) == "" {
 		result.Attempted = false
 		result.Error = "recipient_whatsapp_missing"
@@ -1790,86 +1791,41 @@ func (repo Repository) dispatchWhatsAppNotification(ctx context.Context, tenantC
 	}
 	messageText := buildWhatsAppNotificationText(title, content)
 
-	if notificationConfigUsesDirectInstance(config) {
-		return repo.dispatchWhatsAppViaEvolutionGo(ctx, notificationWhatsAppSession{
-			InstanceID:  strings.TrimSpace(config.InstanceID),
-			InstanceKey: firstNotificationText(config.InstanceName, config.InstanceID),
-			Token:       strings.TrimSpace(config.Token),
-		}, to, messageText, "evolution_go_instance")
-	}
-
+	var organizationResult DispatchWhatsAppResult
 	if session, found, err := repo.findNotificationWhatsAppSession(ctx, tenantContext.OrganizationID, config.SessionID); err != nil {
 		return result, err
 	} else if found {
-		return repo.dispatchWhatsAppViaEvolutionGo(ctx, session, to, messageText, "evolution_go_session")
-	}
-
-	webhookURL := strings.TrimSpace(firstNotificationText(config.WebhookURL, config.URL))
-	if webhookURL == "" {
-		return result, nil
-	}
-
-	method := strings.ToUpper(strings.TrimSpace(config.Method))
-	if method == "" {
-		method = http.MethodPost
-	}
-	timeout := time.Duration(config.TimeoutSeconds) * time.Second
-	if timeout <= 0 || timeout > 60*time.Second {
-		timeout = 10 * time.Second
-	}
-
-	payload := map[string]any{
-		"event_key":       eventKey,
-		"organization_id": tenantContext.OrganizationID,
-		"user_id":         recipient.ID,
-		"recipient":       to,
-		"notification": map[string]any{
-			"title":      title,
-			"content":    content,
-			"type":       notificationTypeForEvent(eventKey),
-			"lead_id":    request.LeadID,
-			"dedupe_key": dedupeKey,
-			"is_test":    request.IsTest,
-		},
-		"user": map[string]any{
-			"id":       recipient.ID,
-			"name":     recipient.Name,
-			"email":    recipient.Email,
-			"whatsapp": recipient.WhatsApp,
-		},
-		"variables": request.Variables,
-	}
-	rawPayload, err := json.Marshal(payload)
-	if err != nil {
-		return result, err
-	}
-
-	httpRequest, err := http.NewRequestWithContext(ctx, method, webhookURL, bytes.NewReader(rawPayload))
-	if err != nil {
-		return result, err
-	}
-	httpRequest.Header.Set("Content-Type", "application/json")
-	for key, value := range config.Headers {
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if key != "" && value != "" {
-			httpRequest.Header.Set(key, value)
+		organizationResult, err = repo.dispatchWhatsAppViaEvolutionGo(ctx, session, to, messageText, "evolution_go_org_session")
+		if err == nil && organizationResult.OK {
+			return organizationResult, nil
 		}
 	}
 
-	result.Attempted = true
-	result.Provider = "webhook"
-	client := &http.Client{Timeout: timeout}
-	response, err := client.Do(httpRequest)
-	if err != nil {
-		return result, err
+	if notificationConfigUsesDirectInstance(config) {
+		globalResult, err := repo.dispatchWhatsAppViaEvolutionGo(ctx, notificationWhatsAppSession{
+			InstanceID:  strings.TrimSpace(config.InstanceID),
+			InstanceKey: firstNotificationText(config.InstanceName, config.InstanceID),
+			Token:       strings.TrimSpace(config.Token),
+		}, to, messageText, "evolution_go_global_instance")
+		if err == nil && globalResult.OK {
+			if organizationResult.Attempted {
+				globalResult.Provider = "evolution_go_global_instance_fallback"
+			}
+			return globalResult, nil
+		}
+		if organizationResult.Attempted {
+			if globalResult.Error != "" {
+				organizationResult.Error = firstNotificationText(organizationResult.Error, "fallback_failed: "+globalResult.Error)
+			}
+			return organizationResult, err
+		}
+		return globalResult, err
 	}
-	defer response.Body.Close()
-	result.Status = response.StatusCode
-	result.OK = response.StatusCode >= 200 && response.StatusCode < 300
-	if !result.OK {
-		result.Error = fmt.Sprintf("whatsapp_webhook_status_%d", response.StatusCode)
+	if organizationResult.Attempted {
+		return organizationResult, nil
 	}
+
+	result.Error = "notification_whatsapp_sender_missing"
 	return result, nil
 }
 
@@ -2106,7 +2062,7 @@ func buildDispatchNotificationContent(eventKey string, request DispatchNotificat
 
 func notificationTypeForEvent(eventKey string) string {
 	switch eventKey {
-	case "new_lead_received", "lead_reentry", "lead_duplicate_existing":
+	case "new_lead_received", "lead_reentry", "lead_duplicate_existing", "lead_transferred", "lead_stage_changed", "lead_redistribution_warning", "lead_redistributed_received", "lead_redistributed_away":
 		return "lead"
 	case "deal_won":
 		return "deal_won"
@@ -2119,6 +2075,84 @@ func notificationTypeForEvent(eventKey string) string {
 	default:
 		return "info"
 	}
+}
+
+func shouldDispatchLeadWhatsAppNotification(eventKey string) bool {
+	switch strings.TrimSpace(eventKey) {
+	case "new_lead_received",
+		"lead_reentry",
+		"lead_duplicate_existing",
+		"lead_transferred",
+		"lead_stage_changed",
+		"deal_won",
+		"lead_redistribution_warning",
+		"lead_redistributed_received",
+		"lead_redistributed_away",
+		"whatsapp_disconnected",
+		"schedule_reminder":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldDispatchPushNotification(eventKey string) bool {
+	eventKey = strings.TrimSpace(eventKey)
+	return eventKey != ""
+}
+
+func shouldDispatchEmailNotification(eventKey string) bool {
+	return strings.TrimSpace(eventKey) == "deal_won"
+}
+
+func applyNotificationDispatchMetadata(metadata map[string]any, eventKey string, channels []string) map[string]any {
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	eventKey = firstNotificationText(eventKey, stringFromMap(metadata, "event_key"), "notification")
+	metadata["event_key"] = eventKey
+
+	dispatch := mapFromAny(metadata["dispatch"])
+	setChannel := func(channel string, required bool) {
+		current := mapFromAny(dispatch[channel])
+		if _, exists := current["status"]; !exists {
+			current["status"] = "pending"
+		}
+		current["required"] = required
+		dispatch[channel] = current
+	}
+
+	wantsWhatsApp := requestWantsChannel(channels, "whatsapp") && shouldDispatchLeadWhatsAppNotification(eventKey)
+	wantsPush := requestWantsChannel(channels, "push") && shouldDispatchPushNotification(eventKey)
+	wantsEmail := requestWantsChannel(channels, "email") && shouldDispatchEmailNotification(eventKey)
+
+	if wantsWhatsApp {
+		metadata["whatsapp_dispatch_required"] = true
+		if _, exists := metadata["whatsapp_dispatch"]; !exists {
+			metadata["whatsapp_dispatch"] = map[string]any{"status": "pending"}
+		}
+		setChannel("whatsapp", true)
+	}
+	if wantsPush {
+		setChannel("push", true)
+	}
+	if wantsEmail {
+		setChannel("email", true)
+	}
+	if len(dispatch) > 0 {
+		metadata["dispatch"] = dispatch
+	}
+	return metadata
+}
+
+func mapFromAny(value any) map[string]any {
+	if value == nil {
+		return map[string]any{}
+	}
+	if typed, ok := value.(map[string]any); ok {
+		return typed
+	}
+	return map[string]any{}
 }
 
 func requestWantsChannel(channels []string, channel string) bool {
@@ -2168,6 +2202,11 @@ func stringFromMap(values map[string]any, key string) string {
 func isUndefinedTableError(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "42P01"
+}
+
+func isUndefinedColumnError(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42703"
 }
 
 func (repo Repository) GetLeadVisibility(ctx context.Context, tenantContext tenant.Context) (LeadVisibility, error) {

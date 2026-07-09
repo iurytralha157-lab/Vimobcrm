@@ -25,6 +25,8 @@ type Repository struct {
 	storage              storageClient
 	evolutionGoAPIURL    string
 	evolutionGoAPIKey    string
+	notificationEmail    notificationEmailClient
+	notificationPush     notificationPushClient
 	gamificationRecorder GamificationRecorder
 }
 
@@ -79,6 +81,8 @@ func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder
 		repository.storage = newStorageClient(storageConfigs[0])
 		repository.evolutionGoAPIURL = strings.TrimRight(strings.TrimSpace(storageConfigs[0].EvolutionGo.APIURL), "/")
 		repository.evolutionGoAPIKey = strings.TrimSpace(storageConfigs[0].EvolutionGo.APIKey)
+		repository.notificationEmail = newNotificationEmailClient(storageConfigs[0].Email)
+		repository.notificationPush = newNotificationPushClient(storageConfigs[0].Push)
 	}
 	return repository
 }
@@ -2103,9 +2107,6 @@ func (repo Repository) dispatchDealWonNotification(ctx context.Context, tenantCo
 			assignedUserID = *input.AssignedUserID.Value
 		}
 	}
-	if assignedUserID == "" {
-		return
-	}
 
 	interestValue := current.InterestValue
 	if input.InterestValue.Set {
@@ -2115,16 +2116,123 @@ func (repo Repository) dispatchDealWonNotification(ctx context.Context, tenantCo
 		}
 	}
 
-	_, _ = repo.DispatchNotification(ctx, tenantContext, DispatchNotificationRequest{
-		EventKey:  "deal_won",
-		UserID:    assignedUserID,
-		LeadID:    &current.ID,
-		DedupeKey: "deal_won:" + current.ID + ":" + assignedUserID,
-		Variables: map[string]any{
-			"lead_name":       current.Name,
-			"valor_interesse": nullableString(interestValue),
-		},
-	})
+	recipients, err := repo.listDealWonNotificationRecipients(ctx, tenantContext.OrganizationID, assignedUserID)
+	if err != nil || len(recipients) == 0 {
+		if assignedUserID != "" {
+			recipients = []string{assignedUserID}
+		}
+	}
+	actorName := "Equipe Vimob"
+	if name, err := repo.getNotificationUserName(ctx, tenantContext.OrganizationID, tenantContext.UserID); err == nil && name != "" {
+		actorName = name
+	}
+	organizationName := ""
+	_ = repo.db.Pool().QueryRow(ctx, `
+		select coalesce(name, '')
+		from public.organizations
+		where id = $1::uuid
+		limit 1
+	`, tenantContext.OrganizationID).Scan(&organizationName)
+
+	for _, recipientID := range recipients {
+		_, _ = repo.DispatchNotification(ctx, tenantContext, DispatchNotificationRequest{
+			EventKey:  "deal_won",
+			UserID:    recipientID,
+			LeadID:    &current.ID,
+			DedupeKey: "deal_won:" + current.ID + ":" + recipientID,
+			Variables: map[string]any{
+				"lead_name":         current.Name,
+				"valor_interesse":   nullableString(interestValue),
+				"actor_name":        actorName,
+				"organization_name": organizationName,
+			},
+		})
+	}
+}
+
+func (repo Repository) listDealWonNotificationRecipients(ctx context.Context, organizationID string, assignedUserID string) ([]string, error) {
+	rows, err := repo.db.Pool().Query(ctx, `
+		with base as (
+			select nullif($2, '')::uuid as assigned_user_id
+		),
+		responsible as (
+			select assigned_user_id as user_id
+			from base
+			where assigned_user_id is not null
+		),
+		admins as (
+			select distinct om.user_id
+			from public.organization_members om
+			where om.organization_id = $1::uuid
+			  and coalesce(om.is_active, true) = true
+			  and om.role in ('owner', 'admin', 'manager')
+			union
+			select distinct u.id
+			from public.users u
+			where u.organization_id = $1::uuid
+			  and coalesce(u.is_active, true) = true
+			  and u.role in ('admin', 'super_admin')
+		),
+		leaders as (
+			select distinct leader.user_id
+			from base
+			join public.team_members member
+			  on member.user_id = base.assigned_user_id
+			 and member.organization_id = $1::uuid
+			 and coalesce(member.is_active, true) = true
+			join public.team_members leader
+			  on leader.team_id = member.team_id
+			 and leader.organization_id = member.organization_id
+			 and coalesce(leader.is_active, true) = true
+			 and coalesce(leader.is_leader, false) = true
+		)
+		select distinct user_id::text
+		from (
+			select user_id from responsible
+			union all
+			select user_id from admins
+			union all
+			select user_id from leaders
+		) recipients
+		where user_id is not null
+	`, organizationID, assignedUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	recipients := []string{}
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(userID) != "" {
+			recipients = append(recipients, userID)
+		}
+	}
+	return recipients, rows.Err()
+}
+
+func (repo Repository) getNotificationUserName(ctx context.Context, organizationID string, userID string) (string, error) {
+	var name pgtype.Text
+	err := repo.db.Pool().QueryRow(ctx, `
+		select u.name
+		from public.users u
+		left join public.organization_members om
+		  on om.user_id = u.id
+		 and om.organization_id = $1::uuid
+		where u.id = $2::uuid
+		  and (u.organization_id = $1::uuid or om.id is not null)
+		limit 1
+	`, organizationID, userID).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return textValue(name), nil
 }
 
 func (repo Repository) recordDealStatusGamification(ctx context.Context, tenantContext tenant.Context, current leadSnapshot, input updateInput) {
@@ -2255,7 +2363,7 @@ func (repo Repository) insertNotificationWithType(ctx context.Context, tx pgx.Tx
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
-	metadata["event_key"] = eventKey
+	metadata = applyNotificationDispatchMetadata(metadata, eventKey, nil)
 
 	_, err := tx.Exec(ctx, `
 		insert into public.notifications (

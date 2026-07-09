@@ -53,11 +53,16 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  // Public auth routes - redirect to dashboard if already logged in
-  const publicAuthRoutes = ['/login', '/cadastro', '/reset-password', '/onboarding'];
+  // Public auth routes - redirect to dashboard if already logged in.
+  // Keep /reset-password out of this list: Supabase recovery links create a
+  // temporary session, and that session must be allowed to reach the reset page.
+  const publicAuthRoutes = ['/login', '/cadastro', '/onboarding'];
   const isPublicAuthRoute = publicAuthRoutes.some(route => request.nextUrl.pathname.startsWith(route));
+  const isPasswordResetReturnToLogin =
+    request.nextUrl.pathname.startsWith('/login') &&
+    request.nextUrl.searchParams.get('passwordReset') === 'success';
   if (isPublicAuthRoute) {
-    if (user) {
+    if (user && !isPasswordResetReturnToLogin) {
       return NextResponse.redirect(new URL('/dashboard', request.url))
     }
   }

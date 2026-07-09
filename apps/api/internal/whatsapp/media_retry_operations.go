@@ -258,16 +258,25 @@ func mediaBase64Candidates(raw map[string]any, messageType string) []string {
 		"Base64",
 		"media",
 		"file",
+		"thumbnail",
+		"thumbnailBase64",
+		"jpegThumbnail",
 		"Message.base64",
 		"Message.Base64",
 		"Message.media",
 		"Message.file",
+		"Message.thumbnail",
+		"Message.thumbnailBase64",
+		"Message.jpegThumbnail",
 		"message.base64",
 		"message.media",
 		"message.file",
+		"message.thumbnail",
+		"message.thumbnailBase64",
+		"message.jpegThumbnail",
 		"data.Message.base64",
 		"Data.Message.base64",
-	}, mediaBlockPaths(messageType, "base64", "Base64", "media", "file")...)
+	}, mediaBlockPaths(messageType, "base64", "Base64", "media", "file", "thumbnail", "thumbnailBase64", "jpegThumbnail")...)
 
 	candidates := make([]string, 0, len(paths)+4)
 	for _, path := range paths {
@@ -276,13 +285,16 @@ func mediaBase64Candidates(raw map[string]any, messageType string) []string {
 		}
 	}
 	for _, value := range recursiveMediaStrings(raw, map[string]bool{
-		"base64": true,
+		"base64":          true,
+		"thumbnail":       true,
+		"thumbnailbase64": true,
+		"jpegthumbnail":   true,
 	}) {
 		if looksLikeBase64Media(value) {
 			candidates = append(candidates, value)
 		}
 	}
-	return uniqueStrings(candidates)
+	return uniqueMediaStrings(candidates)
 }
 
 func mediaURLCandidates(raw map[string]any, message retryMediaMessage) []string {
@@ -311,12 +323,13 @@ func mediaURLCandidates(raw map[string]any, message retryMediaMessage) []string 
 	for _, value := range recursiveMediaStrings(raw, map[string]bool{
 		"media_url": true,
 		"mediaurl":  true,
+		"url":       true,
 	}) {
 		if looksLikeHTTPURL(value) {
 			candidates = append(candidates, value)
 		}
 	}
-	return uniqueStrings(candidates)
+	return uniqueMediaStrings(candidates)
 }
 
 func mediaBlockPaths(messageType string, fields ...string) []string {
@@ -458,7 +471,7 @@ func sanitizeWhatsAppMediaObjectPart(value string) string {
 	return out
 }
 
-func uniqueStrings(values []string) []string {
+func uniqueMediaStrings(values []string) []string {
 	out := make([]string, 0, len(values))
 	seen := map[string]bool{}
 	for _, value := range values {

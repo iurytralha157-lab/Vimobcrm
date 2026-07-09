@@ -877,6 +877,32 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 	if err := repo.insertActivity(ctx, tx, integration.OrganizationID, leadID, lead.Name, reentry, metadata); err != nil {
 		return "", false, err
 	}
+	assignedUserID := destination.AssignedUserID
+	if reentry || assignedUserID == nil {
+		assignedUserID, err = repo.findLeadAssignedUser(ctx, tx, integration.OrganizationID, leadID)
+		if err != nil {
+			return "", false, err
+		}
+	}
+	if assignedUserID != nil {
+		eventKey := "new_lead_received"
+		title := "Novo lead recebido"
+		content := fmt.Sprintf("%s foi atribuido a voce", lead.Name)
+		if reentry {
+			eventKey = "lead_reentry"
+			title = "Lead retornou"
+			content = fmt.Sprintf("%s teve uma nova entrada", lead.Name)
+		}
+		if err := repo.insertLeadNotification(ctx, tx, integration.OrganizationID, *assignedUserID, leadID, title, content, eventKey, map[string]any{
+			"lead_name":  lead.Name,
+			"source":     source,
+			"form_id":    change.FormID,
+			"page_id":    change.PageID,
+			"leadgen_id": change.LeadgenID,
+		}); err != nil {
+			return "", false, err
+		}
+	}
 	if err := repo.incrementStats(ctx, tx, integration.ID, formConfig.ID); err != nil {
 		return "", false, err
 	}
@@ -1516,6 +1542,77 @@ func (repo Repository) insertActivity(ctx context.Context, tx pgx.Tx, organizati
 		)
 		values ($1::uuid, $2::uuid, null, $3, $4, $5::jsonb)
 	`, organizationID, leadID, activityType, content, jsonb(metadata))
+	return err
+}
+
+func (repo Repository) findLeadAssignedUser(ctx context.Context, tx pgx.Tx, organizationID string, leadID string) (*string, error) {
+	var assignedUserID *string
+	err := tx.QueryRow(ctx, `
+		select assigned_user_id::text
+		from public.leads
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		limit 1
+	`, organizationID, leadID).Scan(&assignedUserID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return assignedUserID, err
+}
+
+func (repo Repository) insertLeadNotification(ctx context.Context, tx pgx.Tx, organizationID string, userID string, leadID string, title string, content string, eventKey string, metadata map[string]any) error {
+	if strings.TrimSpace(userID) == "" {
+		return nil
+	}
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata["event_key"] = eventKey
+	metadata["whatsapp_dispatch_required"] = true
+	if _, exists := metadata["whatsapp_dispatch"]; !exists {
+		metadata["whatsapp_dispatch"] = map[string]any{
+			"status": "pending",
+		}
+	}
+	if _, exists := metadata["dispatch"]; !exists {
+		metadata["dispatch"] = map[string]any{
+			"whatsapp": map[string]any{
+				"required": true,
+				"status":   "pending",
+			},
+			"push": map[string]any{
+				"required": true,
+				"status":   "pending",
+			},
+		}
+	}
+
+	_, err := tx.Exec(ctx, `
+		insert into public.notifications (
+			organization_id,
+			user_id,
+			title,
+			content,
+			body,
+			type,
+			channel,
+			lead_id,
+			target_url,
+			metadata
+		)
+		values (
+			$1::uuid,
+			$2::uuid,
+			$3,
+			$4,
+			$4,
+			'lead',
+			'in_app',
+			$5::uuid,
+			'/leads',
+			$6::jsonb
+		)
+	`, organizationID, userID, title, content, leadID, jsonb(metadata))
 	return err
 }
 

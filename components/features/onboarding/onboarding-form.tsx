@@ -321,7 +321,7 @@ function VimobLogo() {
       alt="Vimob"
       width={1228}
       height={429}
-      preload
+      loading="eager"
       className="mx-auto"
       style={{ width: "148px", height: "auto" }}
     />

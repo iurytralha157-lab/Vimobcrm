@@ -49,17 +49,23 @@ function FunnelSkeleton() {
 
 export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProps) {
   const { organization } = useAuth();
-  const { data: pipelines = [], isLoading: pipelinesLoading } = usePipelines();
-  const [manualPipelineId, setManualPipelineId] = useState<string | null>(null);
+  const { data: pipelines = [] } = usePipelines();
+  const [manualPipelineSelection, setManualPipelineSelection] = useState<{
+    organizationId: string | null;
+    pipelineId: string | null;
+  }>({ organizationId: null, pipelineId: null });
+  const manualPipelineId = manualPipelineSelection.organizationId === organization?.id
+    ? manualPipelineSelection.pipelineId
+    : null;
 
   const selectedPipelineId = useMemo(
     () => manualPipelineId || pipelines.find((p) => p.is_default)?.id || pipelines[0]?.id || null,
     [manualPipelineId, pipelines]
   );
 
-  const { data: funnelData = [], isLoading: funnelLoading } = useFunnelData(filters, selectedPipelineId);
+  const { data: funnelData = [], isLoading: funnelLoading } = useFunnelData(filters, manualPipelineId);
 
-  const isLoading = !organization?.id || pipelinesLoading || funnelLoading;
+  const isLoading = !organization?.id || funnelLoading;
   const total = funnelData.reduce((sum, d) => sum + d.value, 0);
   const maxStages = Math.max(funnelData.length, 1);
 
@@ -73,7 +79,15 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
           </CardTitle>
           <div className="flex items-center gap-2">
             {pipelines.length > 1 && (
-              <Select value={selectedPipelineId || ''} onValueChange={setManualPipelineId}>
+              <Select
+                value={selectedPipelineId || ''}
+                onValueChange={(pipelineId) => {
+                  setManualPipelineSelection({
+                    organizationId: organization?.id || null,
+                    pipelineId,
+                  });
+                }}
+              >
                 <SelectTrigger className="h-7 w-[140px] border-white/[0.055] bg-white/[0.045] text-[10px] font-medium">
                   <SelectValue placeholder="Pipeline" />
                 </SelectTrigger>

@@ -41,7 +41,8 @@ export function VimobLoader({
         aria-hidden
         width={48}
         height={48}
-        loading={size === "lg" ? "eager" : "lazy"}
+        decoding="async"
+        loading="lazy"
         className={cn("vimob-loader-pulse shrink-0", sizeClasses[size], iconClassName)}
         unoptimized
       />

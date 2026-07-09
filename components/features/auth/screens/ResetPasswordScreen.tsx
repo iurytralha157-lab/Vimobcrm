@@ -286,8 +286,13 @@ export default function ResetPasswordScreen() {
             : "Enviamos um aviso de segurança para o seu e-mail.",
       });
 
-      await supabase.auth.signOut();
-      setTimeout(() => router.replace(ROUTES.LOGIN), 2600);
+      try {
+        await supabase.auth.signOut({ scope: "global" });
+      } catch (signOutError) {
+        console.error("Error signing out after password reset:", signOutError);
+      }
+
+      setTimeout(() => router.replace(`${ROUTES.LOGIN}?passwordReset=success`), 1600);
     } catch (error) {
       const message = passwordErrorMessage(error);
       toast({

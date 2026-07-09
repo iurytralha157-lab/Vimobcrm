@@ -163,6 +163,21 @@ function metadataText(value: unknown): string | null {
   return String(value);
 }
 
+function isInternalNotificationMessage(message: WhatsAppMessage) {
+  const metadata = (message.metadata || {}) as Record<string, unknown>;
+  const notificationType = String(metadata.notification_type || metadata.notificationType || '').toLowerCase();
+
+  return Boolean(
+    metadata.internal_notification ||
+      metadata.internalNotification ||
+      metadata.notification_lead_id ||
+      metadata.notificationLeadId ||
+      notificationType === 'new_lead_received' ||
+      notificationType === 'lead_received' ||
+      notificationType === 'new_lead'
+  );
+}
+
 function getStageNameFromMetadata(metadata: Record<string, unknown> | null | undefined, direction: 'from' | 'to') {
   const source: Record<string, unknown> = metadata || {};
   const keys = direction === 'from'
@@ -841,12 +856,14 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
       });
     }
 
-    const messageItems: ThreadItem[] = messages.map((message) => ({
-      id: `message-${message.id}`,
-      kind: 'message',
-      timestamp: message.sent_at,
-      message,
-    }));
+    const messageItems: ThreadItem[] = messages
+      .filter((message) => !isInternalNotificationMessage(message))
+      .map((message) => ({
+        id: `message-${message.id}`,
+        kind: 'message',
+        timestamp: message.sent_at,
+        message,
+      }));
 
     const sorted = [...finalEventItems, ...messageItems]
       .filter((item) => item.timestamp)

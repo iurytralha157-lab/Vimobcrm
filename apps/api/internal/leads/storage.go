@@ -22,11 +22,28 @@ type StorageConfig struct {
 	ProjectURL  string
 	APIKey      string
 	EvolutionGo EvolutionGoConfig
+	Email       EmailConfig
+	Push        PushConfig
 }
 
 type EvolutionGoConfig struct {
 	APIURL string
 	APIKey string
+}
+
+type EmailConfig struct {
+	ResendAPIKey string
+	FromEmail    string
+	ReplyTo      string
+	SupportEmail string
+	AppURL       string
+}
+
+type PushConfig struct {
+	VAPIDPublicKey  string
+	VAPIDPrivateKey string
+	VAPIDSubject    string
+	FCMServerKey    string
 }
 
 type storageClient struct {

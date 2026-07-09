@@ -1169,6 +1169,21 @@ func (repo Repository) insertScheduleActivity(ctx context.Context, tx pgx.Tx, or
 }
 
 func (repo Repository) insertScheduleNotifications(ctx context.Context, tx pgx.Tx, organizationID string, actorID string, recipientIDs []string, title string, content string, metadata map[string]any) error {
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	if _, exists := metadata["event_key"]; !exists {
+		metadata["event_key"] = "schedule_notification"
+	}
+	if _, exists := metadata["dispatch"]; !exists {
+		metadata["dispatch"] = map[string]any{
+			"push": map[string]any{
+				"required": true,
+				"status":   "pending",
+			},
+		}
+	}
+
 	seen := map[string]struct{}{}
 	for _, recipientID := range recipientIDs {
 		if recipientID == "" || recipientID == actorID {

@@ -39,12 +39,80 @@ function normalizeDigits(value: unknown) {
   return normalizeText(value).replace(/\D/g, "");
 }
 
+function phoneMatches(left: unknown, right: unknown) {
+  const leftDigits = normalizeDigits(left);
+  const rightDigits = normalizeDigits(right);
+  if (!leftDigits || !rightDigits) return false;
+  return leftDigits === rightDigits || leftDigits.endsWith(rightDigits) || rightDigits.endsWith(leftDigits);
+}
+
 function normalizeJid(value: unknown) {
   const text = normalizeText(value).trim();
   if (!text) return "";
   if (text.includes("@")) return text;
   const digits = normalizeDigits(text);
   return digits ? `${digits}@s.whatsapp.net` : text;
+}
+
+function notificationText(notification: JsonRecord | undefined) {
+  if (!notification) return "";
+  const title = normalizeText(notification.title).trim();
+  const content = normalizeText(firstPresent(notification.content, notification.message, notification.body)).trim();
+  return [title, content].filter(Boolean).join("\n");
+}
+
+function truthyFlag(value: unknown) {
+  return value === true || value === 1 || value === "1" || String(value).toLowerCase() === "true";
+}
+
+function nestedNotificationRecord(body: JsonRecord) {
+  return body.notification && typeof body.notification === "object"
+    ? (body.notification as JsonRecord)
+    : {};
+}
+
+function hasInternalNotificationFlag(body: JsonRecord) {
+  const notification = nestedNotificationRecord(body);
+  return [
+    body.internal_notification,
+    body.internalNotification,
+    body.is_internal_notification,
+    body.isInternalNotification,
+    notification.internal_notification,
+    notification.internalNotification,
+  ].some(truthyFlag);
+}
+
+function isInternalNotificationPayload(body: JsonRecord, text: string, lead: JsonRecord | null) {
+  const notification = nestedNotificationRecord(body);
+
+  if (hasInternalNotificationFlag(body)) return true;
+
+  const eventKey = normalizeText(firstPresent(
+    body.event_key,
+    body.eventKey,
+    body.notification_type,
+    body.notificationType,
+    notification.event_key,
+    notification.eventKey,
+  )).toLowerCase();
+  if (["new_lead_received", "lead_received", "new_lead"].includes(eventKey)) return true;
+
+  if (!lead) return false;
+
+  return /novo lead|lead recebido/i.test(text);
+}
+
+async function loadLead(organizationId: string, leadId?: string | null) {
+  if (!leadId) return null;
+  const { data, error } = await supabase
+    .from("leads")
+    .select("id, name, phone, assigned_user_id")
+    .eq("id", leadId)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
 }
 
 function extractSentMessageId(data: any) {
@@ -178,7 +246,13 @@ async function evolutionSendText(session: JsonRecord, numberOrJid: string, text:
   return { ok: response.ok, status: response.status, data, rawText };
 }
 
-async function ensureConversation(session: JsonRecord, remoteJid: string, leadId?: string | null) {
+async function ensureConversation(
+  session: JsonRecord,
+  remoteJid: string,
+  lead: JsonRecord | null,
+  metadata: JsonRecord,
+  internalNotification: boolean,
+) {
   const { data: existing, error: existingError } = await supabase
     .from("whatsapp_conversations")
     .select("*")
@@ -188,17 +262,27 @@ async function ensureConversation(session: JsonRecord, remoteJid: string, leadId
     .maybeSingle();
 
   if (existingError) throw existingError;
-  if (existing) return existing;
-
-  let lead: JsonRecord | null = null;
-  if (leadId) {
-    const { data } = await supabase
-      .from("leads")
-      .select("id, name, phone, whatsapp, assigned_user_id")
-      .eq("id", leadId)
-      .eq("organization_id", session.organization_id)
-      .maybeSingle();
-    lead = data;
+  if (existing) {
+    if (internalNotification && existing.lead_id) {
+      const { data, error } = await supabase
+        .from("whatsapp_conversations")
+        .update({
+          lead_id: null,
+          metadata: {
+            ...(existing.metadata || {}),
+            ...metadata,
+            internal_notification: true,
+            notification_lead_id: metadata.notification_lead_id || existing.lead_id,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existing.id)
+        .select("*")
+        .single();
+      if (error) throw error;
+      return data;
+    }
+    return existing;
   }
 
   const { data, error } = await supabase
@@ -206,14 +290,14 @@ async function ensureConversation(session: JsonRecord, remoteJid: string, leadId
     .insert({
       organization_id: session.organization_id,
       session_id: session.id,
-      lead_id: lead?.id || null,
+      lead_id: internalNotification ? null : lead?.id || null,
       assigned_user_id: lead?.assigned_user_id || session.owner_user_id || null,
       remote_jid: remoteJid,
-      contact_name: lead?.name || normalizeDigits(remoteJid),
+      contact_name: internalNotification ? normalizeDigits(remoteJid) : lead?.name || normalizeDigits(remoteJid),
       contact_phone: normalizeDigits(remoteJid),
       is_group: remoteJid.endsWith("@g.us"),
       unread_count: 0,
-      metadata: { source: "whatsapp_notifier" },
+      metadata: { source: "whatsapp_notifier", ...metadata },
     })
     .select("*")
     .single();
@@ -222,7 +306,14 @@ async function ensureConversation(session: JsonRecord, remoteJid: string, leadId
   return data;
 }
 
-async function recordOutboundMessage(session: JsonRecord, conversation: JsonRecord, text: string, providerMessageId: string | null) {
+async function recordOutboundMessage(
+  session: JsonRecord,
+  conversation: JsonRecord,
+  text: string,
+  providerMessageId: string | null,
+  metadata: JsonRecord,
+  internalNotification: boolean,
+) {
   const messageId = providerMessageId || `notifier:${conversation.remote_jid}:${Date.now()}`;
   const sentAt = new Date().toISOString();
 
@@ -232,16 +323,17 @@ async function recordOutboundMessage(session: JsonRecord, conversation: JsonReco
       organization_id: session.organization_id,
       conversation_id: conversation.id,
       session_id: session.id,
-      lead_id: conversation.lead_id,
+      lead_id: internalNotification ? null : conversation.lead_id,
       message_id: messageId,
       provider_message_id: messageId,
       from_me: true,
+      direction: "outbound",
       message_type: "text",
       content: text,
       remote_jid: conversation.remote_jid,
       status: providerMessageId ? "sent" : "pending",
       sent_at: sentAt,
-      metadata: { source: "whatsapp_notifier" },
+      metadata: { source: "whatsapp_notifier", ...metadata },
     })
     .select("*")
     .single();
@@ -270,9 +362,11 @@ Deno.serve(async (req) => {
     if (auth.error) return json({ ok: false, error: auth.error }, 401);
 
     const body = await req.json().catch(() => ({}));
+    const nestedNotification = nestedNotificationRecord(body);
     const organizationId = body.organization_id || body.organizationId;
-    const text = normalizeText(firstPresent(body.text, body.message, body.content));
-    const remoteJid = normalizeJid(firstPresent(body.jid, body.remote_jid, body.remoteJid, body.phone, body.to));
+    const text = normalizeText(firstPresent(body.text, body.message, body.content, notificationText(nestedNotification)));
+    let remoteJid = normalizeJid(firstPresent(body.jid, body.remote_jid, body.remoteJid, body.phone, body.to, body.recipient, body.user?.whatsapp));
+    const leadId = firstPresent(body.lead_id, body.leadId, nestedNotification?.lead_id, nestedNotification?.leadId);
 
     if (!organizationId) return json({ ok: false, error: "organization_id is required" }, 400);
     if (!remoteJid) return json({ ok: false, error: "phone or jid is required" }, 400);
@@ -286,11 +380,37 @@ Deno.serve(async (req) => {
     if (!session) return json({ ok: false, error: "No WhatsApp notification session available" }, 404);
     if (session.status !== "connected") return json({ ok: false, error: "WhatsApp session is not connected" }, 409);
 
+    const lead = await loadLead(organizationId, leadId);
+    const internalNotification = isInternalNotificationPayload(body, text, lead);
+    if (internalNotification) {
+      const userWhatsApp = normalizeJid(body.user && typeof body.user === "object" ? (body.user as JsonRecord).whatsapp : null);
+      if (userWhatsApp) remoteJid = userWhatsApp;
+    }
+
+    if (internalNotification && lead) {
+      const destinationIsLead = [lead.phone, lead.whatsapp].some((phone) => phoneMatches(remoteJid, phone));
+      if (destinationIsLead) {
+        return json({
+          ok: false,
+          error: "Internal notification recipient cannot be the lead phone",
+        }, 400);
+      }
+    }
+
+    const internalMetadata = internalNotification
+      ? {
+          internal_notification: true,
+          notification_lead_id: lead?.id || leadId || null,
+          notification_type: normalizeText(firstPresent(body.event_key, body.eventKey, nestedNotification?.event_key, nestedNotification?.eventKey, nestedNotification?.type)) || "notification",
+          notification_recipient_user_id: body.user_id || body.userId || body.user?.id || null,
+        }
+      : {};
+
     const destination = remoteJid.endsWith("@g.us") ? remoteJid : normalizeDigits(remoteJid);
     const result = await evolutionSendText(session, destination, text);
     const providerMessageId = result.ok ? extractSentMessageId(result.data) : null;
-    const conversation = await ensureConversation(session, remoteJid, body.lead_id || body.leadId);
-    const message = await recordOutboundMessage(session, conversation, text, providerMessageId);
+    const conversation = await ensureConversation(session, remoteJid, lead, internalMetadata, internalNotification);
+    const message = await recordOutboundMessage(session, conversation, text, providerMessageId, internalMetadata, internalNotification);
 
     if (!result.ok) {
       await supabase

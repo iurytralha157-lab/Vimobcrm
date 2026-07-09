@@ -35,7 +35,13 @@ export interface DispatchNotificationInput {
 export interface DispatchNotificationResult {
   success: boolean
   notification?: Notification
-  whatsapp?: {
+  whatsapp?: DispatchChannelResult
+  push?: DispatchChannelResult
+  email?: DispatchChannelResult
+  error?: string
+}
+
+export interface DispatchChannelResult {
     enabled: boolean
     attempted: boolean
     ok: boolean
@@ -44,8 +50,8 @@ export interface DispatchNotificationResult {
     provider?: string
     session_id?: string
     instance_id?: string
-  }
-  error?: string
+    sent?: number
+    skipped?: number
 }
 
 export const notificationsAPI = {

@@ -14,7 +14,7 @@ export default function LoginScreen() {
             src="/images/login-hero.webp"
             alt=""
             fill
-            priority
+            preload
             unoptimized
             className="object-cover object-[63%_center] brightness-[0.6] md:object-[68%_center] md:brightness-[0.88]"
             sizes="100vw"
