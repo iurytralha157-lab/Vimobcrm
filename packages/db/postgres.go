@@ -127,7 +127,7 @@ func isRetriableStartupPingError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return true
 	}
 
@@ -139,6 +139,7 @@ func isRetriableStartupPingError(err error) bool {
 		strings.Contains(message, "connection timed out") ||
 		strings.Contains(message, "timeout") ||
 		strings.Contains(message, "deadline exceeded") ||
+		strings.Contains(message, "context canceled") ||
 		strings.Contains(message, "server closed the connection")
 }
 

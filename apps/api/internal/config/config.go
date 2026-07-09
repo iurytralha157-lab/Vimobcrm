@@ -107,8 +107,8 @@ func Load() (Config, error) {
 			MinConns:             parseInt("DATABASE_MIN_CONNS", 2),
 			MaxConnLifetime:      parseDuration("DATABASE_MAX_CONN_LIFETIME", 30*time.Minute),
 			MaxConnIdleTime:      parseDuration("DATABASE_MAX_CONN_IDLE_TIME", 5*time.Minute),
-			HealthTimeout:        parseDuration("DATABASE_HEALTH_TIMEOUT", 3*time.Second),
-			StartupRetryTimeout:  parseDuration("DATABASE_STARTUP_RETRY_TIMEOUT", 90*time.Second),
+			HealthTimeout:        parseDuration("DATABASE_HEALTH_TIMEOUT", 10*time.Second),
+			StartupRetryTimeout:  parseDuration("DATABASE_STARTUP_RETRY_TIMEOUT", 5*time.Minute),
 			StartupRetryInterval: parseDuration("DATABASE_STARTUP_RETRY_INTERVAL", 5*time.Second),
 		},
 		Storage: StorageConfig{
