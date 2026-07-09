@@ -154,6 +154,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		GraphVersion:       cfg.Meta.GraphVersion,
 		GraphBaseURL:       cfg.Meta.GraphBaseURL,
 	}), realtimeHub)
+	metaHandler.StartWebhookWorker(ctx, logger)
 	integrationsHandler := integrations.NewHandler(integrations.NewRepository(postgres, integrations.ExternalConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,

@@ -47,6 +47,11 @@ type webhookEventContext struct {
 	EventType string
 }
 
+type webhookEventJob struct {
+	ID      string
+	Payload map[string]any
+}
+
 type leadgenChange struct {
 	PageID      string
 	FormID      string

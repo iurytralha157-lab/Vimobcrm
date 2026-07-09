@@ -100,7 +100,14 @@ func (repo Repository) FinishWebhookEvent(ctx context.Context, eventID string, o
 		    error_message = $4,
 		    last_error = $4,
 		    processed_at = now(),
-		    attempts = coalesce(attempts, 0) + 1
+		    attempts = coalesce(attempts, 0) + 1,
+		    next_retry_at = case
+		      when $3 = 'failed'
+		       and coalesce(attempts, 0) + 1 < 5
+		       and coalesce($4, '') not in ('Invalid X-Hub-Signature-256 signature', 'META_APP_SECRET is not configured')
+		        then now() + (least(30, (coalesce(attempts, 0) + 1) * 2) * interval '1 minute')
+		      else null
+		    end
 		where id = $1::uuid
 	`, eventID, nullableString(organizationID), status, nullableString(errorMessage))
 	if err == nil {
@@ -118,6 +125,90 @@ func (repo Repository) FinishWebhookEvent(ctx context.Context, eventID string, o
 		where id = $1::uuid
 	`, eventID, nullableString(organizationID), nullableString(errorMessage))
 	return err
+}
+
+func (repo Repository) MarkWebhookEventProcessing(ctx context.Context, eventID string, lease time.Duration) error {
+	if strings.TrimSpace(eventID) == "" {
+		return nil
+	}
+	leaseSeconds := int(lease / time.Second)
+	if leaseSeconds < 1 {
+		leaseSeconds = 300
+	}
+
+	_, err := repo.db.Pool().Exec(ctx, `
+		update public.meta_webhook_events
+		set status = 'processing',
+		    next_retry_at = now() + ($2::int * interval '1 second')
+		where id = $1::uuid
+	`, eventID, leaseSeconds)
+	if err != nil && isUndefinedColumn(err) {
+		return nil
+	}
+	return err
+}
+
+func (repo Repository) ClaimPendingWebhookEvents(ctx context.Context, limit int, lease time.Duration) ([]webhookEventJob, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	leaseSeconds := int(lease / time.Second)
+	if leaseSeconds < 1 {
+		leaseSeconds = 300
+	}
+
+	rows, err := repo.db.Pool().Query(ctx, `
+		with picked as (
+			select id
+			from public.meta_webhook_events
+			where coalesce(signature_valid, true) = true
+			  and (
+			    status = 'received'
+			    or (
+			      status = 'failed'
+			      and coalesce(attempts, 0) < 5
+			      and coalesce(next_retry_at, received_at, created_at, now()) <= now()
+			    )
+			    or (
+			      status = 'processing'
+			      and coalesce(next_retry_at, received_at, created_at, now()) <= now()
+			    )
+			  )
+			order by coalesce(received_at, created_at) asc
+			limit $1
+			for update skip locked
+		)
+		update public.meta_webhook_events event
+		set status = 'processing',
+		    next_retry_at = now() + ($2::int * interval '1 second')
+		from picked
+		where event.id = picked.id
+		returning event.id::text, coalesce(event.raw_payload, event.payload, '{}'::jsonb)
+	`, limit, leaseSeconds)
+	if err != nil {
+		if isUndefinedColumn(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+
+	jobs := []webhookEventJob{}
+	for rows.Next() {
+		var job webhookEventJob
+		var payload []byte
+		if err := rows.Scan(&job.ID, &payload); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(payload, &job.Payload); err != nil || job.Payload == nil {
+			job.Payload = map[string]any{}
+		}
+		jobs = append(jobs, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return jobs, nil
 }
 
 func (repo Repository) ProcessWebhookPayload(ctx context.Context, eventID string, payload map[string]any) (WebhookResponse, error) {

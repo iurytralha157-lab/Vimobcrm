@@ -1,17 +1,24 @@
 package meta
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
+)
+
+const (
+	webhookEventStoreTimeout = 5 * time.Second
+	webhookEventLease        = 5 * time.Minute
+	webhookProcessTimeout    = 2 * time.Minute
 )
 
 type Handler struct {
@@ -75,9 +82,11 @@ func (handler Handler) receiveWebhook(w http.ResponseWriter, r *http.Request) {
 
 	context := extractWebhookEventContext(payload)
 	signatureValid := verifySignature(raw, r.Header.Get("X-Hub-Signature-256"), handler.repo.config.AppSecret)
-	eventID, eventErr := handler.repo.InsertWebhookEvent(r.Context(), context, payload, signatureValid)
+	storeCtx, cancelStore := contextWithTimeout(r.Context(), webhookEventStoreTimeout)
+	eventID, eventErr := handler.repo.InsertWebhookEvent(storeCtx, context, payload, signatureValid)
+	cancelStore()
 	if eventErr != nil {
-		httpserver.WriteError(w, r, http.StatusInternalServerError, "meta_webhook_event_failed", "Unable to register Meta webhook event.")
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "meta_webhook_event_failed", "Unable to register Meta webhook event.")
 		return
 	}
 
@@ -99,23 +108,36 @@ func (handler Handler) receiveWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := handler.repo.ProcessWebhookPayload(r.Context(), eventID, payload)
-	if err != nil && errors.Is(err, ErrInvalidInput) {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_meta_webhook_input", "Meta webhook payload is invalid.")
-		return
-	}
-	if err != nil {
-		_ = handler.repo.FinishWebhookEvent(r.Context(), eventID, context.OrganizationID(), "failed", err.Error())
-		httpserver.WriteJSON(w, http.StatusOK, WebhookResponse{
-			OK:      true,
-			EventID: eventID,
-			Warnings: []string{
-				"processing_failed",
-			},
-		})
-		return
+	claimCtx, cancelClaim := contextWithTimeout(r.Context(), 2*time.Second)
+	claimErr := handler.repo.MarkWebhookEventProcessing(claimCtx, eventID, webhookEventLease)
+	cancelClaim()
+	warnings := []string{"queued"}
+	if claimErr == nil {
+		go handler.processWebhookPayloadAsync(eventID, payload)
+	} else {
+		warnings = append(warnings, "deferred_processing")
 	}
 
+	httpserver.WriteJSON(w, http.StatusOK, WebhookResponse{
+		OK:       true,
+		EventID:  eventID,
+		Warnings: warnings,
+	})
+}
+
+func (handler Handler) processWebhookPayloadAsync(eventID string, payload map[string]any) {
+	ctx, cancel := context.WithTimeout(context.Background(), webhookProcessTimeout)
+	defer cancel()
+
+	response, err := handler.repo.ProcessWebhookPayload(ctx, eventID, payload)
+	if err != nil {
+		_ = handler.repo.FinishWebhookEvent(context.Background(), eventID, "", "failed", err.Error())
+		return
+	}
+	handler.publishWebhookResults(response)
+}
+
+func (handler Handler) publishWebhookResults(response WebhookResponse) {
 	for _, result := range response.Results {
 		if result.Status != "processed" || result.OrganizationID == "" || result.LeadID == "" {
 			continue
@@ -128,8 +150,13 @@ func (handler Handler) receiveWebhook(w http.ResponseWriter, r *http.Request) {
 			"reentry":   result.Reentry,
 		}))
 	}
+}
 
-	httpserver.WriteJSON(w, http.StatusOK, response)
+func contextWithTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.WithCancel(parent)
+	}
+	return context.WithTimeout(parent, timeout)
 }
 
 func verifySignature(raw []byte, signatureHeader string, appSecret string) bool {
