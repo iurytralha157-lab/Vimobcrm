@@ -1215,8 +1215,7 @@ func (repo Repository) findLeadByMetaLeadID(ctx context.Context, organizationID 
 }
 
 func (repo Repository) findExistingLeadByPhone(ctx context.Context, tx pgx.Tx, organizationID string, phone *string) (string, error) {
-	normalizedPhone := digitsOnly(phone)
-	if normalizedPhone == "" {
+	if digitsOnly(phone) == "" {
 		return "", nil
 	}
 
@@ -1225,10 +1224,12 @@ func (repo Repository) findExistingLeadByPhone(ctx context.Context, tx pgx.Tx, o
 		select id::text
 		from public.leads
 		where organization_id = $1::uuid
-		  and regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g') = $2
-		order by created_at desc
+		  and phone is not null
+		  and normalize_phone(phone) <> ''
+		  and normalize_phone(phone) = normalize_phone($2)
+		order by created_at asc
 		limit 1
-	`, organizationID, normalizedPhone).Scan(&leadID)
+	`, organizationID, *phone).Scan(&leadID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
