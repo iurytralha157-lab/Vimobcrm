@@ -2026,6 +2026,7 @@ func (repo Repository) getNotificationWhatsAppConfig(ctx context.Context) (notif
 	err := repo.db.Pool().QueryRow(ctx, `
 		select coalesce(value->'notification_dispatch'->'whatsapp', '{}'::jsonb)::text
 		from public.system_settings
+		where key = 'notifications'
 		order by updated_at desc nulls last, created_at desc nulls last
 		limit 1
 	`).Scan(&raw)
