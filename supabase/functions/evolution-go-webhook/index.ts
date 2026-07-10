@@ -440,8 +440,8 @@ function validateWebhookAuth(req: Request, url: URL, session: JsonRecord) {
     return incomingKey === EVOLUTION_GO_API_KEY;
   }
 
-  console.warn("Evolution webhook accepted without a session webhook_token or EVOLUTION_GO_API_KEY configured.");
-  return true;
+  console.warn("Evolution webhook rejected because no session webhook token or provider API key is configured.");
+  return false;
 }
 
 function validateSessionSignals(session: JsonRecord, signals: JsonRecord) {
