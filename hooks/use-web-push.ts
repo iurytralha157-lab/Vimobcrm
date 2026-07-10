@@ -7,6 +7,8 @@ const VAPID_PUBLIC_KEY =
   process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ||
   'BKHfLz2QmeOLdhRYV3kr51Ffnn0Uyo5No4MN59N3ujKPATVbmQJ3-R6tExHHBci6v8LD3wnX-Y2DwSLo4Ht67YI';
 
+const VAPID_STORAGE_KEY = 'vimob-web-push-vapid-key';
+
 
 // Converte base64 URL-safe para Uint8Array (necessário para applicationServerKey)
 // Suporta tanto chaves raw (65 bytes) quanto SPKI/DER (91 bytes)
@@ -63,6 +65,30 @@ function arrayBufferToBase64Url(buffer: ArrayBuffer | null | undefined): string 
     .replace(/=+$/, '');
 }
 
+function storedVapidKey() {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem(VAPID_STORAGE_KEY);
+}
+
+function storeCurrentVapidKey(currentKey: string | null) {
+  if (typeof window === 'undefined' || !currentKey) return;
+  localStorage.setItem(VAPID_STORAGE_KEY, currentKey);
+}
+
+function shouldReplaceSubscription(subscription: PushSubscription, currentKey: string | null) {
+  if (!currentKey) return false;
+  const subscriptionKey = arrayBufferToBase64Url(subscription.options?.applicationServerKey);
+  const savedKey = storedVapidKey();
+
+  if (subscriptionKey) {
+    return subscriptionKey !== currentKey;
+  }
+
+  // Safari/iOS may not expose applicationServerKey. Use the key stored when
+  // this browser last subscribed; without it, force one clean resubscribe.
+  return savedKey !== currentKey;
+}
+
 async function getServiceWorkerRegistration() {
   const existing = await navigator.serviceWorker.getRegistration('/');
   if (existing) {
@@ -117,13 +143,13 @@ export function useWebPush() {
 
       if (subscription) {
         const currentKey = arrayBufferToBase64Url(urlBase64ToUint8Array(VAPID_PUBLIC_KEY));
-        const subscriptionKey = arrayBufferToBase64Url(subscription.options?.applicationServerKey);
 
-        if (currentKey && subscriptionKey && currentKey !== subscriptionKey) {
-          console.log('[WebPush] Subscription usa VAPID antigo; removendo para reinscrever.');
+        if (shouldReplaceSubscription(subscription, currentKey)) {
+          console.log('[WebPush] Subscription usa VAPID antigo/desconhecido; removendo para reinscrever.');
           await subscription.unsubscribe();
           return null;
         }
+        storeCurrentVapidKey(currentKey);
       }
 
       return subscription;
@@ -226,10 +252,19 @@ export function useWebPush() {
 
       let subscription: PushSubscription;
       try {
-        subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey,
-        });
+        const currentKey = arrayBufferToBase64Url(applicationServerKey);
+        const existingSubscription = await registration.pushManager.getSubscription();
+        if (existingSubscription && shouldReplaceSubscription(existingSubscription, currentKey)) {
+          await existingSubscription.unsubscribe();
+        }
+        if (existingSubscription && !shouldReplaceSubscription(existingSubscription, currentKey)) {
+          subscription = existingSubscription;
+        } else {
+          subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey,
+          });
+        }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Erro ao criar subscription';
         console.error('[WebPush] Erro ao criar subscription:', error);
@@ -251,6 +286,7 @@ export function useWebPush() {
       console.log('[WebPush] Salvando subscription no banco...');
       try {
         await saveSubscription(subscription);
+        storeCurrentVapidKey(arrayBufferToBase64Url(applicationServerKey));
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Erro ao salvar subscription';
         console.error('[WebPush] Erro ao salvar subscription no servidor:', error);
