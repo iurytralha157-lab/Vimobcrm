@@ -37,18 +37,25 @@ self.addEventListener("notificationclick", (event) => {
   const rawURL = event.notification.data && event.notification.data.url
     ? event.notification.data.url
     : "/notifications";
-  const targetURL = new URL(rawURL, self.location.origin).href;
+  const leadID = event.notification.data && event.notification.data.lead_id
+    ? String(event.notification.data.lead_id)
+    : "";
+  let targetURL = new URL(rawURL, self.location.origin);
+  if (targetURL.origin === self.location.origin && targetURL.pathname === "/leads") {
+    targetURL = new URL(leadID ? `/crm/pipelines?lead=${encodeURIComponent(leadID)}` : "/crm/pipelines", self.location.origin);
+  }
+  const targetHref = targetURL.href;
 
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {
         if ("focus" in client && client.url.startsWith(self.location.origin)) {
-          client.navigate(targetURL);
+          client.navigate(targetHref);
           return client.focus();
         }
       }
       if (self.clients.openWindow) {
-        return self.clients.openWindow(targetURL);
+        return self.clients.openWindow(targetHref);
       }
       return undefined;
     }),

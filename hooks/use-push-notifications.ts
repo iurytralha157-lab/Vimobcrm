@@ -111,7 +111,7 @@ export function usePushNotifications() {
 
     if (leadId) {
       // Navigate to lead detail or relevant page
-      router.push(`/crm/pipelines?openLeadId=${encodeURIComponent(String(leadId))}`);
+      router.push(`/crm/pipelines?lead=${encodeURIComponent(String(leadId))}`);
     } else if (type === 'commission' || type === 'financial') {
       router.push('/financeiro');
     } else if (type === 'task') {

@@ -2384,13 +2384,13 @@ func (repo Repository) insertNotificationWithType(ctx context.Context, tx pgx.Tx
 			$3,
 			$4,
 			$4,
-			$7,
+			$6,
 			'in_app',
 			$5::uuid,
-			$6,
-			$8::jsonb
+			'/crm/pipelines?lead=' || $5::text,
+			$7::jsonb
 		)
-	`, organizationID, userID, title, content, leadID, "/leads", notificationType, jsonb(metadata))
+	`, organizationID, userID, title, content, leadID, notificationType, jsonb(metadata))
 	return err
 }
 

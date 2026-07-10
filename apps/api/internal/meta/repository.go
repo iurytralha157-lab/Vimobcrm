@@ -1615,7 +1615,7 @@ func (repo Repository) insertLeadNotification(ctx context.Context, tx pgx.Tx, or
 			'lead',
 			'in_app',
 			$5::uuid,
-			'/leads',
+			'/crm/pipelines?lead=' || $5::text,
 			$6::jsonb
 		)
 	`, organizationID, userID, title, content, leadID, jsonb(metadata))

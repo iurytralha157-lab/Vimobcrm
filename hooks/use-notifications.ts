@@ -2,12 +2,22 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { notificationsAPI } from '@/lib/api/notifications';
+import { connectBackendRealtime } from '@/lib/api/realtime';
 
 export type { Notification } from '@/lib/api/notifications';
 
 let globalAudioContext: AudioContext | null = null;
 let audioInitialized = false;
 const NOTIFICATIONS_INITIAL_LOAD_DELAY_MS = 2500;
+const NOTIFICATION_REALTIME_EVENTS = new Set([
+  'notification.created',
+  'lead.meta_webhook_received',
+  'lead.webhook_received',
+  'lead.created',
+  'lead.updated',
+  'lead.assigned',
+  'lead.reassigned',
+]);
 
 type WebkitAudioWindow = Window & typeof globalThis & {
   webkitAudioContext?: typeof AudioContext;
@@ -83,7 +93,9 @@ function useDelayedQueryEnabled(enabledKey: string | null, delayMs = NOTIFICATIO
 
 export function useNotifications() {
   const { profile, organization } = useAuth();
+  const queryClient = useQueryClient();
   const audioSetupDone = useRef(false);
+  const realtimeRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queryEnabled = useDelayedQueryEnabled(
     profile?.id && organization?.id ? `${profile.id}:${organization.id}` : null,
   );
@@ -125,6 +137,37 @@ export function useNotifications() {
   const playNotificationSound = useCallback((type: 'notification' | 'new-lead' = 'notification') => {
     playSound(type, type === 'new-lead' ? 0.7 : 0.5);
   }, []);
+
+  useEffect(() => {
+    const organizationId = organization?.id || profile?.organization_id;
+    const userId = profile?.id;
+    if (!organizationId || !userId) return undefined;
+
+    const refreshNotifications = () => {
+      if (realtimeRefreshTimer.current) clearTimeout(realtimeRefreshTimer.current);
+      realtimeRefreshTimer.current = setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['notifications'] });
+        queryClient.invalidateQueries({ queryKey: ['unread-notifications-count'] });
+      }, 300);
+    };
+
+    const disconnect = connectBackendRealtime({
+      organizationId,
+      onEvent: (event) => {
+        if (!NOTIFICATION_REALTIME_EVENTS.has(event.type)) return;
+        if (event.userId && event.userId !== userId) return;
+        refreshNotifications();
+      },
+    });
+
+    return () => {
+      if (realtimeRefreshTimer.current) {
+        clearTimeout(realtimeRefreshTimer.current);
+        realtimeRefreshTimer.current = null;
+      }
+      disconnect();
+    };
+  }, [organization?.id, profile?.id, profile?.organization_id, queryClient]);
 
   const query = useQuery({
     queryKey: ['notifications', profile?.id, organization?.id],
