@@ -1779,7 +1779,7 @@ func (repo Repository) dispatchWhatsAppNotification(ctx context.Context, tenantC
 		return DispatchWhatsAppResult{}, err
 	}
 	result := DispatchWhatsAppResult{Enabled: config.Enabled}
-	if !config.Enabled || !requestWantsChannel(request.Channels, "whatsapp") {
+	if !config.Enabled {
 		return result, nil
 	}
 
