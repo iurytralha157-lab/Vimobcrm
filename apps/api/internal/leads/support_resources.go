@@ -1801,6 +1801,25 @@ func (repo Repository) dispatchWhatsAppNotification(ctx context.Context, tenantC
 		}
 	}
 
+	if session, found, err := repo.findGlobalNotificationWhatsAppSession(ctx, config.SessionID); err != nil {
+		return result, err
+	} else if found && (!organizationResult.Attempted || session.ID != organizationResult.SessionID) {
+		globalSessionResult, err := repo.dispatchWhatsAppViaEvolutionGo(ctx, session, to, messageText, "evolution_go_global_session")
+		if err == nil && globalSessionResult.OK {
+			if organizationResult.Attempted {
+				globalSessionResult.Provider = "evolution_go_global_session_fallback"
+			}
+			return globalSessionResult, nil
+		}
+		if organizationResult.Attempted {
+			if globalSessionResult.Error != "" {
+				organizationResult.Error = firstNotificationText(organizationResult.Error, "global_session_failed: "+globalSessionResult.Error)
+			}
+			return organizationResult, err
+		}
+		return globalSessionResult, err
+	}
+
 	if notificationConfigUsesDirectInstance(config) {
 		globalResult, err := repo.dispatchWhatsAppViaEvolutionGo(ctx, notificationWhatsAppSession{
 			InstanceID:  strings.TrimSpace(config.InstanceID),
@@ -1870,6 +1889,43 @@ func (repo Repository) findNotificationWhatsAppSession(ctx context.Context, orga
 		order by ws.last_connected_at desc nulls last, ws.created_at desc
 		limit 1
 	`, organizationID, sessionID).Scan(&session.ID, &session.InstanceID, &session.InstanceKey, &session.Token)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return notificationWhatsAppSession{}, false, nil
+	}
+	if err != nil {
+		return notificationWhatsAppSession{}, false, err
+	}
+	return session, true, nil
+}
+
+func (repo Repository) findGlobalNotificationWhatsAppSession(ctx context.Context, sessionID string) (notificationWhatsAppSession, bool, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return notificationWhatsAppSession{}, false, nil
+	}
+	normalized, ok := normalizeUUID(sessionID)
+	if !ok {
+		return notificationWhatsAppSession{}, false, fmt.Errorf("%w: global notification WhatsApp session_id is invalid", ErrInvalidInput)
+	}
+
+	var session notificationWhatsAppSession
+	err := repo.db.Pool().QueryRow(ctx, `
+		select
+			ws.id::text,
+			coalesce(nullif(ws.instance_id, ''), ''),
+			coalesce(
+				nullif(ws.advanced_settings->>'evolution_go_resolved_instance_key', ''),
+				nullif(ws.instance_id, ''),
+				nullif(ws.instance_name, '')
+			),
+			coalesce(nullif(ws.advanced_settings->>'token', ''), '')
+		from public.whatsapp_sessions ws
+		where ws.id = $1::uuid
+		  and ws.provider = 'evolution_go'
+		  and coalesce(ws.is_active, true) = true
+		  and coalesce(ws.status, '') = 'connected'
+		limit 1
+	`, normalized).Scan(&session.ID, &session.InstanceID, &session.InstanceKey, &session.Token)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return notificationWhatsAppSession{}, false, nil
 	}
