@@ -160,7 +160,12 @@ func newNotificationPushClient(config PushConfig) notificationPushClient {
 }
 
 func (client notificationPushClient) send(ctx context.Context, subscription pushSubscription, payload pushPayload) DispatchChannelResult {
-	if strings.HasPrefix(subscription.Endpoint, "native:") || subscription.Platform == "ios" || subscription.Platform == "android" {
+	if subscription.Token != "" && (strings.HasPrefix(subscription.Endpoint, "native:") ||
+		subscription.Platform == "ios" ||
+		subscription.Platform == "android" ||
+		subscription.Endpoint == "" ||
+		subscription.P256DH == "" ||
+		subscription.Auth == "") {
 		return client.sendNativeFCM(ctx, subscription, payload)
 	}
 	return client.sendWeb(ctx, subscription, payload)

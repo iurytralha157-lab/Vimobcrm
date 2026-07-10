@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	aiWorkerInterval          = 5 * time.Second
-	aiFollowUpWorkerInterval  = time.Minute
-	aiWorkerBatchLimit        = 10
-	aiFollowUpBatchLimit      = 5
+	aiWorkerInterval          = time.Minute
+	aiFollowUpWorkerInterval  = 10 * time.Minute
+	aiWorkerBatchLimit        = 1
+	aiFollowUpBatchLimit      = 1
 	aiJobMaxAttempts          = 3
 	aiHumanPauseDuration      = 30 * time.Minute
 	autoReplyJobType          = "whatsapp_ai_autoreply"
