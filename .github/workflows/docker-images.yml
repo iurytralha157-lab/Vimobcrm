@@ -24,6 +24,7 @@ jobs:
       WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_AnQ_6OJi0LuPUyxFh7rVwA_biv5WTyf' }}
       WEB_NEXT_PUBLIC_VIMOB_API_URL: ${{ vars.VIMOB_NEXT_PUBLIC_API_URL || secrets.VIMOB_NEXT_PUBLIC_API_URL || 'https://api.vimobcrm.com.br' }}
       WEB_NEXT_PUBLIC_SITE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SITE_URL || secrets.VIMOB_NEXT_PUBLIC_SITE_URL || 'https://app.vimobcrm.com.br' }}
+      WEB_NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${{ vars.VIMOB_NEXT_PUBLIC_VAPID_PUBLIC_KEY || secrets.VIMOB_NEXT_PUBLIC_VAPID_PUBLIC_KEY || 'BH2ZWykyr3I9H9QowUVb_On8J60swPnuwcI8I9g24X7DVjaLfCI12U1HI7YQkde98IgYcG1NAY0P5-9Qi0rUBkg' }}
 
     steps:
       - name: Checkout
@@ -78,6 +79,7 @@ jobs:
             NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ env.WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
             NEXT_PUBLIC_VIMOB_API_URL=${{ env.WEB_NEXT_PUBLIC_VIMOB_API_URL }}
             NEXT_PUBLIC_SITE_URL=${{ env.WEB_NEXT_PUBLIC_SITE_URL }}
+            NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ env.WEB_NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.WEB_IMAGE }}:latest
             ${{ env.REGISTRY }}/${{ env.WEB_IMAGE }}:${{ github.sha }}

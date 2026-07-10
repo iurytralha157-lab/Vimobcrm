@@ -1834,7 +1834,7 @@ func notificationConfigUsesDirectInstance(config notificationWhatsAppConfig) boo
 	if mode == "evolution_go_instance" || mode == "instance" || mode == "direct_instance" {
 		return true
 	}
-	return strings.TrimSpace(config.Token) != "" && strings.TrimSpace(firstNotificationText(config.InstanceName, config.InstanceID)) != ""
+	return strings.TrimSpace(firstNotificationText(config.InstanceName, config.InstanceID)) != ""
 }
 
 func (repo Repository) findNotificationWhatsAppSession(ctx context.Context, organizationID string, sessionID string) (notificationWhatsAppSession, bool, error) {

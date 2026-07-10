@@ -3,7 +3,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { settingsAPI } from '@/lib/api/settings';
 
 // VAPID public key - must match the backend Web Push sender configuration.
-const VAPID_PUBLIC_KEY = 'BC7q4HGKxwbHnzRl0uBTyTOm59GcEyxqM8fgSTGiSfNoxwYIIy8-HnbbpzQghQUzpzPmmifvn9t01EoTJaFa3uQ';
+const VAPID_PUBLIC_KEY =
+  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ||
+  'BH2ZWykyr3I9H9QowUVb_On8J60swPnuwcI8I9g24X7DVjaLfCI12U1HI7YQkde98IgYcG1NAY0P5-9Qi0rUBkg';
 
 
 // Converte base64 URL-safe para Uint8Array (necessário para applicationServerKey)
