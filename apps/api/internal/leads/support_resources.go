@@ -2287,7 +2287,8 @@ func shouldDispatchLeadWhatsAppNotification(eventKey string) bool {
 		"lead_redistributed_received",
 		"lead_redistributed_away",
 		"whatsapp_disconnected",
-		"schedule_reminder":
+		"schedule_reminder",
+		"test_push":
 		return true
 	default:
 		return false

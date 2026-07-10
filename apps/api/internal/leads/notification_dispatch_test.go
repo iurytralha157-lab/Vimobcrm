@@ -20,6 +20,7 @@ func TestShouldDispatchLeadWhatsAppNotification(t *testing.T) {
 		"lead_redistributed_away",
 		"whatsapp_disconnected",
 		"schedule_reminder",
+		"test_push",
 	}
 	for _, eventKey := range criticalEvents {
 		if !shouldDispatchLeadWhatsAppNotification(eventKey) {
