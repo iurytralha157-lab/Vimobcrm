@@ -632,7 +632,8 @@ function normalizeReferralCandidate(candidate: JsonRecord | null | undefined) {
   const imageUrl = firstUrl(candidate.image_url, candidate.imageUrl, candidate.ImageURL, candidate.picture, thumbnailUrl);
   const rawVideoUrl = firstUrl(candidate.video_url, candidate.videoUrl, candidate.VideoURL, candidate.media_url, candidate.mediaUrl);
   const videoUrl = mediaType === "video" ? rawVideoUrl : firstUrl(candidate.video_url, candidate.videoUrl, candidate.VideoURL);
-  const sourceType = cleanText(firstPresent(candidate.source_type, candidate.sourceType, candidate.SourceType)) || (sourceId || sourceUrl || ctwaClid ? "ad" : null);
+  const explicitSourceType = cleanText(firstPresent(candidate.source_type, candidate.sourceType, candidate.SourceType));
+  const sourceType = explicitSourceType || (sourceId || sourceUrl || ctwaClid ? "ad" : null);
 
   if (!sourceUrl && !sourceId && !ctwaClid && !headline && !body && !imageUrl && !videoUrl && !thumbnailUrl) {
     return null;
@@ -649,6 +650,7 @@ function normalizeReferralCandidate(candidate: JsonRecord | null | undefined) {
     video_url: videoUrl,
     thumbnail_url: thumbnailUrl,
     ctwa_clid: ctwaClid,
+    explicit_source_type: explicitSourceType,
   };
 }
 
@@ -1193,6 +1195,15 @@ function whatsappAttribution(message: ReturnType<typeof normalizeMessage>) {
   );
 }
 
+function hasWhatsAppLeadCreationContext(message: ReturnType<typeof normalizeMessage>) {
+  const referral = message?.referral;
+  if (!referral) return false;
+  if (cleanText(referral.ctwa_clid) || cleanText(referral.source_id)) return true;
+
+  const explicitSourceType = cleanText(referral.explicit_source_type)?.toLowerCase() || "";
+  return /\b(ad|ads|ctwa|click_to_whatsapp|click_to_message|whatsapp_click_to_message)\b/.test(explicitSourceType);
+}
+
 function ruleMatches(rule: JsonRecord, message: ReturnType<typeof normalizeMessage>) {
   if (!message) return false;
   const rawMatchType = normalizeText(rule.match_type || "contains").toLowerCase();
@@ -1352,6 +1363,16 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
     }
     await supabase.from("leads").update(update).eq("id", existing.id);
     return { ...existing, ...update, is_new_lead: false };
+  }
+
+  if (!hasWhatsAppLeadCreationContext(message)) {
+    console.debug("[evolution-go-webhook] plain WhatsApp conversation stored without lead auto-creation", {
+      session_id: session.id,
+      organization_id: session.organization_id,
+      remote_jid: identity.remoteJid || message.remoteJid,
+      message_id: message.messageId,
+    });
+    return null;
   }
 
   const roundRobinAssignee = await resolveRoundRobinAssignee(rule, session.organization_id);
