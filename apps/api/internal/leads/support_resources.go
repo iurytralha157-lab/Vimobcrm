@@ -1780,6 +1780,7 @@ func (repo Repository) dispatchWhatsAppNotification(ctx context.Context, tenantC
 	}
 	result := DispatchWhatsAppResult{Enabled: config.Enabled}
 	if !config.Enabled {
+		result.Error = "notification_whatsapp_disabled"
 		return result, nil
 	}
 
@@ -2038,7 +2039,9 @@ func (repo Repository) getNotificationWhatsAppConfig(ctx context.Context) (notif
 	}
 	var config notificationWhatsAppConfig
 	if strings.TrimSpace(raw) != "" {
-		_ = json.Unmarshal([]byte(raw), &config)
+		if err := json.Unmarshal([]byte(raw), &config); err != nil {
+			return notificationWhatsAppConfig{}, err
+		}
 	}
 	return config, nil
 }

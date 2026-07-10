@@ -91,14 +91,18 @@ func (repo Repository) ProcessNotificationDeliveries(ctx context.Context) error 
 		return err
 	}
 
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
 	for _, notification := range notifications {
 		delivery := repo.dispatchPendingNotification(ctx, notification, nil)
-		if err := repo.markNotificationDelivery(ctx, tx, notification, delivery); err != nil {
+		if err := repo.markNotificationDeliveryDirect(ctx, notification, delivery); err != nil {
 			return err
 		}
 	}
 
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (repo Repository) dispatchNotificationDeliveries(ctx context.Context, notification Notification, channels []string) notificationDeliveryResult {
@@ -321,6 +325,19 @@ func (repo Repository) markNotificationDelivery(ctx context.Context, tx pgx.Tx, 
 		where id = $1::uuid
 	`, notification.ID, jsonb(metadata))
 	return err
+}
+
+func (repo Repository) markNotificationDeliveryDirect(ctx context.Context, notification pendingNotification, result notificationDeliveryResult) error {
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := repo.markNotificationDelivery(ctx, tx, notification, result); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func setNotificationChannelDispatch(metadata map[string]any, channel string, result DispatchChannelResult) map[string]any {
