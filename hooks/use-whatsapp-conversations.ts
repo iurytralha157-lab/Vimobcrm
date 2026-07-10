@@ -112,6 +112,13 @@ type SendWhatsAppMessageResult = Record<string, unknown> & {
   conversationId: string;
 };
 
+type UseWhatsAppMessagesOptions = {
+  includeLeadHistory?: boolean;
+  refetchIntervalMs?: number | false;
+  refetchOnWindowFocus?: boolean;
+  refetchOnMount?: boolean | "always";
+};
+
 const getConversationLeadId = (conversation?: WhatsAppConversation | null) =>
   conversation?.lead_id || conversation?.lead?.id || null;
 
@@ -189,13 +196,31 @@ export function useWhatsAppMessages(
   conversationId: string | null,
   leadId?: string | null,
   limit: number = 50,
+  options: UseWhatsAppMessagesOptions = {},
 ) {
   const { profile } = useAuth();
+  const includeLeadHistory = options.includeLeadHistory ?? true;
+  const refetchInterval = options.refetchIntervalMs ?? (conversationId || leadId ? 5_000 : false);
 
   return useQuery({
-    queryKey: ["whatsapp-messages", conversationId, leadId, limit],
+    queryKey: [
+      "whatsapp-messages",
+      conversationId,
+      leadId,
+      limit,
+      includeLeadHistory ? "lead-history" : "conversation-page",
+    ],
     queryFn: async () => {
       if (!conversationId && !leadId) return [];
+
+      if (conversationId && !includeLeadHistory) {
+        const page = await whatsappAPI.getMessages({
+          conversationId,
+          organizationId: profile?.organization_id,
+          limit,
+        });
+        return page.messages as WhatsAppMessage[];
+      }
 
       if (leadId) {
         const history = await whatsappAPI.getHistoryAccess({
@@ -215,13 +240,13 @@ export function useWhatsAppMessages(
       return page.messages as WhatsAppMessage[];
     },
     enabled: (!!conversationId && !!profile?.organization_id) || (!!leadId && !!profile?.organization_id),
-    refetchInterval: conversationId || leadId ? 5_000 : false,
+    refetchInterval,
     refetchIntervalInBackground: false,
     refetchOnReconnect: true,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: options.refetchOnWindowFocus ?? true,
     staleTime: 2_000,
     gcTime: 1000 * 60 * 15,
-    refetchOnMount: true,
+    refetchOnMount: options.refetchOnMount ?? true,
   });
 }
 
@@ -564,6 +589,12 @@ export function useWhatsAppRealtimeConversations(enabled: boolean = true, access
 
   useEffect(() => {
     if (!enabled || !profile?.organization_id) return;
+
+    // WhatsApp uses polling here; postgres_changes for these tables overloaded Realtime RLS.
+    queryClient.invalidateQueries({ queryKey: ["whatsapp-conversations"] });
+    return;
+    /*
+
     const scopedSessionIds = accessibleSessionKey === null
       ? undefined
       : accessibleSessionKey
@@ -697,5 +728,6 @@ export function useWhatsAppRealtimeConversations(enabled: boolean = true, access
       messageRefreshTimers.clear();
       void supabase.removeChannel(channel);
     };
+    */
   }, [enabled, profile?.organization_id, queryClient, accessibleSessionKey]);
 }

@@ -173,14 +173,33 @@ func (repo Repository) ListConversations(ctx context.Context, tenantContext tena
 		where = append(where, fmt.Sprintf(clause, len(args)))
 	}
 
-	if filter.SessionID != "" {
-		addFilter("wc.session_id = $%d::uuid", filter.SessionID)
+	if strings.TrimSpace(filter.SessionID) != "" {
+		sessionID, ok := normalizeUUID(filter.SessionID)
+		if !ok {
+			return nil, fmt.Errorf("%w: sessionId is invalid", ErrInvalidInput)
+		}
+		addFilter("wc.session_id = $%d::uuid", sessionID)
 	}
 	if len(filter.SessionIDs) > 0 {
 		placeholders := make([]string, 0, len(filter.SessionIDs))
+		seenSessionIDs := make(map[string]bool, len(filter.SessionIDs))
 		for _, sessionID := range filter.SessionIDs {
-			args = append(args, sessionID)
+			normalized, ok := normalizeUUID(sessionID)
+			if !ok {
+				if strings.TrimSpace(sessionID) == "" {
+					continue
+				}
+				return nil, fmt.Errorf("%w: sessionIds contains invalid uuid", ErrInvalidInput)
+			}
+			if seenSessionIDs[normalized] {
+				continue
+			}
+			seenSessionIDs[normalized] = true
+			args = append(args, normalized)
 			placeholders = append(placeholders, fmt.Sprintf("$%d::uuid", len(args)))
+		}
+		if len(placeholders) == 0 {
+			return []Conversation{}, nil
 		}
 		where = append(where, "wc.session_id in ("+strings.Join(placeholders, ", ")+")")
 	}

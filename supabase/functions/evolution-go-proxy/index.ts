@@ -18,6 +18,7 @@ const EVOLUTION_GO_API_URL = (Deno.env.get("EVOLUTION_GO_API_URL") || "").replac
 const EVOLUTION_GO_API_KEY = Deno.env.get("EVOLUTION_GO_API_KEY") || "";
 
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function json(body: JsonRecord, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -38,6 +39,12 @@ function withoutEmpty(obj: JsonRecord) {
   return Object.fromEntries(
     Object.entries(obj).filter(([, value]) => value !== undefined && value !== null && value !== ""),
   );
+}
+
+function optionalUuid(value: any) {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  return UUID_RE.test(text) ? text : null;
 }
 
 function normalizeMentionedJids(value: any) {
@@ -246,7 +253,7 @@ async function authenticate(req: Request) {
 }
 
 async function getSession(payload: JsonRecord) {
-  const sessionId = payload.session_id || payload.sessionId;
+  const sessionId = optionalUuid(firstPresent(payload.session_id, payload.sessionId));
   if (!sessionId) return null;
 
   const { data, error } = await supabase

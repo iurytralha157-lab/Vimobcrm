@@ -61,6 +61,20 @@ function cleanText(value: unknown) {
   return text || null;
 }
 
+function optionalUuid(value: unknown) {
+  const text = normalizeText(value).trim();
+  if (!text) return null;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text)
+    ? text.toLowerCase()
+    : null;
+}
+
+function isUniqueViolation(error: any, constraintName?: string) {
+  if (error?.code !== "23505") return false;
+  if (!constraintName) return true;
+  return normalizeText(error.message).includes(constraintName);
+}
+
 function normalizeDigits(value: unknown) {
   return normalizeText(value).replace(/\D/g, "");
 }
@@ -402,12 +416,13 @@ function extractInstanceSignals(payload: any, url: URL) {
 
 async function resolveSession(payload: any, url: URL) {
   const signals = extractInstanceSignals(payload, url);
+  const sessionId = optionalUuid(signals.sessionId);
 
-  if (signals.sessionId) {
+  if (sessionId) {
     const { data, error } = await supabase
       .from("whatsapp_sessions")
       .select("*")
-      .eq("id", signals.sessionId)
+      .eq("id", sessionId)
       .eq("provider", "evolution_go")
       .maybeSingle();
 
@@ -1233,12 +1248,13 @@ async function findInboundRule(session: JsonRecord, message: ReturnType<typeof n
 }
 
 async function resolveRoundRobinAssignee(rule: JsonRecord | null, organizationId: string) {
-  if (!rule?.target_round_robin_id) return null;
+  const targetRoundRobinId = optionalUuid(rule?.target_round_robin_id);
+  if (!targetRoundRobinId) return null;
 
   const { data: roundRobin } = await supabase
     .from("round_robins")
     .select("id, current_position")
-    .eq("id", rule.target_round_robin_id)
+    .eq("id", targetRoundRobinId)
     .eq("organization_id", organizationId)
     .eq("is_active", true)
     .maybeSingle();
@@ -1339,52 +1355,66 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
   }
 
   const roundRobinAssignee = await resolveRoundRobinAssignee(rule, session.organization_id);
-  const assignedUserId = rule?.target_user_id || roundRobinAssignee?.userId || session.owner_user_id || session.created_by || null;
+  const targetUserId = optionalUuid(rule?.target_user_id);
+  const targetPipelineId = optionalUuid(rule?.target_pipeline_id);
+  const targetStageId = optionalUuid(rule?.target_stage_id);
+  const targetTeamId = optionalUuid(rule?.target_team_id);
+  const targetRoundRobinId = optionalUuid(rule?.target_round_robin_id);
+  const ownerUserId = optionalUuid(session.owner_user_id) || optionalUuid(session.created_by);
+  const assignedUserId = targetUserId || optionalUuid(roundRobinAssignee?.userId) || ownerUserId;
   const sourceLabel = rule?.source_label || "WhatsApp";
 
-  const { data: lead, error } = await supabase
-    .from("leads")
-    .insert({
-      organization_id: session.organization_id,
-      name: message.contactName || phone,
-      phone,
-      whatsapp: phone,
-      whatsapp_avatar_url: avatarUrl,
-      whatsapp_avatar_synced_at: avatarUrl ? now : null,
-      source: "whatsapp",
-      source_detail: campaignLabel || sourceLabel,
-      source_session_id: session.id,
-      initial_message: message.content,
-      message: message.content,
-      property_code: propertyCode,
-      property_id: property?.id || null,
-      interest_property_id: property?.id || null,
-      assigned_user_id: assignedUserId,
-      assigned_at: assignedUserId ? now : null,
-      pipeline_id: rule?.target_pipeline_id || null,
-      stage_id: rule?.target_stage_id || null,
-      created_by: session.owner_user_id || session.created_by || null,
-      first_touch_at: now,
-      first_touch_channel: "whatsapp",
-      last_contact_at: now,
-      metadata: {
+  const { data: upsertedLead, error } = await supabase
+    .rpc("upsert_whatsapp_webhook_lead", {
+      p_organization_id: session.organization_id,
+      p_name: message.contactName || phone,
+      p_phone: phone,
+      p_whatsapp: phone,
+      p_whatsapp_avatar_url: avatarUrl,
+      p_whatsapp_avatar_synced_at: avatarUrl ? now : null,
+      p_source_detail: campaignLabel || sourceLabel,
+      p_source_session_id: session.id,
+      p_initial_message: message.content,
+      p_message: message.content,
+      p_property_code: propertyCode,
+      p_property_id: property?.id || null,
+      p_interest_property_id: property?.id || null,
+      p_assigned_user_id: assignedUserId,
+      p_assigned_at: assignedUserId ? now : null,
+      p_pipeline_id: targetPipelineId,
+      p_stage_id: targetStageId,
+      p_created_by: ownerUserId,
+      p_first_touch_at: now,
+      p_first_touch_channel: "whatsapp",
+      p_last_contact_at: now,
+      p_metadata: {
         source: "whatsapp",
         whatsapp_session_id: session.id,
         remote_jid: identity.remoteJid || message.remoteJid,
         matched_rule_id: rule?.id || null,
-        target_team_id: rule?.target_team_id || null,
-        target_round_robin_id: rule?.target_round_robin_id || null,
+        target_team_id: targetTeamId,
+        target_round_robin_id: targetRoundRobinId,
         campaign_label: campaignLabel,
         whatsapp_attribution: attribution,
         property_id: property?.id || null,
       },
-    })
-    .select("id, name, assigned_user_id, whatsapp_avatar_url, property_code, property_id, interest_property_id, source_detail, metadata")
-    .single();
+    });
 
-  if (error) throw error;
+  const lead = Array.isArray(upsertedLead) ? upsertedLead[0] : upsertedLead;
 
-  if (roundRobinAssignee?.roundRobinId) {
+  if (error) {
+    if (isUniqueViolation(error, "leads_org_phone_unique")) {
+      const recovered = await findLeadByPhone(session.organization_id, phone);
+      if (recovered?.id) return { ...recovered, is_new_lead: false };
+    }
+    throw error;
+  }
+
+  if (!lead?.id) {
+    throw new Error("Lead upsert did not return a lead");
+  }
+
+  if (roundRobinAssignee?.roundRobinId && lead.is_new_lead) {
     await supabase
       .from("round_robins")
       .update({ current_position: roundRobinAssignee.nextPosition, updated_at: now })
@@ -1400,7 +1430,7 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
     });
   }
 
-  return { ...lead, is_new_lead: true };
+  return { ...lead, is_new_lead: Boolean(lead.is_new_lead) };
 }
 
 async function upsertLeadMetaAttribution(
@@ -1756,6 +1786,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
 
   const attribution = whatsappAttribution(message);
   const resolvedGroupName = message.isGroup ? await resolveGroupName(session, remoteJid, message.groupName) : null;
+  const conversationOwnerUserId = optionalUuid(session.owner_user_id);
 
   let existing: JsonRecord | null = null;
   let canonicalConflict = false;
@@ -1808,7 +1839,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       contact_phone: existing.contact_phone || contactPhone,
       contact_picture: message.avatarUrl || existing.contact_picture,
       lead_id: attachableLeadId,
-      assigned_user_id: existing.assigned_user_id || (attachableLeadId ? lead?.assigned_user_id : null) || session.owner_user_id || null,
+      assigned_user_id: existing.assigned_user_id || (attachableLeadId ? optionalUuid(lead?.assigned_user_id) : null) || conversationOwnerUserId,
       updated_at: new Date().toISOString(),
       metadata: {
         ...(existing.metadata || {}),
@@ -1863,7 +1894,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       organization_id: session.organization_id,
       session_id: session.id,
       lead_id: attachableLeadId,
-      assigned_user_id: (attachableLeadId ? lead?.assigned_user_id : null) || session.owner_user_id || null,
+      assigned_user_id: (attachableLeadId ? optionalUuid(lead?.assigned_user_id) : null) || conversationOwnerUserId,
       remote_jid: remoteJid,
       contact_name: message.isGroup
         ? (resolvedGroupName || "Grupo WhatsApp")
@@ -1887,7 +1918,23 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
     .select("*")
     .single();
 
-  if (error) throw error;
+  if (error) {
+    if (isUniqueViolation(error, "whatsapp_conversations_session_id_remote_jid_key")) {
+      const { data: recovered, error: recoveryError } = await supabase
+        .from("whatsapp_conversations")
+        .select("*")
+        .eq("organization_id", session.organization_id)
+        .eq("session_id", session.id)
+        .eq("remote_jid", remoteJid)
+        .maybeSingle();
+      if (recoveryError) throw recoveryError;
+      if (recovered) {
+        await safelyUpsertWhatsAppIdentityAliases(session, identity, lead, recovered, identityAliases);
+        return recovered;
+      }
+    }
+    throw error;
+  }
   await safelyUpsertWhatsAppIdentityAliases(session, identity, lead, data, identityAliases);
   return data;
 }

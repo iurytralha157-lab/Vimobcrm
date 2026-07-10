@@ -183,7 +183,7 @@ func (repo Repository) ClaimPendingWebhookEvents(ctx context.Context, limit int,
 		    next_retry_at = now() + ($2::int * interval '1 second')
 		from picked
 		where event.id = picked.id
-		returning event.id::text, coalesce(event.raw_payload, event.payload, '{}'::jsonb)
+		returning event.id::text, coalesce(event.raw_payload, '{}'::jsonb)
 	`, limit, leaseSeconds)
 	if err != nil {
 		if isUndefinedColumn(err) {

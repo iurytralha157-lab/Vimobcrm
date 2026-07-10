@@ -16,6 +16,7 @@ const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const EVOLUTION_GO_API_URL = (Deno.env.get("EVOLUTION_GO_API_URL") || "").replace(/\/+$/, "");
 const EVOLUTION_GO_API_KEY = Deno.env.get("EVOLUTION_GO_API_KEY") || "";
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function json(body: JsonRecord, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -33,6 +34,11 @@ function normalizeText(value: unknown) {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return "";
+}
+
+function optionalUuid(value: unknown) {
+  const text = normalizeText(value).trim();
+  return UUID_RE.test(text) ? text : null;
 }
 
 function normalizeDigits(value: unknown) {
@@ -104,11 +110,12 @@ function isInternalNotificationPayload(body: JsonRecord, text: string, lead: Jso
 }
 
 async function loadLead(organizationId: string, leadId?: string | null) {
-  if (!leadId) return null;
+  const normalizedLeadId = optionalUuid(leadId);
+  if (!normalizedLeadId) return null;
   const { data, error } = await supabase
     .from("leads")
     .select("id, name, phone, assigned_user_id")
-    .eq("id", leadId)
+    .eq("id", normalizedLeadId)
     .eq("organization_id", organizationId)
     .maybeSingle();
   if (error) throw error;
@@ -178,11 +185,13 @@ async function canUseOrganization(userId: string, organizationId: string) {
 }
 
 async function selectSession(organizationId: string, sessionId?: string | null) {
-  if (sessionId) {
+  const normalizedSessionId = optionalUuid(sessionId);
+  if (normalizeText(sessionId).trim() && !normalizedSessionId) return null;
+  if (normalizedSessionId) {
     const { data, error } = await supabase
       .from("whatsapp_sessions")
       .select("*")
-      .eq("id", sessionId)
+      .eq("id", normalizedSessionId)
       .eq("organization_id", organizationId)
       .eq("provider", "evolution_go")
       .maybeSingle();
@@ -291,7 +300,7 @@ async function ensureConversation(
       organization_id: session.organization_id,
       session_id: session.id,
       lead_id: internalNotification ? null : lead?.id || null,
-      assigned_user_id: lead?.assigned_user_id || session.owner_user_id || null,
+      assigned_user_id: optionalUuid(lead?.assigned_user_id) || optionalUuid(session.owner_user_id) || null,
       remote_jid: remoteJid,
       contact_name: internalNotification ? normalizeDigits(remoteJid) : lead?.name || normalizeDigits(remoteJid),
       contact_phone: normalizeDigits(remoteJid),
@@ -323,7 +332,7 @@ async function recordOutboundMessage(
       organization_id: session.organization_id,
       conversation_id: conversation.id,
       session_id: session.id,
-      lead_id: internalNotification ? null : conversation.lead_id,
+      lead_id: internalNotification ? null : optionalUuid(conversation.lead_id),
       message_id: messageId,
       provider_message_id: messageId,
       from_me: true,
@@ -363,7 +372,7 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const nestedNotification = nestedNotificationRecord(body);
-    const organizationId = body.organization_id || body.organizationId;
+    const organizationId = optionalUuid(firstPresent(body.organization_id, body.organizationId));
     const text = normalizeText(firstPresent(body.text, body.message, body.content, notificationText(nestedNotification)));
     let remoteJid = normalizeJid(firstPresent(body.jid, body.remote_jid, body.remoteJid, body.phone, body.to, body.recipient, body.user?.whatsapp));
     const leadId = firstPresent(body.lead_id, body.leadId, nestedNotification?.lead_id, nestedNotification?.leadId);
@@ -400,9 +409,9 @@ Deno.serve(async (req) => {
     const internalMetadata = internalNotification
       ? {
           internal_notification: true,
-          notification_lead_id: lead?.id || leadId || null,
+          notification_lead_id: lead?.id || optionalUuid(leadId) || null,
           notification_type: normalizeText(firstPresent(body.event_key, body.eventKey, nestedNotification?.event_key, nestedNotification?.eventKey, nestedNotification?.type)) || "notification",
-          notification_recipient_user_id: body.user_id || body.userId || body.user?.id || null,
+          notification_recipient_user_id: optionalUuid(firstPresent(body.user_id, body.userId, body.user?.id)) || null,
         }
       : {};
 

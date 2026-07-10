@@ -105,13 +105,21 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 		where = append(where, fmt.Sprintf(clause, len(args)))
 	}
 
-	if filter.StageID != "" {
-		addFilter("l.stage_id = $%d::uuid", filter.StageID)
+	if strings.TrimSpace(filter.StageID) != "" {
+		stageID, ok := normalizeUUID(filter.StageID)
+		if !ok {
+			return ListResponse{}, fmt.Errorf("%w: stageId is invalid", ErrInvalidInput)
+		}
+		addFilter("l.stage_id = $%d::uuid", stageID)
 	}
 	if filter.Unassigned {
 		where = append(where, "l.assigned_user_id is null")
-	} else if filter.AssignedUserID != "" {
-		addFilter("l.assigned_user_id = $%d::uuid", filter.AssignedUserID)
+	} else if strings.TrimSpace(filter.AssignedUserID) != "" {
+		assignedUserID, ok := normalizeUUID(filter.AssignedUserID)
+		if !ok {
+			return ListResponse{}, fmt.Errorf("%w: assignedUserId is invalid", ErrInvalidInput)
+		}
+		addFilter("l.assigned_user_id = $%d::uuid", assignedUserID)
 	}
 	if filter.DealStatus != "" {
 		addFilter("l.deal_status = $%d", filter.DealStatus)

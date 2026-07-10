@@ -1889,7 +1889,7 @@ func (repo Repository) findNotificationWhatsAppSession(ctx context.Context, orga
 		  and coalesce(ws.status, '') = 'connected'
 		  and (
 		    ($2 = '' and coalesce(ws.is_notification_session, false) = true)
-		    or ($2 <> '' and ws.id = $2::uuid)
+		    or ws.id = nullif($2, '')::uuid
 		  )
 		order by ws.last_connected_at desc nulls last, ws.created_at desc
 		limit 1
@@ -2480,30 +2480,50 @@ func buildContactWhere(tenantContext tenant.Context, filter ContactListFilter) (
 		index := len(args)
 		where = append(where, fmt.Sprintf("(l.name ilike $%d or l.phone ilike $%d or l.email ilike $%d)", index, index, index))
 	}
-	if filter.TeamID != "" {
+	if strings.TrimSpace(filter.TeamID) != "" {
+		teamID, ok := normalizeUUID(filter.TeamID)
+		if !ok {
+			return nil, nil, fmt.Errorf("%w: teamId is invalid", ErrInvalidInput)
+		}
 		add(`exists (
 			select 1 from public.team_members tm
 			where tm.team_id = $%d::uuid
 			  and tm.user_id = l.assigned_user_id
-		)`, filter.TeamID)
+		)`, teamID)
 	}
-	if filter.PipelineID != "" {
-		add("l.pipeline_id = $%d::uuid", filter.PipelineID)
+	if strings.TrimSpace(filter.PipelineID) != "" {
+		pipelineID, ok := normalizeUUID(filter.PipelineID)
+		if !ok {
+			return nil, nil, fmt.Errorf("%w: pipelineId is invalid", ErrInvalidInput)
+		}
+		add("l.pipeline_id = $%d::uuid", pipelineID)
 	}
-	if filter.StageID != "" {
-		add("l.stage_id = $%d::uuid", filter.StageID)
+	if strings.TrimSpace(filter.StageID) != "" {
+		stageID, ok := normalizeUUID(filter.StageID)
+		if !ok {
+			return nil, nil, fmt.Errorf("%w: stageId is invalid", ErrInvalidInput)
+		}
+		add("l.stage_id = $%d::uuid", stageID)
 	}
 	if filter.Unassigned {
 		where = append(where, "l.assigned_user_id is null")
-	} else if filter.AssigneeID != "" {
-		add("l.assigned_user_id = $%d::uuid", filter.AssigneeID)
+	} else if strings.TrimSpace(filter.AssigneeID) != "" {
+		assigneeID, ok := normalizeUUID(filter.AssigneeID)
+		if !ok {
+			return nil, nil, fmt.Errorf("%w: assigneeId is invalid", ErrInvalidInput)
+		}
+		add("l.assigned_user_id = $%d::uuid", assigneeID)
 	}
-	if filter.TagID != "" {
+	if strings.TrimSpace(filter.TagID) != "" {
+		tagID, ok := normalizeUUID(filter.TagID)
+		if !ok {
+			return nil, nil, fmt.Errorf("%w: tagId is invalid", ErrInvalidInput)
+		}
 		add(`exists (
 			select 1 from public.lead_tags lt
 			where lt.lead_id = l.id
 			  and lt.tag_id = $%d::uuid
-		)`, filter.TagID)
+		)`, tagID)
 	}
 	if filter.Source != "" {
 		add("l.source = $%d", filter.Source)

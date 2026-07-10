@@ -15,6 +15,7 @@ const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const EVOLUTION_GO_API_URL = (Deno.env.get("EVOLUTION_GO_API_URL") || "").replace(/\/+$/, "");
 const EVOLUTION_GO_API_KEY = Deno.env.get("EVOLUTION_GO_API_KEY") || "";
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function json(body: JsonRecord, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -32,6 +33,11 @@ function normalizeText(value: unknown) {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return "";
+}
+
+function optionalUuid(value: unknown) {
+  const text = normalizeText(value).trim();
+  return UUID_RE.test(text) ? text : null;
 }
 
 function normalizeDigits(value: unknown) {
@@ -58,10 +64,13 @@ async function authenticate(req: Request) {
 }
 
 async function getSession(sessionId: string) {
+  const normalizedSessionId = optionalUuid(sessionId);
+  if (!normalizedSessionId) return null;
+
   const { data, error } = await supabase
     .from("whatsapp_sessions")
     .select("*")
-    .eq("id", sessionId)
+    .eq("id", normalizedSessionId)
     .eq("provider", "evolution_go")
     .maybeSingle();
   if (error) throw error;
@@ -197,7 +206,7 @@ Deno.serve(async (req) => {
     if (auth.error) return json({ success: false, error: auth.error }, 401);
 
     const body = await req.json().catch(() => ({}));
-    const sessionId = body.session_id || body.sessionId;
+    const sessionId = optionalUuid(firstPresent(body.session_id, body.sessionId));
     if (!sessionId) return json({ success: false, error: "session_id is required" }, 400);
 
     const session = await getSession(sessionId);
