@@ -473,18 +473,27 @@ func (repo Repository) SavePushToken(ctx context.Context, tenantContext tenant.C
 	if endpoint == "" {
 		return ErrInvalidInput
 	}
+	token := legacyPushTokenValue(endpoint)
+	platform := legacyPushPlatform(endpoint)
+	deviceInfo, err := legacyPushDeviceInfo(endpoint, request)
+	if err != nil {
+		return err
+	}
 
 	result, err := repo.db.Pool().Exec(ctx, `
 		update public.push_tokens
 		set organization_id = $1::uuid,
-		    p256dh = $4,
-		    auth = $5,
-		    user_agent = $6,
+		    token = $4,
+		    platform = $5,
+		    device_info = $6::jsonb,
+		    p256dh = $7,
+		    auth = $8,
+		    user_agent = $9,
 		    is_active = true,
 		    updated_at = now()
-		where user_id = $2::uuid
-		  and endpoint = $3
-	`, tenantContext.OrganizationID, tenantContext.UserID, endpoint, cleanStringPointer(request.P256DH), cleanStringPointer(request.Auth), cleanStringPointer(request.UserAgent))
+	where user_id = $2::uuid
+	  and endpoint = $3
+	`, tenantContext.OrganizationID, tenantContext.UserID, endpoint, token, platform, string(deviceInfo), cleanStringPointer(request.P256DH), cleanStringPointer(request.Auth), cleanStringPointer(request.UserAgent))
 	if isUndefinedTableError(err) {
 		return nil
 	}
@@ -502,26 +511,32 @@ func (repo Repository) SavePushToken(ctx context.Context, tenantContext tenant.C
 		insert into public.push_tokens (
 			organization_id,
 			user_id,
+			token,
+			platform,
+			device_info,
 			endpoint,
 			p256dh,
 			auth,
 			user_agent,
 			is_active
 		)
-		values ($1::uuid, $2::uuid, $3, $4, $5, $6, true)
-	`, tenantContext.OrganizationID, tenantContext.UserID, endpoint, cleanStringPointer(request.P256DH), cleanStringPointer(request.Auth), cleanStringPointer(request.UserAgent))
+		values ($1::uuid, $2::uuid, $3, $4, $5::jsonb, $6, $7, $8, $9, true)
+	`, tenantContext.OrganizationID, tenantContext.UserID, token, platform, string(deviceInfo), endpoint, cleanStringPointer(request.P256DH), cleanStringPointer(request.Auth), cleanStringPointer(request.UserAgent))
 	if isUniqueViolation(err) {
 		_, err = repo.db.Pool().Exec(ctx, `
 			update public.push_tokens
 			set organization_id = $1::uuid,
-			    p256dh = $4,
-			    auth = $5,
-			    user_agent = $6,
+			    token = $4,
+			    platform = $5,
+			    device_info = $6::jsonb,
+			    p256dh = $7,
+			    auth = $8,
+			    user_agent = $9,
 			    is_active = true,
 			    updated_at = now()
 			where user_id = $2::uuid
 			  and endpoint = $3
-		`, tenantContext.OrganizationID, tenantContext.UserID, endpoint, cleanStringPointer(request.P256DH), cleanStringPointer(request.Auth), cleanStringPointer(request.UserAgent))
+		`, tenantContext.OrganizationID, tenantContext.UserID, endpoint, token, platform, string(deviceInfo), cleanStringPointer(request.P256DH), cleanStringPointer(request.Auth), cleanStringPointer(request.UserAgent))
 	}
 	if isUndefinedColumnError(err) {
 		return repo.saveLegacyPushToken(ctx, tenantContext, endpoint, request)

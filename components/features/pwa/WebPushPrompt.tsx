@@ -121,15 +121,15 @@ export function WebPushPrompt() {
   const handleEnable = async () => {
     setIsSubscribing(true);
 
-    const success = await subscribe();
+    const result = await subscribe();
 
     setIsSubscribing(false);
 
-    if (success) {
+    if (result.ok) {
       toast.success('Notificacoes ativadas com sucesso!');
       setShowPrompt(false);
     } else {
-      toast.error('Nao foi possivel ativar as notificacoes. Verifique as permissoes do navegador.');
+      toast.error(result.message);
     }
   };
 

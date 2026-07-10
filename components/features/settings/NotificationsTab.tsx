@@ -16,11 +16,11 @@ export const NotificationsTab = () => {
       return;
     }
 
-    const enabled = await subscribe();
-    if (enabled) {
+    const result = await subscribe();
+    if (result.ok) {
       toast.success('Notificacoes ativadas com sucesso!');
-    } else if (permission === 'denied') {
-      toast.error('Permissao de notificacao negada. Ative nas configuracoes do navegador.');
+    } else {
+      toast.error(result.message);
     }
   };
 

@@ -79,6 +79,14 @@ interface WebPushState {
   error: string | null;
 }
 
+export type WebPushSubscribeResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: 'permission_denied' | 'service_worker' | 'browser_push' | 'save_failed' | 'unknown';
+      message: string;
+    };
+
 export function useWebPush() {
   const { user, profile } = useAuth();
   const [state, setState] = useState<WebPushState>({
@@ -164,7 +172,7 @@ export function useWebPush() {
   }, [user?.id]);
 
   // Solicita permissão e cria subscription
-  const subscribe = useCallback(async (): Promise<boolean> => {
+  const subscribe = useCallback(async (): Promise<WebPushSubscribeResult> => {
     console.log('[WebPush] Iniciando subscription...');
     console.log('[WebPush] VAPID key configurada:', VAPID_PUBLIC_KEY ? `${VAPID_PUBLIC_KEY.length} chars` : 'NÃO CONFIGURADA');
 
@@ -184,29 +192,81 @@ export function useWebPush() {
           isLoading: false,
           error: 'Permissão negada para notificações'
         }));
-        return false;
+        return {
+          ok: false,
+          reason: 'permission_denied',
+          message: 'Permissao de notificacao negada. Ative nas configuracoes do navegador.',
+        };
       }
 
       // Aguarda o Service Worker estar pronto
       console.log('[WebPush] Aguardando Service Worker...');
-      await getServiceWorkerRegistration();
-      const registration = await navigator.serviceWorker.ready;
+      let registration: ServiceWorkerRegistration;
+      try {
+        await getServiceWorkerRegistration();
+        registration = await navigator.serviceWorker.ready;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Service Worker indisponivel';
+        setState(prev => ({
+          ...prev,
+          isLoading: false,
+          error: errorMessage
+        }));
+        return {
+          ok: false,
+          reason: 'service_worker',
+          message: 'Nao foi possivel preparar o dispositivo para notificacoes. Atualize a pagina e tente novamente.',
+        };
+      }
       console.log('[WebPush] Service Worker pronto:', registration.scope);
 
       // Cria subscription
       console.log('[WebPush] Criando subscription com PushManager...');
       const applicationServerKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
 
-      const subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey,
-      });
+      let subscription: PushSubscription;
+      try {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey,
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Erro ao criar subscription';
+        console.error('[WebPush] Erro ao criar subscription:', error);
+        setState(prev => ({
+          ...prev,
+          isLoading: false,
+          error: errorMessage
+        }));
+        return {
+          ok: false,
+          reason: 'browser_push',
+          message: 'O navegador recusou a ativacao das notificacoes neste dispositivo.',
+        };
+      }
 
       console.log('[WebPush] Subscription criada:', subscription.endpoint);
 
       // Salva no banco
       console.log('[WebPush] Salvando subscription no banco...');
-      await saveSubscription(subscription);
+      try {
+        await saveSubscription(subscription);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Erro ao salvar subscription';
+        console.error('[WebPush] Erro ao salvar subscription no servidor:', error);
+        await subscription.unsubscribe().catch(() => undefined);
+        setState(prev => ({
+          ...prev,
+          isSubscribed: false,
+          isLoading: false,
+          error: errorMessage
+        }));
+        return {
+          ok: false,
+          reason: 'save_failed',
+          message: 'Nao foi possivel registrar este dispositivo no servidor. Tente novamente em instantes.',
+        };
+      }
       console.log('[WebPush] Subscription salva com sucesso!');
 
       setState(prev => ({
@@ -216,7 +276,7 @@ export function useWebPush() {
         error: null
       }));
 
-      return true;
+      return { ok: true };
     } catch (error) {
       console.error('[WebPush] Erro ao inscrever:', error);
       const errorMessage = error instanceof Error ? error.message : 'Erro ao ativar notificações';
@@ -226,7 +286,11 @@ export function useWebPush() {
         isLoading: false,
         error: errorMessage
       }));
-      return false;
+      return {
+        ok: false,
+        reason: 'unknown',
+        message: 'Nao foi possivel ativar as notificacoes agora. Tente novamente em instantes.',
+      };
     }
   }, [saveSubscription]);
 
