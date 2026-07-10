@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, SyntheticEvent } from "react";
 import NextImage from "next/image";
-import { Check, CheckCheck, Clock, Mic, Play, Pause, FileText, Download, AlertCircle, RefreshCw, Loader2, Image as ImageIcon, Video, Link2 } from "lucide-react";
+import { Check, CheckCheck, Clock, Mic, Play, Pause, FileText, Download, AlertCircle, RefreshCw, Loader2, Image as ImageIcon, Video, Link2, MessageCircleOff } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -44,7 +44,7 @@ interface MessageBubbleProps {
   }>;
 }
 
-type MediaKind = "text" | "image" | "video" | "audio" | "document" | "sticker" | "reaction";
+type MediaKind = "text" | "image" | "video" | "audio" | "document" | "sticker" | "reaction" | "deleted";
 
 // Generate pseudo-random waveform bars based on a seed
 const generateWaveform = (seed: string, count: number = 40): number[] => {
@@ -109,6 +109,7 @@ const getEffectiveMediaKind = (
   const type = String(messageType || "text").toLowerCase();
   const mimeType = cleanMimeType(mediaMimeType);
 
+  if (type === "deleted") return "deleted";
   if (type === "reaction") return "reaction";
   if (type === "sticker") return "sticker";
   if (type === "audio" || type === "video" || type === "image") return type;
@@ -936,7 +937,8 @@ export function MessageBubble({
     }
   };
 
-  const isMediaMessage = mediaKind !== "text" && mediaKind !== "reaction";
+  const isMediaMessage = mediaKind !== "text" && mediaKind !== "reaction" && mediaKind !== "deleted";
+  const isDeletedMessage = mediaKind === "deleted";
   const isMediaWithOverlayTimestamp = (mediaKind === "image" || mediaKind === "video") && isValidMediaUrl(mediaUrl) && !imageError;
   const isAudioMessage = mediaKind === "audio";
   const hasReactions = reactions.length > 0;
@@ -998,6 +1000,12 @@ export function MessageBubble({
           {isMediaMessage && renderMedia()}
 
           {/* Text content */}
+          {isDeletedMessage && (
+            <div className="flex items-center gap-1.5 text-[13.5px] italic opacity-75">
+              <MessageCircleOff className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>Esta mensagem foi apagada</span>
+            </div>
+          )}
           {safeContent && mediaKind === "text" && (
             <MessageText
               content={safeContent}

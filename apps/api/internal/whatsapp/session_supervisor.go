@@ -9,11 +9,22 @@ import (
 )
 
 const (
-	whatsappSessionSupervisorInitialDelay = 90 * time.Second
-	whatsappSessionSupervisorInterval     = 10 * time.Minute
-	whatsappWebhookRefreshInterval        = 15 * time.Minute
+	whatsappSessionSupervisorInitialDelay = 30 * time.Second
+	whatsappSessionSupervisorInterval     = time.Minute
 	whatsappSupervisorBatchLimit          = 5
+	whatsappWebhookSubscriptionVersion    = "message-events-v1"
 )
+
+var whatsappWebhookSubscriptions = []string{
+	"MESSAGE",
+	"SEND_MESSAGE",
+	"READ_RECEIPT",
+	"CONNECTION",
+	"QRCODE",
+	"GROUP",
+	"LABEL",
+	"CONTACT",
+}
 
 func (handler Handler) StartSessionSupervisor(ctx context.Context, logger *slog.Logger) {
 	if logger == nil {
@@ -104,7 +115,8 @@ func (repo Repository) superviseSession(ctx context.Context, session Session, no
 	}
 
 	configuredWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, instanceKey, webhookToken)
-	if configuredWebhookURL != "" && webhookRefreshDue(settings, configuredWebhookURL, now) {
+	webhookNeedsConfiguration := webhookConfigurationDue(settings, configuredWebhookURL)
+	if configuredWebhookURL != "" && (webhookNeedsConfiguration || session.Status == "disconnected") {
 		result, err := repo.functions.invokeEvolution(ctx, "instance.connect", map[string]any{
 			"session_id":  session.ID,
 			"instance_id": instanceKey,
@@ -116,6 +128,7 @@ func (repo Repository) superviseSession(ctx context.Context, session Session, no
 		}
 		settings["webhook_url"] = configuredWebhookURL
 		settings["webhook_last_configured_at"] = now.Format(time.RFC3339)
+		settings["webhook_subscription_version"] = whatsappWebhookSubscriptionVersion
 		settings["evolution_go_resolved_instance_key"] = instanceKey
 		settingsChanged = true
 		if providerNotificationSafeApplied(result) {
@@ -144,12 +157,13 @@ func (repo Repository) superviseSession(ctx context.Context, session Session, no
 }
 
 func evolutionWebhookConnectBody(webhookURL string) map[string]any {
+	subscriptions := append([]string(nil), whatsappWebhookSubscriptions...)
 	return withoutEmptyMap(map[string]any{
 		"webhookUrl":  webhookURL,
 		"webhook_url": webhookURL,
 		"url":         webhookURL,
-		"subscribe":   []string{"ALL"},
-		"events":      []string{"ALL"},
+		"subscribe":   subscriptions,
+		"events":      append([]string(nil), subscriptions...),
 		"immediate":   true,
 		"advancedSettings": map[string]any{
 			"rejectCall":      false,
@@ -162,19 +176,11 @@ func evolutionWebhookConnectBody(webhookURL string) map[string]any {
 	})
 }
 
-func webhookRefreshDue(settings map[string]any, expectedURL string, now time.Time) bool {
+func webhookConfigurationDue(settings map[string]any, expectedURL string) bool {
 	if strings.TrimSpace(stringFromMap(settings, "webhook_url")) != expectedURL {
 		return true
 	}
-	configuredAt := strings.TrimSpace(stringFromMap(settings, "webhook_last_configured_at"))
-	if configuredAt == "" {
-		return true
-	}
-	parsed, err := time.Parse(time.RFC3339, configuredAt)
-	if err != nil {
-		return true
-	}
-	return now.Sub(parsed) >= whatsappWebhookRefreshInterval
+	return strings.TrimSpace(stringFromMap(settings, "webhook_subscription_version")) != whatsappWebhookSubscriptionVersion
 }
 
 func sessionEvolutionInstanceKey(session Session, settings map[string]any) string {

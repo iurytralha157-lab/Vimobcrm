@@ -572,8 +572,13 @@ export function useWhatsAppRealtimeConversations(enabled: boolean = true, access
     if (scopedSessionIds && scopedSessionIds.length === 0) return;
 
     const organizationId = profile.organization_id;
+    let conversationRefreshTimer: number | null = null;
     const invalidateConversations = () => {
-      queryClient.invalidateQueries({ queryKey: ["whatsapp-conversations"] });
+      if (conversationRefreshTimer) window.clearTimeout(conversationRefreshTimer);
+      conversationRefreshTimer = window.setTimeout(() => {
+        conversationRefreshTimer = null;
+        queryClient.invalidateQueries({ queryKey: ["whatsapp-conversations"] });
+      }, 250);
     };
     const normalizeRealtimeId = (value: unknown) => typeof value === "string" && value ? value : null;
     const invalidateMessages = (conversationId?: unknown, leadId?: unknown) => {
@@ -644,9 +649,7 @@ export function useWhatsAppRealtimeConversations(enabled: boolean = true, access
 
     const channelName = `whatsapp-live:${organizationId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     let channel = supabase.channel(channelName);
-    const sessionFilters = scopedSessionIds?.length && scopedSessionIds.length <= 40
-      ? scopedSessionIds.slice(0, 40).map((sessionId) => `session_id=eq.${sessionId}`)
-      : [`organization_id=eq.${organizationId}`];
+    const sessionFilters = [`organization_id=eq.${organizationId}`];
 
     sessionFilters.forEach((filter) => {
       channel = channel.on(
@@ -682,9 +685,14 @@ export function useWhatsAppRealtimeConversations(enabled: boolean = true, access
         },
       );
     });
-    channel.subscribe();
+    channel.subscribe((status) => {
+      if (status !== "SUBSCRIBED") return;
+      invalidateConversations();
+      invalidateMessages();
+    });
 
     return () => {
+      if (conversationRefreshTimer) window.clearTimeout(conversationRefreshTimer);
       messageRefreshTimers.forEach((timer) => window.clearTimeout(timer));
       messageRefreshTimers.clear();
       void supabase.removeChannel(channel);

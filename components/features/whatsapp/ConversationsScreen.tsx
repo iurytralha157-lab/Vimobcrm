@@ -37,6 +37,7 @@ import { useMetaIntegrations } from "@/hooks/use-meta-integration";
 import { useMentionNames } from "@/hooks/use-mention-names";
 import { whatsappAPI } from "@/lib/api/whatsapp";
 import { getWhatsAppMessageInputState } from "@/lib/whatsapp-message-input";
+import { groupLatestWhatsAppReactions } from "@/lib/whatsapp-reactions";
 import { useAuth } from "@/contexts/AuthContext";
 
 const MAX_IMAGE_DIMENSION = 1600;
@@ -83,19 +84,16 @@ type DisplayMessage = Pick<
       | "media_status"
       | "message_id"
       | "reaction_emoji"
+      | "reaction_sender_jid"
       | "reaction_sender_name"
       | "reaction_to_message_id"
+      | "sender_jid"
       | "sender_name"
     >
   > & {
     metadata?: Record<string, unknown>;
     status: string | null;
   };
-
-const getMetadataString = (metadata: Record<string, unknown> | undefined, key: string) => {
-  const value = metadata?.[key];
-  return typeof value === "string" ? value : null;
-};
 
 const toScreenConversation = (conversation: MetaConversation): ScreenConversation => ({
   id: conversation.id,
@@ -243,24 +241,7 @@ export default function Conversations() {
     return ((messages || []) as DisplayMessage[]).filter((message) => message.message_type === "reaction");
   }, [activePlatform, messages]);
   const reactionsByMessageId = useMemo(() => {
-    const map = new Map<string, Array<{ emoji: string; senderName: string | null; fromMe: boolean }>>();
-    for (const message of reactionMessages) {
-      const targetId =
-        message.reaction_to_message_id ||
-        getMetadataString(message.metadata, "reaction_to_message_id") ||
-        getMetadataString(message.metadata, "target_message_id") ||
-        getMetadataString(message.metadata, "targetMessageId");
-      const emoji = message.reaction_emoji || message.content;
-      if (!targetId || !emoji) continue;
-      const list = map.get(targetId) || [];
-      list.push({
-        emoji,
-        senderName: message.reaction_sender_name || message.sender_name || null,
-        fromMe: Boolean(message.from_me),
-      });
-      map.set(targetId, list);
-    }
-    return map;
+    return groupLatestWhatsAppReactions(reactionMessages);
   }, [reactionMessages]);
   const visibleMessages = useMemo<DisplayMessage[]>(() => {
     if (activePlatform !== "whatsapp") return (messages || []) as DisplayMessage[];

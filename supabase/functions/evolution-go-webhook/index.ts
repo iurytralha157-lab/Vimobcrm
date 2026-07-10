@@ -200,7 +200,15 @@ function whatsappIdentityForMessage(message: any) {
     };
   }
 
-  const contactPhone = phoneFromJidLike(message.remoteJid) || phoneFromJidLike(message.senderJid);
+  const rawInfo = firstPresent(message.raw?.Info, message.raw?.info, {});
+  const alternateJids = [
+    rawInfo?.SenderAlt,
+    rawInfo?.senderAlt,
+    rawInfo?.RecipientAlt,
+    rawInfo?.recipientAlt,
+  ];
+  const contactPhone = phoneFromJidLike(message.remoteJid) || phoneFromJidLike(message.senderJid) ||
+    alternateJids.map(phoneFromJidLike).find(Boolean) || "";
   const remoteJid = contactPhone ? `${contactPhone}@s.whatsapp.net` : normalizeJid(message.remoteJid, false);
   const remoteAliases = unique([
     remoteJid,
@@ -209,6 +217,7 @@ function whatsappIdentityForMessage(message: any) {
     normalizeJid(message.senderJid, false),
     message.remoteJid,
     message.senderJid,
+    ...alternateJids.map((value) => normalizeJid(value, false)),
   ].filter(Boolean));
 
   return {
@@ -710,6 +719,35 @@ function extractContent(messageNode: any, message: any, mediaBlock: any) {
   ) || null;
 }
 
+function extractDeletedMessageId(messageNode: any, message: any) {
+  const protocol = firstPresent(
+    messageNode?.protocolMessage,
+    messageNode?.ProtocolMessage,
+    message?.protocolMessage,
+    message?.ProtocolMessage,
+  );
+  if (!isRecord(protocol)) return null;
+
+  const targetMessageId = normalizeText(firstPresent(
+    protocol.key?.id,
+    protocol.key?.ID,
+    protocol.Key?.id,
+    protocol.Key?.ID,
+    protocol.messageId,
+    protocol.message_id,
+  ));
+  if (!targetMessageId) return null;
+
+  const protocolType = normalizeText(firstPresent(
+    protocol.type,
+    protocol.Type,
+    protocol.protocolType,
+    protocol.protocol_type,
+  )).toLowerCase();
+  const revokeTypes = ["0", "revoke", "message_revoke", "message-revoke", "delete", "deleted"];
+  return revokeTypes.includes(protocolType) ? targetMessageId : null;
+}
+
 function normalizeBase64(value: unknown) {
   const text = normalizeText(value).trim();
   if (!text) return null;
@@ -838,6 +876,8 @@ function normalizeMessage(message: any) {
     info.SenderPn,
     info.Sender,
     info.sender,
+    info.SenderAlt,
+    info.senderAlt,
     message.sender,
     message.senderJid,
     message.from,
@@ -850,6 +890,8 @@ function normalizeMessage(message: any) {
     info.RecipientPn,
     info.Recipient,
     info.recipient,
+    info.RecipientAlt,
+    info.recipientAlt,
     message.recipient,
     message.recipientJid,
     message.to,
@@ -988,7 +1030,15 @@ function normalizeMessage(message: any) {
   ));
 
   const reaction = firstPresent(messageNode?.reactionMessage, messageNode?.ReactionMessage, message.reaction, null);
-  const isReaction = isRecord(reaction);
+  const encryptedReaction = firstPresent(
+    messageNode?.encReactionMessage,
+    messageNode?.EncReactionMessage,
+    message.encReactionMessage,
+    message.EncReactionMessage,
+    null,
+  );
+  const isReaction = isRecord(reaction) || isRecord(encryptedReaction);
+  const deletedMessageId = extractDeletedMessageId(messageNode, message);
   const referral = extractWhatsAppReferral(messageNode, message, mediaBlock);
 
   const senderName = normalizeText(firstPresent(info.PushName, info.pushName, message.pushName, message.senderName, message.notifyName)) || null;
@@ -1008,14 +1058,15 @@ function normalizeMessage(message: any) {
     fromMe,
     isGroup,
     sentAt: timestamp,
-    messageType: isReaction ? "reaction" : messageType,
-    content: isReaction ? normalizeText(firstPresent(reaction.text, reaction.emoji)) : content,
+    messageType: deletedMessageId ? "deleted_event" : (isReaction ? "reaction" : messageType),
+    content: deletedMessageId ? null : (isReaction ? normalizeText(firstPresent(reaction?.text, reaction?.emoji)) : content),
     mediaUrl,
     mediaMimeType: mimeType || null,
     mediaBase64: base64,
     mediaSize: Number(firstPresent(mediaBlock.fileLength, mediaBlock.FileLength, message.mediaSize, message.fileSize)) || null,
-    reactionToMessageId: isReaction ? normalizeText(firstPresent(reaction.key?.id, reaction.Key?.ID, reaction.messageId)) : null,
-    reactionEmoji: isReaction ? normalizeText(firstPresent(reaction.text, reaction.emoji)) : null,
+    reactionToMessageId: isReaction ? normalizeText(firstPresent(reaction?.key?.id, reaction?.Key?.ID, reaction?.messageId)) : null,
+    reactionEmoji: isReaction ? normalizeText(firstPresent(reaction?.text, reaction?.emoji)) : null,
+    deletedMessageId,
     avatarUrl: normalizeText(firstPresent(message.profilePicture, message.profilePicUrl, message.avatar, message.pictureUrl)) || null,
     referral,
     raw: message,
@@ -1851,6 +1902,61 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
   return { inserted: true, message: data };
 }
 
+async function markMessageDeleted(session: JsonRecord, message: ReturnType<typeof normalizeMessage>) {
+  if (!message?.deletedMessageId) return false;
+
+  const { data: target, error: targetError } = await supabase
+    .from("whatsapp_messages")
+    .select("id, conversation_id, sent_at, metadata")
+    .eq("organization_id", session.organization_id)
+    .eq("session_id", session.id)
+    .eq("message_id", message.deletedMessageId)
+    .maybeSingle();
+  if (targetError) throw targetError;
+  if (!target) return false;
+
+  const deletedAt = new Date().toISOString();
+  const originalMetadata = isRecord(target.metadata) ? target.metadata : {};
+  const { error: updateError } = await supabase
+    .from("whatsapp_messages")
+    .update({
+      content: "Esta mensagem foi apagada",
+      message_type: "deleted",
+      media_url: null,
+      media_storage_path: null,
+      media_status: null,
+      media_error: null,
+      media_mime_type: null,
+      media_size: null,
+      metadata: {
+        ...originalMetadata,
+        deleted: true,
+        deleted_at: deletedAt,
+        deletion_event: {
+          message_id: message.messageId,
+          raw: message.raw,
+        },
+      },
+    })
+    .eq("id", target.id);
+  if (updateError) throw updateError;
+
+  if (target.sent_at) {
+    const { error: conversationError } = await supabase
+      .from("whatsapp_conversations")
+      .update({
+        last_message: "Esta mensagem foi apagada",
+        last_message_preview: "Esta mensagem foi apagada",
+        updated_at: deletedAt,
+      })
+      .eq("id", target.conversation_id)
+      .eq("last_message_at", target.sent_at);
+    if (conversationError) throw conversationError;
+  }
+
+  return true;
+}
+
 async function updateConversationAfterMessage(conversation: JsonRecord, normalized: ReturnType<typeof normalizeMessage>, inserted: boolean) {
   if (!normalized || !inserted || normalized.messageType === "reaction") return;
 
@@ -1957,6 +2063,13 @@ async function handleMessages(session: JsonRecord, payload: any) {
   for (const rawMessage of messages) {
     const message = normalizeMessage(rawMessage);
     if (!message) continue;
+    if (message.messageType === "deleted_event") {
+      if (await markMessageDeleted(session, message)) processed += 1;
+      continue;
+    }
+    if (message.messageType === "reaction" && !message.reactionToMessageId) {
+      continue;
+    }
     const messageIdentity = whatsappIdentityForMessage(message);
     const diagnosticRemoteJid = messageIdentity.remoteJid || message.remoteJid;
 
@@ -2021,9 +2134,23 @@ async function handleMessageStatus(session: JsonRecord, payload: any) {
 
   let updated = 0;
   for (const entry of entries) {
-    const messageId = normalizeText(firstPresent(entry.messageId, entry.message_id, entry.id, entry.ID, entry.key?.id, entry.Key?.ID));
-    const status = statusFromProvider(firstPresent(entry.status, entry.Status, entry.ack, entry.Ack, entry.type));
-    if (!messageId || !status) continue;
+    const messageIds = unique([
+      ...toArray(firstPresent(entry.MessageIDs, entry.messageIds, entry.message_ids)),
+      firstPresent(entry.messageId, entry.message_id, entry.id, entry.ID, entry.key?.id, entry.Key?.ID),
+    ].map((value) => normalizeText(value)).filter(Boolean));
+    const status = statusFromProvider(firstPresent(
+      entry.status,
+      entry.Status,
+      entry.state,
+      entry.State,
+      entry.ack,
+      entry.Ack,
+      entry.type,
+      entry.Type,
+      payload.state,
+      payload.State,
+    ));
+    if (messageIds.length === 0 || !status) continue;
 
     const update: JsonRecord = { status };
     if (status === "delivered") update.delivered_at = new Date().toISOString();
@@ -2034,9 +2161,9 @@ async function handleMessageStatus(session: JsonRecord, payload: any) {
       .from("whatsapp_messages")
       .update(update)
       .eq("session_id", session.id)
-      .eq("message_id", messageId);
+      .in("message_id", messageIds);
     if (error) throw error;
-    updated += 1;
+    updated += messageIds.length;
   }
   return updated;
 }

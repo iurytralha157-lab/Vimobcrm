@@ -106,6 +106,7 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 	settings["evolution_go_resolved_instance_key"] = firstPresentAny(evoID, instanceName)
 	settings["webhook_url"] = configuredWebhookURL
 	settings["webhook_last_configured_at"] = time.Now().UTC().Format(time.RFC3339)
+	settings["webhook_subscription_version"] = whatsappWebhookSubscriptionVersion
 	if providerNotificationSafeApplied(connectResult) {
 		settings["notification_safe_settings_applied_at"] = time.Now().UTC().Format(time.RFC3339)
 	}
@@ -324,6 +325,7 @@ func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant
 	settings["evolution_go_resolved_instance_key"] = firstPresentAny(evoID, session.InstanceName)
 	settings["webhook_url"] = configuredWebhookURL
 	settings["webhook_last_configured_at"] = time.Now().UTC().Format(time.RFC3339)
+	settings["webhook_subscription_version"] = whatsappWebhookSubscriptionVersion
 	if providerNotificationSafeApplied(createResult) || providerNotificationSafeApplied(connectResult) {
 		settings["notification_safe_settings_applied_at"] = time.Now().UTC().Format(time.RFC3339)
 	}
