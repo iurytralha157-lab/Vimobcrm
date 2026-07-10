@@ -2074,7 +2074,6 @@ func buildWhatsAppNotificationTemplate(eventKey string, title string, content st
 		appendField("🎯", "Campanha", campaign)
 		appendField("🧾", "Formulário", formName)
 		appendPipeline()
-		appendField("📅", "Data", date)
 		appendAction("acesse o CRM para atender")
 	case "lead_reentry":
 		lines = append(lines, "🔁 *LEAD REENTROU*")

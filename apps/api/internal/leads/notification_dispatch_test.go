@@ -58,6 +58,7 @@ func TestBuildWhatsAppNotificationTextNewLeadTemplate(t *testing.T) {
 		"source":        "Meta Ads",
 		"campaign_name": "[LINCE] CHACARA-$870 MIL",
 		"form_name":     "Formulario principal",
+		"created_time":  "2026-07-10T01:06:42-03:00",
 	})
 
 	expected := []string{
@@ -72,6 +73,9 @@ func TestBuildWhatsAppNotificationTextNewLeadTemplate(t *testing.T) {
 		if !strings.Contains(text, item) {
 			t.Fatalf("expected WhatsApp template to contain %q, got %q", item, text)
 		}
+	}
+	if strings.Contains(text, "Data:") || strings.Contains(text, "2026-07-10T01:06:42-03:00") {
+		t.Fatalf("new lead WhatsApp template must not contain date, got %q", text)
 	}
 }
 
