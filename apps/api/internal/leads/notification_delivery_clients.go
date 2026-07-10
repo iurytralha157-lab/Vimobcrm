@@ -147,13 +147,13 @@ type pushPayload struct {
 
 func newNotificationPushClient(config PushConfig) notificationPushClient {
 	subject := strings.TrimSpace(config.VAPIDSubject)
-	if subject != "" && !strings.Contains(subject, ":") {
-		subject = "mailto:" + subject
+	if strings.HasPrefix(strings.ToLower(subject), "mailto:") {
+		subject = strings.TrimSpace(subject[len("mailto:"):])
 	}
 	return notificationPushClient{
 		vapidPublicKey:  strings.TrimSpace(config.VAPIDPublicKey),
 		vapidPrivateKey: strings.TrimSpace(config.VAPIDPrivateKey),
-		vapidSubject:    firstNotificationText(subject, "mailto:contato@vimobcrm.com.br"),
+		vapidSubject:    firstNotificationText(subject, "contato@vimobcrm.com.br"),
 		fcmServerKey:    strings.TrimSpace(config.FCMServerKey),
 		httpClient:      &http.Client{Timeout: 15 * time.Second},
 	}
