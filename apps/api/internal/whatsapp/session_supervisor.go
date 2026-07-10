@@ -9,10 +9,10 @@ import (
 )
 
 const (
-	whatsappSessionSupervisorInitialDelay = 10 * time.Second
-	whatsappSessionSupervisorInterval     = time.Minute
+	whatsappSessionSupervisorInitialDelay = 90 * time.Second
+	whatsappSessionSupervisorInterval     = 10 * time.Minute
 	whatsappWebhookRefreshInterval        = 15 * time.Minute
-	whatsappSupervisorBatchLimit          = 25
+	whatsappSupervisorBatchLimit          = 5
 )
 
 func (handler Handler) StartSessionSupervisor(ctx context.Context, logger *slog.Logger) {
