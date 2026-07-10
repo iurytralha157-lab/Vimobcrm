@@ -5,14 +5,14 @@ import { usersAPI, type CreateUserInput, type DeleteUserInput, type UpdateUserIn
 
 export type { CreateUserInput, DeleteUserImpact, DeleteUserInput, UpdateUserInput, User } from '@/lib/api/users';
 
-export function useOrganizationUsers() {
+export function useOrganizationUsers(options?: { enabled?: boolean }) {
   const { profile } = useAuth();
   const orgId = profile?.organization_id;
 
   return useQuery({
     queryKey: ['organization-users', orgId],
     queryFn: () => usersAPI.listUsers(orgId),
-    enabled: !!orgId,
+    enabled: !!orgId && (options?.enabled ?? true),
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,

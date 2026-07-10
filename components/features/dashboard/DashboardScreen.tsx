@@ -243,6 +243,7 @@ export default function Dashboard() {
             isLoadingCampaigns={isLoadingCampaigns}
             isLoadingAdSets={isLoadingAdSets}
             isLoadingAds={isLoadingAds}
+            loadDynamicOptions={shouldLoadFilterOptions}
             onFiltersOpenChange={(open) => {
               if (open) setShouldLoadFilterOptions(true);
             }}

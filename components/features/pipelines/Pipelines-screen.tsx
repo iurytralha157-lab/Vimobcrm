@@ -3,6 +3,7 @@
 import { Component, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { useDeferredValue } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { AppLayout } from '@/components/shared/layout/AppLayout';
@@ -25,14 +26,10 @@ import {
   LayoutGrid,
   Trash2
 } from 'lucide-react';
-import { StageSettingsDialog } from '@/components/features/pipelines/StageSettingsDialog';
-import { PipelineSlaSettings } from '@/components/features/pipelines/PipelineSlaSettings';
-import { StagesEditorDialog } from '@/components/features/pipelines/StagesEditorDialog';
 import { SharedFilters } from '@/components/shared/SharedFilters';
 import { useSharedFilters } from '@/hooks/use-shared-filters';
 
 import { LeadCard } from '@/components/features/leads/LeadCard';
-import { LeadDetailDialog } from '@/components/features/leads/LeadDetailDialog';
 
 import {
   DropdownMenu,
@@ -68,7 +65,6 @@ import { DragDropContext, Droppable, DropResult } from '@hello-pangea/dnd';
 import { useStages, useStagesWithLeads, usePipelines, useCreatePipeline, useCreateStage, useDeletePipeline } from '@/hooks/use-stages';
 import type { PipelineLead, StageWithLeads } from '@/hooks/use-stages';
 import { useLoadMoreLeads } from '@/hooks/use-stages';
-import { CreateLeadDialog } from '@/components/features/leads/CreateLeadDialog';
 import { useOrganizationUsers } from '@/hooks/use-users';
 import { useTags } from '@/hooks/use-tags';
 import { useAssignLeadRoundRobin } from '@/hooks/use-assign-lead-roundrobin';
@@ -86,6 +82,27 @@ import { pipelinesAPI } from '@/lib/api/pipelines';
 import { getPipelineBoard } from '@/lib/api/pipeline-board';
 import { useDealStatusChange } from '@/hooks/use-deal-status-change';
 import { LostReasonDialog } from '@/components/features/leads/LostReasonDialog';
+
+const StageSettingsDialog = dynamic(
+  () => import('@/components/features/pipelines/StageSettingsDialog').then((mod) => mod.StageSettingsDialog),
+  { loading: () => null },
+);
+const PipelineSlaSettings = dynamic(
+  () => import('@/components/features/pipelines/PipelineSlaSettings').then((mod) => mod.PipelineSlaSettings),
+  { loading: () => null },
+);
+const StagesEditorDialog = dynamic(
+  () => import('@/components/features/pipelines/StagesEditorDialog').then((mod) => mod.StagesEditorDialog),
+  { loading: () => null },
+);
+const LeadDetailDialog = dynamic(
+  () => import('@/components/features/leads/LeadDetailDialog').then((mod) => mod.LeadDetailDialog),
+  { loading: () => null },
+);
+const CreateLeadDialog = dynamic(
+  () => import('@/components/features/leads/CreateLeadDialog').then((mod) => mod.CreateLeadDialog),
+  { loading: () => null },
+);
 
 // Helper to format currency compactly (pt-BR locale)
 const formatCompactCurrency = (value: number): string => {
@@ -419,13 +436,15 @@ export default function Pipelines() {
     return () => window.clearTimeout(retryTimer);
   }, [leadsError, refetch, shouldLoadPipelineLeads]);
 
-  const { data: users = [] } = useOrganizationUsers();
+  const shouldLoadLeadDialogResources = Boolean(selectedLead);
+  const { data: users = [] } = useOrganizationUsers({ enabled: shouldLoadLeadDialogResources });
   const visibleUsers = hasUserScope
     ? users.filter((candidate) => scopedVisibleUserIds.includes(candidate.id))
     : users;
-  const { data: allTags = [] } = useTags();
+  const { data: allTags = [] } = useTags({ enabled: shouldLoadLeadDialogResources });
   const assignLeadRoundRobin = useAssignLeadRoundRobin();
-  const canEditPipeline = useCanEditCadences();
+  const shouldLoadPipelineManagementAccess = Boolean(selectedPipelineId) && (!leadsLoading || stagesWithLeads.length > 0);
+  const canEditPipeline = useCanEditCadences({ enabled: shouldLoadPipelineManagementAccess });
   const isMobile = useIsMobile();
   const [activeMobileStageId, setActiveMobileStageId] = useState<string | null>(null);
 
@@ -1184,6 +1203,7 @@ export default function Pipelines() {
                   isLoadingCampaigns={isLoadingCampaigns}
                   isLoadingAdSets={isLoadingAdSets}
                   isLoadingAds={isLoadingAds}
+                  loadDynamicOptions={shouldLoadFilterOptions}
                   onFiltersOpenChange={(open) => {
                     if (open) setShouldLoadFilterOptions(true);
                   }}
@@ -1442,33 +1462,39 @@ export default function Pipelines() {
           </DragDropContext>
         </div>
 
-        <LeadDialogErrorBoundary leadId={selectedLead?.id} onClose={() => setSelectedLead(null)}>
-          <LeadDetailDialog
-            lead={selectedLead}
-            stages={stages}
-            onClose={() => setSelectedLead(null)}
-            allTags={allTags}
-            allUsers={visibleUsers}
-            refetchStages={refetch}
+        {selectedLead && (
+          <LeadDialogErrorBoundary leadId={selectedLead.id} onClose={() => setSelectedLead(null)}>
+            <LeadDetailDialog
+              lead={selectedLead}
+              stages={stages}
+              onClose={() => setSelectedLead(null)}
+              allTags={allTags}
+              allUsers={visibleUsers}
+              refetchStages={refetch}
+            />
+          </LeadDialogErrorBoundary>
+        )}
+
+        {settingsStageForDialog && (
+          <StageSettingsDialog
+            open={!!settingsStage}
+            onOpenChange={(open) => !open && setSettingsStage(null)}
+            stage={settingsStageForDialog}
+            onStageUpdate={() => {
+              refetch();
+              setSettingsStage(null);
+            }}
           />
-        </LeadDialogErrorBoundary>
+        )}
 
-        <StageSettingsDialog
-          open={!!settingsStage}
-          onOpenChange={(open) => !open && setSettingsStage(null)}
-          stage={settingsStageForDialog}
-          onStageUpdate={() => {
-            refetch();
-            setSettingsStage(null);
-          }}
-        />
-
-        <CreateLeadDialog
-          open={newLeadDialogOpen}
-          onOpenChange={setNewLeadDialogOpen}
-          defaultStageId={newLeadStageId}
-          defaultPipelineId={selectedPipelineId}
-        />
+        {newLeadDialogOpen && (
+          <CreateLeadDialog
+            open={newLeadDialogOpen}
+            onOpenChange={setNewLeadDialogOpen}
+            defaultStageId={newLeadStageId}
+            defaultPipelineId={selectedPipelineId}
+          />
+        )}
 
         <LostReasonDialog
           open={!!lostReasonLead}
@@ -1594,7 +1620,7 @@ export default function Pipelines() {
           </DialogContent>
         </Dialog>
 
-        {selectedPipelineId && (
+        {selectedPipelineId && slaSettingsOpen && (
           <PipelineSlaSettings
             open={slaSettingsOpen}
             onOpenChange={setSlaSettingsOpen}
@@ -1603,7 +1629,7 @@ export default function Pipelines() {
           />
         )}
 
-        {selectedPipelineId && (
+        {selectedPipelineId && stagesEditorOpen && (
           <StagesEditorDialog
             open={stagesEditorOpen}
             onOpenChange={setStagesEditorOpen}

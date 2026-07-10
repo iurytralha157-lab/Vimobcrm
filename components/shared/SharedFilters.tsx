@@ -59,6 +59,7 @@ interface SharedFiltersProps {
   hasActiveFilters: boolean;
   hideSearch?: boolean;
   datePosition?: "start" | "end";
+  loadDynamicOptions?: boolean;
   onFiltersOpenChange?: (open: boolean) => void;
   tourPrefix?: string;
 }
@@ -99,12 +100,13 @@ export function SharedFilters({
   isLoadingAds = false,
   hideSearch = false,
   datePosition = "start",
+  loadDynamicOptions = true,
   onFiltersOpenChange,
   tourPrefix,
 }: SharedFiltersProps) {
   const { user, profile } = useAuth();
-  const { data: teams = [] } = useTeams();
-  const { data: users = [] } = useOrganizationUsers();
+  const { data: teams = [] } = useTeams({ enabled: loadDynamicOptions });
+  const { data: users = [] } = useOrganizationUsers({ enabled: loadDynamicOptions });
   const isMobile = useIsMobile();
   const { hasPermission } = useUserPermissions();
   const currentUserId = user?.id;

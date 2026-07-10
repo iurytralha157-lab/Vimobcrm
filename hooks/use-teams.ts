@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext'
 
 export type { Team, TeamMember, TeamMemberInput }
 
-export function useTeams(options?: { includeInactive?: boolean }) {
+export function useTeams(options?: { includeInactive?: boolean; enabled?: boolean }) {
   const includeInactive = options?.includeInactive ?? false
   const { organization, profile } = useAuth()
   const organizationId = organization?.id || profile?.organization_id || null
@@ -13,7 +13,7 @@ export function useTeams(options?: { includeInactive?: boolean }) {
   return useQuery({
     queryKey: ['teams', organizationId, { includeInactive }],
     queryFn: () => teamsAPI.listTeams({ includeInactive, organizationId }),
-    enabled: Boolean(organizationId),
+    enabled: Boolean(organizationId) && (options?.enabled ?? true),
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,

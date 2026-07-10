@@ -3,37 +3,28 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTeams } from '@/hooks/use-teams';
 
 /**
- * Hook para verificar se o usuário pode editar cadências e pipelines
- * Retorna true se:
- * - Usuário é admin (role = 'admin')
- * - Usuário é líder de alguma equipe (is_leader = true)
+ * Hook para verificar se o usuario pode editar cadencias e pipelines.
+ * Retorna true para administradores, donos, super admins ou lideres de equipe.
  */
-export function useCanEditCadences() {
+export function useCanEditCadences(options?: { enabled?: boolean }) {
   const { profile, organization, isSuperAdmin, userOrganizations } = useAuth();
-  const { data: teams = [] } = useTeams();
+  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
+  const canEditByRole = Boolean(
+    isSuperAdmin ||
+    profile?.role === 'admin' ||
+    activeMemberRole === 'admin' ||
+    activeMemberRole === 'owner',
+  );
+  const shouldLoadTeams = !canEditByRole && (options?.enabled ?? true);
+  const { data: teams = [] } = useTeams({ enabled: shouldLoadTeams });
 
-  const canEdit = useMemo(() => {
-    // Admin sempre pode editar
-    const activeOrganizationId = organization?.id || profile?.organization_id;
-    const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
-    if (
-      isSuperAdmin ||
-      profile?.role === 'admin' ||
-      activeMemberRole === 'admin' ||
-      activeMemberRole === 'owner'
-    ) {
-      return true;
-    }
+  return useMemo(() => {
+    if (canEditByRole) return true;
+    if (!shouldLoadTeams) return false;
 
-    // Verificar se é líder de alguma equipe
-    const isTeamLeader = teams.some(team =>
-      team.members?.some(member =>
-        member.user_id === profile?.id && member.is_leader
-      )
+    return teams.some((team) =>
+      team.members?.some((member) => member.user_id === profile?.id && member.is_leader),
     );
-
-    return isTeamLeader;
-  }, [isSuperAdmin, organization?.id, profile?.id, profile?.organization_id, profile?.role, teams, userOrganizations]);
-
-  return canEdit;
+  }, [canEditByRole, profile?.id, shouldLoadTeams, teams]);
 }

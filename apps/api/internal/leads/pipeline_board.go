@@ -31,30 +31,23 @@ func (repo Repository) GetPipelineBoard(ctx context.Context, tenantContext tenan
 	for _, stage := range stages {
 		stageIDs = append(stageIDs, stage.ID)
 	}
-	countFilter := filter
-	countFilter.PipelineID = pipelineID
-	countFilter.StageID = ""
-	countFilter.StageIDs = stageIDs
-	counts, err := repo.CountPipelineStageLeads(ctx, tenantContext, countFilter)
+
+	boardFilter := filter
+	boardFilter.PipelineID = pipelineID
+	boardFilter.StageID = ""
+	boardFilter.StageIDs = stageIDs
+	boardFilter.Offset = 0
+	leadsByStage, counts, err := repo.listPipelineBoardLeadsByStage(ctx, tenantContext, boardFilter)
 	if err != nil {
 		return nil, err
 	}
 
 	allLeads := []*PipelineBoardLead{}
 	for index := range stages {
-		stageFilter := filter
-		stageFilter.PipelineID = pipelineID
-		stageFilter.StageID = stages[index].ID
-		stageFilter.Offset = 0
-
-		leads, _, err := repo.listPipelineBoardLeads(ctx, tenantContext, stageFilter, false)
-		if err != nil {
-			return nil, err
-		}
 		total := counts[stages[index].ID]
-		stages[index].Leads = leads
+		stages[index].Leads = leadsByStage[stages[index].ID]
 		stages[index].TotalLeadCount = total
-		stages[index].HasMore = total > int64(len(leads))
+		stages[index].HasMore = total > int64(len(stages[index].Leads))
 		for leadIndex := range stages[index].Leads {
 			allLeads = append(allLeads, &stages[index].Leads[leadIndex])
 		}
@@ -409,6 +402,79 @@ func (repo Repository) listPipelineBoardLeads(ctx context.Context, tenantContext
 	return leads, total, nil
 }
 
+func (repo Repository) listPipelineBoardLeadsByStage(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) (map[string][]PipelineBoardLead, map[string]int64, error) {
+	leadsByStage := map[string][]PipelineBoardLead{}
+	counts := map[string]int64{}
+	for _, stageID := range filter.StageIDs {
+		leadsByStage[stageID] = []PipelineBoardLead{}
+		counts[stageID] = 0
+	}
+	if strings.TrimSpace(filter.PipelineID) == "" || len(filter.StageIDs) == 0 {
+		return leadsByStage, counts, nil
+	}
+
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = defaultPipelineBoardLimit
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	where, args, err := buildPipelineLeadWhere(tenantContext, filter)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	args = append(args, offset, offset+limit)
+	offsetIndex := len(args) - 1
+	endIndex := len(args)
+
+	rows, err := repo.db.Pool().Query(ctx, `
+		with ranked as (
+			select
+				count(*) over(partition by l.stage_id) as stage_total_count,
+				row_number() over(
+					partition by l.stage_id
+					order by coalesce(l.last_entry_at, l.stage_entered_at, l.updated_at, l.created_at) desc, l.id desc
+				) as stage_rank,
+				`+pipelineBoardLeadSelectFields()+`
+			from public.leads l
+			where `+strings.Join(where, " and ")+`
+		)
+		select
+			stage_total_count,
+			`+pipelineBoardLeadColumnFields()+`
+		from ranked
+		where stage_rank > $`+fmt.Sprint(offsetIndex)+`
+		  and stage_rank <= $`+fmt.Sprint(endIndex)+`
+		order by stage_id, stage_rank
+	`, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		lead, rowTotal, err := scanPipelineBoardLead(rows, true)
+		if err != nil {
+			return nil, nil, err
+		}
+		if lead.StageID == nil || *lead.StageID == "" {
+			continue
+		}
+		stageID := *lead.StageID
+		leadsByStage[stageID] = append(leadsByStage[stageID], lead)
+		counts[stageID] = rowTotal
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	return leadsByStage, counts, nil
+}
+
 func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFilter) ([]string, []any, error) {
 	args := []any{
 		tenantContext.OrganizationID,
@@ -581,6 +647,36 @@ func pipelineBoardLeadSelectFields() string {
 		l.first_response_at,
 		l.first_response_seconds,
 		l.first_response_is_automation`
+}
+
+func pipelineBoardLeadColumnFields() string {
+	return `
+		id,
+		name,
+		phone,
+		email,
+		source,
+		created_at,
+		updated_at,
+		stage_id,
+		assigned_user_id,
+		pipeline_id,
+		message,
+		stage_entered_at,
+		organization_id,
+		last_entry_at,
+		reentry_count,
+		whatsapp_avatar_url,
+		deal_status,
+		valor_interesse,
+		property_id,
+		lost_reason,
+		won_at,
+		lost_at,
+		interest_property_id,
+		first_response_at,
+		first_response_seconds,
+		first_response_is_automation`
 }
 
 func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int64, error) {

@@ -10,14 +10,22 @@ type TeamPipelineAccess = {
 };
 
 export function useUserAccessScope() {
-  const { profile, isSuperAdmin } = useAuth();
+  const { profile, organization, isSuperAdmin, userOrganizations } = useAuth();
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
-  const { data: teams = [], isLoading: teamsLoading } = useTeams();
   const profileId = profile?.id;
   const profileRole = profile?.role;
-  const isAdminProfile = isSuperAdmin || profileRole === 'admin' || profileRole === 'super_admin';
+  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
+  const isAdminProfile =
+    isSuperAdmin ||
+    profileRole === 'admin' ||
+    profileRole === 'super_admin' ||
+    activeMemberRole === 'admin' ||
+    activeMemberRole === 'owner';
+  const shouldLoadTeams = !isAdminProfile;
+  const { data: teams = [], isLoading: teamsLoading } = useTeams({ enabled: shouldLoadTeams });
   const shouldLoadTeamPipelines =
-    !isAdminProfile &&
+    shouldLoadTeams &&
     teams.some((team) =>
       team.is_active !== false &&
       team.members?.some((member) => member.user_id === profileId && member.is_leader),
@@ -54,7 +62,7 @@ export function useUserAccessScope() {
       ledPipelineIds,
       canViewAllLeads: isAdmin || hasPermission('lead_view_all'),
       canTransferAnyLead: isAdmin || hasPermission('lead_transfer') || hasPermission('lead_edit_all'),
-      isLoading: permissionsLoading || teamsLoading || (shouldLoadTeamPipelines && teamPipelinesLoading),
+      isLoading: permissionsLoading || (shouldLoadTeams && teamsLoading) || (shouldLoadTeamPipelines && teamPipelinesLoading),
     };
-  }, [hasPermission, isAdminProfile, permissionsLoading, profileId, shouldLoadTeamPipelines, teamPipelineRows, teamPipelinesLoading, teams, teamsLoading]);
+  }, [hasPermission, isAdminProfile, permissionsLoading, profileId, shouldLoadTeamPipelines, shouldLoadTeams, teamPipelineRows, teamPipelinesLoading, teams, teamsLoading]);
 }

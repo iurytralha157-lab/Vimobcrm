@@ -136,10 +136,10 @@ export function useStagesWithLeads(
     },
     retry: (failureCount, error) => {
       if (error instanceof VimobAPIError && ['api_timeout', 'api_unavailable'].includes(error.code)) {
-        return failureCount < 5;
+        return failureCount < 1;
       }
 
-      return failureCount < 2;
+      return failureCount < 1;
     },
     retryDelay: (attemptIndex) => Math.min(800 * 2 ** attemptIndex, 8000),
   });
