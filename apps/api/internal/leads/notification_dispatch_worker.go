@@ -138,7 +138,7 @@ func (repo Repository) listPendingNotificationDeliveries(ctx context.Context, tx
 			id::text,
 			organization_id::text,
 			user_id::text,
-			lead_id::text,
+			coalesce(lead_id::text, ''),
 			coalesce(title, ''),
 			coalesce(content, body, ''),
 			coalesce(type, 'info'),
