@@ -201,23 +201,42 @@ function whatsappIdentityForMessage(message: any) {
   }
 
   const rawInfo = firstPresent(message.raw?.Info, message.raw?.info, {});
-  const alternateJids = [
-    rawInfo?.SenderAlt,
-    rawInfo?.senderAlt,
-    rawInfo?.RecipientAlt,
-    rawInfo?.recipientAlt,
-  ];
-  const contactPhone = phoneFromJidLike(message.remoteJid) || phoneFromJidLike(message.senderJid) ||
-    alternateJids.map(phoneFromJidLike).find(Boolean) || "";
+  const rawDeviceSentMeta = firstPresent(rawInfo?.DeviceSentMeta, rawInfo?.deviceSentMeta, {});
+  const contactSideJids = message.fromMe
+    ? [
+        message.remoteJid,
+        rawInfo?.RecipientPN,
+        rawInfo?.recipientPN,
+        rawInfo?.RecipientPn,
+        rawInfo?.Recipient,
+        rawInfo?.recipient,
+        rawInfo?.RecipientAlt,
+        rawInfo?.recipientAlt,
+        rawInfo?.Chat,
+        rawInfo?.chat,
+        rawDeviceSentMeta?.DestinationJID,
+        rawDeviceSentMeta?.destinationJID,
+      ]
+    : [
+        message.remoteJid,
+        message.senderJid,
+        rawInfo?.SenderPN,
+        rawInfo?.senderPN,
+        rawInfo?.SenderPn,
+        rawInfo?.Sender,
+        rawInfo?.sender,
+        rawInfo?.SenderAlt,
+        rawInfo?.senderAlt,
+        rawInfo?.Chat,
+        rawInfo?.chat,
+      ];
+  const contactPhone = contactSideJids.map(phoneFromJidLike).find(Boolean) || "";
   const remoteJid = contactPhone ? `${contactPhone}@s.whatsapp.net` : normalizeJid(message.remoteJid, false);
   const remoteAliases = unique([
     remoteJid,
     contactPhone ? `${contactPhone}@c.us` : "",
-    normalizeJid(message.remoteJid, false),
-    normalizeJid(message.senderJid, false),
-    message.remoteJid,
-    message.senderJid,
-    ...alternateJids.map((value) => normalizeJid(value, false)),
+    ...contactSideJids.map((value) => normalizeJid(value, false)),
+    ...contactSideJids.map((value) => normalizeText(value)),
   ].filter(Boolean));
 
   return {
@@ -225,7 +244,7 @@ function whatsappIdentityForMessage(message: any) {
     contactPhone,
     isGroup: false,
     remoteAliases,
-    phoneVariants: phoneMatchVariantsForWhatsApp(contactPhone, message.remoteJid, message.senderJid),
+    phoneVariants: phoneMatchVariantsForWhatsApp(contactPhone, ...contactSideJids),
   };
 }
 
@@ -1661,13 +1680,40 @@ async function upsertWhatsAppIdentityAliases(
   }
 }
 
+async function safelyUpsertWhatsAppIdentityAliases(
+  session: JsonRecord,
+  identity: ReturnType<typeof whatsappIdentityForMessage>,
+  lead: JsonRecord | null,
+  conversation: JsonRecord,
+  extraAliases: unknown[] = [],
+) {
+  try {
+    await upsertWhatsAppIdentityAliases(session, identity, lead, conversation, extraAliases);
+  } catch (error) {
+    console.warn("[evolution-go-webhook] identity alias update failed; message processing will continue", {
+      session_id: session.id,
+      conversation_id: conversation.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function ensureConversation(session: JsonRecord, message: ReturnType<typeof normalizeMessage>, lead: JsonRecord | null) {
   if (!message) throw new Error("Missing normalized message");
   const identity = whatsappIdentityForMessage(message);
   let remoteJid = identity.remoteJid || message.remoteJid;
   let contactPhone = message.isGroup ? null : (identity.contactPhone || null);
-  let identityAliases = mergeWhatsAppIdentityAliases(identity, [message.remoteJid, message.senderJid, remoteJid]);
-  const aliasMatch = await findWhatsAppIdentityAlias(session, identityAliases);
+  let identityAliases = mergeWhatsAppIdentityAliases(identity, [message.remoteJid, remoteJid]);
+  let aliasMatch: JsonRecord | null = null;
+  try {
+    aliasMatch = await findWhatsAppIdentityAlias(session, identityAliases);
+  } catch (error) {
+    console.warn("[evolution-go-webhook] identity alias lookup failed; direct identity matching will continue", {
+      session_id: session.id,
+      remote_jid: remoteJid,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 
   if (aliasMatch) {
     if (!message.isGroup) {
@@ -1710,7 +1756,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
 
   const phoneVariants = message.isGroup
     ? []
-    : phoneMatchVariantsForWhatsApp(contactPhone, remoteJid, message.remoteJid, message.senderJid, ...identityAliases);
+    : phoneMatchVariantsForWhatsApp(contactPhone, remoteJid, message.remoteJid, ...identityAliases);
 
   if (!existing && !message.isGroup && phoneVariants.length > 0) {
     const { data, error } = await supabase
@@ -1777,7 +1823,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
         .is("lead_id", null);
     }
 
-    await upsertWhatsAppIdentityAliases(session, identity, lead, data, identityAliases);
+    await safelyUpsertWhatsAppIdentityAliases(session, identity, lead, data, identityAliases);
     return data;
   }
 
@@ -1789,7 +1835,9 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       lead_id: lead?.id || null,
       assigned_user_id: lead?.assigned_user_id || session.owner_user_id || null,
       remote_jid: remoteJid,
-      contact_name: message.isGroup ? (resolvedGroupName || "Grupo WhatsApp") : (message.contactName || contactPhone || "Contato WhatsApp"),
+      contact_name: message.isGroup
+        ? (resolvedGroupName || "Grupo WhatsApp")
+        : (message.contactName || cleanText(lead?.name) || contactPhone || "Contato WhatsApp"),
       contact_phone: contactPhone,
       contact_picture: message.avatarUrl,
       is_group: message.isGroup,
@@ -1810,7 +1858,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
     .single();
 
   if (error) throw error;
-  await upsertWhatsAppIdentityAliases(session, identity, lead, data, identityAliases);
+  await safelyUpsertWhatsAppIdentityAliases(session, identity, lead, data, identityAliases);
   return data;
 }
 
