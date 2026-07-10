@@ -884,16 +884,31 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 			return "", false, err
 		}
 	}
+	notificationRecipients := []string{}
 	if assignedUserID != nil {
+		notificationRecipients = append(notificationRecipients, *assignedUserID)
+	} else {
+		notificationRecipients, err = repo.listFallbackLeadNotificationRecipients(ctx, tx, integration.OrganizationID)
+		if err != nil {
+			return "", false, err
+		}
+	}
+	for _, recipientID := range notificationRecipients {
 		eventKey := "new_lead_received"
 		title := "Novo lead recebido"
 		content := fmt.Sprintf("%s foi atribuido a voce", lead.Name)
+		if assignedUserID == nil {
+			content = fmt.Sprintf("%s entrou pela Meta sem responsavel definido", lead.Name)
+		}
 		if reentry {
 			eventKey = "lead_reentry"
 			title = "Lead retornou"
 			content = fmt.Sprintf("%s teve uma nova entrada", lead.Name)
+			if assignedUserID == nil {
+				content = fmt.Sprintf("%s teve uma nova entrada pela Meta sem responsavel definido", lead.Name)
+			}
 		}
-		if err := repo.insertLeadNotification(ctx, tx, integration.OrganizationID, *assignedUserID, leadID, title, content, eventKey, map[string]any{
+		if err := repo.insertLeadNotification(ctx, tx, integration.OrganizationID, recipientID, leadID, title, content, eventKey, map[string]any{
 			"lead_name":     lead.Name,
 			"source":        source,
 			"campaign_name": metaText(details, change.Raw, "campaign_name"),
@@ -905,6 +920,7 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 			"page_id":       change.PageID,
 			"leadgen_id":    change.LeadgenID,
 			"created_time":  change.CreatedTime,
+			"unassigned":    assignedUserID == nil,
 		}); err != nil {
 			return "", false, err
 		}
@@ -1565,6 +1581,42 @@ func (repo Repository) findLeadAssignedUser(ctx context.Context, tx pgx.Tx, orga
 		return nil, nil
 	}
 	return assignedUserID, err
+}
+
+func (repo Repository) listFallbackLeadNotificationRecipients(ctx context.Context, tx pgx.Tx, organizationID string) ([]string, error) {
+	rows, err := tx.Query(ctx, `
+		select distinct user_id::text
+		from (
+			select om.user_id
+			from public.organization_members om
+			where om.organization_id = $1::uuid
+			  and coalesce(om.is_active, true) = true
+			  and om.role in ('owner', 'admin', 'manager')
+			union
+			select u.id
+			from public.users u
+			where u.organization_id = $1::uuid
+			  and coalesce(u.is_active, true) = true
+			  and u.role in ('admin', 'super_admin')
+		) recipients
+		where user_id is not null
+	`, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	recipients := []string{}
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(userID) != "" {
+			recipients = append(recipients, userID)
+		}
+	}
+	return recipients, rows.Err()
 }
 
 func (repo Repository) insertLeadNotification(ctx context.Context, tx pgx.Tx, organizationID string, userID string, leadID string, title string, content string, eventKey string, metadata map[string]any) error {
