@@ -207,9 +207,30 @@ func (repo Repository) findConversationByExactSessionJID(ctx context.Context, te
 		  and wc.deleted_at is null
 		  and `+conversationVisibilitySQL()+`
 		  and wc.session_id = $6::uuid
-		  and wc.remote_jid = any($7::text[])
+		  and (
+			wc.remote_jid = any($7::text[])
+			or exists (
+				select 1
+				from public.whatsapp_contact_identity_aliases wcia
+				where wcia.organization_id = wc.organization_id
+				  and wcia.session_id = wc.session_id
+				  and wcia.alias_jid = any($7::text[])
+				  and wcia.canonical_jid = wc.remote_jid
+			)
+		  )
 		order by
-		  case when wc.remote_jid = $8 then 0 else 1 end,
+		  case
+			when wc.remote_jid = $8 then 0
+			when exists (
+				select 1
+				from public.whatsapp_contact_identity_aliases wcia
+				where wcia.organization_id = wc.organization_id
+				  and wcia.session_id = wc.session_id
+				  and wcia.alias_jid = any($7::text[])
+				  and wcia.canonical_jid = wc.remote_jid
+			) then 1
+			else 2
+		  end,
 		  wc.last_message_at desc nulls last,
 		  wc.created_at desc
 		limit 1
@@ -275,7 +296,29 @@ func (repo Repository) findConversationByPhoneVariants(ctx context.Context, tena
 	orParts := []string{}
 	for _, variant := range variants {
 		args = append(args, "%"+variant+"%")
-		orParts = append(orParts, fmt.Sprintf("(wc.remote_jid ilike $%d or wc.contact_phone ilike $%d)", len(args), len(args)))
+		orParts = append(orParts, fmt.Sprintf(`(
+			wc.remote_jid ilike $%d
+			or wc.contact_phone ilike $%d
+			or exists (
+				select 1
+				from public.whatsapp_contact_identity_aliases wcia
+				where wcia.organization_id = wc.organization_id
+				  and wcia.session_id = wc.session_id
+				  and (
+					wcia.canonical_jid = wc.remote_jid
+					or (
+						wc.contact_phone is not null
+						and wcia.contact_phone is not null
+						and wcia.contact_phone = wc.contact_phone
+					)
+				  )
+				  and (
+					wcia.alias_jid ilike $%d
+					or wcia.canonical_jid ilike $%d
+					or wcia.contact_phone ilike $%d
+				  )
+			)
+		)`, len(args), len(args), len(args), len(args), len(args)))
 	}
 	where = append(where, "("+strings.Join(orParts, " or ")+")")
 

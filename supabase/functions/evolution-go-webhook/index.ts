@@ -91,6 +91,23 @@ function isLidJid(value: string) {
   return value.endsWith("@lid");
 }
 
+function isNewsletterJid(value: string) {
+  return value.endsWith("@newsletter");
+}
+
+function isBroadcastJid(value: string) {
+  return value.endsWith("@broadcast");
+}
+
+function isStatusJid(value: string) {
+  return value.endsWith("@status");
+}
+
+function isOpaqueJid(value: string) {
+  const lower = value.toLowerCase();
+  return isLidJid(lower) || isNewsletterJid(lower) || isBroadcastJid(lower) || isStatusJid(lower);
+}
+
 function normalizeJidList(values: unknown[], forceGroup = false) {
   return unique(values.map((value) => normalizeJid(value, forceGroup)).filter(Boolean));
 }
@@ -99,7 +116,15 @@ function phoneFromJidLike(value: unknown) {
   const raw = normalizeText(value).trim();
   if (!raw) return "";
   const lower = raw.toLowerCase();
-  if (lower.includes("@g.us") || lower.includes("@lid")) return "";
+  if (
+    lower.includes("@g.us") ||
+    lower.includes("@lid") ||
+    lower.includes("@newsletter") ||
+    lower.includes("@broadcast") ||
+    lower.includes("@status")
+  ) {
+    return "";
+  }
 
   const hasDomain = lower.includes("@");
   let left = raw;
@@ -119,7 +144,13 @@ function phoneMatchVariantsForWhatsApp(...values: unknown[]) {
   for (const value of values) {
     const raw = normalizeText(value).trim().toLowerCase();
     const phone = phoneFromJidLike(value);
-    const rawDigits = raw.includes("@g.us") || raw.includes("@lid") ? "" : normalizeDigits(value);
+    const rawDigits = (
+      raw.includes("@g.us") ||
+      raw.includes("@lid") ||
+      raw.includes("@newsletter") ||
+      raw.includes("@broadcast") ||
+      raw.includes("@status")
+    ) ? "" : normalizeDigits(value);
 
     for (const candidate of [phone, rawDigits]) {
       if (!candidate || candidate.length < 8) continue;
@@ -137,6 +168,14 @@ function phoneMatchVariantsForWhatsApp(...values: unknown[]) {
     }
   }
   return unique(variants.filter((value) => value.length >= 8));
+}
+
+function firstPhoneJid(values: string[]) {
+  for (const value of values) {
+    const phone = phoneFromJidLike(value);
+    if (phone) return `${phone}@s.whatsapp.net`;
+  }
+  return "";
 }
 
 function whatsappIdentityForMessage(message: any) {
@@ -181,11 +220,11 @@ function whatsappIdentityForMessage(message: any) {
   };
 }
 
-function firstStableJid(values: string[], options: { allowGroup?: boolean; allowLid?: boolean } = {}) {
+function firstStableJid(values: string[], options: { allowGroup?: boolean; allowOpaque?: boolean } = {}) {
   for (const value of values) {
     if (!value) continue;
     if (!options.allowGroup && isGroupJid(value)) continue;
-    if (!options.allowLid && isLidJid(value)) continue;
+    if (!options.allowOpaque && isOpaqueJid(value)) continue;
     return value;
   }
   return "";
@@ -212,20 +251,26 @@ function resolveRemoteJid(params: {
 
   if (params.fromMe) {
     return (
+      firstPhoneJid(outboundJids) ||
+      firstPhoneJid(chatJids) ||
+      firstPhoneJid(inboundJids) ||
       firstStableJid(outboundJids) ||
       firstStableJid(chatJids) ||
       firstStableJid(inboundJids) ||
-      firstStableJid(outboundJids, { allowLid: true }) ||
-      firstStableJid(chatJids, { allowLid: true })
+      firstStableJid(outboundJids, { allowOpaque: true }) ||
+      firstStableJid(chatJids, { allowOpaque: true })
     );
   }
 
   return (
+    firstPhoneJid(chatJids) ||
+    firstPhoneJid(inboundJids) ||
+    firstPhoneJid(outboundJids) ||
     firstStableJid(chatJids) ||
     firstStableJid(inboundJids) ||
     firstStableJid(outboundJids) ||
-    firstStableJid(chatJids, { allowLid: true }) ||
-    firstStableJid(inboundJids, { allowLid: true })
+    firstStableJid(chatJids, { allowOpaque: true }) ||
+    firstStableJid(inboundJids, { allowOpaque: true })
   );
 }
 
@@ -788,11 +833,11 @@ function normalizeMessage(message: any) {
   const fromMe = parseBoolean(firstPresent(info.IsFromMe, info.fromMe, key.fromMe, message.fromMe, message.from_me));
 
   const receivedFallbackJids = [
-    info.Sender,
-    info.sender,
     info.SenderPN,
     info.senderPN,
     info.SenderPn,
+    info.Sender,
+    info.sender,
     message.sender,
     message.senderJid,
     message.from,
@@ -800,11 +845,11 @@ function normalizeMessage(message: any) {
     message.number,
   ];
   const sentFallbackJids = [
-    info.Recipient,
-    info.recipient,
     info.RecipientPN,
     info.recipientPN,
     info.RecipientPn,
+    info.Recipient,
+    info.recipient,
     message.recipient,
     message.recipientJid,
     message.to,
@@ -816,16 +861,18 @@ function normalizeMessage(message: any) {
     fromMe,
     isGroupHint,
     chatCandidates: [
-      info.Chat,
-      info.chat,
-      info.JID,
-      info.jid,
       key.remoteJid,
       key.RemoteJID,
       message.remoteJid,
       message.remote_jid,
       message.chat,
       message.chatId,
+      message.chatJid,
+      message.chat_jid,
+      info.Chat,
+      info.chat,
+      info.JID,
+      info.jid,
       message.jid,
     ],
     inboundCandidates: receivedFallbackJids,
@@ -861,11 +908,12 @@ function normalizeMessage(message: any) {
       )).trim() || null)
     : null;
   const senderJid = normalizeJid(firstPresent(
+    isGroup ? firstPresent(key.participant, key.Participant, message.participant) : null,
+    info.SenderPN,
+    info.senderPN,
+    info.SenderPn,
     info.Sender,
     info.sender,
-    key.participant,
-    key.Participant,
-    message.participant,
     message.sender,
     message.senderJid,
     fromMe ? null : remoteJid,
@@ -1184,7 +1232,7 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
   if (!message || message.isGroup) return null;
 
   const identity = whatsappIdentityForMessage(message);
-  const phone = identity.contactPhone || normalizeDigits(message.remoteJid);
+  const phone = identity.contactPhone || phoneFromJidLike(message.remoteJid) || phoneFromJidLike(message.senderJid);
   if (!phone) return null;
 
   const existing = await findLeadByPhone(session.organization_id, phone);
@@ -1285,7 +1333,12 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
   return { ...lead, is_new_lead: true };
 }
 
-async function upsertLeadMetaAttribution(session: JsonRecord, lead: JsonRecord | null, message: ReturnType<typeof normalizeMessage>) {
+async function upsertLeadMetaAttribution(
+  session: JsonRecord,
+  conversation: JsonRecord,
+  lead: JsonRecord | null,
+  message: ReturnType<typeof normalizeMessage>,
+) {
   if (!lead?.id || !message) return;
   const attribution = whatsappAttribution(message);
   if (!attribution) return;
@@ -1458,24 +1511,142 @@ async function resolveGroupName(session: JsonRecord, remoteJid: string, incoming
   return cleanText(data?.name) || cleanText(data?.subject) || null;
 }
 
+function isUsableCanonicalJid(value: unknown) {
+  const normalized = normalizeJid(value, false);
+  if (!normalized) return false;
+  if (isGroupJid(normalized)) return true;
+  if (isOpaqueJid(normalized)) return false;
+  return Boolean(phoneFromJidLike(normalized));
+}
+
+function mergeWhatsAppIdentityAliases(identity: ReturnType<typeof whatsappIdentityForMessage>, extraAliases: unknown[] = []) {
+  return unique([
+    identity.remoteJid,
+    ...identity.remoteAliases,
+    identity.contactPhone ? `${identity.contactPhone}@s.whatsapp.net` : "",
+    identity.contactPhone ? `${identity.contactPhone}@c.us` : "",
+    ...extraAliases.map((alias) => normalizeJid(alias, identity.isGroup)),
+    ...extraAliases.map((alias) => normalizeText(alias)),
+  ].filter(Boolean));
+}
+
+async function findWhatsAppIdentityAlias(session: JsonRecord, aliases: string[]) {
+  const normalizedAliases = unique(aliases.map((alias) => normalizeJid(alias, false)).filter(Boolean));
+  if (normalizedAliases.length === 0) return null;
+
+  const { data, error } = await supabase
+    .from("whatsapp_contact_identity_aliases")
+    .select("alias_jid, canonical_jid, contact_phone, lead_id, metadata")
+    .eq("organization_id", session.organization_id)
+    .eq("session_id", session.id)
+    .in("alias_jid", normalizedAliases)
+    .order("last_seen_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    if (["42P01", "42703"].includes(error.code)) return null;
+    throw error;
+  }
+
+  return data || null;
+}
+
+async function upsertWhatsAppIdentityAliases(
+  session: JsonRecord,
+  identity: ReturnType<typeof whatsappIdentityForMessage>,
+  lead: JsonRecord | null,
+  conversation: JsonRecord,
+  extraAliases: unknown[] = [],
+) {
+  const preferredCanonical = isUsableCanonicalJid(identity.remoteJid)
+    ? identity.remoteJid
+    : (conversation.remote_jid || identity.remoteJid);
+  const canonicalJid = normalizeJid(preferredCanonical, identity.isGroup);
+  if (!canonicalJid || !isUsableCanonicalJid(canonicalJid)) return;
+
+  const contactPhone = identity.isGroup
+    ? null
+    : (identity.contactPhone || conversation.contact_phone || phoneFromJidLike(canonicalJid) || null);
+  const aliases = mergeWhatsAppIdentityAliases(identity, [
+    canonicalJid,
+    conversation.remote_jid,
+    conversation.contact_phone ? `${conversation.contact_phone}@s.whatsapp.net` : "",
+    conversation.contact_phone ? `${conversation.contact_phone}@c.us` : "",
+    ...extraAliases,
+  ]);
+  const now = new Date().toISOString();
+  const rowsByAlias = new Map<string, JsonRecord>();
+  for (const alias of aliases) {
+    const aliasJid = normalizeJid(alias, identity.isGroup);
+    if (!aliasJid) continue;
+    rowsByAlias.set(aliasJid, {
+      organization_id: session.organization_id,
+      session_id: session.id,
+      alias_jid: aliasJid,
+      canonical_jid: canonicalJid,
+      contact_phone: contactPhone,
+      lead_id: lead?.id || conversation.lead_id || null,
+      is_group: identity.isGroup,
+      last_seen_at: now,
+      metadata: {
+        source: "evolution_go_webhook",
+        conversation_id: conversation.id,
+      },
+    });
+  }
+
+  const rows = Array.from(rowsByAlias.values());
+
+  if (rows.length === 0) return;
+
+  const { error } = await supabase
+    .from("whatsapp_contact_identity_aliases")
+    .upsert(rows, { onConflict: "organization_id,session_id,alias_jid" });
+
+  if (error) {
+    if (["42P01", "42703"].includes(error.code)) return;
+    throw error;
+  }
+}
+
 async function ensureConversation(session: JsonRecord, message: ReturnType<typeof normalizeMessage>, lead: JsonRecord | null) {
   if (!message) throw new Error("Missing normalized message");
   const identity = whatsappIdentityForMessage(message);
-  const remoteJid = identity.remoteJid || message.remoteJid;
-  const contactPhone = message.isGroup ? null : (identity.contactPhone || null);
+  let remoteJid = identity.remoteJid || message.remoteJid;
+  let contactPhone = message.isGroup ? null : (identity.contactPhone || null);
+  let identityAliases = mergeWhatsAppIdentityAliases(identity, [message.remoteJid, message.senderJid, remoteJid]);
+  const aliasMatch = await findWhatsAppIdentityAlias(session, identityAliases);
+
+  if (aliasMatch) {
+    if (!message.isGroup) {
+      contactPhone = contactPhone || aliasMatch.contact_phone || phoneFromJidLike(aliasMatch.canonical_jid) || null;
+    }
+    if (!isUsableCanonicalJid(remoteJid) || isOpaqueJid(normalizeJid(remoteJid, false))) {
+      remoteJid = normalizeJid(aliasMatch.canonical_jid, message.isGroup) || remoteJid;
+    }
+    identityAliases = mergeWhatsAppIdentityAliases(identity, [
+      ...identityAliases,
+      aliasMatch.alias_jid,
+      aliasMatch.canonical_jid,
+      aliasMatch.contact_phone ? `${aliasMatch.contact_phone}@s.whatsapp.net` : "",
+      aliasMatch.contact_phone ? `${aliasMatch.contact_phone}@c.us` : "",
+    ]);
+  }
+
   const attribution = whatsappAttribution(message);
   const resolvedGroupName = message.isGroup ? await resolveGroupName(session, remoteJid, message.groupName) : null;
 
   let existing: JsonRecord | null = null;
   let canonicalConflict = false;
 
-  if (identity.remoteAliases.length > 0) {
+  if (identityAliases.length > 0) {
     const { data, error } = await supabase
       .from("whatsapp_conversations")
       .select("*")
       .eq("organization_id", session.organization_id)
       .eq("session_id", session.id)
-      .in("remote_jid", identity.remoteAliases)
+      .in("remote_jid", identityAliases)
       .order("last_message_at", { ascending: false, nullsFirst: false })
       .limit(10);
     if (error) throw error;
@@ -1486,13 +1657,17 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
     canonicalConflict = Boolean(canonical && existing && canonical.id !== existing.id);
   }
 
-  if (!existing && !message.isGroup && identity.phoneVariants.length > 0) {
+  const phoneVariants = message.isGroup
+    ? []
+    : phoneMatchVariantsForWhatsApp(contactPhone, remoteJid, message.remoteJid, message.senderJid, ...identityAliases);
+
+  if (!existing && !message.isGroup && phoneVariants.length > 0) {
     const { data, error } = await supabase
       .from("whatsapp_conversations")
       .select("*")
       .eq("organization_id", session.organization_id)
       .eq("session_id", session.id)
-      .in("contact_phone", identity.phoneVariants)
+      .in("contact_phone", phoneVariants)
       .order("last_message_at", { ascending: false, nullsFirst: false })
       .limit(10);
     if (error) throw error;
@@ -1513,13 +1688,28 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       metadata: {
         ...(existing.metadata || {}),
         last_webhook_at: new Date().toISOString(),
+        whatsapp_identity: {
+          canonical_jid: remoteJid,
+          aliases: identityAliases,
+          contact_phone: contactPhone,
+        },
         ...(message.isGroup && resolvedGroupName ? { group_name: resolvedGroupName } : {}),
         ...(attribution ? { whatsapp_attribution: attribution } : {}),
       },
     };
-    if (!canonicalConflict && remoteJid && existing.remote_jid !== remoteJid) {
+
+    const existingRemote = normalizeText(existing.remote_jid);
+    const existingRemoteCanonical = normalizeJid(existingRemote, message.isGroup);
+    const shouldPromoteRemote = !canonicalConflict &&
+      remoteJid &&
+      existingRemote !== remoteJid &&
+      isUsableCanonicalJid(remoteJid) &&
+      (existingRemoteCanonical === remoteJid || !isUsableCanonicalJid(existingRemote) || isOpaqueJid(existingRemote.toLowerCase()));
+
+    if (shouldPromoteRemote) {
       updates.remote_jid = remoteJid;
     }
+
     const { data, error } = await supabase
       .from("whatsapp_conversations")
       .update(updates)
@@ -1536,6 +1726,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
         .is("lead_id", null);
     }
 
+    await upsertWhatsAppIdentityAliases(session, identity, lead, data, identityAliases);
     return data;
   }
 
@@ -1547,7 +1738,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       lead_id: lead?.id || null,
       assigned_user_id: lead?.assigned_user_id || session.owner_user_id || null,
       remote_jid: remoteJid,
-      contact_name: message.isGroup ? (resolvedGroupName || "Grupo WhatsApp") : (message.contactName || contactPhone || normalizeDigits(remoteJid)),
+      contact_name: message.isGroup ? (resolvedGroupName || "Grupo WhatsApp") : (message.contactName || contactPhone || "Contato WhatsApp"),
       contact_phone: contactPhone,
       contact_picture: message.avatarUrl,
       is_group: message.isGroup,
@@ -1555,6 +1746,11 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       metadata: {
         source: "evolution_go",
         created_from_webhook: true,
+        whatsapp_identity: {
+          canonical_jid: remoteJid,
+          aliases: identityAliases,
+          contact_phone: contactPhone,
+        },
         ...(message.isGroup && resolvedGroupName ? { group_name: resolvedGroupName } : {}),
         ...(attribution ? { whatsapp_attribution: attribution } : {}),
       },
@@ -1563,6 +1759,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
     .single();
 
   if (error) throw error;
+  await upsertWhatsAppIdentityAliases(session, identity, lead, data, identityAliases);
   return data;
 }
 
@@ -1793,7 +1990,7 @@ async function handleMessages(session: JsonRecord, payload: any) {
     await updateConversationAfterMessage(conversation, message, result.inserted);
     await logInbound(session, conversation, lead, rule, message);
     if (result.inserted) {
-      await upsertLeadMetaAttribution(session, lead, message);
+      await upsertLeadMetaAttribution(session, conversation, lead, message);
       await logLeadEntryAttribution(session, conversation, lead, message);
       await logCreativeActivity(session, conversation, lead, message);
       scheduleAutoReply(session, conversation, result.message, message);

@@ -46,6 +46,25 @@ func TestWhatsAppContactIdentityIgnoresLIDAsPhoneSource(t *testing.T) {
 	}
 }
 
+func TestWhatsAppContactIdentityIgnoresOpaqueJIDsAsPhoneSource(t *testing.T) {
+	opaqueJIDs := []string{
+		"120363999999999@newsletter",
+		"status@broadcast",
+		"5511999999999@status",
+	}
+
+	for _, remoteJID := range opaqueJIDs {
+		identity := newWhatsAppContactIdentity("5522974063727", remoteJID, false)
+
+		if identity.ContactPhone != "5522974063727" {
+			t.Fatalf("expected phone fallback for %q, got %q", remoteJID, identity.ContactPhone)
+		}
+		if containsString(identity.LeadMatchValues(), remoteJID) {
+			t.Fatalf("expected lead match values to ignore opaque alias %q, got %#v", remoteJID, identity.LeadMatchValues())
+		}
+	}
+}
+
 func containsString(values []string, expected string) bool {
 	for _, value := range values {
 		if value == expected {

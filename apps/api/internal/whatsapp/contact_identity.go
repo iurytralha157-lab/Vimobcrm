@@ -56,7 +56,7 @@ func (identity whatsappContactIdentity) RemoteAliases() []string {
 }
 
 func (identity whatsappContactIdentity) LeadMatchValues() []string {
-	values := append(append([]string{identity.ContactPhone, identity.RemoteJID}, withoutLIDAliases(identity.remoteAliases)...), identity.phoneCandidates...)
+	values := append(append([]string{identity.ContactPhone, identity.RemoteJID}, withoutOpaqueAliases(identity.remoteAliases)...), identity.phoneCandidates...)
 	return uniqueStrings(values...)
 }
 
@@ -117,7 +117,7 @@ func phoneFromIdentityValue(value string) (string, bool) {
 		return "", false
 	}
 	lower := strings.ToLower(raw)
-	if strings.Contains(lower, "@g.us") || strings.Contains(lower, "@lid") {
+	if isOpaqueWhatsAppJID(lower) || strings.Contains(lower, "@g.us") {
 		return "", false
 	}
 
@@ -157,10 +157,18 @@ func uniqueStrings(values ...string) []string {
 	return result
 }
 
-func withoutLIDAliases(values []string) []string {
+func isOpaqueWhatsAppJID(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	return strings.Contains(lower, "@lid") ||
+		strings.Contains(lower, "@newsletter") ||
+		strings.Contains(lower, "@broadcast") ||
+		strings.Contains(lower, "@status")
+}
+
+func withoutOpaqueAliases(values []string) []string {
 	result := []string{}
 	for _, value := range values {
-		if strings.Contains(strings.ToLower(value), "@lid") {
+		if isOpaqueWhatsAppJID(value) {
 			continue
 		}
 		result = append(result, value)
