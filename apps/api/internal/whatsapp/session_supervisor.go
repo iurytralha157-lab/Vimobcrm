@@ -12,7 +12,7 @@ const (
 	whatsappSessionSupervisorInitialDelay = 10 * time.Second
 	whatsappSessionSupervisorInterval     = time.Minute
 	whatsappWebhookRefreshInterval        = 15 * time.Minute
-	whatsappSupervisorBatchLimit          = 200
+	whatsappSupervisorBatchLimit          = 25
 )
 
 func (handler Handler) StartSessionSupervisor(ctx context.Context, logger *slog.Logger) {
@@ -52,20 +52,30 @@ func (repo Repository) superviseActiveSessions(ctx context.Context, logger *slog
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 
-	now := time.Now().UTC()
+	sessions := make([]Session, 0, whatsappSupervisorBatchLimit)
 	for rows.Next() {
 		session, err := scanSession(rows)
 		if err != nil {
+			rows.Close()
 			return err
 		}
+		sessions = append(sessions, session)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	now := time.Now().UTC()
+	for _, session := range sessions {
 		if err := repo.superviseSession(ctx, session, now); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Warn("whatsapp session supervision skipped", "session_id", session.ID, "error", err)
 		}
 	}
 
-	return rows.Err()
+	return nil
 }
 
 func (repo Repository) superviseSession(ctx context.Context, session Session, now time.Time) error {
