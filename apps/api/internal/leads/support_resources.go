@@ -1752,7 +1752,11 @@ func (repo Repository) getNotificationRecipient(ctx context.Context, organizatio
 	var recipient notificationRecipient
 	var name, email, whatsapp pgtype.Text
 	err := repo.db.Pool().QueryRow(ctx, `
-		select u.id::text, u.name, u.email, u.whatsapp
+		select
+		  u.id::text,
+		  u.name,
+		  u.email,
+		  coalesce(nullif(u.whatsapp, ''), nullif(u.phone, ''))
 		from public.users u
 		left join public.organization_members om
 		  on om.user_id = u.id
