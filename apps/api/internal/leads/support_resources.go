@@ -1790,7 +1790,7 @@ func (repo Repository) dispatchWhatsAppNotification(ctx context.Context, tenantC
 		result.Error = "recipient_whatsapp_missing"
 		return result, nil
 	}
-	messageText := buildWhatsAppNotificationText(title, content)
+	messageText := buildWhatsAppNotificationText(eventKey, title, content, request.Variables)
 
 	var organizationResult DispatchWhatsAppResult
 	if session, found, err := repo.findNotificationWhatsAppSession(ctx, tenantContext.OrganizationID, config.SessionID); err != nil {
@@ -2010,16 +2010,154 @@ func normalizeNotificationWhatsAppRecipient(value string) string {
 	return builder.String()
 }
 
-func buildWhatsAppNotificationText(title string, content string) string {
+func buildWhatsAppNotificationText(eventKey string, title string, content string, variables map[string]any) string {
+	eventKey = strings.TrimSpace(eventKey)
 	title = strings.TrimSpace(title)
 	content = strings.TrimSpace(content)
+	if formatted := buildWhatsAppNotificationTemplate(eventKey, title, content, variables); formatted != "" {
+		return formatted
+	}
 	if title == "" {
 		return content
 	}
 	if content == "" {
-		return title
+		return "🔔 *" + title + "*"
 	}
-	return title + "\n" + content
+	return "🔔 *" + title + "*\n" + content
+}
+
+func buildWhatsAppNotificationTemplate(eventKey string, title string, content string, variables map[string]any) string {
+	if variables == nil {
+		variables = map[string]any{}
+	}
+
+	leadName := firstNotificationText(
+		stringFromMap(variables, "lead_name"),
+		stringFromMap(variables, "leadName"),
+		stringFromMap(variables, "name"),
+	)
+	source := firstNotificationText(stringFromMap(variables, "source"), stringFromMap(variables, "origin"))
+	campaign := firstNotificationText(stringFromMap(variables, "campaign_name"), stringFromMap(variables, "campaign"), stringFromMap(variables, "campaignName"))
+	formName := firstNotificationText(stringFromMap(variables, "form_name"), stringFromMap(variables, "formName"), stringFromMap(variables, "form"))
+	pipeline := firstNotificationText(stringFromMap(variables, "pipeline_name"), stringFromMap(variables, "pipelineName"), stringFromMap(variables, "pipeline"))
+	stage := firstNotificationText(stringFromMap(variables, "stage_name"), stringFromMap(variables, "stageName"), stringFromMap(variables, "stage"))
+	actor := firstNotificationText(stringFromMap(variables, "actor_name"), stringFromMap(variables, "actorName"))
+	value := firstNotificationText(stringFromMap(variables, "valor_interesse"), stringFromMap(variables, "interest_value"), stringFromMap(variables, "value"))
+	date := firstNotificationText(stringFromMap(variables, "created_time"), stringFromMap(variables, "created_at"), stringFromMap(variables, "date"), stringFromMap(variables, "start_time"))
+
+	lines := []string{}
+	appendField := func(icon string, label string, value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			lines = append(lines, icon+" "+label+": "+value)
+		}
+	}
+	appendAction := func(value string) {
+		appendField("✅", "Ação", value)
+	}
+	appendLead := func() {
+		appendField("👤", "Nome", firstNotificationText(leadName, "Lead"))
+	}
+	appendPipeline := func() {
+		if pipeline != "" && stage != "" {
+			appendField("📌", "Pipeline", pipeline+" / "+stage)
+			return
+		}
+		appendField("📌", "Pipeline", firstNotificationText(pipeline, stage))
+	}
+
+	switch eventKey {
+	case "new_lead_received":
+		lines = append(lines, "🔔 *NOVO LEAD*")
+		appendLead()
+		appendField("📲", "Origem", source)
+		appendField("🎯", "Campanha", campaign)
+		appendField("🧾", "Formulário", formName)
+		appendPipeline()
+		appendField("📅", "Data", date)
+		appendAction("acesse o CRM para atender")
+	case "lead_reentry":
+		lines = append(lines, "🔁 *LEAD REENTROU*")
+		appendLead()
+		appendField("📲", "Origem", source)
+		appendField("🎯", "Campanha", campaign)
+		appendField("📅", "Data", date)
+		appendAction("acesse o CRM para acompanhar")
+	case "lead_duplicate_existing":
+		lines = append(lines, "⚠️ *LEAD JÁ EXISTIA*")
+		appendLead()
+		appendField("👥", "Responsável atual", firstNotificationText(stringFromMap(variables, "assignee_name"), stringFromMap(variables, "assigned_user_name")))
+		appendField("📲", "Origem", source)
+		appendAction("verifique o lead no CRM")
+	case "lead_transferred":
+		lines = append(lines, "🔄 *LEAD TRANSFERIDO*")
+		appendLead()
+		appendPipeline()
+		appendField("🧑‍💼", "Transferido de", firstNotificationText(stringFromMap(variables, "from_user_name"), stringFromMap(variables, "previous_user_name"), actor))
+		appendAction("acesse o CRM para atender")
+	case "lead_stage_changed":
+		lines = append(lines, "📌 *ETAPA ALTERADA*")
+		appendLead()
+		appendField("➡️", "Etapa", firstNotificationText(stage, stringFromMap(variables, "new_stage_name"), content))
+		appendAction("acompanhe no CRM")
+	case "deal_won":
+		lines = append(lines, "🏆 *LEAD GANHO*")
+		appendLead()
+		appendField("🤝", "Responsável", actor)
+		appendField("💰", "Valor", value)
+		appendAction("confira o fechamento no CRM")
+	case "lead_redistribution_warning":
+		lines = append(lines, "⏳ *LEAD QUASE REDISTRIBUÍDO*")
+		appendLead()
+		appendField("⏱️", "Prazo", firstNotificationText(stringFromMap(variables, "warning_minutes"), stringFromMap(variables, "timeout_minutes"))+" min")
+		appendAction("atenda antes da redistribuição")
+	case "lead_redistributed_received":
+		lines = append(lines, "🔄 *LEAD REDISTRIBUÍDO*")
+		appendLead()
+		appendField("⏱️", "Parado há", stringFromMap(variables, "timeout_minutes")+" min")
+		appendAction("acesse o CRM para atender")
+	case "lead_redistributed_away":
+		lines = append(lines, "🔄 *LEAD REDISTRIBUÍDO*")
+		appendLead()
+		appendField("⏱️", "Motivo", firstNotificationText(content, "sem atendimento no prazo"))
+	case "whatsapp_disconnected":
+		lines = append(lines, "⚠️ *WHATSAPP DESCONECTADO*")
+		appendField("📱", "Conexão", firstNotificationText(stringFromMap(variables, "session_name"), stringFromMap(variables, "display_name"), leadName, "WhatsApp"))
+		appendAction("acesse Integrações para reconectar")
+	case "schedule_reminder":
+		lines = append(lines, "⏰ *LEMBRETE DE AGENDA*")
+		appendField("📌", "Atividade", firstNotificationText(stringFromMap(variables, "schedule_title"), stringFromMap(variables, "title"), title))
+		appendField("📅", "Horário", date)
+		appendAction("acesse a agenda")
+	case "test_push":
+		lines = append(lines, "🧪 *TESTE DE NOTIFICAÇÃO*")
+		if content != "" {
+			lines = append(lines, content)
+		} else {
+			lines = append(lines, "Dispatcher do backend funcionando.")
+		}
+	default:
+		return ""
+	}
+
+	if len(lines) == 1 && content != "" {
+		lines = append(lines, content)
+	}
+	return strings.Join(cleanNotificationTemplateLines(lines), "\n")
+}
+
+func cleanNotificationTemplateLines(lines []string) []string {
+	cleaned := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasSuffix(line, ": min") || strings.HasSuffix(line, ":  min") {
+			continue
+		}
+		if line != "" {
+			cleaned = append(cleaned, line)
+		}
+	}
+	return cleaned
 }
 
 func (repo Repository) getNotificationWhatsAppConfig(ctx context.Context) (notificationWhatsAppConfig, error) {

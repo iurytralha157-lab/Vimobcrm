@@ -254,7 +254,7 @@ func (repo Repository) dispatchPendingWhatsAppNotification(ctx context.Context, 
 				InstanceID:  strings.TrimSpace(config.InstanceID),
 				InstanceKey: firstNotificationText(config.InstanceName, config.InstanceID),
 				Token:       strings.TrimSpace(config.Token),
-			}, recipient.WhatsApp, buildWhatsAppNotificationText(notification.Title, notification.Content), "evolution_go_global_instance_worker_fallback")
+			}, recipient.WhatsApp, buildWhatsAppNotificationText(eventKey, notification.Title, notification.Content, variables), "evolution_go_global_instance_worker_fallback")
 			if directResult.Attempted || directResult.Error != "" {
 				return directResult, directErr
 			}
@@ -623,14 +623,21 @@ func notificationVariables(metadata map[string]any) map[string]any {
 	if metadata == nil {
 		return map[string]any{}
 	}
-	value, ok := metadata["variables"]
-	if !ok || value == nil {
-		return map[string]any{}
+	variables := map[string]any{}
+	for key, value := range metadata {
+		switch key {
+		case "dispatch", "whatsapp_dispatch", "push_dispatch", "email_dispatch", "variables":
+			continue
+		default:
+			variables[key] = value
+		}
 	}
-	if variables, ok := value.(map[string]any); ok {
-		return variables
+	if nested, ok := metadata["variables"].(map[string]any); ok {
+		for key, value := range nested {
+			variables[key] = value
+		}
 	}
-	return map[string]any{}
+	return variables
 }
 
 func truthyString(value string) bool {

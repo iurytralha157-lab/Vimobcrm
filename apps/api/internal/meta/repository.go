@@ -894,11 +894,17 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 			content = fmt.Sprintf("%s teve uma nova entrada", lead.Name)
 		}
 		if err := repo.insertLeadNotification(ctx, tx, integration.OrganizationID, *assignedUserID, leadID, title, content, eventKey, map[string]any{
-			"lead_name":  lead.Name,
-			"source":     source,
-			"form_id":    change.FormID,
-			"page_id":    change.PageID,
-			"leadgen_id": change.LeadgenID,
+			"lead_name":     lead.Name,
+			"source":        source,
+			"campaign_name": metaText(details, change.Raw, "campaign_name"),
+			"adset_name":    metaText(details, change.Raw, "adset_name"),
+			"ad_name":       metaText(details, change.Raw, "ad_name"),
+			"form_name":     nullablePointer(formConfig.FormName),
+			"form_id":       change.FormID,
+			"page_name":     nullablePointer(integration.PageName),
+			"page_id":       change.PageID,
+			"leadgen_id":    change.LeadgenID,
+			"created_time":  change.CreatedTime,
 		}); err != nil {
 			return "", false, err
 		}
