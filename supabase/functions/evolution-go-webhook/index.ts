@@ -1656,7 +1656,7 @@ async function upsertWhatsAppIdentityAliases(
       alias_jid: aliasJid,
       canonical_jid: canonicalJid,
       contact_phone: contactPhone,
-      lead_id: lead?.id || conversation.lead_id || null,
+      lead_id: conversation.lead_id || null,
       is_group: identity.isGroup,
       last_seen_at: now,
       metadata: {
@@ -1678,6 +1678,29 @@ async function upsertWhatsAppIdentityAliases(
     if (["42P01", "42703"].includes(error.code)) return;
     throw error;
   }
+}
+
+async function resolveAttachableLeadId(
+  session: JsonRecord,
+  conversationId: string | null,
+  candidateLeadId: string | null,
+) {
+  if (!candidateLeadId) return null;
+
+  let query = supabase
+    .from("whatsapp_conversations")
+    .select("id")
+    .eq("organization_id", session.organization_id)
+    .eq("lead_id", candidateLeadId)
+    .is("deleted_at", null)
+    .or("is_group.is.null,is_group.eq.false")
+    .limit(1);
+
+  if (conversationId) query = query.neq("id", conversationId);
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw error;
+  return data?.id ? null : candidateLeadId;
 }
 
 async function safelyUpsertWhatsAppIdentityAliases(
@@ -1772,6 +1795,11 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
   }
 
   if (existing) {
+    const attachableLeadId = existing.lead_id || await resolveAttachableLeadId(
+      session,
+      existing.id,
+      lead?.id || null,
+    );
     const contactName = message.isGroup
       ? (resolvedGroupName || existing.contact_name || "Grupo WhatsApp")
       : (!message.fromMe && message.contactName ? message.contactName : existing.contact_name);
@@ -1779,8 +1807,8 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       contact_name: contactName,
       contact_phone: existing.contact_phone || contactPhone,
       contact_picture: message.avatarUrl || existing.contact_picture,
-      lead_id: existing.lead_id || lead?.id || null,
-      assigned_user_id: existing.assigned_user_id || lead?.assigned_user_id || session.owner_user_id || null,
+      lead_id: attachableLeadId,
+      assigned_user_id: existing.assigned_user_id || (attachableLeadId ? lead?.assigned_user_id : null) || session.owner_user_id || null,
       updated_at: new Date().toISOString(),
       metadata: {
         ...(existing.metadata || {}),
@@ -1815,10 +1843,10 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       .single();
     if (error) throw error;
 
-    if (lead?.id && !existing.lead_id) {
+    if (attachableLeadId && !existing.lead_id) {
       await supabase
         .from("whatsapp_messages")
-        .update({ lead_id: lead.id })
+        .update({ lead_id: attachableLeadId })
         .eq("conversation_id", existing.id)
         .is("lead_id", null);
     }
@@ -1827,13 +1855,15 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
     return data;
   }
 
+  const attachableLeadId = await resolveAttachableLeadId(session, null, lead?.id || null);
+
   const { data, error } = await supabase
     .from("whatsapp_conversations")
     .insert({
       organization_id: session.organization_id,
       session_id: session.id,
-      lead_id: lead?.id || null,
-      assigned_user_id: lead?.assigned_user_id || session.owner_user_id || null,
+      lead_id: attachableLeadId,
+      assigned_user_id: (attachableLeadId ? lead?.assigned_user_id : null) || session.owner_user_id || null,
       remote_jid: remoteJid,
       contact_name: message.isGroup
         ? (resolvedGroupName || "Grupo WhatsApp")
@@ -1892,7 +1922,7 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
     organization_id: session.organization_id,
     conversation_id: conversation.id,
     session_id: session.id,
-    lead_id: lead?.id || conversation.lead_id || null,
+    lead_id: conversation.lead_id || null,
     message_id: message.messageId,
     provider_message_id: message.messageId,
     from_me: message.fromMe,
@@ -2147,13 +2177,14 @@ async function handleMessages(session: JsonRecord, payload: any) {
     }
 
     const conversation = await ensureConversation(session, message, lead);
-    const result = await insertMessage(session, conversation, lead, message);
+    const attachedLead = conversation.lead_id && conversation.lead_id === lead?.id ? lead : null;
+    const result = await insertMessage(session, conversation, attachedLead, message);
     await updateConversationAfterMessage(conversation, message, result.inserted);
-    await logInbound(session, conversation, lead, rule, message);
+    await logInbound(session, conversation, attachedLead, rule, message);
     if (result.inserted) {
-      await upsertLeadMetaAttribution(session, conversation, lead, message);
-      await logLeadEntryAttribution(session, conversation, lead, message);
-      await logCreativeActivity(session, conversation, lead, message);
+      await upsertLeadMetaAttribution(session, conversation, attachedLead, message);
+      await logLeadEntryAttribution(session, conversation, attachedLead, message);
+      await logCreativeActivity(session, conversation, attachedLead, message);
       scheduleAutoReply(session, conversation, result.message, message);
     }
     processed += 1;
