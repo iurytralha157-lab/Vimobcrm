@@ -102,6 +102,7 @@ export interface PublicProperty {
   fotos: string[] | null;
   destaque: boolean | null;
   status: string | null;
+  mobiliado?: boolean | null;
 }
 
 export interface SiteMenuItem {
@@ -138,6 +139,10 @@ export interface PublicPropertiesData {
   page: number;
   limit: number;
   totalPages: number;
+  types: string[];
+  cities: string[];
+  neighborhoods: string[];
+  purposes: string[];
 }
 
 export type PublicSiteResolution =
@@ -240,6 +245,10 @@ export async function getPublicProperties(
       page: Number(query.page) || 1,
       limit: Number(query.limit) || 12,
       totalPages: 0,
+      types: [],
+      cities: [],
+      neighborhoods: [],
+      purposes: [],
     },
   );
 }

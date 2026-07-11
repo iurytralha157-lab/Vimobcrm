@@ -1,7 +1,27 @@
 /* eslint-disable @next/next/no-img-element */
 
 import Link from "next/link";
-import { Award, Bath, BedDouble, Building2, Car, CheckCircle2, Home, Mail, MapPin, Maximize2, Phone, Search, ShieldCheck, Users } from "lucide-react";
+import {
+  Award,
+  Bath,
+  BedDouble,
+  Building2,
+  Car,
+  CheckCircle2,
+  CircleDollarSign,
+  Home,
+  House,
+  KeyRound,
+  Mail,
+  MapPin,
+  Maximize2,
+  Phone,
+  Search,
+  ShieldCheck,
+  SlidersHorizontal,
+  SquareStack,
+  Users,
+} from "lucide-react";
 
 import type {
   PublicHomeData,
@@ -66,6 +86,28 @@ const iconMap = {
   users: Users,
 };
 
+const homeCategoryShortcuts = [
+  { label: "Casa", href: "/imoveis?tipo=Casa", icon: House },
+  { label: "Apartamento", href: "/imoveis?tipo=Apartamento", icon: Building2 },
+  { label: "Cobertura", href: "/imoveis?tipo=Cobertura", icon: SquareStack },
+  { label: "Estúdio", href: "/imoveis?tipo=Estudio", icon: KeyRound },
+];
+
+const purposeOptions = [
+  { value: "venda", label: "Venda" },
+  { value: "locacao", label: "Locação" },
+  { value: "venda_locacao", label: "Venda e locação" },
+  { value: "temporada", label: "Temporada" },
+];
+
+const numericOptions = [
+  { value: "1", label: "1+" },
+  { value: "2", label: "2+" },
+  { value: "3", label: "3+" },
+  { value: "4", label: "4+" },
+  { value: "5", label: "5+" },
+];
+
 export function PublicHomeScreen({
   basePath,
   data,
@@ -79,7 +121,7 @@ export function PublicHomeScreen({
 }>) {
   const tokens = getThemeTokens(site);
   const heroImage = site.hero_image_url || data.featured[0]?.imagem_principal || DEFAULT_HERO_IMAGE;
-  const title = site.hero_title || getSiteTitle(site);
+  const title = "Encontre o imóvel dos seus sonhos com exclusividade";
   const subtitle = site.hero_subtitle || getSiteDescription(site);
   const activeFilters = searchFilters.length > 0
     ? searchFilters
@@ -94,16 +136,15 @@ export function PublicHomeScreen({
       <section className="relative min-h-[calc(100vh-80px)] overflow-hidden">
         <img src={heroImage} alt="" className="absolute inset-0 h-full w-full object-cover" loading="eager" />
         <div className="absolute inset-0 bg-black/56" />
-        <div className="relative z-10 mx-auto flex min-h-[calc(100vh-80px)] w-full max-w-7xl flex-col justify-center px-4 py-20 text-white sm:px-6 lg:px-8">
-          <p className="mb-4 text-sm font-medium uppercase tracking-[0.24em] text-white/70">
-            {site.organization_name || "Portal imobiliario"}
-          </p>
-          <h1 className="max-w-4xl text-4xl font-light leading-tight tracking-normal sm:text-5xl lg:text-6xl">{title}</h1>
+        <div className="relative z-10 mx-auto flex min-h-[calc(100vh-80px)] w-full max-w-7xl flex-col items-center justify-center px-4 py-24 text-center text-white sm:px-6 lg:px-8">
+          <h1 className="mx-auto max-w-5xl text-4xl font-light leading-tight tracking-normal sm:text-5xl lg:text-6xl">
+            {title}
+          </h1>
           <p className="mt-5 max-w-2xl text-base leading-7 text-white/78 sm:text-lg">{subtitle}</p>
 
           <form
             action={buildSiteHref(basePath, "/imoveis")}
-            className="mt-10 grid max-w-5xl gap-3 rounded-[14px] bg-black/46 p-3 backdrop-blur-xl sm:p-4 md:grid-cols-4"
+            className="site-float mt-10 grid w-full max-w-5xl gap-3 rounded-[14px] bg-black/46 p-3 text-left backdrop-blur-xl sm:p-4 md:grid-cols-4"
           >
             {activeFilters.map((filter) => (
               <SearchFilterField
@@ -122,7 +163,35 @@ export function PublicHomeScreen({
               Buscar
             </button>
           </form>
+
+          <div className="mt-7 grid w-full max-w-4xl grid-cols-2 gap-3 sm:grid-cols-4">
+            {homeCategoryShortcuts.map((item) => {
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.href}
+                  href={buildSiteHref(basePath, item.href)}
+                  className="group flex items-center justify-center gap-2 rounded-[12px] bg-white/12 px-3 py-3 text-sm font-medium text-white backdrop-blur-md transition hover:-translate-y-1 hover:bg-white/20"
+                >
+                  <Icon className="h-4 w-4 transition group-hover:scale-110" />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
         </div>
+        <style>{`
+          @keyframes site-float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-6px); }
+          }
+          .site-float {
+            animation: site-float 7s ease-in-out infinite;
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .site-float { animation: none; }
+          }
+        `}</style>
       </section>
 
       <PropertySection
@@ -183,77 +252,248 @@ export function PublicPropertiesScreen({
 }>) {
   const tokens = getThemeTokens(site);
   const banner = site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE;
+  const hasFilters = Boolean(
+    stringQuery(query.search) ||
+      stringQuery(query.tipo) ||
+      stringQuery(query.finalidade) ||
+      stringQuery(query.cidade) ||
+      stringQuery(query.bairro) ||
+      stringQuery(query.min_price) ||
+      stringQuery(query.max_price) ||
+      stringQuery(query.quartos) ||
+      stringQuery(query.suites) ||
+      stringQuery(query.banheiros) ||
+      stringQuery(query.vagas) ||
+      stringQuery(query.mobilia),
+  );
 
   return (
     <>
-      <PageHero backgroundImage={banner} eyebrow="Imoveis" title="Imoveis disponiveis" />
-      <section className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
-        <form
-          action={buildSiteHref(basePath, "/imoveis")}
-          className="mb-8 grid gap-3 rounded-lg border p-4 md:grid-cols-5"
-          style={{ backgroundColor: tokens.card, borderColor: `${tokens.foreground}18` }}
-        >
-          <input
-            name="search"
-            defaultValue={stringQuery(query.search)}
-            placeholder="Codigo, bairro ou cidade"
-            className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none md:col-span-2"
-          />
-          <input
-            name="tipo"
-            defaultValue={stringQuery(query.tipo)}
-            placeholder="Tipo"
-            className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none"
-          />
-          <select
-            name="finalidade"
-            defaultValue={stringQuery(query.finalidade)}
-            className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none"
-          >
-            <option value="">Finalidade</option>
-            <option value="venda">Venda</option>
-            <option value="aluguel">Aluguel</option>
-          </select>
-          <button
-            type="submit"
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold text-white"
-            style={{ backgroundColor: tokens.primary }}
-          >
-            <Search className="h-4 w-4" />
-            Filtrar
-          </button>
-        </form>
+      <PageHero backgroundImage={banner} eyebrow="Imoveis" title={getPropertiesHeroTitle(query)} />
+      <section className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-10 sm:px-6 lg:grid-cols-[290px_1fr] lg:px-8">
+        <PublicPropertiesFilterSidebar basePath={basePath} data={data} query={query} site={site} />
 
-        <div className="mb-5 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
-          <div>
-            <p className="text-sm font-medium opacity-70" style={{ color: tokens.foreground }}>
-              {data.total} imoveis encontrados
-            </p>
-            <h2 className="text-2xl font-semibold" style={{ color: tokens.foreground }}>
-              Resultado da busca
-            </h2>
+        <div className="min-w-0">
+          <div className="mb-5 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
+            <div>
+              <p className="text-sm font-medium opacity-70" style={{ color: tokens.foreground }}>
+                {data.total} imoveis encontrados
+              </p>
+              <h2 className="text-2xl font-normal" style={{ color: tokens.foreground }}>
+                Resultado da busca
+              </h2>
+            </div>
+            {hasFilters ? (
+              <Link href={buildSiteHref(basePath, "/imoveis")} className="text-sm font-semibold" style={{ color: tokens.primary }}>
+                Limpar filtros
+              </Link>
+            ) : null}
           </div>
-          <Link href={buildSiteHref(basePath, "/imoveis")} className="text-sm font-semibold" style={{ color: tokens.primary }}>
-            Limpar filtros
-          </Link>
+
+          {data.properties.length > 0 ? (
+            <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+              {data.properties.map((property) => (
+                <PublicPropertyCard key={property.id} basePath={basePath} property={property} site={site} />
+              ))}
+            </div>
+          ) : (
+            <EmptyState title="Nenhum imovel encontrado" description="Tente ajustar os filtros ou fale com a equipe." />
+          )}
+
+          {data.totalPages > 1 ? (
+            <Pagination basePath={basePath} currentPage={data.page} query={query} totalPages={data.totalPages} />
+          ) : null}
         </div>
-
-        {data.properties.length > 0 ? (
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {data.properties.map((property) => (
-              <PublicPropertyCard key={property.id} basePath={basePath} property={property} site={site} />
-            ))}
-          </div>
-        ) : (
-          <EmptyState title="Nenhum imovel encontrado" description="Tente ajustar os filtros ou fale com a equipe." />
-        )}
-
-        {data.totalPages > 1 ? (
-          <Pagination basePath={basePath} currentPage={data.page} query={query} totalPages={data.totalPages} />
-        ) : null}
       </section>
     </>
   );
+}
+
+function PublicPropertiesFilterSidebar({
+  basePath,
+  data,
+  query,
+  site,
+}: Readonly<{
+  basePath: string;
+  data: PublicPropertiesData;
+  query: Record<string, string | string[] | undefined>;
+  site: PublicSiteConfig;
+}>) {
+  const tokens = getThemeTokens(site);
+  const inputClass = "public-site-filter-field h-11 w-full rounded-[10px] border px-3 text-sm outline-none transition";
+  const selectClass = `${inputClass} appearance-none pr-9`;
+
+  return (
+    <aside className="h-fit rounded-[14px] p-5 lg:sticky lg:top-32" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
+      <div className="mb-5 flex items-center gap-3">
+        <span className="inline-flex h-10 w-10 items-center justify-center rounded-[10px]" style={{ backgroundColor: `${tokens.primary}18`, color: tokens.primary }}>
+          <SlidersHorizontal className="h-5 w-5" />
+        </span>
+        <div>
+          <h2 className="text-lg font-semibold">Filtros</h2>
+          <p className="text-xs opacity-60">Refine por cidade, valor e perfil.</p>
+        </div>
+      </div>
+
+      <form action={buildSiteHref(basePath, "/imoveis")} className="space-y-4">
+        <label className="block">
+          <span className="mb-2 block text-xs font-semibold uppercase tracking-wide opacity-70">Buscar</span>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 opacity-52" />
+            <input
+              name="search"
+              defaultValue={stringQuery(query.search)}
+              placeholder="Codigo, condominio, bairro ou cidade"
+              className={`${inputClass} pl-9`}
+            />
+          </div>
+        </label>
+
+        <FilterSelect className={selectClass} label="Cidade" name="cidade" options={data.cities} placeholder="Todas as cidades" value={stringQuery(query.cidade)} />
+        <FilterSelect className={selectClass} label="Bairro" name="bairro" options={data.neighborhoods} placeholder="Todos os bairros" value={stringQuery(query.bairro)} />
+
+        <div>
+          <span className="mb-2 block text-xs font-semibold uppercase tracking-wide opacity-70">Faixa de preço</span>
+          <div className="grid grid-cols-2 gap-3">
+            <input name="min_price" defaultValue={stringQuery(query.min_price)} placeholder="Minimo" className={inputClass} inputMode="numeric" />
+            <input name="max_price" defaultValue={stringQuery(query.max_price)} placeholder="Maximo" className={inputClass} inputMode="numeric" />
+          </div>
+        </div>
+
+        <div className="rounded-[12px] border border-white/10 p-3">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+            <CircleDollarSign className="h-4 w-4" style={{ color: tokens.primary }} />
+            Mais filtros
+          </div>
+          <div className="space-y-3">
+            <FilterSelect className={selectClass} label="Tipo de imóvel" name="tipo" options={data.types} placeholder="Todos os tipos" value={stringQuery(query.tipo)} />
+            <FilterSelect className={selectClass} label="Finalidade" name="finalidade" options={buildPurposeOptions(data.purposes)} placeholder="Todas" value={stringQuery(query.finalidade)} />
+            <FilterSelect className={selectClass} label="Quartos" name="quartos" options={numericOptions} placeholder="Quartos" value={stringQuery(query.quartos)} />
+            <FilterSelect className={selectClass} label="Suites" name="suites" options={numericOptions} placeholder="Suites" value={stringQuery(query.suites)} />
+            <FilterSelect className={selectClass} label="Banheiros" name="banheiros" options={numericOptions} placeholder="Banheiros" value={stringQuery(query.banheiros)} />
+            <FilterSelect className={selectClass} label="Vagas" name="vagas" options={numericOptions} placeholder="Vagas" value={stringQuery(query.vagas)} />
+            <FilterSelect
+              className={selectClass}
+              label="Mobilia"
+              name="mobilia"
+              options={[
+                { value: "mobiliado", label: "Mobiliado" },
+                { value: "nao", label: "Sem mobilia" },
+              ]}
+              placeholder="Indiferente"
+              value={stringQuery(query.mobilia)}
+            />
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-[10px] text-sm font-semibold text-white transition hover:brightness-110"
+          style={{ backgroundColor: tokens.primary }}
+        >
+          <Search className="h-4 w-4" />
+          Buscar imoveis
+        </button>
+      </form>
+      <style>{`
+        .public-site-filter-field {
+          border-color: color-mix(in srgb, var(--site-fg) 12%, transparent);
+          background: color-mix(in srgb, var(--site-fg) 7%, transparent);
+          color: var(--site-fg);
+        }
+        .public-site-filter-field::placeholder {
+          color: color-mix(in srgb, var(--site-fg) 52%, transparent);
+        }
+        .public-site-filter-field:focus {
+          border-color: color-mix(in srgb, var(--site-primary) 42%, transparent);
+          background: color-mix(in srgb, var(--site-fg) 10%, transparent);
+        }
+      `}</style>
+    </aside>
+  );
+}
+
+function FilterSelect({
+  className,
+  label,
+  name,
+  options,
+  placeholder,
+  value,
+}: Readonly<{
+  className: string;
+  label: string;
+  name: string;
+  options: Array<string | { value: string; label: string }>;
+  placeholder: string;
+  value: string;
+}>) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-xs font-semibold uppercase tracking-wide opacity-70">{label}</span>
+      <div className="relative">
+        <select name={name} defaultValue={value} className={className}>
+          <option className="text-slate-900" value="">
+            {placeholder}
+          </option>
+          {options.map((option) => {
+            const item = typeof option === "string" ? { value: option, label: option } : option;
+            return (
+              <option className="text-slate-900" key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            );
+          })}
+        </select>
+        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 opacity-50">v</span>
+      </div>
+    </label>
+  );
+}
+
+function getPropertiesHeroTitle(query: Record<string, string | string[] | undefined>) {
+  const type = stringQuery(query.tipo);
+  const purpose = stringQuery(query.finalidade);
+
+  if (type) {
+    const lowerType = type.toLowerCase();
+    if (lowerType.includes("apart")) return "Apartamentos";
+    if (lowerType.includes("casa")) return "Casas";
+    if (lowerType.includes("cobertura")) return "Coberturas";
+    if (lowerType.includes("estudio") || lowerType.includes("studio")) return "Estúdios";
+    return type;
+  }
+
+  if (purpose) {
+    const normalizedPurpose = normalizePurposeValue(purpose);
+    const option = purposeOptions.find((item) => item.value === normalizedPurpose);
+    return option ? option.label : purpose;
+  }
+
+  return "Imóveis disponíveis";
+}
+
+function buildPurposeOptions(rawPurposes: string[]) {
+  const options = new Map(purposeOptions.map((item) => [item.value, item]));
+
+  rawPurposes.forEach((purpose) => {
+    const normalized = normalizePurposeValue(purpose);
+    if (!options.has(normalized)) {
+      options.set(normalized, { value: normalized, label: purpose });
+    }
+  });
+
+  return Array.from(options.values());
+}
+
+function normalizePurposeValue(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (["aluguel", "locacao", "locaÃ§Ã£o", "rent"].includes(normalized)) return "locacao";
+  if (["venda e aluguel", "venda locacao", "venda/locacao", "venda/aluguel", "venda_locacao"].includes(normalized)) return "venda_locacao";
+  if (["temporada", "season"].includes(normalized)) return "temporada";
+  if (["venda", "sale"].includes(normalized)) return "venda";
+  return normalized || value;
 }
 
 export function PublicPropertyDetailScreen({
@@ -338,8 +578,10 @@ export function PublicAboutScreen({
 }
 
 export function PublicContactScreen({
+  basePath,
   site,
 }: Readonly<{
+  basePath: string;
   site: PublicSiteConfig;
 }>) {
   const tokens = getThemeTokens(site);
@@ -357,11 +599,12 @@ export function PublicContactScreen({
             Envie seus dados e conte o que procura. A equipe recebe o lead no CRM e retorna pelo canal informado.
           </p>
           <ContactLine icon={<Phone className="h-5 w-5" />} label="Telefone" value={site.phone} href={site.phone ? `tel:${site.phone}` : undefined} />
+          <ContactLine icon={<Phone className="h-5 w-5" />} label="WhatsApp" value={site.whatsapp} href={site.whatsapp ? buildSiteHref(basePath, "/contato?origem=whatsapp") : undefined} />
           <ContactLine icon={<Mail className="h-5 w-5" />} label="E-mail" value={site.email} href={site.email ? `mailto:${site.email}` : undefined} />
           <ContactLine icon={<MapPin className="h-5 w-5" />} label="Endereco" value={[site.address, site.city, site.state].filter(Boolean).join(", ")} />
         </div>
 
-        <div className="rounded-lg border p-6" style={{ backgroundColor: tokens.card, borderColor: `${tokens.foreground}18`, color: tokens.foreground }}>
+        <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
           <PublicContactForm organizationId={site.organization_id} primaryColor={tokens.primary} />
         </div>
       </section>
@@ -473,7 +716,7 @@ function SearchFilterField({
       <select name="finalidade" className={commonClass} defaultValue="">
         <option className="text-slate-900" value="">{filter.label || "Finalidade"}</option>
         <option className="text-slate-900" value="venda">Venda</option>
-        <option className="text-slate-900" value="aluguel">Aluguel</option>
+        <option className="text-slate-900" value="locacao">Aluguel</option>
       </select>
     );
   }
@@ -610,9 +853,9 @@ function PageHero({
     <section className="relative overflow-hidden">
       <img src={backgroundImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
       <div className="absolute inset-0 bg-black/62" />
-      <div className="relative mx-auto flex min-h-72 w-full max-w-7xl flex-col justify-end px-4 py-12 text-white sm:px-6 lg:px-8">
-        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-white/70">{eyebrow}</p>
-        <h1 className="mt-3 text-4xl font-semibold sm:text-5xl">{title}</h1>
+      <div className="relative mx-auto flex min-h-72 w-full max-w-7xl flex-col items-center justify-center px-4 py-20 text-center text-white sm:px-6 lg:px-8">
+        <p className="text-sm font-medium uppercase tracking-[0.2em] text-white/62">{eyebrow}</p>
+        <h1 className="mt-3 text-4xl font-light sm:text-5xl">{title}</h1>
       </div>
     </section>
   );
@@ -725,11 +968,11 @@ function ContactLine({
   );
 
   return href ? (
-    <a href={href} className="flex items-start gap-3 rounded-lg bg-white p-4 text-left shadow-sm">
+    <a href={href} className="flex items-start gap-3 rounded-[12px] bg-slate-100 p-4 text-left transition hover:bg-slate-200">
       {content}
     </a>
   ) : (
-    <div className="flex items-start gap-3 rounded-lg bg-white p-4 text-left shadow-sm">{content}</div>
+    <div className="flex items-start gap-3 rounded-[12px] bg-slate-100 p-4 text-left">{content}</div>
   );
 }
 

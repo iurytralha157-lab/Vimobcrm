@@ -497,16 +497,36 @@ func (repo Repository) PublicSiteData(ctx context.Context, organizationID string
 		if err != nil {
 			return nil, err
 		}
+		types, err := repo.listPublicPropertyTypes(ctx, organizationID)
+		if err != nil {
+			return nil, err
+		}
+		cities, err := repo.listPublicCities(ctx, organizationID)
+		if err != nil {
+			return nil, err
+		}
+		neighborhoods, err := repo.listPublicNeighborhoods(ctx, organizationID, values.Get("cidade"))
+		if err != nil {
+			return nil, err
+		}
+		purposes, err := repo.listPublicPropertyPurposes(ctx, organizationID)
+		if err != nil {
+			return nil, err
+		}
 		totalPages := 0
 		if limit > 0 {
 			totalPages = int(math.Ceil(float64(total) / float64(limit)))
 		}
 		return map[string]any{
-			"properties": properties,
-			"total":      total,
-			"page":       page,
-			"limit":      limit,
-			"totalPages": totalPages,
+			"properties":    properties,
+			"total":         total,
+			"page":          page,
+			"limit":         limit,
+			"totalPages":    totalPages,
+			"types":         types,
+			"cities":        cities,
+			"neighborhoods": neighborhoods,
+			"purposes":      purposes,
 		}, nil
 	case "property":
 		property, err := repo.getPublicProperty(ctx, organizationID, values.Get("property_code"))
@@ -902,6 +922,20 @@ func (repo Repository) listPublicNeighborhoods(ctx context.Context, organization
 	`, args...)
 }
 
+func (repo Repository) listPublicPropertyPurposes(ctx context.Context, organizationID string) ([]string, error) {
+	return repo.queryStringArray(ctx, `
+		select coalesce(jsonb_agg(value order by value), '[]'::jsonb)
+		from (
+			select distinct nullif(trim(p.finalidade), '') as value
+			from public.properties p
+			where p.organization_id = $1::uuid
+			  and p.published_on_site = true
+			  and `+publicPropertyActiveSQL()+`
+		) items
+		where value is not null
+	`, organizationID)
+}
+
 func (repo Repository) queryJSONRows(ctx context.Context, sql string, args ...any) ([]map[string]any, error) {
 	rows, err := repo.db.Pool().Query(ctx, sql, args...)
 	if err != nil {
@@ -962,13 +996,28 @@ func publicPropertyWhereClauses(values url.Values, mode string, args *[]any) []s
 	if search := strings.TrimSpace(values.Get("search")); search != "" {
 		*args = append(*args, "%"+search+"%")
 		placeholder := len(*args)
-		where = append(where, fmt.Sprintf("(p.title ilike $%[1]d or p.code ilike $%[1]d or p.bairro ilike $%[1]d or p.cidade ilike $%[1]d)", placeholder))
+		where = append(where, fmt.Sprintf(`(
+			p.title ilike $%[1]d
+			or p.code ilike $%[1]d
+			or p.bairro ilike $%[1]d
+			or p.cidade ilike $%[1]d
+			or p.endereco ilike $%[1]d
+			or exists (
+				select 1
+				from public.property_condominiums co
+				where co.id = p.condominium_id
+				  and co.name ilike $%[1]d
+			)
+		)`, placeholder))
 	}
 	if tipo := strings.TrimSpace(values.Get("tipo")); tipo != "" {
 		add(tipo, "p.tipo = $%d")
 	}
 	if finalidade := strings.TrimSpace(values.Get("finalidade")); finalidade != "" {
-		add(finalidade, "p.finalidade = $%d")
+		aliases := publicDealTypeAliases(finalidade)
+		if len(aliases) > 0 {
+			add(aliases, "(lower(trim(coalesce(p.finalidade, ''))) = any($%[1]d::text[]) or lower(trim(coalesce(p.tipo_de_negocio, ''))) = any($%[1]d::text[]))")
+		}
 	}
 	if cidade := strings.TrimSpace(values.Get("cidade")); cidade != "" {
 		add(cidade, "p.cidade = $%d")
@@ -1013,6 +1062,58 @@ func publicPropertyWhereClauses(values url.Values, mode string, args *[]any) []s
 	return where
 }
 
+func publicDealTypeAliases(dealType string) []string {
+	switch strings.ToLower(strings.TrimSpace(dealType)) {
+	case "venda", "sale":
+		return []string{
+			"venda",
+			"sale",
+			"venda_locacao",
+			"venda e aluguel",
+			"venda e locacao",
+			"venda e locaÃ§Ã£o",
+			"venda/locacao",
+			"venda/locaÃ§Ã£o",
+			"venda/aluguel",
+		}
+	case "locacao", "locaÃ§Ã£o", "aluguel", "rent":
+		return []string{
+			"locacao",
+			"locaÃ§Ã£o",
+			"aluguel",
+			"locacao anual",
+			"locaÃ§Ã£o anual",
+			"rent",
+			"venda_locacao",
+			"venda e aluguel",
+			"venda e locacao",
+			"venda e locaÃ§Ã£o",
+			"venda/locacao",
+			"venda/locaÃ§Ã£o",
+			"venda/aluguel",
+		}
+	case "temporada", "season":
+		return []string{"temporada", "season"}
+	case "lancamento", "lanÃ§amento", "launch", "release":
+		return []string{"lancamento", "lanÃ§amento", "launch", "release"}
+	case "venda_locacao", "venda e aluguel", "venda locacao", "venda/locacao", "venda/aluguel":
+		return []string{
+			"venda_locacao",
+			"venda e aluguel",
+			"venda e locacao",
+			"venda e locaÃ§Ã£o",
+			"venda/locacao",
+			"venda/locaÃ§Ã£o",
+			"venda/aluguel",
+		}
+	default:
+		if strings.TrimSpace(dealType) == "" {
+			return []string{}
+		}
+		return []string{strings.ToLower(strings.TrimSpace(dealType))}
+	}
+}
+
 func publicPropertyActiveSQL() string {
 	return "lower(trim(coalesce(p.status, ''))) in ('active', 'ativo')"
 }
@@ -1051,7 +1152,8 @@ func publicPropertyJSONSQL() string {
 			where not (coalesce(p.metadata->'hidden_site_image_urls', '[]'::jsonb) ? img.url)
 		), '[]'::jsonb),
 		'destaque', p.is_featured,
-		'status', p.status
+		'status', p.status,
+		'mobiliado', p.mobiliado
 	)`
 }
 

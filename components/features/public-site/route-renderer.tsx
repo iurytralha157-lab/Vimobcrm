@@ -107,7 +107,7 @@ export async function renderPublicSiteRoute({
   if (route.kind === "contact") {
     return (
       <PublicSiteShell basePath={basePath} menuItems={menuItems} pageTitle={`Contato - ${getSiteTitle(site)}`} site={site}>
-        <PublicContactScreen site={site} />
+        <PublicContactScreen basePath={basePath} site={site} />
       </PublicSiteShell>
     );
   }

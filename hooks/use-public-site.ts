@@ -90,6 +90,7 @@ export interface PublicProperty {
   fotos: string[] | null;
   destaque: boolean;
   status: string;
+  mobiliado?: boolean | null;
 }
 
 function getVisitorSessionId() {
