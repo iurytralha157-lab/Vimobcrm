@@ -205,7 +205,7 @@ function getEventColors(event: UnifiedHistoryEvent): { text: string; bg: string 
 export function LeadHistory({ leadId, onEventClick }: LeadHistoryProps) {
   const { data: events = [], isLoading } = useLeadHistory(leadId);
 
-  if (isLoading) {
+  if (isLoading && events.length === 0) {
     return (
       <div className="flex items-center justify-center py-8">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -230,7 +230,7 @@ export function LeadHistory({ leadId, onEventClick }: LeadHistoryProps) {
       {firstResponseEvent && (
         <div className="mb-4 p-3 rounded-lg border border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 flex items-center gap-2 flex-wrap">
           <Zap className="h-4 w-4 text-yellow-600 dark:text-yellow-400 shrink-0" />
-          <span className="text-sm font-medium text-yellow-700 dark:text-yellow-300">
+          <span className="text-xs font-medium text-yellow-700 dark:text-yellow-300">
             Primeiro contato:{' '}
             {firstResponseEvent.firstResponseSeconds != null
               ? formatResponseTime(firstResponseEvent.firstResponseSeconds)
@@ -307,7 +307,7 @@ export function LeadHistory({ leadId, onEventClick }: LeadHistoryProps) {
                     {/* Label row */}
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <p className={cn(
-                        'text-sm font-medium leading-tight',
+                        'text-xs font-medium leading-tight',
                         isFirstResponse && 'text-yellow-700 dark:text-yellow-300'
                       )}>
                         {event.label}
@@ -357,14 +357,14 @@ export function LeadHistory({ leadId, onEventClick }: LeadHistoryProps) {
 
                     {/* Outcome notes */}
                     {outcomeNotes && (
-                      <p className="text-xs text-muted-foreground mt-0.5 italic">
+                      <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground italic">
                         &quot;{outcomeNotes}&quot;
                       </p>
                     )}
 
                     {/* Content / detail */}
                     {event.content && !outcomeNotes && (
-                      <p className="text-xs text-muted-foreground mt-0.5">
+                      <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
                         {(() => {
                           const mentionRegex = /(@\d{7,}|@[\w\u00C0-\u017F]+(?:\s[\w\u00C0-\u017F]+){0,2})/g;
                           const parts = event.content.split(mentionRegex);
@@ -389,14 +389,14 @@ export function LeadHistory({ leadId, onEventClick }: LeadHistoryProps) {
                     )}
 
                     {lostReason && (
-                      <p className="mt-0.5 text-xs font-medium text-red-700 dark:text-red-300">
+                      <p className="mt-0.5 text-[11px] font-medium leading-snug text-red-700 dark:text-red-300">
                         Motivo: {lostReason}
                       </p>
                     )}
 
                     {/* Stage transition from metadata when content not set */}
                     {!event.content && !outcome && fromStageText && toStageText && (
-                      <span className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5">
+                      <span className="mt-0.5 flex items-center gap-1 text-[11px] leading-snug text-muted-foreground">
                         {fromStageText}
                         <ArrowRight className="h-3 w-3" />
                         {toStageText}

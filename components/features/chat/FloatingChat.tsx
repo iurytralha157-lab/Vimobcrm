@@ -279,7 +279,13 @@ export function FloatingChat() {
     isFetching: fetchingMessages
   } = useWhatsAppMessages(
     shouldSyncFloatingChat ? activeConversationId || null : null,
-    shouldSyncFloatingChat ? activeConversation?.lead_id || activeConversation?.lead?.id || null : null
+    shouldSyncFloatingChat ? activeConversation?.lead_id || activeConversation?.lead?.id || null : null,
+    50,
+    {
+      includeLeadHistory: false,
+      refetchIntervalMs: 15_000,
+      refetchOnWindowFocus: false,
+    }
   );
   const reactionMessages = useMemo(() => {
     return (messages || []).filter((message) => message.message_type === "reaction");
@@ -1056,6 +1062,7 @@ export function FloatingChat() {
                       messageId={msg.id}
                       leadId={activeConversation!.lead?.id || activeConversation!.lead_id || ''}
                       leadName={activeConversation!.lead?.name || activeConversation!.contact_name || ''}
+                      contactAvatarUrl={getConversationAvatarUrl(activeConversation)}
                       conversationRemoteJid={activeConversation!.remote_jid ?? null}
                       conversationSessionId={activeConversation!.session_id ?? null}
                       reactions={(reactionsByMessageId.get(msg.message_id) || reactionsByMessageId.get(msg.id) || []).map((reaction) => ({

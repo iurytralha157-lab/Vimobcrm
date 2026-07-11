@@ -30,7 +30,7 @@ export function useAccessibleSessions(options: UseAccessibleSessionsOptions = {}
     staleTime: 30_000,
     gcTime: 10 * 60_000,
     retry: false,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
     refetchOnReconnect: true,
   });
 }

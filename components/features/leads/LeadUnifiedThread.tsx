@@ -638,7 +638,7 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
             {question}
           </div>
           {answer && (
-            <div className="mt-2 max-w-full overflow-hidden rounded-[6px] bg-white/[0.16] px-2.5 py-1.5 text-[12px] font-semibold leading-snug text-white [overflow-wrap:anywhere]">
+            <div className="mt-2 max-w-full overflow-hidden rounded-[6px] bg-white/[0.16] px-2.5 py-1.5 text-[11px] font-semibold leading-snug text-white [overflow-wrap:anywhere]">
               {answer}
             </div>
           )}
@@ -654,23 +654,16 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
     const metadata = event.metadata || {};
     const imageUrl = metadataText(metadata.creative_url);
     const videoUrl = metadataText(metadata.creative_video_url);
-    const sourceType = metadataText(metadata.source_type);
-    const isClickToWhatsApp = sourceType === 'whatsapp_click_to_message' || metadataText(metadata.channel) === 'whatsapp';
+    const linkUrl =
+      metadataText(metadata.creative_link_url) ||
+      metadataText(metadata.creative_destination_url) ||
+      metadataText(metadata.creative_instagram_url);
 
     return (
       <div className="flex justify-end px-2">
         <div className="max-w-[88%] overflow-hidden rounded-[8px] bg-[#1877F2] text-right text-white shadow-sm">
-          <div className="px-3 pt-2">
-            <div className="text-[9px] font-medium uppercase tracking-wide text-white/70">
-              {isClickToWhatsApp ? 'Meta Click to WhatsApp' : 'Meta Lead Ads'}
-            </div>
-            <div className="mt-0.5 text-[10px] font-medium uppercase leading-snug text-white/90">
-              Criativo do anuncio
-            </div>
-          </div>
-
           {(videoUrl || imageUrl) && (
-            <div className="mt-2 flex max-h-[260px] items-center justify-center bg-black/15">
+            <div className="flex max-h-[260px] items-center justify-center bg-black/15">
               {videoUrl ? (
                 <video
                   src={videoUrl}
@@ -690,8 +683,18 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
             </div>
           )}
 
-          <div className="px-3 py-2 text-[9px] text-white/65">
-            {format(new Date(event.timestamp), 'HH:mm', { locale: ptBR })}
+          <div className="flex items-center justify-end gap-2 px-3 py-2 text-[9px] text-white/65">
+            {linkUrl && (
+              <a
+                href={linkUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-[5px] bg-white/15 px-2 py-1 text-[9px] font-medium text-white/85 hover:bg-white/20"
+              >
+                Abrir
+              </a>
+            )}
+            <span>{format(new Date(event.timestamp), 'HH:mm', { locale: ptBR })}</span>
           </div>
         </div>
       </div>
@@ -716,7 +719,7 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
         {event.isAutomation && <Bot className="ml-1 inline h-3 w-3 align-[-2px]" />}
       </div>
       {detail && (
-        <div className={cn('mt-1 max-w-[15rem] whitespace-pre-wrap break-words text-[11px] normal-case leading-snug', isSolidTone ? 'text-white/90' : 'opacity-80', alignment === 'center' ? 'text-center' : 'text-right')}>
+        <div className={cn('mt-1 max-w-[15rem] whitespace-pre-wrap break-words text-[10px] normal-case leading-snug', isSolidTone ? 'text-white/90' : 'opacity-80', alignment === 'center' ? 'text-center' : 'text-right')}>
           {detail}
         </div>
       )}
@@ -746,7 +749,7 @@ function FeedbackBubble({ event }: { event: UnifiedHistoryEvent }) {
 
   return (
     <div className="flex items-end justify-end gap-2 px-2">
-      <div className="max-w-[82%] rounded-[8px] bg-primary/12 px-3 py-2 text-xs leading-relaxed text-[var(--app-text-primary)] ring-1 ring-primary/14">
+      <div className="max-w-[82%] rounded-[8px] bg-primary/12 px-3 py-2 text-[11px] leading-relaxed text-[var(--app-text-primary)] ring-1 ring-primary/14">
         <div className="mb-1 flex items-center justify-between gap-3 text-[10px] font-medium text-[var(--app-text-tertiary)]">
           <span>Feedback</span>
           <span>{format(new Date(event.timestamp), 'HH:mm', { locale: ptBR })}</span>
@@ -788,7 +791,11 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
     data: messages = [],
     isLoading: loadingMessages,
     refetch: refetchMessages,
-  } = useWhatsAppMessages(conversation?.id ?? null, leadId, 80);
+  } = useWhatsAppMessages(conversation?.id ?? null, leadId, 80, {
+    includeLeadHistory: true,
+    refetchIntervalMs: false,
+    refetchOnWindowFocus: false,
+  });
   const sendMessage = useSendWhatsAppMessage();
   const startConversation = useStartConversation();
 
@@ -999,7 +1006,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
     }
   };
 
-  const isLoading = loadingHistory || loadingMessages;
+  const isLoading = (loadingHistory && history.length === 0) || (loadingMessages && messages.length === 0);
 
   return (
     <section className="lead-thread-panel flex h-full min-h-0 flex-col bg-transparent p-3">
@@ -1053,6 +1060,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
                       leadName={leadName}
                       conversationRemoteJid={conversation?.remote_jid ?? item.message.remote_jid ?? null}
                       conversationSessionId={conversation?.session_id ?? item.message.session_id ?? null}
+                      compact
                       reactions={[]}
                     />
                   </MessageErrorBoundary>

@@ -209,6 +209,8 @@ export const settingsAPI = {
   async listModules(organizationId?: string | null) {
     const response = await vimobAPIRequest<Envelope<OrganizationModule[]>>('/v1/settings/modules', {
       organizationId,
+      timeoutMs: 4_000,
+      skipTelemetry: true,
     });
     return response.data;
   },

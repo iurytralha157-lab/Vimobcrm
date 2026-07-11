@@ -50,6 +50,30 @@ type DistributionLogRow = {
   assigned_user?: HistoryActor | null;
 };
 
+type AssignmentLogRow = {
+  id: string;
+  old_user_id?: string | null;
+  new_user_id?: string | null;
+  reason?: string | null;
+  created_by?: string | null;
+  created_at: string;
+  old_user?: HistoryActor | null;
+  new_user?: HistoryActor | null;
+  actor?: HistoryActor | null;
+};
+
+type AuditLogRow = {
+  id: string;
+  action: string;
+  entity_type?: string | null;
+  entity_id?: string | null;
+  old_data?: HistoryMetadata | null;
+  new_data?: HistoryMetadata | null;
+  user_id?: string | null;
+  created_at: string;
+  actor?: HistoryActor | null;
+};
+
 type LeadMetaHistoryRow = {
   id?: string | null;
   lead_id?: string | null;
@@ -92,6 +116,8 @@ type LeadHistoryRaw = {
   lead?: LeadHistoryLead | null;
   leadMeta?: LeadMetaHistoryRow | null;
   distributionLogs?: DistributionLogRow[];
+  assignmentLogs?: AssignmentLogRow[];
+  auditLogs?: AuditLogRow[];
   users?: HistoryActor[];
 };
 
@@ -541,7 +567,7 @@ function firstText(...values: unknown[]) {
 
 function rawLeadDetails(source: Record<string, unknown>) {
   const rawPayload = metadataRecord(source.raw_payload);
-  return metadataRecord(rawPayload?.lead_details) || metadataRecord(source.lead_details) || source;
+  return metadataRecord(rawPayload?.lead_details) || metadataRecord(source.lead_details) || rawPayload || source;
 }
 
 function extractMetaCreative(source: Record<string, unknown> | null | undefined): MetaCreativeHistory | null {
@@ -582,6 +608,9 @@ function extractMetaCreative(source: Record<string, unknown> | null | undefined)
       destinationUrl ||
       name ||
       adName ||
+      campaignName ||
+      adsetName ||
+      formName ||
       type,
   );
 
@@ -790,6 +819,16 @@ function buildLabel(type: string, metadata: HistoryMetadata): string {
       return 'Comissão registrada';
     case 'commission_updated':
       return 'Comissão atualizada';
+    case 'lead_updated':
+      return 'Lead editado';
+    case 'lead_deleted':
+      return 'Lead excluido';
+    case 'lead_auto_redistributed':
+      return 'Redistribuicao automatica';
+    case 'sale_closed':
+      return 'Venda concluida';
+    case 'property_interest_reserved':
+      return 'Imovel reservado';
     case 'whatsapp':
       return 'Mensagem WhatsApp';
     case 'assignment':
@@ -886,6 +925,71 @@ function buildContent(type: string, metadata: HistoryMetadata): string | undefin
   }
 }
 
+const AUDIT_FIELD_LABELS: Record<string, string> = {
+  name: 'Nome',
+  email: 'Email',
+  phone: 'Telefone',
+  source: 'Origem',
+  message: 'Mensagem',
+  property_code: 'Codigo do imovel',
+  property_id: 'Imovel',
+  interest_property_id: 'Imovel de interesse',
+  pipeline_id: 'Pipeline',
+  stage_id: 'Etapa',
+  assigned_user_id: 'Responsavel',
+  valor_interesse: 'Valor de interesse',
+  commission_percentage: 'Comissao',
+  deal_status: 'Status',
+  lost_reason: 'Motivo de perda',
+  feedback: 'Feedback',
+  cargo: 'Cargo',
+  empresa: 'Empresa',
+  profissao: 'Profissao',
+  endereco: 'Endereco',
+  numero: 'Numero',
+  complemento: 'Complemento',
+  bairro: 'Bairro',
+  cep: 'CEP',
+  cidade: 'Cidade',
+  uf: 'UF',
+  renda_familiar: 'Renda familiar',
+  faixa_valor_imovel: 'Faixa de valor',
+  finalidade_compra: 'Finalidade',
+  trabalha: 'Trabalha',
+  procura_financiamento: 'Procura financiamento',
+  is_own_resource: 'Recurso proprio',
+};
+
+const AUDIT_IGNORED_FIELDS = new Set(['origin']);
+
+function auditChangedKeys(audit: AuditLogRow) {
+  const newData = asMetadata(audit.new_data);
+  return Object.keys(newData)
+    .filter((key) => !AUDIT_IGNORED_FIELDS.has(key))
+    .sort();
+}
+
+function auditFieldLabel(key: string) {
+  return AUDIT_FIELD_LABELS[key] || key.replace(/_/g, ' ');
+}
+
+function auditEventType(action: string, keys: string[]) {
+  if (action === 'delete') return 'lead_deleted';
+  if (action === 'create') return 'lead_created';
+  if (action === 'move_stage' || keys.some((key) => key === 'stage_id' || key === 'pipeline_id')) {
+    return 'stage_change';
+  }
+  if (keys.includes('assigned_user_id')) return 'assignee_changed';
+  if (keys.includes('deal_status')) return 'status_change';
+  return 'lead_updated';
+}
+
+function auditContent(action: string, keys: string[]) {
+  if (action === 'delete') return 'Lead removido do CRM';
+  if (keys.length === 0) return undefined;
+  return `Campos alterados: ${keys.map(auditFieldLabel).join(', ')}`;
+}
+
 export function useLeadHistory(leadId: string | null) {
 
   return useQuery({
@@ -900,6 +1004,8 @@ export function useLeadHistory(leadId: string | null) {
       const lead = raw.lead || null;
       const leadMeta = raw.leadMeta || null;
       const distributionLogs = raw.distributionLogs || [];
+      const assignmentLogs = raw.assignmentLogs || [];
+      const auditLogs = raw.auditLogs || [];
 
       // Collect all user IDs that need resolution from metadata
       const userIdsToResolve = new Set<string>();
@@ -916,6 +1022,14 @@ export function useLeadHistory(leadId: string | null) {
       });
       distributionLogs.forEach((log) => {
         if (log.assigned_user_id && typeof log.assigned_user_id === 'string') userIdsToResolve.add(log.assigned_user_id);
+      });
+      assignmentLogs.forEach((log) => {
+        if (log.old_user_id) userIdsToResolve.add(log.old_user_id);
+        if (log.new_user_id) userIdsToResolve.add(log.new_user_id);
+        if (log.created_by) userIdsToResolve.add(log.created_by);
+      });
+      auditLogs.forEach((log) => {
+        if (log.user_id) userIdsToResolve.add(log.user_id);
       });
       if (lead?.assigned_user_id) userIdsToResolve.add(lead.assigned_user_id);
 
@@ -1207,7 +1321,7 @@ export function useLeadHistory(leadId: string | null) {
           id: `meta-creative-${activity.id}`,
           type: 'meta_creative',
           label: buildLabel('meta_creative', creativeMetadata),
-          content: creative.name || creative.adName || 'Criativo do anuncio',
+          content: creative.name || creative.adName || creative.campaignName || creative.adsetName || creative.formName || 'Criativo do anuncio',
           timestamp,
           actor: null,
           source: 'activity' as const,
@@ -1247,7 +1361,7 @@ export function useLeadHistory(leadId: string | null) {
           id: `meta-creative-lead-meta-${leadMeta?.id || lead?.id || leadId}`,
           type: 'meta_creative',
           label: buildLabel('meta_creative', metadata),
-          content: creative.name || creative.adName || 'Criativo do anuncio',
+          content: creative.name || creative.adName || creative.campaignName || creative.adsetName || creative.formName || 'Criativo do anuncio',
           timestamp,
           actor: null,
           source: 'activity' as const,
@@ -1321,6 +1435,43 @@ export function useLeadHistory(leadId: string | null) {
           };
         });
 
+      const assignmentMapped: UnifiedHistoryEvent[] = assignmentLogs
+        .filter((log) => {
+          return !distributionMapped.some((event) => {
+            const meta = asMetadata(event.metadata);
+            const sameUser = metadataString(meta.to_user_id) === log.new_user_id;
+            const sameReason = metadataString(meta.reason) === log.reason || metadataString(meta.queue_id) === metadataString(log.reason);
+            const distance = Math.abs(new Date(event.timestamp).getTime() - new Date(log.created_at).getTime());
+            return sameUser && (sameReason || distance < 5000);
+          });
+        })
+        .map((log) => {
+          const oldUser = log.old_user || (log.old_user_id ? userMap.get(log.old_user_id) : null);
+          const newUser = log.new_user || (log.new_user_id ? userMap.get(log.new_user_id) : null);
+          const actor = log.actor || (log.created_by ? userMap.get(log.created_by) : null);
+          const metadata: HistoryMetadata = {
+            from_user_id: log.old_user_id,
+            from_user_name: oldUser?.name || null,
+            to_user_id: log.new_user_id,
+            to_user_name: newUser?.name || null,
+            reason: log.reason,
+            is_automation: log.reason !== 'manual_transfer',
+          };
+
+          return {
+            id: `assignment-${log.id}`,
+            type: 'assignee_changed',
+            label: buildLabel('assignee_changed', metadata),
+            content: log.reason ? `Motivo: ${log.reason}` : undefined,
+            timestamp: log.created_at,
+            actor: actor ? { id: actor.id, name: actor.name, avatar_url: actor.avatar_url || null } : null,
+            source: 'timeline' as const,
+            metadata,
+            channel: null,
+            isAutomation: log.reason !== 'manual_transfer',
+          };
+        });
+
       const fallbackEvents: UnifiedHistoryEvent[] = [];
       const hasLeadCreated = timelineTypesPresent.has('lead_created') || activityTypesPresent.has('lead_created');
       if (lead && !hasLeadCreated) {
@@ -1344,6 +1495,7 @@ export function useLeadHistory(leadId: string | null) {
         timelineTypesPresent.has('lead_assigned') ||
         timelineTypesPresent.has('assignee_changed') ||
         activityTypesPresent.has('assignee_changed') ||
+        assignmentMapped.length > 0 ||
         distributionMapped.length > 0;
       if (lead?.assigned_user_id && !hasAssignmentEvent) {
         const assignedUser = lead.assigned_user || userMap.get(lead.assigned_user_id);
@@ -1369,11 +1521,65 @@ export function useLeadHistory(leadId: string | null) {
         });
       }
 
+      const auditMapped: UnifiedHistoryEvent[] = auditLogs
+        .filter((audit) => {
+          const keys = auditChangedKeys(audit);
+          const eventType = auditEventType(audit.action, keys);
+          if (eventType === 'lead_created' && hasLeadCreated) return false;
+          if (
+            audit.action === 'move_stage' &&
+            (timelineTypesPresent.has('stage_changed') || activityTypesPresent.has('stage_change'))
+          ) {
+            return false;
+          }
+          return true;
+        })
+        .map((audit) => {
+          const keys = auditChangedKeys(audit);
+          const eventType = auditEventType(audit.action, keys);
+          const oldData = asMetadata(audit.old_data);
+          const newData = asMetadata(audit.new_data);
+          const toUserId = metadataString(newData.assigned_user_id);
+          const fromUserId = metadataString(oldData.assigned_user_id);
+          const toUser = toUserId ? userMap.get(toUserId) : null;
+          const fromUser = fromUserId ? userMap.get(fromUserId) : null;
+          const actor = audit.actor || (audit.user_id ? userMap.get(audit.user_id) : null);
+          const metadata: HistoryMetadata = {
+            ...newData,
+            audit_action: audit.action,
+            old_data: oldData,
+            new_data: newData,
+            from_user_id: fromUserId,
+            from_user_name: fromUser?.name || null,
+            to_user_id: toUserId,
+            to_user_name: toUser?.name || null,
+            from_status: metadataString(oldData.deal_status),
+            to_status: metadataString(newData.deal_status),
+            old_stage_id: metadataString(oldData.stage_id),
+            new_stage_id: metadataString(newData.stage_id),
+          };
+
+          return {
+            id: `audit-${audit.id}`,
+            type: eventType,
+            label: buildLabel(eventType, metadata),
+            content: auditContent(audit.action, keys),
+            timestamp: audit.created_at,
+            actor: actor ? { id: actor.id, name: actor.name, avatar_url: actor.avatar_url || null } : null,
+            source: 'activity' as const,
+            metadata,
+            channel: null,
+            isAutomation: false,
+          };
+        });
+
       // Merge and sort chronologically (oldest first)
       return [
         ...fallbackEvents,
         ...timelineMapped,
         ...activityMapped,
+        ...assignmentMapped,
+        ...auditMapped,
         ...metaCreativeMappedFromActivities,
         ...metaCreativeMappedFromLeadMeta,
         ...metaFormAnswerMapped,
@@ -1386,7 +1592,8 @@ export function useLeadHistory(leadId: string | null) {
       );
     },
     enabled: !!leadId,
-    staleTime: 0,
-    refetchInterval: 5000,
+    placeholderData: (previousData) => previousData ?? [],
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 }

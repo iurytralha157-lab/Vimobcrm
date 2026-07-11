@@ -35,8 +35,10 @@ interface MessageBubbleProps {
   messageId: string;
   leadId: string;
   leadName: string;
+  contactAvatarUrl?: string | null;
   conversationRemoteJid?: string | null;
   conversationSessionId?: string | null;
+  compact?: boolean;
   reactions: Array<{
     emoji: string;
     senderName: string | null;
@@ -82,8 +84,34 @@ const fetchAsBlobUrl = async (url: string, mimeType?: string): Promise<string> =
 };
 
 const AUDIO_PLAYBACK_RATES = [1, 1.5, 2] as const;
-const AUDIO_PLAYBACK_RATE_EVENT = "vimob:whatsapp-audio-rate";
-let sharedAudioPlaybackRate: typeof AUDIO_PLAYBACK_RATES[number] = 1;
+type AudioPlaybackRate = typeof AUDIO_PLAYBACK_RATES[number];
+const AUDIO_PLAYBACK_RATE_STORAGE_KEY = "vimob:whatsapp-audio-rate";
+const AUDIO_PLAYBACK_RATE_EVENT = "vimob:whatsapp-audio-rate-change";
+let sharedAudioPlaybackRate: AudioPlaybackRate = 1;
+
+const isAudioPlaybackRate = (value: unknown): value is AudioPlaybackRate =>
+  AUDIO_PLAYBACK_RATES.includes(value as AudioPlaybackRate);
+
+const readStoredAudioPlaybackRate = (): AudioPlaybackRate => {
+  if (typeof window === "undefined") return sharedAudioPlaybackRate;
+  try {
+    const stored = Number(window.localStorage.getItem(AUDIO_PLAYBACK_RATE_STORAGE_KEY));
+    return isAudioPlaybackRate(stored) ? stored : sharedAudioPlaybackRate;
+  } catch {
+    return sharedAudioPlaybackRate;
+  }
+};
+
+const persistAudioPlaybackRate = (rate: AudioPlaybackRate) => {
+  sharedAudioPlaybackRate = rate;
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(AUDIO_PLAYBACK_RATE_STORAGE_KEY, String(rate));
+  } catch {
+    // Mantem a velocidade sincronizada nesta sessao mesmo sem storage persistente.
+  }
+  window.dispatchEvent(new CustomEvent(AUDIO_PLAYBACK_RATE_EVENT, { detail: rate }));
+};
 
 const toSafeText = (value: unknown): string => {
   if (value === null || value === undefined) return "";
@@ -161,8 +189,10 @@ export function MessageBubble({
   messageId,
   leadId,
   leadName,
+  contactAvatarUrl,
   conversationRemoteJid,
   conversationSessionId,
+  compact = false,
   reactions = [],
 }: MessageBubbleProps) {
   const createAttachment = useCreateLeadAttachment();
@@ -177,13 +207,23 @@ export function MessageBubble({
   const [currentTime, setCurrentTime] = useState(0);
   const [audioError, setAudioError] = useState<string | null>(null);
   const [audioReady, setAudioReady] = useState(false);
-  const [playbackRate, setPlaybackRate] = useState(sharedAudioPlaybackRate);
+  const [playbackRate, setPlaybackRate] = useState<AudioPlaybackRate>(() => {
+    const storedRate = readStoredAudioPlaybackRate();
+    sharedAudioPlaybackRate = storedRate;
+    return storedRate;
+  });
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [blobAttempted, setBlobAttempted] = useState(false);
   const [mediaPendingNowMs, setMediaPendingNowMs] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const mediaKind = getEffectiveMediaKind(messageType, mediaMimeType, mediaUrl);
   const normalizedMediaMimeType = normalizeMediaMimeType(mediaMimeType, mediaKind);
+  const safeSenderName = toSafeText(senderName).trim();
+  const displaySenderName = safeSenderName || (fromMe ? "Você" : "");
+  const audioAvatarName = fromMe
+    ? displaySenderName
+    : (toSafeText(leadName).trim() || safeSenderName || "Contato");
+  const audioAvatarInitial = audioAvatarName.charAt(0).toUpperCase() || (fromMe ? "V" : "C");
 
   // Waveform bars generated from mediaUrl or sentAt as seed
   const waveformBars = generateWaveform(mediaUrl || sentAt, 28);
@@ -229,8 +269,8 @@ export function MessageBubble({
   useEffect(() => {
     const handlePlaybackRateChange = (event: Event) => {
       const nextRate = (event as CustomEvent<number>).detail;
-      if (!AUDIO_PLAYBACK_RATES.includes(nextRate as typeof AUDIO_PLAYBACK_RATES[number])) return;
-      setPlaybackRate(nextRate as typeof AUDIO_PLAYBACK_RATES[number]);
+      if (!isAudioPlaybackRate(nextRate)) return;
+      setPlaybackRate(nextRate);
       if (audioRef.current) {
         audioRef.current.playbackRate = nextRate;
       }
@@ -317,15 +357,14 @@ export function MessageBubble({
   };
 
   const cyclePlaybackRate = () => {
-    const currentIndex = AUDIO_PLAYBACK_RATES.indexOf(playbackRate as typeof AUDIO_PLAYBACK_RATES[number]);
+    const currentIndex = AUDIO_PLAYBACK_RATES.indexOf(playbackRate);
     const nextIndex = (currentIndex + 1) % AUDIO_PLAYBACK_RATES.length;
     const newRate = AUDIO_PLAYBACK_RATES[nextIndex];
-    sharedAudioPlaybackRate = newRate;
+    persistAudioPlaybackRate(newRate);
     setPlaybackRate(newRate);
     if (audioRef.current) {
       audioRef.current.playbackRate = newRate;
     }
-    window.dispatchEvent(new CustomEvent(AUDIO_PLAYBACK_RATE_EVENT, { detail: newRate }));
   };
 
   const handleAudioPlay = () => {
@@ -529,12 +568,55 @@ export function MessageBubble({
     </div>
   );
 
+  const renderAudioAvatar = () => (
+    <button
+      type="button"
+      onClick={cyclePlaybackRate}
+      className={cn(
+        "relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full text-[11px] font-semibold transition-colors",
+        fromMe
+          ? "bg-primary-foreground/20 text-primary-foreground hover:bg-primary-foreground/30"
+          : "bg-white/[0.08] text-white hover:bg-white/[0.12]"
+      )}
+      title={`Velocidade ${playbackRate}x`}
+      aria-label={`Alterar velocidade do audio para ${playbackRate}x`}
+    >
+      {isPlaying || currentTime > 0 ? (
+        <span>{playbackRate}x</span>
+      ) : contactAvatarUrl && !fromMe ? (
+        <NextImage
+          src={contactAvatarUrl}
+          alt={audioAvatarName}
+          fill
+          sizes="40px"
+          className="object-cover"
+          unoptimized
+        />
+      ) : (
+        <span>{audioAvatarInitial}</span>
+      )}
+      <span
+        className={cn(
+          "absolute bottom-0 right-0 flex h-3.5 w-3.5 items-center justify-center rounded-full border",
+          fromMe
+            ? "border-primary bg-primary-foreground text-primary"
+            : "border-[#242424] bg-primary text-primary-foreground"
+        )}
+      >
+        <Mic className="h-2.5 w-2.5" />
+      </span>
+    </button>
+  );
+
   const renderAudioPlayer = () => {
     const hasValidMedia = isValidMediaUrl(mediaUrl);
 
     if (hasValidMedia) {
       const progressPercent = audioProgress || 0;
       const playedBars = Math.floor((progressPercent / 100) * waveformBars.length);
+      const audioTimeLabel = (isPlaying || currentTime > 0)
+        ? formatDuration(currentTime)
+        : formatDuration(audioDuration);
 
       // If there's an error, show fallback with download button
       if (audioError) {
@@ -577,30 +659,18 @@ export function MessageBubble({
 
       return (
         <div className={cn(
-          "flex items-center gap-2 py-1.5 px-2 min-w-0 w-full",
+          "flex min-w-[250px] max-w-[310px] items-center gap-2 py-1.5 px-1",
         )}>
-          {/* Speed Control Button - only show when playing or has progress */}
           <button
-            onClick={cyclePlaybackRate}
-            className={cn(
-              "h-7 px-2 rounded-full text-xs font-medium shrink-0 transition-colors",
-              fromMe
-                ? "bg-primary-foreground/20 hover:bg-primary-foreground/30"
-                : "bg-white/[0.055] hover:bg-white/[0.08]"
-            )}
-          >
-            {playbackRate}x
-          </button>
-
-          {/* Play/Pause Button */}
-          <button
+            type="button"
             onClick={handleAudioPlay}
             className={cn(
-              "w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-colors",
+              "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors",
               fromMe
                 ? "bg-primary-foreground/20 hover:bg-primary-foreground/30"
                 : "bg-primary/15 hover:bg-primary/25"
             )}
+            aria-label={isPlaying ? "Pausar audio" : "Reproduzir audio"}
           >
             {isPlaying ? (
               <Pause className="w-4 h-4" />
@@ -609,10 +679,8 @@ export function MessageBubble({
             )}
           </button>
 
-          {/* Waveform with progress indicator */}
-          <div className="flex-1 flex flex-col gap-1">
-            <div className="relative h-[28px] flex items-center">
-              {/* Waveform container */}
+          <div className="min-w-0 flex-1">
+            <div className="relative flex h-[30px] items-center">
               <div
                 className="flex items-center gap-[2px] h-full w-full cursor-pointer"
                 onClick={handleWaveformClick}
@@ -630,15 +698,14 @@ export function MessageBubble({
                           ? "bg-primary-foreground/30"
                           : "bg-primary/30"
                     )}
-                    style={{ height: `${Math.max(height * 100, 15)}%` }}
+                    style={{ height: `${Math.max(height * 78, 18)}%` }}
                   />
                 ))}
               </div>
 
-              {/* Progress indicator dot */}
               <div
                 className={cn(
-                  "absolute w-3 h-3 rounded-full shadow-sm transition-all duration-100 pointer-events-none",
+                  "absolute h-3 w-3 rounded-full shadow-sm transition-all duration-100 pointer-events-none",
                   fromMe ? "bg-primary-foreground" : "bg-primary"
                 )}
                 style={{
@@ -649,43 +716,36 @@ export function MessageBubble({
               />
             </div>
 
-            {/* Time indicators */}
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <span className={cn(
-                "text-[11px]",
+                "text-[11px] leading-none",
                 fromMe ? "text-primary-foreground/60" : "text-white/55"
               )}>
-                {formatDuration(currentTime)}
+                {audioTimeLabel}
               </span>
-              <span className={cn(
-                "text-[11px]",
+              <div className={cn(
+                "flex shrink-0 items-center gap-1 leading-none",
                 fromMe ? "text-primary-foreground/60" : "text-white/55"
               )}>
-                {formatDuration(audioDuration)}
-              </span>
+                {leadId && isValidMediaUrl(mediaUrl) && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setAttachConfirmOpen(true);
+                    }}
+                    className="hover:text-primary transition-colors p-0.5"
+                    title="Anexar ao Lead"
+                  >
+                    <Link2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                <span className="text-[11px]">{formatTime(sentAt)}</span>
+                {getStatusIcon()}
+              </div>
             </div>
           </div>
 
-          {/* Message timestamp and status */}
-          <div className={cn(
-            "flex items-center gap-1 shrink-0",
-            fromMe ? "text-primary-foreground/60" : "text-white/55"
-          )}>
-            {leadId && isValidMediaUrl(mediaUrl) && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setAttachConfirmOpen(true);
-                }}
-                className="hover:text-primary transition-colors p-0.5"
-                title="Anexar ao Lead"
-              >
-                <Link2 className="w-3.5 h-3.5" />
-              </button>
-            )}
-            <span className="text-[11px]">{formatTime(sentAt)}</span>
-            {getStatusIcon()}
-          </div>
+          {renderAudioAvatar()}
 
           <audio
             key={blobUrl || mediaUrl}
@@ -872,7 +932,7 @@ export function MessageBubble({
             {/* Content area — flex-1 com overflow hidden garante truncate */}
             <div className="min-w-0 flex-1 overflow-hidden">
               <p
-                className="text-sm font-medium truncate leading-tight"
+                className={cn(compact ? "text-xs" : "text-sm", "font-medium truncate leading-tight")}
                 title={safeContent || "Documento"}
               >
                 {safeContent || "Documento"}
@@ -989,11 +1049,11 @@ export function MessageBubble({
           (mediaKind === "image" || mediaKind === "video") && !content ? "p-[3px]" : "px-3 py-2"
         )}>
           {/* Sender name for groups or sent messages with sender info */}
-          {!fromMe && senderName && (
-            <p className="text-xs font-semibold text-primary mb-0.5">{toSafeText(senderName)}</p>
+          {!fromMe && displaySenderName && (
+            <p className={cn(compact ? "text-[11px]" : "text-xs", "font-semibold text-primary mb-0.5")}>{displaySenderName}</p>
           )}
-          {fromMe && senderName && (
-            <p className="text-[11px] font-medium mb-0.5 opacity-70">{toSafeText(senderName)}</p>
+          {fromMe && displaySenderName && (
+            <p className="text-[11px] font-medium mb-0.5 opacity-70">{displaySenderName}</p>
           )}
 
           {/* Media content */}
@@ -1012,6 +1072,7 @@ export function MessageBubble({
               fromMe={fromMe}
               groupJid={isGroup ? conversationRemoteJid : null}
               sessionId={isGroup ? conversationSessionId : null}
+              compact={compact}
             />
           )}
 
@@ -1075,11 +1136,13 @@ function MessageText({
   fromMe,
   groupJid,
   sessionId,
+  compact = false,
 }: {
   content: string;
   fromMe: boolean;
   groupJid?: string | null;
   sessionId?: string | null;
+  compact?: boolean;
 }) {
   const mentionRegex = /(@\d{7,}|@[\w\u00C0-\u017F]+(?:\s[\w\u00C0-\u017F]+){0,2})/g;
   const mentionTokenRegex = /^(@\d{7,}|@[\w\u00C0-\u017F]+(?:\s[\w\u00C0-\u017F]+){0,2})$/;
@@ -1118,7 +1181,7 @@ function MessageText({
   };
 
   return (
-    <p className="text-[14.2px] leading-[19px] whitespace-pre-wrap break-words">
+    <p className={cn(compact ? "text-[12.5px] leading-[17px]" : "text-[14.2px] leading-[19px]", "whitespace-pre-wrap break-words")}>
       {parts.length === 1
         ? renderTextWithLinks(content)
         : parts.map((part, index) => {

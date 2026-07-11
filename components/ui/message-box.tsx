@@ -64,6 +64,30 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
     },
     ref
   ) => {
+    const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+    const fieldRef = React.useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+
+    React.useImperativeHandle(inputRef, () => fieldRef.current as HTMLInputElement | HTMLTextAreaElement);
+
+    const resizeTextarea = React.useCallback((element: HTMLTextAreaElement | null) => {
+      if (!element) return;
+      element.style.height = "auto";
+      element.style.height = `${Math.min(element.scrollHeight, 160)}px`;
+    }, []);
+
+    const setTextareaRef = React.useCallback((element: HTMLTextAreaElement | null) => {
+      textareaRef.current = element;
+      fieldRef.current = element;
+    }, []);
+
+    const setInputElementRef = React.useCallback((element: HTMLInputElement | null) => {
+      fieldRef.current = element;
+    }, []);
+
+    React.useLayoutEffect(() => {
+      if (multiline) resizeTextarea(textareaRef.current);
+    }, [multiline, resizeTextarea, value]);
+
     const handleKeyDown = (e: React.KeyboardEvent) => {
       if (onKeyDown) {
         onKeyDown(e);
@@ -83,7 +107,7 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
       <div
         ref={ref}
         className={cn(
-          "flex min-h-[46px] w-full items-center gap-2 rounded-[8px] bg-[var(--app-surface-hover)] px-2 py-2 text-sm text-[var(--app-text-primary)] shadow-none outline-none transition-colors focus-within:bg-[var(--app-surface-hover)] focus-within:outline-none",
+          "flex min-h-[46px] w-full items-center gap-2 rounded-[8px] bg-[var(--app-surface-hover)] px-2 py-2 text-sm text-[var(--app-text-primary)] shadow-none outline-none transition-[background-color,min-height] duration-200 focus-within:bg-[var(--app-surface-hover)] focus-within:outline-none",
           compact && "min-h-[42px] px-2 py-1.5",
           disabled && "!bg-[var(--app-surface-hover)] !text-[var(--app-text-tertiary)]",
           className
@@ -97,13 +121,12 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
 
         {multiline ? (
           <textarea
-            ref={inputRef as React.Ref<HTMLTextAreaElement>}
+            ref={setTextareaRef}
             placeholder={placeholder}
             value={value}
             onChange={(e) => {
               onChange(e.target.value);
-              e.target.style.height = "auto";
-              e.target.style.height = Math.min(e.target.scrollHeight, 160) + "px";
+              resizeTextarea(e.target);
             }}
             onKeyDown={handleKeyDown}
             disabled={disabled}
@@ -117,7 +140,7 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
           />
         ) : (
           <input
-            ref={inputRef as React.Ref<HTMLInputElement>}
+            ref={setInputElementRef}
             placeholder={placeholder}
             type="text"
             value={value}

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useFilters } from '@/contexts/FilterContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { contactsAPI } from '@/lib/api/contacts';
-import { analyticsAPI } from '@/lib/api/analytics';
+import { getLeadMetaFilters } from '@/lib/api/pipeline-board';
 import { DatePreset } from './use-dashboard-filters';
 
 export interface SharedFilters {
@@ -19,15 +19,6 @@ export interface SharedFilters {
   dealStatus: string | null;
   searchQuery: string;
 }
-
-type MetaInsightOption = {
-  campaign_id?: string | null;
-  campaign_name?: string | null;
-  adset_id?: string | null;
-  adset_name?: string | null;
-  ad_id?: string | null;
-  ad_name?: string | null;
-};
 
 function labelize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
@@ -95,20 +86,14 @@ export function useSharedFilters(options?: { loadDynamicOptions?: boolean }) {
     placeholderData: (previous) => previous ?? [],
   });
 
-  const metaInsightsQuery = useQuery({
-    queryKey: ['shared-filter-meta-insights', organizationId, dateFromStr, dateToStr, campaignId, adSetId],
+  const leadMetaFiltersQuery = useQuery({
+    queryKey: ['shared-filter-lead-meta-filters', organizationId, dateFromStr, dateToStr],
     enabled: shouldLoadDynamicOptions && !!organizationId,
-    queryFn: () =>
-      analyticsAPI.metaInsights<MetaInsightOption>({
-        dateFrom: dateFromStr,
-        dateTo: dateToStr,
-        campaignId,
-        adSetId,
-      }),
+    queryFn: () => getLeadMetaFilters({ organizationId, dateRange }),
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,
-    placeholderData: (previous) => previous ?? [],
+    placeholderData: (previous) => previous ?? { campaigns: [], adsets: [], ads: [] },
   });
 
   const dynamicSources = useMemo(() => {
@@ -119,32 +104,32 @@ export function useSharedFilters(options?: { loadDynamicOptions?: boolean }) {
   const campaigns = useMemo(
     () =>
       uniqueOptions(
-        (metaInsightsQuery.data || []).map((item) => ({
-          id: item.campaign_id,
-          name: item.campaign_name,
+        (leadMetaFiltersQuery.data?.campaigns || []).map((item) => ({
+          id: item.id,
+          name: item.name,
         })),
       ),
-    [metaInsightsQuery.data],
+    [leadMetaFiltersQuery.data],
   );
 
   const adSets = useMemo(
     () =>
       uniqueOptions(
-        (metaInsightsQuery.data || [])
-          .filter((item) => !campaignId || item.campaign_id === campaignId || item.campaign_name === campaignId)
-          .map((item) => ({ id: item.adset_id, name: item.adset_name })),
+        (leadMetaFiltersQuery.data?.adsets || [])
+          .filter((item) => !campaignId || item.campaignId === campaignId)
+          .map((item) => ({ id: item.id, name: item.name })),
       ),
-    [campaignId, metaInsightsQuery.data],
+    [campaignId, leadMetaFiltersQuery.data],
   );
 
   const ads = useMemo(
     () =>
       uniqueOptions(
-        (metaInsightsQuery.data || [])
-          .filter((item) => !adSetId || item.adset_id === adSetId || item.adset_name === adSetId)
-          .map((item) => ({ id: item.ad_id, name: item.ad_name })),
+        (leadMetaFiltersQuery.data?.ads || [])
+          .filter((item) => !adSetId || item.adsetId === adSetId)
+          .map((item) => ({ id: item.id, name: item.name })),
       ),
-    [adSetId, metaInsightsQuery.data],
+    [adSetId, leadMetaFiltersQuery.data],
   );
 
   const tags = useMemo(() => {
@@ -202,16 +187,16 @@ export function useSharedFilters(options?: { loadDynamicOptions?: boolean }) {
   }, [teamId]);
 
   useEffect(() => {
-    if (metaInsightsQuery.isLoading || adSets.length !== 1 || !campaignId || adSetId) return;
+    if (leadMetaFiltersQuery.isLoading || adSets.length !== 1 || !campaignId || adSetId) return;
     const nextAdSetId = adSets[0].id;
     queueMicrotask(() => setAdSetId(nextAdSetId));
-  }, [adSets, adSetId, campaignId, metaInsightsQuery.isLoading]);
+  }, [adSets, adSetId, campaignId, leadMetaFiltersQuery.isLoading]);
 
   useEffect(() => {
-    if (metaInsightsQuery.isLoading || ads.length !== 1 || !adSetId || adId) return;
+    if (leadMetaFiltersQuery.isLoading || ads.length !== 1 || !adSetId || adId) return;
     const nextAdId = ads[0].id;
     queueMicrotask(() => setAdId(nextAdId));
-  }, [adId, adSetId, ads, metaInsightsQuery.isLoading]);
+  }, [adId, adSetId, ads, leadMetaFiltersQuery.isLoading]);
 
   const filters: SharedFilters = useMemo(
     () => ({
@@ -288,8 +273,8 @@ export function useSharedFilters(options?: { loadDynamicOptions?: boolean }) {
     ads,
     tags,
     isLoadingSources: contactsQuery.isLoading,
-    isLoadingCampaigns: metaInsightsQuery.isLoading,
-    isLoadingAdSets: metaInsightsQuery.isLoading,
-    isLoadingAds: metaInsightsQuery.isLoading,
+    isLoadingCampaigns: leadMetaFiltersQuery.isLoading,
+    isLoadingAdSets: leadMetaFiltersQuery.isLoading,
+    isLoadingAds: leadMetaFiltersQuery.isLoading,
   };
 }

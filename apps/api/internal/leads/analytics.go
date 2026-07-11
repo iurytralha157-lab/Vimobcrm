@@ -393,6 +393,80 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		return nil, err
 	}
 
+	assignmentLogs, err := repo.queryJSONArray(ctx, `
+		select coalesce(jsonb_agg(
+			jsonb_strip_nulls(jsonb_build_object(
+				'id', al.id::text,
+				'organization_id', al.organization_id::text,
+				'lead_id', al.lead_id::text,
+				'old_user_id', al.old_user_id::text,
+				'new_user_id', al.new_user_id::text,
+				'reason', al.reason,
+				'created_by', al.created_by::text,
+				'created_at', al.created_at,
+				'old_user',
+					case when old_user.id is null then null else jsonb_build_object(
+						'id', old_user.id::text,
+						'name', old_user.name,
+						'avatar_url', old_user.avatar_url
+					) end,
+				'new_user',
+					case when new_user.id is null then null else jsonb_build_object(
+						'id', new_user.id::text,
+						'name', new_user.name,
+						'avatar_url', new_user.avatar_url
+					) end,
+				'actor',
+					case when actor.id is null then null else jsonb_build_object(
+						'id', actor.id::text,
+						'name', actor.name,
+						'avatar_url', actor.avatar_url
+					) end
+			))
+			order by al.created_at asc, al.id asc
+		), '[]'::jsonb)
+		from public.assignments_log al
+		left join public.users old_user on old_user.id = al.old_user_id
+		left join public.users new_user on new_user.id = al.new_user_id
+		left join public.users actor on actor.id = al.created_by
+		where al.organization_id = $1::uuid
+		  and al.lead_id = $2::uuid
+	`, tenantContext.OrganizationID, leadID)
+	if err != nil {
+		return nil, err
+	}
+
+	auditLogs, err := repo.queryJSONArray(ctx, `
+		select coalesce(jsonb_agg(
+			jsonb_strip_nulls(jsonb_build_object(
+				'id', al.id::text,
+				'organization_id', al.organization_id::text,
+				'user_id', al.user_id::text,
+				'action', al.action,
+				'entity_type', al.entity_type,
+				'entity_id', al.entity_id::text,
+				'old_data', coalesce(al.old_data, '{}'::jsonb),
+				'new_data', coalesce(al.new_data, '{}'::jsonb),
+				'created_at', al.created_at,
+				'actor',
+					case when u.id is null then null else jsonb_build_object(
+						'id', u.id::text,
+						'name', u.name,
+						'avatar_url', u.avatar_url
+					) end
+			))
+			order by al.created_at asc, al.id asc
+		), '[]'::jsonb)
+		from public.audit_logs al
+		left join public.users u on u.id = al.user_id
+		where al.organization_id = $1::uuid
+		  and al.entity_type = 'lead'
+		  and al.entity_id::text = $2
+	`, tenantContext.OrganizationID, leadID)
+	if err != nil {
+		return nil, err
+	}
+
 	users, err := repo.queryJSONArray(ctx, `
 		select coalesce(jsonb_agg(jsonb_build_object(
 			'id', u.id::text,
@@ -420,6 +494,8 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		"lead":             lead,
 		"leadMeta":         leadMeta,
 		"distributionLogs": distributionLogs,
+		"assignmentLogs":   assignmentLogs,
+		"auditLogs":        auditLogs,
 		"users":            users,
 	}, nil
 }

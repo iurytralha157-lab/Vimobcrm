@@ -243,7 +243,7 @@ export function TeamTab() {
                   <Button 
                     data-tour="team-add-user" 
                     size="sm"
-                    className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg border-2 border-primary/20 hover:scale-105 transition-all duration-200"
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-none border-2 border-primary/20 hover:scale-105 transition-all duration-200"
                   >
                     <Plus className="h-4 w-4 mr-2" />
                     {t.settings.users.newUser}
@@ -329,7 +329,7 @@ export function TeamTab() {
                 {users.filter(user => user.role !== 'super_admin').map(user => (
                   <div 
                     key={user.id} 
-                    className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/50 transition-colors"
+                    className="flex items-center justify-between p-3 rounded-lg border-0 bg-muted/40 hover:bg-muted/60 transition-colors"
                   >
                     <div className="flex items-center gap-3">
                       <Avatar className="h-9 w-9">

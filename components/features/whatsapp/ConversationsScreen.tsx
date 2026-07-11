@@ -225,7 +225,12 @@ export default function Conversations() {
   } = useWhatsAppMessages(
     activePlatform === 'whatsapp' ? selectedConversation?.id || null : null,
     activePlatform === 'whatsapp' ? selectedLeadId : null,
-    messageLimit
+    messageLimit,
+    {
+      includeLeadHistory: false,
+      refetchIntervalMs: 15_000,
+      refetchOnWindowFocus: false,
+    }
   );
 
   const {
@@ -648,6 +653,7 @@ export default function Conversations() {
                               messageId={msg.id}
                               leadId={selectedLeadId || ""}
                               leadName={selectedConversation.lead?.name || selectedConversation.contact_name || "Contato"}
+                              contactAvatarUrl={getConversationAvatarUrl(selectedConversation)}
                               conversationRemoteJid={selectedConversation.remote_jid}
                               conversationSessionId={selectedConversation.session_id}
                               reactions={(msg.message_id ? reactionsByMessageId.get(msg.message_id) : undefined) || reactionsByMessageId.get(msg.id) || []}
@@ -1210,6 +1216,7 @@ export default function Conversations() {
                               messageId={msg.id}
                               leadId={selectedLeadId || ""}
                               leadName={selectedConversation.lead?.name || selectedConversation.contact_name || "Contato"}
+                              contactAvatarUrl={getConversationAvatarUrl(selectedConversation)}
                               conversationRemoteJid={selectedConversation.remote_jid}
                               conversationSessionId={selectedConversation.session_id}
                               reactions={(msg.message_id ? reactionsByMessageId.get(msg.message_id) : undefined) || reactionsByMessageId.get(msg.id) || []}

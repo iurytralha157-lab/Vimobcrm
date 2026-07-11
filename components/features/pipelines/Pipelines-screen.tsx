@@ -1397,7 +1397,7 @@ export default function Pipelines() {
                         >
                           <div
                             className={cn(
-                              "flex-1 min-h-0 overflow-y-auto px-2 pb-2 space-y-2 pt-2 scrollbar-thin",
+                              "flex-1 min-h-0 overflow-y-auto px-2 pb-2 space-y-2 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
                               snapshot.isDraggingOver && "bg-[var(--app-surface-soft)]"
                             )}
                           >

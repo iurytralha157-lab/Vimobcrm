@@ -30,7 +30,9 @@ export function useOrganizationModules() {
       try {
         return await settingsAPI.listModules(orgId);
       } catch (error) {
-        console.error('Error fetching organization modules:', error);
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('Organization modules unavailable; using default modules.', error);
+        }
         return [];
       }
     },
