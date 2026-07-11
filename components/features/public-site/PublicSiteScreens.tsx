@@ -7,6 +7,7 @@ import {
   BedDouble,
   Building2,
   Car,
+  ChevronDown,
   CheckCircle2,
   CircleDollarSign,
   Home,
@@ -41,10 +42,10 @@ import {
   getPropertyLocation,
   getPropertyPrice,
   getPropertyTitle,
-  getSiteDescription,
   getSiteTitle,
   getThemeTokens,
 } from "./public-site-utils";
+import { PublicContactLeadDialog } from "./PublicContactLeadDialog";
 
 const defaultStats = [
   { value: "500+", label: "Imoveis negociados" },
@@ -87,10 +88,10 @@ const iconMap = {
 };
 
 const homeCategoryShortcuts = [
-  { label: "Casa", href: "/imoveis?tipo=Casa", icon: House },
-  { label: "Apartamento", href: "/imoveis?tipo=Apartamento", icon: Building2 },
-  { label: "Cobertura", href: "/imoveis?tipo=Cobertura", icon: SquareStack },
-  { label: "Estúdio", href: "/imoveis?tipo=Estudio", icon: KeyRound },
+  { label: "Casas", href: "/imoveis?tipo=Casa", icon: House, match: ["casa", "sobrado"] },
+  { label: "Apartamentos", href: "/imoveis?tipo=Apartamento", icon: Building2, match: ["apart"] },
+  { label: "Coberturas", href: "/imoveis?tipo=Cobertura", icon: SquareStack, match: ["cobertura"] },
+  { label: "Studios", href: "/imoveis?tipo=Studio", icon: KeyRound, match: ["studio", "estudio", "flat", "loft"] },
 ];
 
 const purposeOptions = [
@@ -122,7 +123,6 @@ export function PublicHomeScreen({
   const tokens = getThemeTokens(site);
   const heroImage = site.hero_image_url || data.featured[0]?.imagem_principal || DEFAULT_HERO_IMAGE;
   const title = "Encontre o imóvel dos seus sonhos com exclusividade";
-  const subtitle = site.hero_subtitle || getSiteDescription(site);
   const activeFilters = searchFilters.length > 0
     ? searchFilters
     : [
@@ -133,18 +133,17 @@ export function PublicHomeScreen({
 
   return (
     <>
-      <section className="relative min-h-[calc(100vh-80px)] overflow-hidden">
+      <section className="relative min-h-[720px] overflow-hidden lg:min-h-[760px]">
         <img src={heroImage} alt="" className="absolute inset-0 h-full w-full object-cover" loading="eager" />
         <div className="absolute inset-0 bg-black/56" />
-        <div className="relative z-10 mx-auto flex min-h-[calc(100vh-80px)] w-full max-w-7xl flex-col items-center justify-center px-4 py-24 text-center text-white sm:px-6 lg:px-8">
-          <h1 className="mx-auto max-w-5xl text-4xl font-light leading-tight tracking-normal sm:text-5xl lg:text-6xl">
+        <div className="relative z-10 mx-auto flex min-h-[720px] w-full max-w-7xl flex-col items-center justify-center px-4 pb-20 pt-36 text-center text-white sm:px-6 lg:min-h-[760px] lg:px-8">
+          <h1 className="mx-auto max-w-4xl text-3xl font-light leading-tight tracking-normal sm:text-5xl lg:text-[56px]">
             {title}
           </h1>
-          <p className="mt-5 max-w-2xl text-base leading-7 text-white/78 sm:text-lg">{subtitle}</p>
 
           <form
             action={buildSiteHref(basePath, "/imoveis")}
-            className="site-float mt-10 grid w-full max-w-5xl gap-3 rounded-[14px] bg-black/46 p-3 text-left backdrop-blur-xl sm:p-4 md:grid-cols-4"
+            className="mt-10 grid w-full max-w-5xl gap-3 rounded-[14px] bg-[#30332f]/78 p-3 text-left shadow-[0_18px_42px_rgba(0,0,0,0.18)] backdrop-blur-xl sm:p-4 md:grid-cols-4"
           >
             {activeFilters.map((filter) => (
               <SearchFilterField
@@ -164,34 +163,7 @@ export function PublicHomeScreen({
             </button>
           </form>
 
-          <div className="mt-7 grid w-full max-w-4xl grid-cols-2 gap-3 sm:grid-cols-4">
-            {homeCategoryShortcuts.map((item) => {
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.href}
-                  href={buildSiteHref(basePath, item.href)}
-                  className="group flex items-center justify-center gap-2 rounded-[12px] bg-white/12 px-3 py-3 text-sm font-medium text-white backdrop-blur-md transition hover:-translate-y-1 hover:bg-white/20"
-                >
-                  <Icon className="h-4 w-4 transition group-hover:scale-110" />
-                  {item.label}
-                </Link>
-              );
-            })}
-          </div>
         </div>
-        <style>{`
-          @keyframes site-float {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-6px); }
-          }
-          .site-float {
-            animation: site-float 7s ease-in-out infinite;
-          }
-          @media (prefers-reduced-motion: reduce) {
-            .site-float { animation: none; }
-          }
-        `}</style>
       </section>
 
       <PropertySection
@@ -220,21 +192,12 @@ export function PublicHomeScreen({
         <AboutContent basePath={basePath} site={site} compact />
       ) : null}
 
-      <section className="px-4 py-16 sm:px-6 lg:px-8" style={{ backgroundColor: tokens.primary }}>
-        <div className="mx-auto max-w-4xl text-center text-white">
-          <h2 className="text-3xl font-semibold sm:text-4xl">Nao encontrou o que procura?</h2>
-          <p className="mx-auto mt-4 max-w-2xl text-white/82">
-            Fale com a equipe e receba indicacoes alinhadas com seu perfil.
-          </p>
-          <Link
-            href={buildSiteHref(basePath, "/contato")}
-            className="mt-8 inline-flex h-11 items-center justify-center rounded-lg bg-white px-5 text-sm font-semibold"
-            style={{ color: tokens.primary }}
-          >
-            Fale conosco
-          </Link>
-        </div>
-      </section>
+      <HomeCategoryShowcase
+        basePath={basePath}
+        heroImage={heroImage}
+        properties={[...data.featured, ...data.exclusive, ...data.latest]}
+        site={site}
+      />
     </>
   );
 }
@@ -297,7 +260,7 @@ export function PublicPropertiesScreen({
               ))}
             </div>
           ) : (
-            <EmptyState title="Nenhum imovel encontrado" description="Tente ajustar os filtros ou fale com a equipe." />
+            <EmptyState site={site} title="Nenhum imovel encontrado" description="Tente ajustar os filtros ou fale com a equipe." />
           )}
 
           {data.totalPages > 1 ? (
@@ -321,7 +284,7 @@ function PublicPropertiesFilterSidebar({
   site: PublicSiteConfig;
 }>) {
   const tokens = getThemeTokens(site);
-  const inputClass = "public-site-filter-field h-11 w-full rounded-[10px] border px-3 text-sm outline-none transition";
+  const inputClass = "public-site-filter-field h-11 w-full rounded-[10px] border-0 px-3 text-sm outline-none transition";
   const selectClass = `${inputClass} appearance-none pr-9`;
 
   return (
@@ -361,12 +324,13 @@ function PublicPropertiesFilterSidebar({
           </div>
         </div>
 
-        <div className="rounded-[12px] border border-white/10 p-3">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+        <details className="group">
+          <summary className="flex h-11 cursor-pointer list-none items-center gap-2 rounded-[10px] px-3 text-sm font-semibold transition hover:brightness-105 public-site-filter-field">
             <CircleDollarSign className="h-4 w-4" style={{ color: tokens.primary }} />
             Mais filtros
-          </div>
-          <div className="space-y-3">
+            <ChevronDown className="ml-auto h-4 w-4 opacity-55 transition group-open:rotate-180" />
+          </summary>
+          <div className="mt-3 space-y-3">
             <FilterSelect className={selectClass} label="Tipo de imóvel" name="tipo" options={data.types} placeholder="Todos os tipos" value={stringQuery(query.tipo)} />
             <FilterSelect className={selectClass} label="Finalidade" name="finalidade" options={buildPurposeOptions(data.purposes)} placeholder="Todas" value={stringQuery(query.finalidade)} />
             <FilterSelect className={selectClass} label="Quartos" name="quartos" options={numericOptions} placeholder="Quartos" value={stringQuery(query.quartos)} />
@@ -385,7 +349,7 @@ function PublicPropertiesFilterSidebar({
               value={stringQuery(query.mobilia)}
             />
           </div>
-        </div>
+        </details>
 
         <button
           type="submit"
@@ -398,7 +362,6 @@ function PublicPropertiesFilterSidebar({
       </form>
       <style>{`
         .public-site-filter-field {
-          border-color: color-mix(in srgb, var(--site-fg) 12%, transparent);
           background: color-mix(in srgb, var(--site-fg) 7%, transparent);
           color: var(--site-fg);
         }
@@ -406,7 +369,6 @@ function PublicPropertiesFilterSidebar({
           color: color-mix(in srgb, var(--site-fg) 52%, transparent);
         }
         .public-site-filter-field:focus {
-          border-color: color-mix(in srgb, var(--site-primary) 42%, transparent);
           background: color-mix(in srgb, var(--site-fg) 10%, transparent);
         }
       `}</style>
@@ -446,7 +408,7 @@ function FilterSelect({
             );
           })}
         </select>
-        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 opacity-50">v</span>
+        <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 opacity-50" />
       </div>
     </label>
   );
@@ -578,7 +540,6 @@ export function PublicAboutScreen({
 }
 
 export function PublicContactScreen({
-  basePath,
   site,
 }: Readonly<{
   basePath: string;
@@ -598,10 +559,19 @@ export function PublicContactScreen({
           <p className="leading-7 opacity-75" style={{ color: tokens.foreground }}>
             Envie seus dados e conte o que procura. A equipe recebe o lead no CRM e retorna pelo canal informado.
           </p>
-          <ContactLine icon={<Phone className="h-5 w-5" />} label="Telefone" value={site.phone} href={site.phone ? `tel:${site.phone}` : undefined} />
-          <ContactLine icon={<Phone className="h-5 w-5" />} label="WhatsApp" value={site.whatsapp} href={site.whatsapp ? buildSiteHref(basePath, "/contato?origem=whatsapp") : undefined} />
-          <ContactLine icon={<Mail className="h-5 w-5" />} label="E-mail" value={site.email} href={site.email ? `mailto:${site.email}` : undefined} />
-          <ContactLine icon={<MapPin className="h-5 w-5" />} label="Endereco" value={[site.address, site.city, site.state].filter(Boolean).join(", ")} />
+          <ContactLine icon={<Phone className="h-5 w-5" />} label="Telefone" site={site} value={site.phone} href={site.phone ? `tel:${site.phone}` : undefined} />
+          {site.whatsapp ? (
+            <PublicContactLeadDialog
+              className="text-[var(--site-fg)]"
+              organizationId={site.organization_id}
+              primaryColor={tokens.primary}
+              siteTitle={getSiteTitle(site)}
+              triggerLabel={site.whatsapp}
+              variant="contact-line"
+            />
+          ) : null}
+          <ContactLine icon={<Mail className="h-5 w-5" />} label="E-mail" site={site} value={site.email} href={site.email ? `mailto:${site.email}` : undefined} />
+          <ContactLine icon={<MapPin className="h-5 w-5" />} label="Endereco" site={site} value={[site.address, site.city, site.state].filter(Boolean).join(", ")} />
         </div>
 
         <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
@@ -684,6 +654,76 @@ function PropertySection({
       </div>
     </section>
   );
+}
+
+function HomeCategoryShowcase({
+  basePath,
+  heroImage,
+  properties,
+  site,
+}: Readonly<{
+  basePath: string;
+  heroImage: string;
+  properties: PublicProperty[];
+  site: PublicSiteConfig;
+}>) {
+  const tokens = getThemeTokens(site);
+  const siteTitle = getSiteTitle(site);
+
+  return (
+    <section className="mx-auto w-full max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
+      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        {homeCategoryShortcuts.map((item) => {
+          const Icon = item.icon;
+          const image = findCategoryImage(properties, item.match) || heroImage;
+
+          return (
+            <Link
+              key={item.href}
+              href={buildSiteHref(basePath, item.href)}
+              className="group relative min-h-[230px] overflow-hidden rounded-[14px] bg-zinc-900 text-white"
+            >
+              <img src={image} alt="" className="absolute inset-0 h-full w-full object-cover transition duration-500 group-hover:scale-105" loading="lazy" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/76 via-black/22 to-black/8" />
+              <div className="absolute inset-x-0 bottom-0 p-5">
+                <span className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-[10px] bg-white/14 backdrop-blur-md">
+                  <Icon className="h-5 w-5" />
+                </span>
+                <h3 className="text-2xl font-light uppercase tracking-wide">{item.label}</h3>
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+
+      <div className="mx-auto mt-12 max-w-3xl text-center">
+        <h2 className="text-3xl font-light" style={{ color: tokens.foreground }}>
+          Nao encontrou o que procura?
+        </h2>
+        <p className="mx-auto mt-3 max-w-2xl leading-7 opacity-70" style={{ color: tokens.foreground }}>
+          Entre em contato conosco e nossa equipe especializada vai ajudar voce a encontrar o imovel ideal.
+        </p>
+        <div className="mt-7">
+          <PublicContactLeadDialog
+            organizationId={site.organization_id}
+            primaryColor={tokens.primary}
+            siteTitle={siteTitle}
+            triggerLabel="Fale conosco"
+            variant="button"
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function findCategoryImage(properties: PublicProperty[], terms: string[]) {
+  const property = properties.find((item) => {
+    const haystack = `${item.tipo_imovel || ""} ${item.titulo || ""}`.toLowerCase();
+    return terms.some((term) => haystack.includes(term));
+  });
+
+  return property?.imagem_principal || property?.fotos?.[0] || null;
 }
 
 function SearchFilterField({
@@ -863,15 +903,19 @@ function PageHero({
 
 function EmptyState({
   description,
+  site,
   title,
 }: Readonly<{
   description: string;
+  site: PublicSiteConfig;
   title: string;
 }>) {
+  const tokens = getThemeTokens(site);
+
   return (
-    <div className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center text-slate-700">
-      <h2 className="text-xl font-semibold text-slate-900">{title}</h2>
-      <p className="mt-2 text-sm">{description}</p>
+    <div className="rounded-[14px] p-8 text-center" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
+      <h2 className="text-xl font-semibold">{title}</h2>
+      <p className="mt-2 text-sm opacity-68">{description}</p>
     </div>
   );
 }
@@ -949,30 +993,33 @@ function ContactLine({
   href,
   icon,
   label,
+  site,
   value,
 }: Readonly<{
   href?: string;
   icon: React.ReactNode;
   label: string;
+  site: PublicSiteConfig;
   value?: string | null;
 }>) {
   if (!value) return null;
+  const tokens = getThemeTokens(site);
   const content = (
     <>
-      <span className="text-amber-600">{icon}</span>
+      <span style={{ color: tokens.primary }}>{icon}</span>
       <span>
-        <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</span>
-        <span className="font-medium text-slate-900">{value}</span>
+        <span className="block text-xs font-semibold uppercase tracking-wide opacity-55">{label}</span>
+        <span className="font-medium">{value}</span>
       </span>
     </>
   );
 
   return href ? (
-    <a href={href} className="flex items-start gap-3 rounded-[12px] bg-slate-100 p-4 text-left transition hover:bg-slate-200">
+    <a href={href} className="flex items-start gap-3 rounded-[12px] p-4 text-left transition hover:brightness-105" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
       {content}
     </a>
   ) : (
-    <div className="flex items-start gap-3 rounded-[12px] bg-slate-100 p-4 text-left">{content}</div>
+    <div className="flex items-start gap-3 rounded-[12px] p-4 text-left" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>{content}</div>
   );
 }
 

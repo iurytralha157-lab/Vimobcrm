@@ -10,6 +10,7 @@ export async function generateMetadata({ params, searchParams }: PageProps) {
   const route = parsePublicSitePath(path);
 
   return await generatePublicSiteMetadata({
+    basePath: `/sites/${slug}`,
     domain: slug,
     route: route.kind === "properties" ? { ...route, query } : route,
   });

@@ -51,7 +51,7 @@ export function getSiteTitle(site: PublicSiteConfig) {
 }
 
 export function getSiteDescription(site: PublicSiteConfig) {
-  return site.site_description || `Encontre os melhores imoveis com a ${getSiteTitle(site)}.`;
+  return site.site_description || `Encontre o imovel dos seus sonhos com a ${getSiteTitle(site)}.`;
 }
 
 export function buildSiteHref(basePath: string, href: string) {

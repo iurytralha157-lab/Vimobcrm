@@ -7,6 +7,7 @@ import { Heart, Mail, MapPin, Menu, MessageCircle, Phone } from "lucide-react";
 import type { PublicSiteConfig, SiteMenuItem } from "@/lib/api/public-site-server";
 import { buildSiteHref, defaultMenuItems, getSiteDescription, getSiteTitle, getThemeTokens } from "./public-site-utils";
 import { PublicSiteTracker } from "./PublicSiteTracker";
+import { PublicContactLeadDialog } from "./PublicContactLeadDialog";
 
 export function PublicSiteShell({
   basePath,
@@ -27,7 +28,6 @@ export function PublicSiteShell({
   const navItems = menuItems.length > 0 ? menuItems : defaultMenuItems;
   const desktopNavItems = buildDesktopNavItems(navItems);
   const title = getSiteTitle(site);
-  const contactHref = buildSiteHref(basePath, "/contato?origem=whatsapp");
   const isPlenusSite = /plenus/i.test(`${site.organization_name || ""} ${site.custom_domain || ""} ${site.subdomain || ""}`);
   const style = {
     "--site-bg": tokens.background,
@@ -137,13 +137,13 @@ export function PublicSiteShell({
       <main>{children}</main>
 
       {site.whatsapp ? (
-        <Link
-          href={contactHref}
-          className="fixed bottom-5 right-5 z-40 inline-flex h-14 w-14 items-center justify-center rounded-full bg-[#25D366] text-white shadow-2xl transition hover:scale-105"
-          aria-label="Abrir formulario de WhatsApp"
-        >
-          <MessageCircle className="h-7 w-7" />
-        </Link>
+        <PublicContactLeadDialog
+          organizationId={site.organization_id}
+          primaryColor={tokens.primary}
+          siteTitle={title}
+          triggerLabel="Abrir formulario de WhatsApp"
+          variant="floating"
+        />
       ) : null}
 
       <footer className="bg-[var(--site-secondary)] text-white">
@@ -183,10 +183,13 @@ export function PublicSiteShell({
               ) : null}
               {site.whatsapp ? (
                 <li>
-                  <Link href={contactHref} className="flex items-center gap-2 hover:text-white">
-                    <MessageCircle className="h-4 w-4" />
-                    WhatsApp
-                  </Link>
+                  <PublicContactLeadDialog
+                    organizationId={site.organization_id}
+                    primaryColor={tokens.primary}
+                    siteTitle={title}
+                    triggerLabel="WhatsApp"
+                    variant="footer-line"
+                  />
                 </li>
               ) : null}
               {site.email ? (

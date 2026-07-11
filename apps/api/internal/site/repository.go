@@ -864,7 +864,10 @@ func (repo Repository) getPublicProperty(ctx context.Context, organizationID str
 		where p.organization_id = $1::uuid
 		  and p.published_on_site = true
 		  and `+publicPropertyActiveSQL()+`
-		  and (p.code = $2 or p.id::text = $2)
+		  and (
+		  	lower(trim(coalesce(p.code, ''))) = lower(trim($2::text))
+		  	or p.id::text = trim($2::text)
+		  )
 		limit 1
 	`, args...)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1076,19 +1079,23 @@ func publicDealTypeAliases(dealType string) []string {
 			"venda/locaÃ§Ã£o",
 			"venda/aluguel",
 		}
-	case "locacao", "locaÃ§Ã£o", "aluguel", "rent":
+	case "locacao", "loca\u00e7\u00e3o", "locaÃ§Ã£o", "aluguel", "rent":
 		return []string{
 			"locacao",
+			"loca\u00e7\u00e3o",
 			"locaÃ§Ã£o",
 			"aluguel",
 			"locacao anual",
+			"loca\u00e7\u00e3o anual",
 			"locaÃ§Ã£o anual",
 			"rent",
 			"venda_locacao",
 			"venda e aluguel",
 			"venda e locacao",
+			"venda e loca\u00e7\u00e3o",
 			"venda e locaÃ§Ã£o",
 			"venda/locacao",
+			"venda/loca\u00e7\u00e3o",
 			"venda/locaÃ§Ã£o",
 			"venda/aluguel",
 		}
@@ -1096,13 +1103,15 @@ func publicDealTypeAliases(dealType string) []string {
 		return []string{"temporada", "season"}
 	case "lancamento", "lanÃ§amento", "launch", "release":
 		return []string{"lancamento", "lanÃ§amento", "launch", "release"}
-	case "venda_locacao", "venda e aluguel", "venda locacao", "venda/locacao", "venda/aluguel":
+	case "venda_locacao", "venda e aluguel", "venda locacao", "venda locação", "venda/locacao", "venda/locação", "venda/aluguel":
 		return []string{
 			"venda_locacao",
 			"venda e aluguel",
 			"venda e locacao",
+			"venda e loca\u00e7\u00e3o",
 			"venda e locaÃ§Ã£o",
 			"venda/locacao",
+			"venda/loca\u00e7\u00e3o",
 			"venda/locaÃ§Ã£o",
 			"venda/aluguel",
 		}
