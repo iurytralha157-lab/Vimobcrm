@@ -1,6 +1,7 @@
 package tenant
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"os"
@@ -11,7 +12,11 @@ import (
 
 const OrganizationHeader = "X-Organization-ID"
 
-func Attach(repo Repository, next http.Handler) http.Handler {
+type Resolver interface {
+	Resolve(ctx context.Context, userID string, requestedOrganizationID string) (Context, error)
+}
+
+func Attach(repo Resolver, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, ok := httpserver.UserFromContext(r.Context())
 		if !ok {

@@ -11,6 +11,7 @@ const eslintConfig = defineConfig([
     ".next/**",
     ".codex/**",
     ".tmp/**",
+    ".validation-tests/**",
     "node_modules/**",
     "out/**",
     "build/**",

@@ -69,7 +69,7 @@ func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrga
 	cacheKey := userID + "|" + requestedOrganizationID
 	if requestedOrganizationID != "" {
 		if cached, ok := repo.getCachedContext(ctx, cacheKey); ok {
-			return repo.applyTeamLeadershipScope(ctx, cached)
+			return cached, nil
 		}
 	}
 
