@@ -1,4 +1,12 @@
 import { vimobAPIRequest } from './vimob-client'
+import {
+  apiAuditLogListResponseSchema,
+  auditLogCreateInputSchema,
+  auditLogListInputSchema,
+  okResponseSchema,
+  parseDomainInput,
+  validateDomainResponse,
+} from '@/lib/validation'
 
 export type AuditLog = {
   id: string
@@ -41,28 +49,34 @@ export async function listAuditLogs(params: {
   limit?: number
   organizationId?: string | null
 }) {
+  const input = parseDomainInput(auditLogListInputSchema, params, 'audit.list')
   return vimobAPIRequest<{ data: AuditLog[]; count: number; totalPages: number }>('/v1/audit-logs', {
-    organizationId: params.organizationId || params.filters?.organizationId,
+    organizationId: input.organizationId || input.filters?.organizationId,
     query: {
-      organizationId: params.filters?.organizationId,
-      userId: params.filters?.userId,
-      action: params.filters?.action,
-      entityType: params.filters?.entityType,
-      startDate: params.filters?.startDate,
-      endDate: params.filters?.endDate,
-      page: params.page,
-      limit: params.limit,
+      organizationId: input.filters?.organizationId,
+      userId: input.filters?.userId,
+      action: input.filters?.action,
+      entityType: input.filters?.entityType,
+      startDate: input.filters?.startDate,
+      endDate: input.filters?.endDate,
+      page: input.page,
+      limit: input.limit,
     },
+  }).then((response) => {
+    validateDomainResponse(apiAuditLogListResponseSchema, response, 'audit.list')
+    return response
   })
 }
 
 export async function createAuditLog(input: AuditLogCreateInput, organizationId?: string | null) {
-  await vimobAPIRequest<{ ok: boolean }>('/v1/audit-logs', {
+  const body = parseDomainInput(auditLogCreateInputSchema, input, 'audit.create')
+  const response = await vimobAPIRequest<{ ok: boolean }>('/v1/audit-logs', {
     method: 'POST',
-    organizationId: organizationId || input.organization_id,
-    body: input,
+    organizationId: organizationId || body.organization_id,
+    body,
     skipTelemetry: true,
   })
+  validateDomainResponse(okResponseSchema, response, 'audit.create')
 }
 
 export const auditAPI = {

@@ -82,7 +82,8 @@ export function getEmptyMetaCampaignSnapshot(): MetaCampaignSnapshot {
 }
 
 export function flattenMetaCreatives(campaigns: MetaCampaignPerformance[]) {
-  return campaigns
+  const validatedCampaigns = parseDomainInput(metaCampaignListSchema, campaigns, 'meta.flatten-creatives') as unknown as MetaCampaignPerformance[];
+  return validatedCampaigns
     .flatMap((campaign) =>
       campaign.adSets.flatMap((adSet) =>
         adSet.creatives.map((creative) => ({
@@ -102,3 +103,4 @@ export function flattenMetaCreatives(campaigns: MetaCampaignPerformance[]) {
 export function getMetaCreativeDestination(creative: Pick<MetaCreativeAsset, "permalinkUrl" | "videoUrl" | "creativeUrl">) {
   return creative.permalinkUrl || creative.videoUrl || creative.creativeUrl || null;
 }
+import { metaCampaignListSchema, parseDomainInput } from '@/lib/validation';

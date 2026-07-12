@@ -1,5 +1,6 @@
 import { vimobAPIRequest } from './vimob-client'
 import type { LeadTask } from '@/hooks/use-lead-tasks'
+import { apiLeadTaskListResponseSchema, apiLeadTaskResponseSchema, cadenceTaskCompletionInputSchema, entityIdSchema, leadTaskCreateInputSchema, leadTaskPatchInputSchema, parseDomainInput, validateDomainResponse } from '@/lib/validation'
 
 type Envelope<T> = {
   data: T
@@ -7,9 +8,11 @@ type Envelope<T> = {
 
 export const leadTasksAPI = {
   async list(leadId: string) {
+    const id = parseDomainInput(entityIdSchema, leadId, 'lead-tasks.list.id')
     const response = await vimobAPIRequest<Envelope<LeadTask[]>>('/v1/lead-tasks', {
-      query: { leadId },
+      query: { leadId: id },
     })
+    validateDomainResponse(apiLeadTaskListResponseSchema, response, 'lead-tasks.list')
     return response.data
   },
 
@@ -21,18 +24,23 @@ export const leadTasksAPI = {
     description?: string
     due_date?: string
   }) {
+    const body = parseDomainInput(leadTaskCreateInputSchema, task, 'lead-tasks.create')
     const response = await vimobAPIRequest<Envelope<LeadTask>>('/v1/lead-tasks', {
       method: 'POST',
-      body: task,
+      body,
     })
+    validateDomainResponse(apiLeadTaskResponseSchema, response, 'lead-tasks.create')
     return response.data
   },
 
   async patch(id: string, input: { is_done?: boolean; outcome?: string; outcome_notes?: string; leadId?: string }) {
-    const response = await vimobAPIRequest<Envelope<LeadTask>>(`/v1/lead-tasks/${id}`, {
+    const taskId = parseDomainInput(entityIdSchema, id, 'lead-tasks.patch.id')
+    const body = parseDomainInput(leadTaskPatchInputSchema, input, 'lead-tasks.patch')
+    const response = await vimobAPIRequest<Envelope<LeadTask>>(`/v1/lead-tasks/${taskId}`, {
       method: 'PATCH',
-      body: input,
+      body,
     })
+    validateDomainResponse(apiLeadTaskResponseSchema, response, 'lead-tasks.patch')
     return response.data
   },
 
@@ -46,10 +54,12 @@ export const leadTasksAPI = {
     outcome?: string
     outcomeNotes?: string
   }) {
+    const body = parseDomainInput(cadenceTaskCompletionInputSchema, input, 'lead-tasks.complete-cadence')
     const response = await vimobAPIRequest<Envelope<LeadTask>>('/v1/lead-tasks/complete-cadence', {
       method: 'POST',
-      body: input,
+      body,
     })
+    validateDomainResponse(apiLeadTaskResponseSchema, response, 'lead-tasks.complete-cadence')
     return response.data
   },
 }

@@ -1,5 +1,6 @@
 import { vimobAPIRequest } from './vimob-client'
 import type { Json } from '@/integrations/supabase/types'
+import { apiLeadMetaResponseSchema, entityIdSchema, parseDomainInput, validateDomainResponse } from '@/lib/validation'
 
 export interface LeadMeta {
   id: string
@@ -34,9 +35,11 @@ type LeadMetaResponse = {
 
 export const leadMetaAPI = {
   async get(leadId: string) {
+    const id = parseDomainInput(entityIdSchema, leadId, 'lead-meta.get.id')
     const response = await vimobAPIRequest<LeadMetaResponse>('/v1/lead-meta', {
-      query: { leadId },
+      query: { leadId: id },
     })
+    validateDomainResponse(apiLeadMetaResponseSchema, response, 'lead-meta.get')
     return response.data
   },
 }

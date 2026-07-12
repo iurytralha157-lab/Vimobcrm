@@ -1,4 +1,17 @@
 import type { Tables, TablesInsert, TablesUpdate } from '@/integrations/supabase/types'
+import {
+  apiLeadListResponseSchema,
+  apiLeadResponseSchema,
+  apiLeadRoundRobinResponseSchema,
+  leadAssignInputSchema,
+  leadCreateInputSchema,
+  leadListQuerySchema,
+  leadMoveStageInputSchema,
+  leadTagInputSchema,
+  leadUpdateInputSchema,
+  parseDomainInput,
+  validateDomainResponse,
+} from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
 
 type LeadInsert = TablesInsert<'leads'>
@@ -109,18 +122,20 @@ type LeadMoveStageInput = {
 // Leads API functions
 export const leadsAPI = {
   async getLeads(organizationId: string, options?: LeadAPIOptions) {
+    const query = parseDomainInput(leadListQuerySchema, options ?? {}, 'leads.list')
     const response = await vimobAPIRequest<APILeadListResponse>('/v1/leads', {
       organizationId,
       query: {
-        limit: options?.limit,
-        offset: options?.offset,
-        stageId: options?.stageId,
-        assignedUserId: options?.assigneeId,
-        assigned: options?.assigned,
-        search: options?.search,
-        dealStatus: options?.dealStatus,
+        limit: query.limit,
+        offset: query.offset,
+        stageId: query.stageId,
+        assignedUserId: query.assigneeId,
+        assigned: query.assigned,
+        search: query.search,
+        dealStatus: query.dealStatus,
       },
     })
+    validateDomainResponse(apiLeadListResponseSchema, response, 'leads.list')
 
     return {
       data: response.data.map(toLegacyLead),
@@ -135,6 +150,7 @@ export const leadsAPI = {
     const response = await vimobAPIRequest<APILeadResponse>(`/v1/leads/${leadId}`, {
       organizationId,
     })
+    validateDomainResponse(apiLeadResponseSchema, response, 'leads.get')
 
     return {
       data: toLegacyLead(response.data),
@@ -143,39 +159,41 @@ export const leadsAPI = {
   },
 
   async createLead(organizationId: string, data: LeadCreateInput) {
+    const body = parseDomainInput(leadCreateInputSchema, {
+      name: data.name,
+      email: data.email,
+      phone: data.phone,
+      source: data.source,
+      message: data.message,
+      propertyCode: data.property_code,
+      propertyId: data.property_id,
+      pipelineId: data.pipeline_id,
+      stageId: data.stage_id,
+      assignedUserId: data.assigned_user_id,
+      interestValue: data.valor_interesse == null ? undefined : String(data.valor_interesse),
+      dealStatus: data.deal_status,
+      lostReason: data.lost_reason,
+      isOwnResource: data.is_own_resource,
+      conversationId: data.conversation_id,
+      tagIds: data.tag_ids,
+      cargo: data.cargo,
+      empresa: data.empresa,
+      profissao: data.profissao,
+      endereco: data.endereco,
+      bairro: data.bairro,
+      numero: data.numero,
+      cep: data.cep,
+      cidade: data.cidade,
+      uf: data.uf,
+      rendaFamiliar: data.renda_familiar,
+      faixaValorImovel: data.faixa_valor_imovel,
+    }, 'leads.create')
     const response = await vimobAPIRequest<APILeadResponse>('/v1/leads', {
       method: 'POST',
       organizationId,
-      body: {
-        name: data.name,
-        email: data.email,
-        phone: data.phone,
-        source: data.source,
-        message: data.message,
-        propertyCode: data.property_code,
-        propertyId: data.property_id,
-        pipelineId: data.pipeline_id,
-        stageId: data.stage_id,
-        assignedUserId: data.assigned_user_id,
-        interestValue: data.valor_interesse == null ? undefined : String(data.valor_interesse),
-        dealStatus: data.deal_status,
-        lostReason: data.lost_reason,
-        isOwnResource: data.is_own_resource,
-        conversationId: data.conversation_id,
-        tagIds: data.tag_ids,
-        cargo: data.cargo,
-        empresa: data.empresa,
-        profissao: data.profissao,
-        endereco: data.endereco,
-        bairro: data.bairro,
-        numero: data.numero,
-        cep: data.cep,
-        cidade: data.cidade,
-        uf: data.uf,
-        rendaFamiliar: data.renda_familiar,
-        faixaValorImovel: data.faixa_valor_imovel,
-      },
+      body,
     })
+    validateDomainResponse(apiLeadResponseSchema, response, 'leads.create')
 
     return {
       data: toLegacyLead(response.data),
@@ -186,11 +204,13 @@ export const leadsAPI = {
   },
 
   async updateLead(leadId: string, data: LeadUpdate, organizationId?: string) {
+    const body = parseDomainInput(leadUpdateInputSchema, toAPILeadUpdateBody(data), 'leads.update')
     const response = await vimobAPIRequest<APILeadResponse>(`/v1/leads/${leadId}`, {
       method: 'PATCH',
       organizationId,
-      body: toAPILeadUpdateBody(data),
+      body,
     })
+    validateDomainResponse(apiLeadResponseSchema, response, 'leads.update')
 
     return {
       data: toLegacyLead(response.data),
@@ -199,15 +219,13 @@ export const leadsAPI = {
   },
 
   async moveLeadStage(leadId: string, data: LeadMoveStageInput, organizationId?: string) {
+    const body = parseDomainInput(leadMoveStageInputSchema, data, 'leads.move-stage')
     const response = await vimobAPIRequest<APILeadResponse>(`/v1/leads/${leadId}/move-stage`, {
       method: 'POST',
       organizationId,
-      body: {
-        stageId: data.stageId,
-        isOwnResource: data.isOwnResource,
-        stageEnteredAt: data.stageEnteredAt,
-      },
+      body,
     })
+    validateDomainResponse(apiLeadResponseSchema, response, 'leads.move-stage')
 
     return {
       data: toLegacyLead(response.data),
@@ -216,13 +234,13 @@ export const leadsAPI = {
   },
 
   async assignLead(leadId: string, assignedUserId: string | null, organizationId?: string) {
+    const body = parseDomainInput(leadAssignInputSchema, { assignedUserId }, 'leads.assign')
     const response = await vimobAPIRequest<APILeadResponse>(`/v1/leads/${leadId}/assign`, {
       method: 'POST',
       organizationId,
-      body: {
-        assignedUserId,
-      },
+      body,
     })
+    validateDomainResponse(apiLeadResponseSchema, response, 'leads.assign')
 
     return {
       data: toLegacyLead(response.data),
@@ -235,6 +253,7 @@ export const leadsAPI = {
       method: 'POST',
       organizationId,
     })
+    validateDomainResponse(apiLeadRoundRobinResponseSchema, response, 'leads.redistribute')
 
     return {
       success: response.success,
@@ -258,10 +277,11 @@ export const leadsAPI = {
   },
 
   async addLeadTag(leadId: string, tagId: string, organizationId?: string) {
+    const body = parseDomainInput(leadTagInputSchema, { tagId }, 'leads.add-tag')
     await vimobAPIRequest<{ ok: boolean }>(`/v1/leads/${leadId}/tags`, {
       method: 'POST',
       organizationId,
-      body: { tagId },
+      body,
     })
 
     return { error: null }

@@ -1,4 +1,5 @@
 import { vimobAPIRequest } from './vimob-client'
+import { apiLeadEnrichmentListResponseSchema, parseDomainInput, uuidListSchema, validateDomainResponse } from '@/lib/validation'
 
 export type LeadEnrichmentTag = {
   id: string
@@ -51,13 +52,15 @@ type ListResponse<T> = {
 export async function getLeadEnrichments(leadIds: string[], organizationId?: string | null) {
   const uniqueIds = Array.from(new Set(leadIds.filter(Boolean)))
   if (uniqueIds.length === 0) return []
+  const ids = parseDomainInput(uuidListSchema, uniqueIds, 'lead-enrichments.list.ids')
 
   const response = await vimobAPIRequest<ListResponse<LeadEnrichment>>('/v1/lead-enrichments', {
     organizationId,
     query: {
-      ids: uniqueIds.join(','),
+      ids: ids.join(','),
     },
   })
+  validateDomainResponse(apiLeadEnrichmentListResponseSchema, response, 'lead-enrichments.list')
 
   return response.data
 }

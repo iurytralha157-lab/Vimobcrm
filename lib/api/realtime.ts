@@ -1,5 +1,6 @@
 import { supabase } from '@/integrations/supabase/client'
 import { buildAPIURL } from './vimob-client'
+import { organizationIdSchema, parseDomainInput, realtimeEventSchema } from '@/lib/validation'
 
 export type BackendRealtimeEvent = {
   id: string
@@ -17,6 +18,7 @@ type ConnectRealtimeOptions = {
 }
 
 export function connectBackendRealtime(options: ConnectRealtimeOptions) {
+  const organizationId = parseDomainInput(organizationIdSchema, options.organizationId, 'realtime.connect.organization')
   let active = true
   let retryAttempt = 0
   let retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -49,7 +51,7 @@ export function connectBackendRealtime(options: ConnectRealtimeOptions) {
         headers: {
           Accept: 'text/event-stream',
           Authorization: `Bearer ${token}`,
-          'X-Organization-ID': options.organizationId,
+          'X-Organization-ID': organizationId,
         },
         signal: controller.signal,
       })
@@ -118,9 +120,9 @@ function dispatchSSEEvent(rawEvent: string, onEvent: (event: BackendRealtimeEven
   if (dataLines.length === 0) return
 
   try {
-    const parsed = JSON.parse(dataLines.join('\n')) as BackendRealtimeEvent
-    if (parsed?.type && parsed?.organizationId) {
-      onEvent(parsed)
+    const parsed = realtimeEventSchema.safeParse(JSON.parse(dataLines.join('\n')))
+    if (parsed.success) {
+      onEvent(parsed.data as BackendRealtimeEvent)
     }
   } catch {
     // Ignore malformed SSE payloads; the next event should still be readable.

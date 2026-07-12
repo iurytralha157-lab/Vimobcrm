@@ -1,3 +1,20 @@
+import {
+  aiAgentInputSchema,
+  aiRoutingRuleInputSchema,
+  aiRunInputSchema,
+  aiSettingsInputSchema,
+  apiAIAgentListResponseSchema,
+  apiAIAgentResponseSchema,
+  apiAIEventListResponseSchema,
+  apiAIMetricsResponseSchema,
+  apiAIRoutingRuleListResponseSchema,
+  apiAIRoutingRuleResponseSchema,
+  apiAIRunEnvelopeSchema,
+  apiAISettingsResponseSchema,
+  okResponseSchema,
+  parseDomainInput,
+  validateDomainResponse,
+} from '@/lib/validation';
 import { vimobAPIRequest } from './vimob-client';
 
 type Envelope<T> = {
@@ -179,20 +196,24 @@ export const aiAPI = {
     const response = await vimobAPIRequest<Envelope<AISettings>>('/v1/ai/settings', {
       organizationId,
     });
+    validateDomainResponse(apiAISettingsResponseSchema, response, 'ai.settings.get');
     return response.data;
   },
 
   async updateSettings(input: AISettingsInput, organizationId?: string | null) {
+    const body = parseDomainInput(aiSettingsInputSchema, input, 'ai.settings.update');
     const response = await vimobAPIRequest<Envelope<AISettings>>('/v1/ai/settings', {
       method: 'PUT',
       organizationId,
-      body: input,
+      body,
     });
+    validateDomainResponse(apiAISettingsResponseSchema, response, 'ai.settings.update');
     return response.data;
   },
 
   async listAgents() {
     const response = await vimobAPIRequest<Envelope<AIAgent[]>>('/v1/admin/ai-agents');
+    validateDomainResponse(apiAIAgentListResponseSchema, response, 'ai.agents.admin.list');
     return response.data;
   },
 
@@ -200,94 +221,116 @@ export const aiAPI = {
     const response = await vimobAPIRequest<Envelope<AIAgent[]>>('/v1/ai/agents', {
       organizationId,
     });
+    validateDomainResponse(apiAIAgentListResponseSchema, response, 'ai.agents.list');
     return response.data;
   },
 
   async createAgent(input: AIAgentInput) {
+    const body = parseDomainInput(aiAgentInputSchema, input, 'ai.agents.admin.create');
     const response = await vimobAPIRequest<Envelope<AIAgent>>('/v1/admin/ai-agents', {
       method: 'POST',
-      body: input,
+      body,
     });
+    validateDomainResponse(apiAIAgentResponseSchema, response, 'ai.agents.admin.create');
     return response.data;
   },
 
   async updateAgent(id: string, input: AIAgentInput) {
+    const body = parseDomainInput(aiAgentInputSchema, input, 'ai.agents.admin.update');
     const response = await vimobAPIRequest<Envelope<AIAgent>>(`/v1/admin/ai-agents/${id}`, {
       method: 'PATCH',
-      body: input,
+      body,
     });
+    validateDomainResponse(apiAIAgentResponseSchema, response, 'ai.agents.admin.update');
     return response.data;
   },
 
   async deleteAgent(id: string) {
-    return vimobAPIRequest<{ ok: boolean }>(`/v1/admin/ai-agents/${id}`, {
+    const response = await vimobAPIRequest<{ ok: boolean }>(`/v1/admin/ai-agents/${id}`, {
       method: 'DELETE',
     });
+    validateDomainResponse(okResponseSchema, response, 'ai.agents.admin.delete');
+    return response;
   },
 
   async createOrganizationAgent(input: AIAgentInput, organizationId?: string | null) {
+    const body = parseDomainInput(aiAgentInputSchema, input, 'ai.agents.create');
     const response = await vimobAPIRequest<Envelope<AIAgent>>('/v1/ai/agents', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     });
+    validateDomainResponse(apiAIAgentResponseSchema, response, 'ai.agents.create');
     return response.data;
   },
 
   async updateOrganizationAgent(id: string, input: AIAgentInput, organizationId?: string | null) {
+    const body = parseDomainInput(aiAgentInputSchema, input, 'ai.agents.update');
     const response = await vimobAPIRequest<Envelope<AIAgent>>(`/v1/ai/agents/${id}`, {
       method: 'PATCH',
       organizationId,
-      body: input,
+      body,
     });
+    validateDomainResponse(apiAIAgentResponseSchema, response, 'ai.agents.update');
     return response.data;
   },
 
   async deleteOrganizationAgent(id: string, organizationId?: string | null) {
-    return vimobAPIRequest<{ ok: boolean }>(`/v1/ai/agents/${id}`, {
+    const response = await vimobAPIRequest<{ ok: boolean }>(`/v1/ai/agents/${id}`, {
       method: 'DELETE',
       organizationId,
     });
+    validateDomainResponse(okResponseSchema, response, 'ai.agents.delete');
+    return response;
   },
 
   async listRoutingRules(organizationId?: string | null) {
     const response = await vimobAPIRequest<Envelope<AIRoutingRule[]>>('/v1/ai/routing-rules', {
       organizationId,
     });
+    validateDomainResponse(apiAIRoutingRuleListResponseSchema, response, 'ai.routing-rules.list');
     return response.data;
   },
 
   async createRoutingRule(input: AIRoutingRuleInput, organizationId?: string | null) {
+    const body = parseDomainInput(aiRoutingRuleInputSchema, input, 'ai.routing-rules.create');
     const response = await vimobAPIRequest<Envelope<AIRoutingRule>>('/v1/ai/routing-rules', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     });
+    validateDomainResponse(apiAIRoutingRuleResponseSchema, response, 'ai.routing-rules.create');
     return response.data;
   },
 
   async updateRoutingRule(id: string, input: AIRoutingRuleInput, organizationId?: string | null) {
+    const body = parseDomainInput(aiRoutingRuleInputSchema, input, 'ai.routing-rules.update');
     const response = await vimobAPIRequest<Envelope<AIRoutingRule>>(`/v1/ai/routing-rules/${id}`, {
       method: 'PATCH',
       organizationId,
-      body: input,
+      body,
     });
+    validateDomainResponse(apiAIRoutingRuleResponseSchema, response, 'ai.routing-rules.update');
     return response.data;
   },
 
   async deleteRoutingRule(id: string, organizationId?: string | null) {
-    return vimobAPIRequest<{ ok: boolean }>(`/v1/ai/routing-rules/${id}`, {
+    const response = await vimobAPIRequest<{ ok: boolean }>(`/v1/ai/routing-rules/${id}`, {
       method: 'DELETE',
       organizationId,
     });
+    validateDomainResponse(okResponseSchema, response, 'ai.routing-rules.delete');
+    return response;
   },
 
   async run(input: AIRunInput, organizationId?: string | null) {
+    const body = parseDomainInput(aiRunInputSchema, input, 'ai.run');
     const response = await vimobAPIRequest<Envelope<AIRunResponse>>('/v1/ai/run', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     });
+    validateDomainResponse(apiAIRunEnvelopeSchema, response, 'ai.run');
     return response.data;
   },
 
@@ -295,6 +338,7 @@ export const aiAPI = {
     const response = await vimobAPIRequest<Envelope<AIMetrics>>('/v1/ai/metrics', {
       organizationId,
     });
+    validateDomainResponse(apiAIMetricsResponseSchema, response, 'ai.metrics');
     return response.data;
   },
 
@@ -302,6 +346,7 @@ export const aiAPI = {
     const response = await vimobAPIRequest<Envelope<AIEvent[]>>('/v1/ai/events', {
       organizationId,
     });
+    validateDomainResponse(apiAIEventListResponseSchema, response, 'ai.events');
     return response.data;
   },
 };

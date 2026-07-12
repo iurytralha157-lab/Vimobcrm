@@ -1,4 +1,11 @@
 import { supabase } from '@/integrations/supabase/client'
+import {
+  leadMetaFiltersResponseSchema,
+  pipelineBoardResponseSchema,
+  pipelineStageCountsResponseSchema,
+  pipelineStageLeadsResponseSchema,
+  validateDomainResponse,
+} from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
 import { VimobAPIError } from './vimob-client'
 
@@ -64,6 +71,7 @@ export async function getPipelineBoard(params: {
       timeoutMs: 4_000,
       skipTelemetry: true,
     })
+    validateDomainResponse(pipelineBoardResponseSchema, response, 'pipeline-board.list')
 
     return response.data
   } catch (error) {
@@ -82,12 +90,14 @@ export async function getPipelineStageLeads(params: {
   limit?: number
 }) {
   try {
-    return await vimobAPIRequest<StageLeadsResponse>('/v1/pipeline-stage-leads', {
+    const response = await vimobAPIRequest<StageLeadsResponse>('/v1/pipeline-stage-leads', {
       organizationId: params.organizationId,
       query: buildPipelineBoardQuery(params),
       timeoutMs: 4_000,
       skipTelemetry: true,
     })
+    validateDomainResponse(pipelineStageLeadsResponseSchema, response, 'pipeline-board.stage-leads')
+    return response
   } catch (error) {
     if (!isReadAPIUnavailable(error)) throw error
     const leads = await getStageLeadsFromSupabase(params)
@@ -114,6 +124,7 @@ export async function getPipelineStageCounts(params: {
       timeoutMs: 4_000,
       skipTelemetry: true,
     })
+    validateDomainResponse(pipelineStageCountsResponseSchema, response, 'pipeline-board.stage-counts')
 
     return response.data
   } catch (error) {
@@ -136,6 +147,7 @@ export async function getLeadMetaFilters(params: {
       timeoutMs: 4_000,
       skipTelemetry: true,
     })
+    validateDomainResponse(leadMetaFiltersResponseSchema, response, 'pipeline-board.meta-filters')
 
     return response.data
   } catch (error) {

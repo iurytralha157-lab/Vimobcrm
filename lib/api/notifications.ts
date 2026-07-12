@@ -1,3 +1,14 @@
+import {
+  apiDispatchNotificationResponseSchema,
+  apiNotificationListResponseSchema,
+  apiNotificationResponseSchema,
+  apiUnreadCountResponseSchema,
+  createNotificationInputSchema,
+  dispatchNotificationInputSchema,
+  okResponseSchema,
+  parseDomainInput,
+  validateDomainResponse,
+} from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
 
 type Envelope<T> = {
@@ -62,25 +73,30 @@ export const notificationsAPI = {
         limit: params.limit,
       },
     })
+    validateDomainResponse(apiNotificationListResponseSchema, response, 'notifications.list')
     return response.data
   },
 
   async unreadCount(userId?: string) {
-    return vimobAPIRequest<{ count: number }>('/v1/notifications/unread-count', {
+    const response = await vimobAPIRequest<{ count: number }>('/v1/notifications/unread-count', {
       query: { userId },
     })
+    validateDomainResponse(apiUnreadCountResponseSchema, response, 'notifications.unread-count')
+    return response
   },
 
   async markRead(id: string) {
-    await vimobAPIRequest<{ ok: boolean }>(`/v1/notifications/${id}/read`, {
+    const response = await vimobAPIRequest<{ ok: boolean }>(`/v1/notifications/${id}/read`, {
       method: 'POST',
     })
+    validateDomainResponse(okResponseSchema, response, 'notifications.mark-read')
   },
 
   async markAllRead() {
-    await vimobAPIRequest<{ ok: boolean }>('/v1/notifications/read-all', {
+    const response = await vimobAPIRequest<{ ok: boolean }>('/v1/notifications/read-all', {
       method: 'POST',
     })
+    validateDomainResponse(okResponseSchema, response, 'notifications.mark-all-read')
   },
 
   async create(notification: {
@@ -92,31 +108,36 @@ export const notificationsAPI = {
     lead_id?: string
     metadata?: Record<string, unknown>
   }) {
+    const body = parseDomainInput(createNotificationInputSchema, notification, 'notifications.create')
     const response = await vimobAPIRequest<Envelope<Notification>>('/v1/notifications', {
       method: 'POST',
-      body: notification,
+      body,
     })
+    validateDomainResponse(apiNotificationResponseSchema, response, 'notifications.create')
     return response.data
   },
 
   async dispatch(input: DispatchNotificationInput) {
-    return vimobAPIRequest<DispatchNotificationResult>('/v1/notifications/dispatch', {
+    const body = parseDomainInput(dispatchNotificationInputSchema, {
+      event_key: input.eventKey,
+      template_slug: input.templateSlug,
+      organization_id: input.organizationId,
+      user_id: input.userId,
+      recipient: input.recipient,
+      title: input.title,
+      content: input.content,
+      variables: input.variables || {},
+      lead_id: input.leadId,
+      dedupe_key: input.dedupeKey,
+      is_test: input.isTest,
+      channels: input.channels,
+    }, 'notifications.dispatch')
+    const response = await vimobAPIRequest<DispatchNotificationResult>('/v1/notifications/dispatch', {
       method: 'POST',
       organizationId: input.organizationId,
-      body: {
-        event_key: input.eventKey,
-        template_slug: input.templateSlug,
-        organization_id: input.organizationId,
-        user_id: input.userId,
-        recipient: input.recipient,
-        title: input.title,
-        content: input.content,
-        variables: input.variables || {},
-        lead_id: input.leadId,
-        dedupe_key: input.dedupeKey,
-        is_test: input.isTest,
-        channels: input.channels,
-      },
+      body,
     })
+    validateDomainResponse(apiDispatchNotificationResponseSchema, response, 'notifications.dispatch')
+    return response
   },
 }

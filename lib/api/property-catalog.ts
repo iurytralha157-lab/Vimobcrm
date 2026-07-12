@@ -1,4 +1,5 @@
 import { vimobAPIRequest } from './vimob-client'
+import { apiPropertyCatalogListResponseSchema, apiPropertyCatalogResponseSchema, organizationIdSchema, parseDomainInput, propertyCatalogCreateInputSchema, propertyCatalogSeedInputSchema, validateDomainResponse } from '@/lib/validation'
 
 export type PropertyCatalogItem = {
   id: string
@@ -25,25 +26,36 @@ const endpoints = {
 type CatalogKey = keyof typeof endpoints
 
 async function listCatalog(key: CatalogKey, organizationId: string) {
-  return vimobAPIRequest<CatalogResponse>(endpoints[key], {
-    organizationId,
+  const orgId = parseDomainInput(organizationIdSchema, organizationId, `property-catalog.${key}.list.organization`)
+  const response = await vimobAPIRequest<CatalogResponse>(endpoints[key], {
+    organizationId: orgId,
   })
+  validateDomainResponse(apiPropertyCatalogListResponseSchema, response, `property-catalog.${key}.list`)
+  return response
 }
 
 async function createCatalogItem(key: CatalogKey, organizationId: string, input: { name: string; icon?: string | null }) {
-  return vimobAPIRequest<CatalogItemResponse>(endpoints[key], {
+  const orgId = parseDomainInput(organizationIdSchema, organizationId, `property-catalog.${key}.create.organization`)
+  const body = parseDomainInput(propertyCatalogCreateInputSchema, input, `property-catalog.${key}.create`)
+  const response = await vimobAPIRequest<CatalogItemResponse>(endpoints[key], {
     method: 'POST',
-    organizationId,
-    body: input,
+    organizationId: orgId,
+    body,
   })
+  validateDomainResponse(apiPropertyCatalogResponseSchema, response, `property-catalog.${key}.create`)
+  return response
 }
 
 async function seedCatalog(key: Exclude<CatalogKey, 'types'>, organizationId: string, names: string[]) {
-  return vimobAPIRequest<CatalogResponse>(`${endpoints[key]}/seed-defaults`, {
+  const orgId = parseDomainInput(organizationIdSchema, organizationId, `property-catalog.${key}.seed.organization`)
+  const body = parseDomainInput(propertyCatalogSeedInputSchema, { names }, `property-catalog.${key}.seed`)
+  const response = await vimobAPIRequest<CatalogResponse>(`${endpoints[key]}/seed-defaults`, {
     method: 'POST',
-    organizationId,
-    body: { names },
+    organizationId: orgId,
+    body,
   })
+  validateDomainResponse(apiPropertyCatalogListResponseSchema, response, `property-catalog.${key}.seed`)
+  return response
 }
 
 export const propertyCatalogAPI = {

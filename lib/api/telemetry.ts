@@ -1,4 +1,5 @@
 import { vimobAPIRequest } from './vimob-client'
+import { apiErrorEventListResponseSchema, apiErrorEventResponseSchema, entityIdSchema, errorEventFiltersSchema, parseDomainInput, reportErrorEventInputSchema, validateDomainResponse } from '@/lib/validation'
 
 export type ErrorEventSeverity = 'debug' | 'info' | 'warning' | 'error' | 'critical'
 export type ErrorEventSource = 'frontend' | 'backend' | 'api'
@@ -73,38 +74,47 @@ export type ErrorEventsResponse = {
 
 export const telemetryAPI = {
   async reportErrorEvent(input: ReportErrorEventInput) {
-    const { organizationId, ...body } = input
+    const validated = parseDomainInput(reportErrorEventInputSchema, input, 'telemetry.report')
+    const { organizationId, ...body } = validated
 
-    return vimobAPIRequest<{ data: ErrorEvent }>('/v1/telemetry/errors', {
+    const response = await vimobAPIRequest<{ data: ErrorEvent }>('/v1/telemetry/errors', {
       method: 'POST',
       body,
       organizationId,
       skipTelemetry: true,
     })
+    validateDomainResponse(apiErrorEventResponseSchema, response, 'telemetry.report')
+    return response
   },
 
   async getErrorEvents(filters: ErrorEventFilters = {}) {
-    return vimobAPIRequest<ErrorEventsResponse>('/v1/admin/error-events', {
+    const input = parseDomainInput(errorEventFiltersSchema, filters, 'telemetry.list')
+    const response = await vimobAPIRequest<ErrorEventsResponse>('/v1/admin/error-events', {
       query: {
-        limit: filters.limit,
-        offset: filters.offset,
-        search: filters.search,
-        severity: filters.severity === 'all' ? undefined : filters.severity,
-        source: filters.source === 'all' ? undefined : filters.source,
-        organizationId: filters.organizationId,
-        fingerprint: filters.fingerprint,
-        unresolved: filters.unresolved,
+        limit: input.limit,
+        offset: input.offset,
+        search: input.search,
+        severity: input.severity === 'all' ? undefined : input.severity,
+        source: input.source === 'all' ? undefined : input.source,
+        organizationId: input.organizationId,
+        fingerprint: input.fingerprint,
+        unresolved: input.unresolved,
       },
       skipTelemetry: true,
     })
+    validateDomainResponse(apiErrorEventListResponseSchema, response, 'telemetry.list')
+    return response
   },
 
   async resolveErrorEvent(id: string, note?: string) {
-    return vimobAPIRequest<{ data: ErrorEvent }>(`/v1/admin/error-events/${id}/resolve`, {
+    const eventId = parseDomainInput(entityIdSchema, id, 'telemetry.resolve.id')
+    const response = await vimobAPIRequest<{ data: ErrorEvent }>(`/v1/admin/error-events/${eventId}/resolve`, {
       method: 'POST',
       body: { note: note || '' },
       skipTelemetry: true,
     })
+    validateDomainResponse(apiErrorEventResponseSchema, response, 'telemetry.resolve')
+    return response
   },
 }
 

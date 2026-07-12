@@ -1,5 +1,20 @@
 import type { Tables } from '@/integrations/supabase/types'
 import { supabase } from '@/integrations/supabase/client'
+import {
+  apiPipelineListResponseSchema,
+  apiPipelineResponseSchema,
+  apiStageListResponseSchema,
+  apiStageResponseSchema,
+  parseDomainInput,
+  pipelineCreateInputSchema,
+  pipelineRoundRobinInputSchema,
+  pipelineUpdateInputSchema,
+  stageCreateInputSchema,
+  stageUpdateInputSchema,
+  stagesReorderInputSchema,
+  uuidSchema,
+  validateDomainResponse,
+} from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
 import { VimobAPIError } from './vimob-client'
 
@@ -62,6 +77,7 @@ export const pipelinesAPI = {
         timeoutMs: 4_000,
         skipTelemetry: true,
       })
+      validateDomainResponse(apiPipelineListResponseSchema, response, 'pipelines.list')
 
       return response.data.map(toLegacyPipeline)
     } catch (error) {
@@ -71,27 +87,25 @@ export const pipelinesAPI = {
   },
 
   async createPipeline(input: { name: string; isDefault?: boolean }, organizationId?: string) {
+    const body = parseDomainInput(pipelineCreateInputSchema, input, 'pipelines.create')
     const response = await vimobAPIRequest<APIItemResponse<APIPipeline>>('/v1/pipelines', {
       method: 'POST',
       organizationId,
-      body: {
-        name: input.name,
-        isDefault: input.isDefault,
-      },
+      body,
     })
+    validateDomainResponse(apiPipelineResponseSchema, response, 'pipelines.create')
 
     return toLegacyPipeline(response.data)
   },
 
   async updatePipeline(id: string, input: { name?: string; isDefault?: boolean }, organizationId?: string) {
+    const body = parseDomainInput(pipelineUpdateInputSchema, input, 'pipelines.update')
     const response = await vimobAPIRequest<APIItemResponse<APIPipeline>>(`/v1/pipelines/${id}`, {
       method: 'PATCH',
       organizationId,
-      body: {
-        name: input.name,
-        isDefault: input.isDefault,
-      },
+      body,
     })
+    validateDomainResponse(apiPipelineResponseSchema, response, 'pipelines.update')
 
     return toLegacyPipeline(response.data)
   },
@@ -111,6 +125,7 @@ export const pipelinesAPI = {
         timeoutMs: 4_000,
         skipTelemetry: true,
       })
+      validateDomainResponse(apiStageListResponseSchema, response, 'stages.list')
 
       return response.data.map(toLegacyStage)
     } catch (error) {
@@ -120,41 +135,45 @@ export const pipelinesAPI = {
   },
 
   async createStage(input: { pipelineId: string; name: string; color?: string }, organizationId?: string) {
-    const response = await vimobAPIRequest<APIItemResponse<APIStage>>(`/v1/pipelines/${input.pipelineId}/stages`, {
+    const pipelineId = parseDomainInput(uuidSchema, input.pipelineId, 'stages.create.pipeline-id')
+    const body = parseDomainInput(stageCreateInputSchema, { name: input.name, color: input.color }, 'stages.create')
+    const response = await vimobAPIRequest<APIItemResponse<APIStage>>(`/v1/pipelines/${pipelineId}/stages`, {
       method: 'POST',
       organizationId,
-      body: {
-        name: input.name,
-        color: input.color,
-      },
+      body,
     })
+    validateDomainResponse(apiStageResponseSchema, response, 'stages.create')
 
     return toLegacyStage(response.data)
   },
 
   async updateStage(id: string, input: { name?: string; color?: string; stageKey?: string; isWon?: boolean; isLost?: boolean; isActive?: boolean }, organizationId?: string) {
+    const body = parseDomainInput(stageUpdateInputSchema, input, 'stages.update')
     const response = await vimobAPIRequest<APIItemResponse<APIStage>>(`/v1/stages/${id}`, {
       method: 'PATCH',
       organizationId,
-      body: input,
+      body,
     })
+    validateDomainResponse(apiStageResponseSchema, response, 'stages.update')
 
     return toLegacyStage(response.data)
   },
 
   async reorderStages(pipelineId: string, stages: StageOrderItem[], organizationId?: string) {
+    const body = parseDomainInput(stagesReorderInputSchema, {
+      stages: stages.map((stage) => ({
+        id: stage.id,
+        name: stage.name,
+        color: stage.color || undefined,
+        stageKey: stage.stage_key || undefined,
+      })),
+    }, 'stages.reorder')
     const response = await vimobAPIRequest<APIListResponse<APIStage>>(`/v1/pipelines/${pipelineId}/stages/reorder`, {
       method: 'POST',
       organizationId,
-      body: {
-        stages: stages.map((stage) => ({
-          id: stage.id,
-          name: stage.name,
-          color: stage.color || undefined,
-          stageKey: stage.stage_key || undefined,
-        })),
-      },
+      body,
     })
+    validateDomainResponse(apiStageListResponseSchema, response, 'stages.reorder')
 
     return response.data.map(toLegacyStage)
   },
@@ -167,13 +186,13 @@ export const pipelinesAPI = {
   },
 
   async setPipelineRoundRobin(pipelineId: string, roundRobinId: string | null, organizationId?: string) {
+    const body = parseDomainInput(pipelineRoundRobinInputSchema, { roundRobinId }, 'pipelines.round-robin')
     const response = await vimobAPIRequest<APIItemResponse<APIPipeline>>(`/v1/pipelines/${pipelineId}/round-robin`, {
       method: 'POST',
       organizationId,
-      body: {
-        roundRobinId,
-      },
+      body,
     })
+    validateDomainResponse(apiPipelineResponseSchema, response, 'pipelines.round-robin')
 
     return toLegacyPipeline(response.data)
   },

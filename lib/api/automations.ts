@@ -1,3 +1,23 @@
+import {
+  apiAutomationExecutionListResponseSchema,
+  apiAutomationListResponseSchema,
+  apiAutomationMediaListResponseSchema,
+  apiAutomationMediaResponseSchema,
+  apiAutomationNodesResponseSchema,
+  apiAutomationResponseSchema,
+  apiAutomationTemplateListResponseSchema,
+  apiAutomationTemplateResponseSchema,
+  apiAutomationWithNodesResponseSchema,
+  apiStartAutomationResponseSchema,
+  automationMediaTypeSchema,
+  createAutomationInputSchema,
+  createAutomationTemplateInputSchema,
+  parseDomainInput,
+  saveAutomationFlowInputSchema,
+  startAutomationInputSchema,
+  updateAutomationBodySchema,
+  validateDomainResponse,
+} from '@/lib/validation';
 import { vimobAPIRequest } from './vimob-client';
 
 type Envelope<T> = {
@@ -171,6 +191,7 @@ export const automationsAPI = {
     const response = await vimobAPIRequest<Envelope<Automation[]>>('/v1/automations', {
       organizationId,
     });
+    validateDomainResponse(apiAutomationListResponseSchema, response, 'automations.list');
     return response.data;
   },
 
@@ -178,25 +199,30 @@ export const automationsAPI = {
     const response = await vimobAPIRequest<Envelope<AutomationWithNodes>>(`/v1/automations/${automationId}`, {
       organizationId,
     });
+    validateDomainResponse(apiAutomationWithNodesResponseSchema, response, 'automations.get');
     return response.data;
   },
 
   async createAutomation(input: CreateAutomationInput, organizationId?: string | null) {
+    const body = parseDomainInput(createAutomationInputSchema, input, 'automations.create');
     const response = await vimobAPIRequest<Envelope<Automation>>('/v1/automations', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     });
+    validateDomainResponse(apiAutomationResponseSchema, response, 'automations.create');
     return response.data;
   },
 
   async updateAutomation(input: UpdateAutomationInput, organizationId?: string | null) {
     const { id, ...body } = input;
+    const validatedBody = parseDomainInput(updateAutomationBodySchema, body, 'automations.update');
     const response = await vimobAPIRequest<Envelope<Automation>>(`/v1/automations/${id}`, {
       method: 'PATCH',
       organizationId,
-      body,
+      body: validatedBody,
     });
+    validateDomainResponse(apiAutomationResponseSchema, response, 'automations.update');
     return response.data;
   },
 
@@ -212,6 +238,7 @@ export const automationsAPI = {
       method: 'POST',
       organizationId,
     });
+    validateDomainResponse(apiAutomationResponseSchema, response, 'automations.duplicate');
     return response.data;
   },
 
@@ -220,14 +247,16 @@ export const automationsAPI = {
     flowDefinition: FlowDefinition,
     organizationId?: string | null,
   ) {
+    const body = parseDomainInput(saveAutomationFlowInputSchema, { flowDefinition }, 'automations.flow.save');
     const response = await vimobAPIRequest<Envelope<{ nodes: AutomationNode[] }>>(
       `/v1/automations/${automationId}/flow`,
       {
         method: 'PUT',
         organizationId,
-        body: { flowDefinition },
+        body,
       },
     );
+    validateDomainResponse(apiAutomationNodesResponseSchema, response, 'automations.flow.save');
     return response.data;
   },
 
@@ -236,14 +265,16 @@ export const automationsAPI = {
     input: { leadId: string; conversationId?: string | null },
     organizationId?: string | null,
   ) {
+    const body = parseDomainInput(startAutomationInputSchema, input, 'automations.start');
     const response = await vimobAPIRequest<Envelope<StartAutomationResult>>(
       `/v1/automations/${automationId}/start`,
       {
         method: 'POST',
         organizationId,
-        body: input,
+        body,
       },
     );
+    validateDomainResponse(apiStartAutomationResponseSchema, response, 'automations.start');
 
     return response.data;
   },
@@ -252,6 +283,7 @@ export const automationsAPI = {
     const response = await vimobAPIRequest<Envelope<AutomationTemplate[]>>('/v1/automation-templates', {
       organizationId,
     });
+    validateDomainResponse(apiAutomationTemplateListResponseSchema, response, 'automations.templates.list');
     return response.data;
   },
 
@@ -259,11 +291,13 @@ export const automationsAPI = {
     input: { name: string; content: string; media_url?: string | null; media_type?: string | null },
     organizationId?: string | null,
   ) {
+    const body = parseDomainInput(createAutomationTemplateInputSchema, input, 'automations.templates.create');
     const response = await vimobAPIRequest<Envelope<AutomationTemplate>>('/v1/automation-templates', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     });
+    validateDomainResponse(apiAutomationTemplateResponseSchema, response, 'automations.templates.create');
     return response.data;
   },
 
@@ -286,6 +320,7 @@ export const automationsAPI = {
         limit: params.limit,
       },
     });
+    validateDomainResponse(apiAutomationExecutionListResponseSchema, response, 'automations.executions.list');
     return response.data;
   },
 
@@ -297,10 +332,12 @@ export const automationsAPI = {
   },
 
   async listMedia(mediaType: AutomationMediaType, organizationId?: string | null) {
+    const validatedMediaType = parseDomainInput(automationMediaTypeSchema, mediaType, 'automations.media.list');
     const response = await vimobAPIRequest<Envelope<AutomationMediaFile[]>>('/v1/automation-media', {
       organizationId,
-      query: { mediaType },
+      query: { mediaType: validatedMediaType },
     });
+    validateDomainResponse(apiAutomationMediaListResponseSchema, response, 'automations.media.list');
     return response.data;
   },
 
@@ -318,6 +355,7 @@ export const automationsAPI = {
       organizationId,
       body: formData,
     });
+    validateDomainResponse(apiAutomationMediaResponseSchema, response, 'automations.media.upload');
     return response.data;
   },
 

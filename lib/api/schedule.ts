@@ -1,3 +1,19 @@
+import {
+  apiScheduleAssigneeListResponseSchema,
+  apiScheduleCapabilitiesResponseSchema,
+  apiScheduleCommentListResponseSchema,
+  apiScheduleCommentResponseSchema,
+  apiScheduleEventListResponseSchema,
+  apiScheduleEventResponseSchema,
+  completeScheduleEventInputSchema,
+  createScheduleEventInputSchema,
+  parseDomainInput,
+  scheduleAssigneeInputSchema,
+  scheduleCommentInputSchema,
+  scheduleListQuerySchema,
+  updateScheduleEventInputSchema,
+  validateDomainResponse,
+} from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
 
 type Envelope<T> = {
@@ -122,46 +138,60 @@ export const scheduleAPI = {
     startDate?: Date
     endDate?: Date
   }) {
+    const query = parseDomainInput(scheduleListQuerySchema, {
+      eventId: params.eventId,
+      userId: params.userId,
+      leadId: params.leadId,
+      startDate: params.startDate,
+      endDate: params.endDate,
+    }, 'schedule.events.list')
     const response = await vimobAPIRequest<Envelope<ScheduleEvent[]>>('/v1/schedule/events', {
       organizationId: params.organizationId,
       query: {
-        eventId: params.eventId,
-        userId: params.userId,
-        leadId: params.leadId,
-        startDate: params.startDate?.toISOString(),
-        endDate: params.endDate?.toISOString(),
+        eventId: query.eventId,
+        userId: query.userId,
+        leadId: query.leadId,
+        startDate: query.startDate?.toISOString(),
+        endDate: query.endDate?.toISOString(),
       },
     })
+    validateDomainResponse(apiScheduleEventListResponseSchema, response, 'schedule.events.list')
 
     return response.data
   },
 
   async createScheduleEvent(organizationId: string | null | undefined, data: CreateScheduleEventInput) {
+    const body = parseDomainInput(createScheduleEventInputSchema, normalizeScheduleEventBody(data), 'schedule.events.create')
     const response = await vimobAPIRequest<Envelope<ScheduleEvent>>('/v1/schedule/events', {
       method: 'POST',
       organizationId,
-      body: normalizeScheduleEventBody(data),
+      body,
     })
+    validateDomainResponse(apiScheduleEventResponseSchema, response, 'schedule.events.create')
 
     return response.data
   },
 
   async updateScheduleEvent(eventId: string, data: UpdateScheduleEventInput, organizationId?: string | null) {
+    const body = parseDomainInput(updateScheduleEventInputSchema, normalizeScheduleEventBody(data), 'schedule.events.update')
     const response = await vimobAPIRequest<Envelope<ScheduleEvent>>(`/v1/schedule/events/${eventId}`, {
       method: 'PATCH',
       organizationId,
-      body: normalizeScheduleEventBody(data),
+      body,
     })
+    validateDomainResponse(apiScheduleEventResponseSchema, response, 'schedule.events.update')
 
     return response.data
   },
 
   async completeScheduleEvent(eventId: string, status: string, organizationId?: string | null) {
+    const body = parseDomainInput(completeScheduleEventInputSchema, { status }, 'schedule.events.complete')
     const response = await vimobAPIRequest<Envelope<ScheduleEvent>>(`/v1/schedule/events/${eventId}/complete`, {
       method: 'POST',
       organizationId,
-      body: { status },
+      body,
     })
+    validateDomainResponse(apiScheduleEventResponseSchema, response, 'schedule.events.complete')
 
     return response.data
   },
@@ -171,6 +201,7 @@ export const scheduleAPI = {
       method: 'DELETE',
       organizationId,
     })
+    validateDomainResponse(apiScheduleEventResponseSchema, response, 'schedule.events.delete')
 
     return response.data
   },
@@ -179,16 +210,19 @@ export const scheduleAPI = {
     const response = await vimobAPIRequest<Envelope<ScheduleComment[]>>(`/v1/schedule/events/${eventId}/comments`, {
       organizationId,
     })
+    validateDomainResponse(apiScheduleCommentListResponseSchema, response, 'schedule.comments.list')
 
     return response.data
   },
 
   async addComment(eventId: string, content: string, organizationId?: string | null) {
+    const body = parseDomainInput(scheduleCommentInputSchema, { content }, 'schedule.comments.create')
     const response = await vimobAPIRequest<Envelope<ScheduleComment>>(`/v1/schedule/events/${eventId}/comments`, {
       method: 'POST',
       organizationId,
-      body: { content },
+      body,
     })
+    validateDomainResponse(apiScheduleCommentResponseSchema, response, 'schedule.comments.create')
 
     return response.data
   },
@@ -197,16 +231,19 @@ export const scheduleAPI = {
     const response = await vimobAPIRequest<Envelope<AssigneeUser[]>>(`/v1/schedule/events/${eventId}/assignees`, {
       organizationId,
     })
+    validateDomainResponse(apiScheduleAssigneeListResponseSchema, response, 'schedule.assignees.list')
 
     return response.data
   },
 
   async addAssignee(eventId: string, userId: string, organizationId?: string | null) {
+    const body = parseDomainInput(scheduleAssigneeInputSchema, { user_id: userId }, 'schedule.assignees.add')
     const response = await vimobAPIRequest<Envelope<AssigneeUser[]>>(`/v1/schedule/events/${eventId}/assignees`, {
       method: 'POST',
       organizationId,
-      body: { user_id: userId },
+      body,
     })
+    validateDomainResponse(apiScheduleAssigneeListResponseSchema, response, 'schedule.assignees.add')
 
     return response.data
   },
@@ -219,6 +256,7 @@ export const scheduleAPI = {
         organizationId,
       },
     )
+    validateDomainResponse(apiScheduleAssigneeListResponseSchema, response, 'schedule.assignees.remove')
 
     return response.data
   },
@@ -227,6 +265,7 @@ export const scheduleAPI = {
     const response = await vimobAPIRequest<Envelope<{ isTeamLeader: boolean }>>('/v1/schedule/capabilities', {
       organizationId,
     })
+    validateDomainResponse(apiScheduleCapabilitiesResponseSchema, response, 'schedule.capabilities')
 
     return response.data
   },

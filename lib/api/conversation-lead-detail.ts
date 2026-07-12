@@ -1,4 +1,5 @@
 import { vimobAPIRequest } from './vimob-client'
+import { apiConversationLeadDetailResponseSchema, entityIdSchema, parseDomainInput, validateDomainResponse } from '@/lib/validation'
 
 export type ConversationLeadDetail = {
   id: string
@@ -52,9 +53,11 @@ type ConversationLeadDetailResponse = {
 
 export const conversationLeadDetailAPI = {
   async get(leadId: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<ConversationLeadDetailResponse>(`/v1/leads/${leadId}/conversation-detail`, {
+    const id = parseDomainInput(entityIdSchema, leadId, 'conversation-lead-detail.get.id')
+    const response = await vimobAPIRequest<ConversationLeadDetailResponse>(`/v1/leads/${id}/conversation-detail`, {
       organizationId,
     })
+    validateDomainResponse(apiConversationLeadDetailResponseSchema, response, 'conversation-lead-detail.get')
 
     return response.data
   },

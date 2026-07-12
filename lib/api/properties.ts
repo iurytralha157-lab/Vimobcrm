@@ -1,4 +1,15 @@
 import type { Tables, TablesInsert, TablesUpdate } from '@/integrations/supabase/types'
+import {
+  apiPropertyHistoryResponseSchema,
+  apiPropertyListResponseSchema,
+  apiPropertyResponseSchema,
+  apiPropertyStatsSchema,
+  parseDomainInput,
+  propertyCreateInputSchema,
+  propertyListQuerySchema,
+  propertyUpdateInputSchema,
+  validateDomainResponse,
+} from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
 
 type Property = Tables<'properties'>
@@ -74,39 +85,14 @@ type PropertyHistoryResponse = {
 // Properties API functions
 export const propertiesAPI = {
   async getProperties(organizationId: string, options?: PropertyAPIOptions) {
+    const query = parseDomainInput(propertyListQuerySchema, options ?? {}, 'properties.list')
     const response = await vimobAPIRequest<PropertyListResponse>('/v1/properties', {
       organizationId,
       query: {
-        limit: options?.limit,
-        offset: options?.offset,
-        search: options?.search,
-        status: options?.status,
-        tipo_de_negocio: options?.tipo_de_negocio,
-        tipo_de_imovel: options?.tipo_de_imovel,
-        cidade: options?.cidade,
-        bairro: options?.bairro,
-        responsavel_id: options?.responsavel_id,
-        quartos_min: options?.quartos_min,
-        suites_min: options?.suites_min,
-        banheiros_min: options?.banheiros_min,
-        valor_min: options?.valor_min,
-        valor_max: options?.valor_max,
-        aceita_permuta: options?.aceita_permuta,
-        aceita_financiamento: options?.aceita_financiamento,
-        published_on_site: options?.published_on_site,
-        owner_id: options?.owner_id,
-        condominium_id: options?.condominium_id,
-        mobilia: options?.mobilia,
-        exclusividade: options?.exclusividade,
-        placa_no_local: options?.placa_no_local,
-        destaque: options?.destaque,
-        vagas_min: options?.vagas_min,
-        area_util_min: options?.area_util_min,
-        area_util_max: options?.area_util_max,
-        area_total_min: options?.area_total_min,
-        area_total_max: options?.area_total_max,
+        ...query,
       },
     })
+    validateDomainResponse(apiPropertyListResponseSchema, response, 'properties.list')
 
     return {
       data: response.data,
@@ -118,43 +104,20 @@ export const propertiesAPI = {
   },
 
   async getPropertyStats(organizationId: string, options?: PropertyAPIOptions) {
-    return vimobAPIRequest<PropertyStats>('/v1/properties/stats', {
+    const query = parseDomainInput(propertyListQuerySchema, options ?? {}, 'properties.stats')
+    const response = await vimobAPIRequest<PropertyStats>('/v1/properties/stats', {
       organizationId,
-      query: {
-        search: options?.search,
-        status: options?.status,
-        tipo_de_negocio: options?.tipo_de_negocio,
-        tipo_de_imovel: options?.tipo_de_imovel,
-        cidade: options?.cidade,
-        bairro: options?.bairro,
-        responsavel_id: options?.responsavel_id,
-        quartos_min: options?.quartos_min,
-        suites_min: options?.suites_min,
-        banheiros_min: options?.banheiros_min,
-        valor_min: options?.valor_min,
-        valor_max: options?.valor_max,
-        aceita_permuta: options?.aceita_permuta,
-        aceita_financiamento: options?.aceita_financiamento,
-        published_on_site: options?.published_on_site,
-        owner_id: options?.owner_id,
-        condominium_id: options?.condominium_id,
-        mobilia: options?.mobilia,
-        exclusividade: options?.exclusividade,
-        placa_no_local: options?.placa_no_local,
-        destaque: options?.destaque,
-        vagas_min: options?.vagas_min,
-        area_util_min: options?.area_util_min,
-        area_util_max: options?.area_util_max,
-        area_total_min: options?.area_total_min,
-        area_total_max: options?.area_total_max,
-      },
+      query,
     })
+    validateDomainResponse(apiPropertyStatsSchema, response, 'properties.stats')
+    return response
   },
 
   async getProperty(propertyId: string, organizationId: string) {
     const response = await vimobAPIRequest<PropertyResponse>(`/v1/properties/${propertyId}`, {
       organizationId,
     })
+    validateDomainResponse(apiPropertyResponseSchema, response, 'properties.get')
 
     return {
       data: response.data,
@@ -163,11 +126,13 @@ export const propertiesAPI = {
   },
 
   async createProperty(organizationId: string, data: Partial<PropertyInsert> & PropertyMetadataInput) {
+    const body = parseDomainInput(propertyCreateInputSchema, data, 'properties.create')
     const response = await vimobAPIRequest<PropertyResponse>('/v1/properties', {
       method: 'POST',
       organizationId,
-      body: data,
+      body,
     })
+    validateDomainResponse(apiPropertyResponseSchema, response, 'properties.create')
 
     return {
       data: response.data,
@@ -176,11 +141,13 @@ export const propertiesAPI = {
   },
 
   async updateProperty(propertyId: string, data: PropertyUpdate & PropertyMetadataInput, organizationId: string) {
+    const body = parseDomainInput(propertyUpdateInputSchema, data, 'properties.update')
     const response = await vimobAPIRequest<PropertyResponse>(`/v1/properties/${propertyId}`, {
       method: 'PATCH',
       organizationId,
-      body: data,
+      body,
     })
+    validateDomainResponse(apiPropertyResponseSchema, response, 'properties.update')
 
     return {
       data: response.data,
@@ -192,6 +159,7 @@ export const propertiesAPI = {
     const response = await vimobAPIRequest<PropertyHistoryResponse>(`/v1/properties/${propertyId}/history`, {
       organizationId,
     })
+    validateDomainResponse(apiPropertyHistoryResponseSchema, response, 'properties.history')
 
     return {
       data: response.data,

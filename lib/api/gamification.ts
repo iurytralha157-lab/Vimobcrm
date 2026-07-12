@@ -1,3 +1,20 @@
+import {
+  apiGamificationAdminResponseSchema,
+  apiGamificationManualEntryResponseSchema,
+  apiGamificationMissionResponseSchema,
+  apiGamificationOverviewResponseSchema,
+  apiGamificationParticipantResponseSchema,
+  apiGamificationRuleResponseSchema,
+  apiGamificationSeasonResponseSchema,
+  gamificationDecisionInputSchema,
+  gamificationManualEntryInputSchema,
+  gamificationMissionInputSchema,
+  gamificationParticipantInputSchema,
+  gamificationRuleInputSchema,
+  gamificationSeasonInputSchema,
+  parseDomainInput,
+  validateDomainResponse,
+} from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
 
 type Envelope<T> = {
@@ -156,6 +173,7 @@ export const gamificationAPI = {
     const response = await vimobAPIRequest<Envelope<GamificationOverview>>('/v1/gamification/overview', {
       organizationId,
     })
+    validateDomainResponse(apiGamificationOverviewResponseSchema, response, 'gamification.overview')
     return response.data
   },
 
@@ -163,51 +181,60 @@ export const gamificationAPI = {
     const response = await vimobAPIRequest<Envelope<GamificationAdminSnapshot>>('/v1/gamification/admin', {
       organizationId,
     })
+    validateDomainResponse(apiGamificationAdminResponseSchema, response, 'gamification.admin')
     return response.data
   },
 
   async upsertRule(actionType: string, input: { points: number; isActive?: boolean }, organizationId?: string | null) {
+    const body = parseDomainInput(gamificationRuleInputSchema, input, 'gamification.rules.upsert')
     const response = await vimobAPIRequest<Envelope<GamificationRule>>(
       `/v1/gamification/rules/${encodeURIComponent(actionType)}`,
       {
         method: 'PUT',
-        body: input,
+        body,
         organizationId,
       },
     )
+    validateDomainResponse(apiGamificationRuleResponseSchema, response, 'gamification.rules.upsert')
     return response.data
   },
 
   async setParticipant(userId: string, participates: boolean, organizationId?: string | null) {
+    const body = parseDomainInput(gamificationParticipantInputSchema, { participates }, 'gamification.participants.update')
     const response = await vimobAPIRequest<Envelope<GamificationParticipant>>(
       `/v1/gamification/participants/${encodeURIComponent(userId)}`,
       {
         method: 'PATCH',
-        body: { participates },
+        body,
         organizationId,
       },
     )
+    validateDomainResponse(apiGamificationParticipantResponseSchema, response, 'gamification.participants.update')
     return response.data
   },
 
   async createMission(input: GamificationMissionInput, organizationId?: string | null) {
+    const body = parseDomainInput(gamificationMissionInputSchema, input, 'gamification.missions.create')
     const response = await vimobAPIRequest<Envelope<GamificationMission>>('/v1/gamification/missions', {
       method: 'POST',
-      body: input,
+      body,
       organizationId,
     })
+    validateDomainResponse(apiGamificationMissionResponseSchema, response, 'gamification.missions.create')
     return response.data
   },
 
   async updateMission(id: string, input: GamificationMissionInput, organizationId?: string | null) {
+    const body = parseDomainInput(gamificationMissionInputSchema, input, 'gamification.missions.update')
     const response = await vimobAPIRequest<Envelope<GamificationMission>>(
       `/v1/gamification/missions/${encodeURIComponent(id)}`,
       {
         method: 'PATCH',
-        body: input,
+        body,
         organizationId,
       },
     )
+    validateDomainResponse(apiGamificationMissionResponseSchema, response, 'gamification.missions.update')
     return response.data
   },
 
@@ -219,11 +246,13 @@ export const gamificationAPI = {
   },
 
   async createManualEntry(input: { actionKey: string; quantity: number; notes: string }, organizationId?: string | null) {
+    const body = parseDomainInput(gamificationManualEntryInputSchema, input, 'gamification.manual-entries.create')
     const response = await vimobAPIRequest<Envelope<GamificationManualEntry>>('/v1/gamification/manual-entries', {
       method: 'POST',
-      body: input,
+      body,
       organizationId,
     })
+    validateDomainResponse(apiGamificationManualEntryResponseSchema, response, 'gamification.manual-entries.create')
     return response.data
   },
 
@@ -232,23 +261,27 @@ export const gamificationAPI = {
     input: { status: 'approved' | 'rejected'; reason?: string },
     organizationId?: string | null,
   ) {
+    const body = parseDomainInput(gamificationDecisionInputSchema, input, 'gamification.manual-entries.decide')
     const response = await vimobAPIRequest<Envelope<GamificationManualEntry>>(
       `/v1/gamification/manual-entries/${encodeURIComponent(id)}`,
       {
         method: 'PATCH',
-        body: input,
+        body,
         organizationId,
       },
     )
+    validateDomainResponse(apiGamificationManualEntryResponseSchema, response, 'gamification.manual-entries.decide')
     return response.data
   },
 
   async resetSeason(input: { name: string; reason: string }, organizationId?: string | null) {
+    const body = parseDomainInput(gamificationSeasonInputSchema, input, 'gamification.seasons.reset')
     const response = await vimobAPIRequest<Envelope<GamificationSeason>>('/v1/gamification/seasons', {
       method: 'POST',
-      body: input,
+      body,
       organizationId,
     })
+    validateDomainResponse(apiGamificationSeasonResponseSchema, response, 'gamification.seasons.reset')
     return response.data
   },
 }

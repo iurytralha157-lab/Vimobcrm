@@ -1,4 +1,5 @@
 import { vimobAPIRequest } from './vimob-client'
+import { apiLeadVisibilityResponseSchema, validateDomainResponse } from '@/lib/validation'
 
 export type LeadVisibilityResponse = {
   canViewAll: boolean
@@ -16,6 +17,7 @@ export async function getLeadVisibility(params: {
   const response = await vimobAPIRequest<Envelope<LeadVisibilityResponse>>('/v1/lead-visibility', {
     organizationId: params.organizationId,
   })
+  validateDomainResponse(apiLeadVisibilityResponseSchema, response, 'lead-visibility.get')
 
   return response.data
 }

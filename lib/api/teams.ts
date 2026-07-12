@@ -1,3 +1,20 @@
+import {
+  apiAvailabilityListResponseSchema,
+  apiAvailabilityResponseSchema,
+  apiTeamListResponseSchema,
+  apiTeamLogoResponseSchema,
+  apiTeamPipelineListResponseSchema,
+  apiTeamPipelineResponseSchema,
+  apiTeamResponseSchema,
+  availabilityInputSchema,
+  bulkAvailabilityInputSchema,
+  createTeamInputSchema,
+  parseDomainInput,
+  teamLeaderInputSchema,
+  teamPipelineInputSchema,
+  updateTeamBodySchema,
+  validateDomainResponse,
+} from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
 
 type Envelope<T> = {
@@ -99,25 +116,30 @@ export const teamsAPI = {
         includeInactive: options?.includeInactive,
       },
     })
+    validateDomainResponse(apiTeamListResponseSchema, response, 'teams.list')
     return response.data
   },
 
   async createTeam(input: CreateTeamInput, organizationId?: string | null) {
+    const body = parseDomainInput(createTeamInputSchema, input, 'teams.create')
     const response = await vimobAPIRequest<Envelope<Team>>('/v1/teams', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     })
+    validateDomainResponse(apiTeamResponseSchema, response, 'teams.create')
     return response.data
   },
 
   async updateTeam(input: UpdateTeamInput, organizationId?: string | null) {
     const { id, ...body } = input
+    const validatedBody = parseDomainInput(updateTeamBodySchema, body, 'teams.update')
     const response = await vimobAPIRequest<Envelope<Team>>(`/v1/teams/${id}`, {
       method: 'PATCH',
       organizationId,
-      body,
+      body: validatedBody,
     })
+    validateDomainResponse(apiTeamResponseSchema, response, 'teams.update')
     return response.data
   },
 
@@ -134,6 +156,7 @@ export const teamsAPI = {
       organizationId,
       body: { is_active: input.is_active },
     })
+    validateDomainResponse(apiTeamResponseSchema, response, 'teams.status')
     return response.data
   },
 
@@ -145,6 +168,7 @@ export const teamsAPI = {
       organizationId,
       body: formData,
     })
+    validateDomainResponse(apiTeamLogoResponseSchema, response, 'teams.logo')
     return response.data.url
   },
 
@@ -155,31 +179,36 @@ export const teamsAPI = {
         teamId: options?.teamId,
       },
     })
+    validateDomainResponse(apiTeamPipelineListResponseSchema, response, 'teams.pipelines.list')
     return response.data
   },
 
   async assignPipelineToTeam(input: { teamId: string; pipelineId: string }, organizationId?: string | null) {
+    const body = parseDomainInput(teamPipelineInputSchema, input, 'teams.pipelines.assign')
     const response = await vimobAPIRequest<Envelope<TeamPipelineRelation>>('/v1/team-pipelines', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     })
+    validateDomainResponse(apiTeamPipelineResponseSchema, response, 'teams.pipelines.assign')
     return response.data
   },
 
   async removePipelineFromTeam(input: { teamId: string; pipelineId: string }, organizationId?: string | null) {
+    const query = parseDomainInput(teamPipelineInputSchema, input, 'teams.pipelines.remove')
     await vimobAPIRequest<null>('/v1/team-pipelines', {
       method: 'DELETE',
       organizationId,
-      query: input,
+      query,
     })
   },
 
   async setTeamLeader(input: { teamId: string; userId: string; isLeader: boolean }, organizationId?: string | null) {
+    const body = parseDomainInput(teamLeaderInputSchema, input, 'teams.leader')
     await vimobAPIRequest<null>('/v1/team-members/leader', {
       method: 'PATCH',
       organizationId,
-      body: input,
+      body,
     })
   },
 
@@ -193,15 +222,18 @@ export const teamsAPI = {
         teamMemberIds: options?.teamMemberIds?.join(','),
       },
     })
+    validateDomainResponse(apiAvailabilityListResponseSchema, response, 'teams.availability.list')
     return response.data
   },
 
   async updateMemberAvailability(input: AvailabilityInput, organizationId?: string | null) {
+    const body = parseDomainInput(availabilityInputSchema, input, 'teams.availability.update')
     const response = await vimobAPIRequest<Envelope<MemberAvailability>>('/v1/member-availability', {
       method: 'PATCH',
       organizationId,
-      body: input,
+      body,
     })
+    validateDomainResponse(apiAvailabilityResponseSchema, response, 'teams.availability.update')
     return response.data
   },
 
@@ -209,13 +241,13 @@ export const teamsAPI = {
     input: { teamMemberId: string; availability: Omit<AvailabilityInput, 'team_member_id'>[] },
     organizationId?: string | null,
   ) {
+    const body = parseDomainInput(bulkAvailabilityInputSchema, { availability: input.availability }, 'teams.availability.replace')
     const response = await vimobAPIRequest<Envelope<MemberAvailability[]>>(`/v1/team-members/${input.teamMemberId}/availability`, {
       method: 'PUT',
       organizationId,
-      body: {
-        availability: input.availability,
-      },
+      body,
     })
+    validateDomainResponse(apiAvailabilityListResponseSchema, response, 'teams.availability.replace')
     return response.data
   },
 }

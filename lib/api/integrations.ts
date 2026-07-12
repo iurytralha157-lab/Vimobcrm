@@ -1,3 +1,16 @@
+import {
+  apiIntegrationListResponseSchema,
+  apiIntegrationResponseSchema,
+  apiMetaWebhookHealthResponseSchema,
+  apiOptionalIntegrationResponseSchema,
+  deleteMetaFormConfigInputSchema,
+  imoviewIntegrationInputSchema,
+  parseDomainInput,
+  toggleMetaFormConfigInputSchema,
+  validateDomainResponse,
+  vistaIntegrationInputSchema,
+  metaFormConfigInputSchema,
+} from '@/lib/validation';
 import { vimobAPIRequest } from './vimob-client';
 
 type Envelope<T> = {
@@ -19,15 +32,18 @@ export const integrationsAPI = {
     const response = await vimobAPIRequest<Envelope<IntegrationJSON | null>>('/v1/integrations/vista', {
       organizationId,
     });
+    validateDomainResponse(apiOptionalIntegrationResponseSchema, response, 'integrations.vista.get');
     return response.data;
   },
 
   async saveVista(input: { api_url: string; api_key: string }, organizationId?: string | null) {
+    const body = parseDomainInput(vistaIntegrationInputSchema, input, 'integrations.vista.save');
     const response = await vimobAPIRequest<Envelope<IntegrationJSON>>('/v1/integrations/vista', {
       method: 'PUT',
       organizationId,
-      body: input,
+      body,
     });
+    validateDomainResponse(apiIntegrationResponseSchema, response, 'integrations.vista.save');
     return response.data;
   },
 
@@ -42,15 +58,18 @@ export const integrationsAPI = {
     const response = await vimobAPIRequest<Envelope<IntegrationJSON | null>>('/v1/integrations/imoview', {
       organizationId,
     });
+    validateDomainResponse(apiOptionalIntegrationResponseSchema, response, 'integrations.imoview.get');
     return response.data;
   },
 
   async saveImoview(input: { api_key: string }, organizationId?: string | null) {
+    const body = parseDomainInput(imoviewIntegrationInputSchema, input, 'integrations.imoview.save');
     const response = await vimobAPIRequest<Envelope<IntegrationJSON>>('/v1/integrations/imoview', {
       method: 'PUT',
       organizationId,
-      body: input,
+      body,
     });
+    validateDomainResponse(apiIntegrationResponseSchema, response, 'integrations.imoview.save');
     return response.data;
   },
 
@@ -65,6 +84,7 @@ export const integrationsAPI = {
     const response = await vimobAPIRequest<Envelope<IntegrationJSON[]>>('/v1/integrations/meta', {
       organizationId,
     });
+    validateDomainResponse(apiIntegrationListResponseSchema, response, 'integrations.meta.list');
     return response.data;
   },
 
@@ -72,6 +92,7 @@ export const integrationsAPI = {
     const response = await vimobAPIRequest<Envelope<IntegrationJSON>>(`/v1/integrations/meta/oauth-flows/${flowId}`, {
       organizationId,
     });
+    validateDomainResponse(apiIntegrationResponseSchema, response, 'integrations.meta.oauth-flow');
     return response.data;
   },
 
@@ -80,31 +101,36 @@ export const integrationsAPI = {
       organizationId,
       query: { integrationId },
     });
+    validateDomainResponse(apiIntegrationListResponseSchema, response, 'integrations.meta.form-configs.list');
     return response.data;
   },
 
   async saveMetaFormConfig(input: IntegrationJSON, organizationId?: string | null) {
+    const body = parseDomainInput(metaFormConfigInputSchema, input, 'integrations.meta.form-configs.save');
     const response = await vimobAPIRequest<Envelope<IntegrationJSON>>('/v1/integrations/meta/form-configs', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     });
+    validateDomainResponse(apiIntegrationResponseSchema, response, 'integrations.meta.form-configs.save');
     return response.data;
   },
 
   async toggleMetaFormConfig(input: { integrationId: string; formId: string; isActive: boolean }, organizationId?: string | null) {
+    const body = parseDomainInput(toggleMetaFormConfigInputSchema, input, 'integrations.meta.form-configs.toggle');
     return vimobAPIRequest<{ ok: boolean }>('/v1/integrations/meta/form-configs', {
       method: 'PATCH',
       organizationId,
-      body: input,
+      body,
     });
   },
 
   async deleteMetaFormConfig(input: { integrationId: string; formId: string }, organizationId?: string | null) {
+    const query = parseDomainInput(deleteMetaFormConfigInputSchema, input, 'integrations.meta.form-configs.delete');
     await vimobAPIRequest<null>('/v1/integrations/meta/form-configs', {
       method: 'DELETE',
       organizationId,
-      query: input,
+      query,
     });
   },
 
@@ -113,6 +139,7 @@ export const integrationsAPI = {
       '/v1/integrations/meta/webhook-health',
       { organizationId },
     );
+    validateDomainResponse(apiMetaWebhookHealthResponseSchema, response, 'integrations.meta.webhook-health');
     return response.data;
   },
 

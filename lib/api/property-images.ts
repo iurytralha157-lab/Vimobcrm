@@ -1,4 +1,5 @@
 import { vimobAPIRequest } from './vimob-client'
+import { apiPropertyImageResponseSchema, entityIdSchema, parseDomainInput, validateDomainResponse } from '@/lib/validation'
 
 export type PropertyImageUpload = {
   url: string
@@ -25,7 +26,7 @@ export async function uploadPropertyImage(
   formData.append('file', file)
 
   if (options.propertyId) {
-    formData.append('propertyId', options.propertyId)
+    formData.append('propertyId', parseDomainInput(entityIdSchema, options.propertyId, 'property-images.upload.property-id'))
   }
 
   const response = await vimobAPIRequest<PropertyImageUploadResponse>('/v1/property-images', {
@@ -33,6 +34,7 @@ export async function uploadPropertyImage(
     organizationId: options.organizationId,
     body: formData,
   })
+  validateDomainResponse(apiPropertyImageResponseSchema, response, 'property-images.upload')
 
   return response.data
 }

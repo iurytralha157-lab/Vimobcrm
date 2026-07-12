@@ -9,7 +9,8 @@
     "lint": "eslint",
     "api:dev": "go run ./apps/api/cmd/api",
     "api:fmt": "gofmt -w apps/api packages/auth packages/db",
-    "api:test": "go test ./apps/api/... ./packages/auth/... ./packages/db/..."
+    "api:test": "go test ./apps/api/... ./packages/auth/... ./packages/db/...",
+    "validation:test": "tsc -p tsconfig.validation-tests.json && node --test .validation-tests/lib/validation/leads.test.js .validation-tests/lib/validation/pipelines.test.js .validation-tests/lib/validation/users.test.js .validation-tests/lib/validation/whatsapp.test.js .validation-tests/lib/validation/domains.test.js"
   },
   "dependencies": {
     "@capacitor/core": "^8.4.0",

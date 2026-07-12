@@ -1,4 +1,24 @@
 import { vimobAPIRequest } from './vimob-client'
+import {
+  apiOptionalOrganizationSiteResponseSchema,
+  apiOrganizationSiteResponseSchema,
+  apiSiteAssetResponseSchema,
+  apiSiteMenuItemListResponseSchema,
+  apiSiteMenuItemResponseSchema,
+  apiSiteSearchFilterListResponseSchema,
+  apiSiteSearchFilterResponseSchema,
+  entityIdSchema,
+  okResponseSchema,
+  organizationSiteMutationSchema,
+  parseDomainInput,
+  siteAssetInputSchema,
+  siteMenuItemInputSchema,
+  siteMenuItemUpdateSchema,
+  siteReorderInputSchema,
+  siteSearchFilterInputSchema,
+  siteSearchFilterUpdateSchema,
+  validateDomainResponse,
+} from '@/lib/validation'
 
 type Envelope<T> = {
   data: T
@@ -94,37 +114,44 @@ export const siteAPI = {
     const response = await vimobAPIRequest<Envelope<OrganizationSite | null>>('/v1/site', {
       organizationId,
     })
+    validateDomainResponse(apiOptionalOrganizationSiteResponseSchema, response, 'site.get')
     return response.data
   },
 
   async createSite(input: Partial<OrganizationSite>, organizationId?: string | null) {
+    const body = parseDomainInput(organizationSiteMutationSchema, input, 'site.create')
     const response = await vimobAPIRequest<Envelope<OrganizationSite>>('/v1/site', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     })
+    validateDomainResponse(apiOrganizationSiteResponseSchema, response, 'site.create')
     return response.data
   },
 
   async updateSite(input: Partial<OrganizationSite>, organizationId?: string | null) {
+    const body = parseDomainInput(organizationSiteMutationSchema, input, 'site.update')
     const response = await vimobAPIRequest<Envelope<OrganizationSite>>('/v1/site', {
       method: 'PATCH',
       organizationId,
-      body: input,
+      body,
     })
+    validateDomainResponse(apiOrganizationSiteResponseSchema, response, 'site.update')
     return response.data
   },
 
   async uploadAsset(input: { file: File; type: SiteAssetType }, organizationId?: string | null) {
+    const upload = parseDomainInput(siteAssetInputSchema, input, 'site.assets.upload')
     const formData = new FormData()
-    formData.append('file', input.file)
-    formData.append('type', input.type)
+    formData.append('file', upload.file)
+    formData.append('type', upload.type)
 
     const response = await vimobAPIRequest<Envelope<{ url: string }>>('/v1/site/assets', {
       method: 'POST',
       organizationId,
       body: formData,
     })
+    validateDomainResponse(apiSiteAssetResponseSchema, response, 'site.assets.upload')
     return response.data.url
   },
 
@@ -132,81 +159,97 @@ export const siteAPI = {
     const response = await vimobAPIRequest<Envelope<SiteMenuItem[]>>('/v1/site/menu-items', {
       organizationId,
     })
+    validateDomainResponse(apiSiteMenuItemListResponseSchema, response, 'site.menu.list')
     return response.data
   },
 
   async createMenuItem(input: Omit<SiteMenuItem, 'id' | 'organization_id' | 'created_at'>, organizationId?: string | null) {
+    const body = parseDomainInput(siteMenuItemInputSchema, input, 'site.menu.create')
     const response = await vimobAPIRequest<Envelope<SiteMenuItem>>('/v1/site/menu-items', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     })
+    validateDomainResponse(apiSiteMenuItemResponseSchema, response, 'site.menu.create')
     return response.data
   },
 
   async updateMenuItem(input: Partial<SiteMenuItem> & { id: string }, organizationId?: string | null) {
-    const { id, ...body } = input
+    const validated = parseDomainInput(siteMenuItemUpdateSchema, input, 'site.menu.update')
+    const { id, ...body } = validated
     const response = await vimobAPIRequest<Envelope<SiteMenuItem>>(`/v1/site/menu-items/${id}`, {
       method: 'PATCH',
       organizationId,
       body,
     })
+    validateDomainResponse(apiSiteMenuItemResponseSchema, response, 'site.menu.update')
     return response.data
   },
 
   async deleteMenuItem(id: string, organizationId?: string | null) {
-    await vimobAPIRequest<null>(`/v1/site/menu-items/${id}`, {
+    const itemId = parseDomainInput(entityIdSchema, id, 'site.menu.delete.id')
+    await vimobAPIRequest<null>(`/v1/site/menu-items/${itemId}`, {
       method: 'DELETE',
       organizationId,
     })
   },
 
   async reorderMenuItems(items: { id: string; position: number }[], organizationId?: string | null) {
-    await vimobAPIRequest<{ ok: boolean }>('/v1/site/menu-items/reorder', {
+    const body = parseDomainInput(siteReorderInputSchema, { items }, 'site.menu.reorder')
+    const response = await vimobAPIRequest<{ ok: boolean }>('/v1/site/menu-items/reorder', {
       method: 'POST',
       organizationId,
-      body: { items },
+      body,
     })
+    validateDomainResponse(okResponseSchema, response, 'site.menu.reorder')
   },
 
   async listSearchFilters(organizationId?: string | null) {
     const response = await vimobAPIRequest<Envelope<SiteSearchFilter[]>>('/v1/site/search-filters', {
       organizationId,
     })
+    validateDomainResponse(apiSiteSearchFilterListResponseSchema, response, 'site.filters.list')
     return response.data
   },
 
   async createSearchFilter(input: Pick<SiteSearchFilter, 'filter_key' | 'label' | 'position' | 'is_active'>, organizationId?: string | null) {
+    const body = parseDomainInput(siteSearchFilterInputSchema, input, 'site.filters.create')
     const response = await vimobAPIRequest<Envelope<SiteSearchFilter>>('/v1/site/search-filters', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     })
+    validateDomainResponse(apiSiteSearchFilterResponseSchema, response, 'site.filters.create')
     return response.data
   },
 
   async updateSearchFilter(input: Partial<SiteSearchFilter> & { id: string }, organizationId?: string | null) {
-    const { id, ...body } = input
+    const validated = parseDomainInput(siteSearchFilterUpdateSchema, input, 'site.filters.update')
+    const { id, ...body } = validated
     const response = await vimobAPIRequest<Envelope<SiteSearchFilter>>(`/v1/site/search-filters/${id}`, {
       method: 'PATCH',
       organizationId,
       body,
     })
+    validateDomainResponse(apiSiteSearchFilterResponseSchema, response, 'site.filters.update')
     return response.data
   },
 
   async deleteSearchFilter(id: string, organizationId?: string | null) {
-    await vimobAPIRequest<null>(`/v1/site/search-filters/${id}`, {
+    const filterId = parseDomainInput(entityIdSchema, id, 'site.filters.delete.id')
+    await vimobAPIRequest<null>(`/v1/site/search-filters/${filterId}`, {
       method: 'DELETE',
       organizationId,
     })
   },
 
   async reorderSearchFilters(items: { id: string; position: number }[], organizationId?: string | null) {
-    await vimobAPIRequest<{ ok: boolean }>('/v1/site/search-filters/reorder', {
+    const body = parseDomainInput(siteReorderInputSchema, { items }, 'site.filters.reorder')
+    const response = await vimobAPIRequest<{ ok: boolean }>('/v1/site/search-filters/reorder', {
       method: 'POST',
       organizationId,
-      body: { items },
+      body,
     })
+    validateDomainResponse(okResponseSchema, response, 'site.filters.reorder')
   },
 }

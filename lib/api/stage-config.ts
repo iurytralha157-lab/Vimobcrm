@@ -1,4 +1,5 @@
 import { vimobAPIRequest } from './vimob-client'
+import { apiPipelineSLAListResponseSchema, apiPipelineSLAResponseSchema, apiStageAutomationListResponseSchema, apiStageAutomationResponseSchema, apiStageOperationalListResponseSchema, apiStageOperationalResponseSchema, entityIdSchema, parseDomainInput, pipelineSLAInputSchema, stageAutomationInputSchema, stageOperationalConfigInputSchema, validateDomainResponse } from '@/lib/validation'
 
 type Envelope<T> = {
   data: T
@@ -83,44 +84,54 @@ export interface PipelineSLASettingsInput {
 
 export const stageConfigAPI = {
   async listStageAutomations(params: { stageId?: string; organizationId?: string | null } = {}) {
+    const stageId = params.stageId ? parseDomainInput(entityIdSchema, params.stageId, 'stage-config.automations.list.stage-id') : undefined
     const response = await vimobAPIRequest<Envelope<StageAutomationRow[]>>('/v1/stage-automations', {
       organizationId: params.organizationId,
-      query: { stageId: params.stageId },
+      query: { stageId },
     })
+    validateDomainResponse(apiStageAutomationListResponseSchema, response, 'stage-config.automations.list')
     return response.data
   },
 
   async createStageAutomation(input: StageAutomationInput, organizationId?: string | null) {
+    const body = parseDomainInput(stageAutomationInputSchema, input, 'stage-config.automations.create')
     const response = await vimobAPIRequest<Envelope<StageAutomationRow>>('/v1/stage-automations', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     })
+    validateDomainResponse(apiStageAutomationResponseSchema, response, 'stage-config.automations.create')
     return response.data
   },
 
   async updateStageAutomation(id: string, input: StageAutomationInput, organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<StageAutomationRow>>(`/v1/stage-automations/${id}`, {
+    const automationId = parseDomainInput(entityIdSchema, id, 'stage-config.automations.update.id')
+    const body = parseDomainInput(stageAutomationInputSchema, input, 'stage-config.automations.update')
+    const response = await vimobAPIRequest<Envelope<StageAutomationRow>>(`/v1/stage-automations/${automationId}`, {
       method: 'PATCH',
       organizationId,
-      body: input,
+      body,
     })
+    validateDomainResponse(apiStageAutomationResponseSchema, response, 'stage-config.automations.update')
     return response.data
   },
 
   async deleteStageAutomation(id: string, organizationId?: string | null) {
-    await vimobAPIRequest<null>(`/v1/stage-automations/${id}`, {
+    const automationId = parseDomainInput(entityIdSchema, id, 'stage-config.automations.delete.id')
+    await vimobAPIRequest<null>(`/v1/stage-automations/${automationId}`, {
       method: 'DELETE',
       organizationId,
     })
   },
 
   async toggleStageAutomation(id: string, isActive: boolean, organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<StageAutomationRow>>(`/v1/stage-automations/${id}/status`, {
+    const automationId = parseDomainInput(entityIdSchema, id, 'stage-config.automations.toggle.id')
+    const response = await vimobAPIRequest<Envelope<StageAutomationRow>>(`/v1/stage-automations/${automationId}/status`, {
       method: 'PATCH',
       organizationId,
       body: { is_active: isActive },
     })
+    validateDomainResponse(apiStageAutomationResponseSchema, response, 'stage-config.automations.toggle')
     return response.data
   },
 
@@ -129,39 +140,48 @@ export const stageConfigAPI = {
     stageId?: string
     organizationId?: string | null
   } = {}) {
+    const pipelineId = params.pipelineId ? parseDomainInput(entityIdSchema, params.pipelineId, 'stage-config.operational.list.pipeline-id') : undefined
+    const stageId = params.stageId ? parseDomainInput(entityIdSchema, params.stageId, 'stage-config.operational.list.stage-id') : undefined
     const response = await vimobAPIRequest<Envelope<StageOperationalConfigRow[]>>('/v1/stage-operational-configs', {
       organizationId: params.organizationId,
       query: {
-        pipelineId: params.pipelineId,
-        stageId: params.stageId,
+        pipelineId,
+        stageId,
       },
     })
+    validateDomainResponse(apiStageOperationalListResponseSchema, response, 'stage-config.operational.list')
     return response.data
   },
 
   async upsertOperationalConfig(input: StageOperationalConfigInput, organizationId?: string | null) {
+    const body = parseDomainInput(stageOperationalConfigInputSchema, input, 'stage-config.operational.upsert')
     const response = await vimobAPIRequest<Envelope<StageOperationalConfigRow>>('/v1/stage-operational-configs', {
       method: 'PUT',
       organizationId,
-      body: input,
+      body,
     })
+    validateDomainResponse(apiStageOperationalResponseSchema, response, 'stage-config.operational.upsert')
     return response.data
   },
 
   async listPipelineSLASettings(pipelineId?: string | null, organizationId?: string | null) {
+    const id = pipelineId ? parseDomainInput(entityIdSchema, pipelineId, 'stage-config.sla.list.pipeline-id') : undefined
     const response = await vimobAPIRequest<Envelope<PipelineSLASettingsRow[]>>('/v1/pipeline-sla-settings', {
       organizationId,
-      query: { pipelineId },
+      query: { pipelineId: id },
     })
+    validateDomainResponse(apiPipelineSLAListResponseSchema, response, 'stage-config.sla.list')
     return response.data
   },
 
   async upsertPipelineSLASettings(input: PipelineSLASettingsInput, organizationId?: string | null) {
+    const body = parseDomainInput(pipelineSLAInputSchema, input, 'stage-config.sla.upsert')
     const response = await vimobAPIRequest<Envelope<PipelineSLASettingsRow>>('/v1/pipeline-sla-settings', {
       method: 'PUT',
       organizationId,
-      body: input,
+      body,
     })
+    validateDomainResponse(apiPipelineSLAResponseSchema, response, 'stage-config.sla.upsert')
     return response.data
   },
 }

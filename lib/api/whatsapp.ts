@@ -1,4 +1,23 @@
 import type { Json } from '@/integrations/supabase/types'
+import {
+  createWhatsAppSessionInputSchema,
+  parseDomainInput,
+  sendWhatsAppMessageInputSchema,
+  sendWhatsAppMessageResponseSchema,
+  startWhatsAppConversationInputSchema,
+  validateDomainResponse,
+  whatsAppAIAutoReplyInputSchema,
+  whatsAppConversationResponseSchema,
+  whatsAppConversationsResponseSchema,
+  whatsAppHistoryResponseSchema,
+  whatsAppMessagesResponseSchema,
+  whatsAppOptionalConversationResponseSchema,
+  whatsAppSessionAccessInputSchema,
+  whatsAppSessionAccessResponseSchema,
+  whatsAppSessionOperationResponseSchema,
+  whatsAppSessionResponseSchema,
+  whatsAppSessionsResponseSchema,
+} from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
 
 type Envelope<T> = {
@@ -228,22 +247,27 @@ export const whatsappAPI = {
     const response = await vimobAPIRequest<WhatsAppSessionsResponse>('/v1/whatsapp/sessions', {
       organizationId,
     })
+    validateDomainResponse(whatsAppSessionsResponseSchema, response, 'whatsapp.sessions.list')
     return response
   },
 
   async createSession(input: { displayName: string; provider?: WhatsAppProvider }, organizationId?: string | null) {
-    return vimobAPIRequest<{ session: WhatsAppSession; evolutionData?: unknown }>('/v1/whatsapp/sessions', {
+    const body = parseDomainInput(createWhatsAppSessionInputSchema, input, 'whatsapp.sessions.create')
+    const response = await vimobAPIRequest<{ session: WhatsAppSession; evolutionData?: unknown }>('/v1/whatsapp/sessions', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
       timeoutMs: 30_000,
     })
+    validateDomainResponse(whatsAppSessionOperationResponseSchema, response, 'whatsapp.sessions.create')
+    return response
   },
 
   async getSession(sessionId: string, organizationId?: string | null) {
     const response = await vimobAPIRequest<Envelope<WhatsAppSession>>(`/v1/whatsapp/sessions/${sessionId}`, {
       organizationId,
     })
+    validateDomainResponse(whatsAppSessionResponseSchema, response, 'whatsapp.sessions.get')
     return response.data
   },
 
@@ -275,10 +299,12 @@ export const whatsappAPI = {
   },
 
   async recreateSession(sessionId: string, organizationId?: string | null) {
-    return vimobAPIRequest<{ session: WhatsAppSession; evolutionData?: unknown }>(
+    const response = await vimobAPIRequest<{ session: WhatsAppSession; evolutionData?: unknown }>(
       `/v1/whatsapp/sessions/${sessionId}/recreate`,
       { method: 'POST', organizationId, skipTelemetry: true, timeoutMs: 30_000 },
     )
+    validateDomainResponse(whatsAppSessionOperationResponseSchema, response, 'whatsapp.sessions.recreate')
+    return response
   },
 
   async logoutSession(sessionId: string, organizationId?: string | null) {
@@ -299,10 +325,11 @@ export const whatsappAPI = {
   },
 
   async toggleAIAutoReplySession(sessionId: string, input: AIAutoReplySessionInput, organizationId?: string | null) {
+    const body = parseDomainInput(whatsAppAIAutoReplyInputSchema, input, 'whatsapp.sessions.ai-auto-reply')
     await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/sessions/${sessionId}/ai-auto-reply`, {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     })
   },
 
@@ -311,6 +338,7 @@ export const whatsappAPI = {
       `/v1/whatsapp/sessions/${sessionId}/access`,
       { organizationId },
     )
+    validateDomainResponse(whatsAppSessionAccessResponseSchema, response, 'whatsapp.sessions.access.list')
     return response.data
   },
 
@@ -324,10 +352,11 @@ export const whatsappAPI = {
     },
     organizationId?: string | null,
   ) {
+    const body = parseDomainInput(whatsAppSessionAccessInputSchema, input, 'whatsapp.sessions.access.grant')
     await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/sessions/${sessionId}/access`, {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     })
   },
 
@@ -355,6 +384,7 @@ export const whatsappAPI = {
         limit: params.limit,
       },
     })
+    validateDomainResponse(whatsAppConversationsResponseSchema, response, 'whatsapp.conversations.list')
     return response.data
   },
 
@@ -364,11 +394,13 @@ export const whatsappAPI = {
     leadId?: string
     leadName?: string
   }, organizationId?: string | null) {
+    const body = parseDomainInput(startWhatsAppConversationInputSchema, input, 'whatsapp.conversations.start')
     const response = await vimobAPIRequest<Envelope<WhatsAppConversation>>('/v1/whatsapp/conversations/start', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     })
+    validateDomainResponse(whatsAppConversationResponseSchema, response, 'whatsapp.conversations.start')
     return response.data
   },
 
@@ -386,6 +418,7 @@ export const whatsappAPI = {
         sessionId: params.sessionId,
       },
     })
+    validateDomainResponse(whatsAppOptionalConversationResponseSchema, response, 'whatsapp.conversations.find')
     return response.data
   },
 
@@ -410,6 +443,7 @@ export const whatsappAPI = {
         },
       },
     )
+    validateDomainResponse(whatsAppHistoryResponseSchema, response, 'whatsapp.history')
     return response.data
   },
 
@@ -418,6 +452,7 @@ export const whatsappAPI = {
       `/v1/whatsapp/conversations/${conversationId}`,
       { organizationId },
     )
+    validateDomainResponse(whatsAppConversationResponseSchema, response, 'whatsapp.conversations.get')
     return response.data
   },
 
@@ -437,6 +472,7 @@ export const whatsappAPI = {
         },
       },
     )
+    validateDomainResponse(whatsAppMessagesResponseSchema, response, 'whatsapp.messages.list')
     return response.data
   },
 
@@ -448,12 +484,15 @@ export const whatsappAPI = {
   },
 
   async sendMessage(conversationId: string, input: SendWhatsAppMessageInput, organizationId?: string | null) {
-    return vimobAPIRequest<SendWhatsAppMessageResult>(`/v1/whatsapp/conversations/${conversationId}/send-message`, {
+    const body = parseDomainInput(sendWhatsAppMessageInputSchema, input, 'whatsapp.messages.send')
+    const response = await vimobAPIRequest<SendWhatsAppMessageResult>(`/v1/whatsapp/conversations/${conversationId}/send-message`, {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
       timeoutMs: 30_000,
     })
+    validateDomainResponse(sendWhatsAppMessageResponseSchema, response, 'whatsapp.messages.send')
+    return response
   },
 
   async markAsSeenOnWhatsApp(conversationId: string, organizationId?: string | null) {

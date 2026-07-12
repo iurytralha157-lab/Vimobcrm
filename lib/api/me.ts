@@ -1,4 +1,5 @@
 import { vimobAPIRequest } from './vimob-client'
+import { apiMeProfileResponseSchema, apiMeResponseSchema, entityIdSchema, okResponseSchema, parseDomainInput, validateDomainResponse } from '@/lib/validation'
 
 export type TenantContext = {
   userId: string
@@ -70,21 +71,28 @@ export type MeProfileResponse = MeResponse & {
 
 export const meAPI = {
   async getMe(organizationId?: string | null) {
-    return vimobAPIRequest<MeResponse>('/v1/me', {
+    const response = await vimobAPIRequest<MeResponse>('/v1/me', {
       organizationId,
     })
+    validateDomainResponse(apiMeResponseSchema, response, 'me.get')
+    return response
   },
 
   async getProfile(organizationId?: string | null) {
-    return vimobAPIRequest<MeProfileResponse>('/v1/me/profile', {
+    const response = await vimobAPIRequest<MeProfileResponse>('/v1/me/profile', {
       organizationId,
     })
+    validateDomainResponse(apiMeProfileResponseSchema, response, 'me.profile')
+    return response
   },
 
   async switchOrganization(organizationId: string) {
-    return vimobAPIRequest<{ ok: boolean }>('/v1/me/switch-organization', {
+    const id = parseDomainInput(entityIdSchema, organizationId, 'me.switch-organization.id')
+    const response = await vimobAPIRequest<{ ok: boolean }>('/v1/me/switch-organization', {
       method: 'POST',
-      body: { organizationId },
+      body: { organizationId: id },
     })
+    validateDomainResponse(okResponseSchema, response, 'me.switch-organization')
+    return response
   },
 }

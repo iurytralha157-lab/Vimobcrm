@@ -1,3 +1,11 @@
+import {
+  apiCadenceTaskResponseSchema,
+  apiCadenceTemplateListResponseSchema,
+  createCadenceTaskInputSchema,
+  parseDomainInput,
+  updateCadenceTaskBodySchema,
+  validateDomainResponse,
+} from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
 
 type Envelope<T> = {
@@ -51,25 +59,30 @@ export const cadencesAPI = {
     const response = await vimobAPIRequest<Envelope<CadenceTemplate[]>>('/v1/cadence-templates', {
       organizationId,
     })
+    validateDomainResponse(apiCadenceTemplateListResponseSchema, response, 'cadences.templates.list')
     return response.data
   },
 
   async createTask(input: CreateCadenceTaskInput, organizationId?: string | null) {
+    const body = parseDomainInput(createCadenceTaskInputSchema, input, 'cadences.tasks.create')
     const response = await vimobAPIRequest<Envelope<CadenceTaskTemplate>>('/v1/cadence-tasks', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     })
+    validateDomainResponse(apiCadenceTaskResponseSchema, response, 'cadences.tasks.create')
     return response.data
   },
 
   async updateTask(input: UpdateCadenceTaskInput, organizationId?: string | null) {
     const { id, ...body } = input
+    const validatedBody = parseDomainInput(updateCadenceTaskBodySchema, body, 'cadences.tasks.update')
     const response = await vimobAPIRequest<Envelope<CadenceTaskTemplate>>(`/v1/cadence-tasks/${id}`, {
       method: 'PATCH',
       organizationId,
-      body,
+      body: validatedBody,
     })
+    validateDomainResponse(apiCadenceTaskResponseSchema, response, 'cadences.tasks.update')
     return response.data
   },
 

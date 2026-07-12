@@ -1,4 +1,5 @@
 import { vimobAPIRequest } from './vimob-client'
+import { apiPropertyOwnerListResponseSchema, apiPropertyOwnerResponseSchema, entityIdSchema, organizationIdSchema, parseDomainInput, propertyOwnerInputSchema, validateDomainResponse } from '@/lib/validation'
 
 export type PropertyOwnerProperty = {
   id: string
@@ -48,24 +49,34 @@ type ItemResponse<T> = {
 
 export const propertyOwnersAPI = {
   async getOwners(organizationId: string) {
-    return vimobAPIRequest<ListResponse<PropertyOwner>>('/v1/property-owners', {
-      organizationId,
+    const orgId = parseDomainInput(organizationIdSchema, organizationId, 'property-owners.list.organization')
+    const response = await vimobAPIRequest<ListResponse<PropertyOwner>>('/v1/property-owners', {
+      organizationId: orgId,
     })
+    validateDomainResponse(apiPropertyOwnerListResponseSchema, response, 'property-owners.list')
+    return response
   },
 
   async createOwner(organizationId: string, owner: PropertyOwnerInput) {
-    return vimobAPIRequest<ItemResponse<PropertyOwner>>('/v1/property-owners', {
+    const body = parseDomainInput(propertyOwnerInputSchema, owner, 'property-owners.create')
+    const response = await vimobAPIRequest<ItemResponse<PropertyOwner>>('/v1/property-owners', {
       method: 'POST',
       organizationId,
-      body: owner,
+      body,
     })
+    validateDomainResponse(apiPropertyOwnerResponseSchema, response, 'property-owners.create')
+    return response
   },
 
   async updateOwner(organizationId: string, ownerId: string, owner: PropertyOwnerInput) {
-    return vimobAPIRequest<ItemResponse<PropertyOwner>>(`/v1/property-owners/${ownerId}`, {
+    const id = parseDomainInput(entityIdSchema, ownerId, 'property-owners.update.id')
+    const body = parseDomainInput(propertyOwnerInputSchema, owner, 'property-owners.update')
+    const response = await vimobAPIRequest<ItemResponse<PropertyOwner>>(`/v1/property-owners/${id}`, {
       method: 'PATCH',
       organizationId,
-      body: owner,
+      body,
     })
+    validateDomainResponse(apiPropertyOwnerResponseSchema, response, 'property-owners.update')
+    return response
   },
 }

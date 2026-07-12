@@ -1,6 +1,17 @@
 import "server-only";
 
 import { headers } from "next/headers";
+import {
+  publicDomainSchema,
+  publicHomeDataSchema,
+  publicMenuItemListEnvelopeSchema,
+  publicPropertiesDataSchema,
+  publicPropertyDataSchema,
+  publicSearchFilterListEnvelopeSchema,
+  publicSiteResolveServerSchema,
+  validateDomainResponse,
+} from "@/lib/validation";
+import type { ZodTypeAny } from "zod";
 
 const DEFAULT_API_URL = "http://localhost:8081";
 const PUBLIC_SITE_REVALIDATE_SECONDS = 60;
@@ -209,7 +220,8 @@ export async function resolvePublicSiteFromRequest() {
 }
 
 export async function resolvePublicSite(domain: string): Promise<PublicSiteResolution> {
-  const normalized = normalizePublicDomain(domain);
+  const domainResult = publicDomainSchema.safeParse(normalizePublicDomain(domain));
+  const normalized = domainResult.success ? domainResult.data : "";
   if (!normalized) return { status: "not-found" };
 
   const candidates = normalized.startsWith("www.")
@@ -222,7 +234,7 @@ export async function resolvePublicSite(domain: string): Promise<PublicSiteResol
       const response = await requestPublicAPI<ResolveResponse>("/v1/public/site/resolve", {
         query: { domain: candidate },
         tags: [`public-site-domain:${candidate}`],
-      });
+      }, publicSiteResolveServerSchema, "public-site-server.resolve");
 
       if (response.found && response.site_config?.organization_id) {
         const site = normalizeSiteConfig(response.site_config);
@@ -248,6 +260,7 @@ export async function getPublicHomeData(organizationId: string) {
     "home",
     {},
     emptyHomeData,
+    publicHomeDataSchema,
   );
 }
 
@@ -271,6 +284,7 @@ export async function getPublicProperties(
       condominiums: [],
       purposes: [],
     },
+    publicPropertiesDataSchema,
   );
 
   return {
@@ -289,6 +303,7 @@ export async function getPublicProperty(organizationId: string, propertyCode: st
     "property",
     { property_code: propertyCode },
     { property: null },
+    publicPropertyDataSchema,
   );
   return data.property;
 }
@@ -300,7 +315,7 @@ export async function getPublicMenuItems(organizationId: string) {
     const response = await requestPublicAPI<Envelope<SiteMenuItem[]>>("/v1/public/site/menu-items", {
       query: { organization_id: organizationId },
       tags: [`public-site:${organizationId}:menu`],
-    });
+    }, publicMenuItemListEnvelopeSchema, "public-site-server.menu");
     const items = response.data || [];
     writeFallbackCache(cacheKey, items);
     return items;
@@ -316,7 +331,7 @@ export async function getPublicSearchFilters(organizationId: string) {
     const response = await requestPublicAPI<Envelope<SiteSearchFilter[]>>("/v1/public/site/search-filters", {
       query: { organization_id: organizationId },
       tags: [`public-site:${organizationId}:filters`],
-    });
+    }, publicSearchFilterListEnvelopeSchema, "public-site-server.filters");
     const filters = response.data || [];
     writeFallbackCache(cacheKey, filters);
     return filters;
@@ -330,6 +345,7 @@ async function safePublicData<T>(
   endpoint: string,
   query: PublicSiteQuery,
   fallback: T,
+  schema: ZodTypeAny,
 ) {
   const cacheKey = publicCacheKey(["data", organizationId, endpoint, stableQueryKey(query)]);
 
@@ -341,7 +357,7 @@ async function safePublicData<T>(
         ...query,
       },
       tags: [`public-site:${organizationId}`, `public-site:${organizationId}:${endpoint}`],
-    });
+    }, schema, `public-site-server.data.${endpoint}`);
     writeFallbackCache(cacheKey, data);
     return data;
   } catch {
@@ -355,6 +371,8 @@ async function requestPublicAPI<T>(
     query?: PublicSiteQuery;
     tags?: string[];
   } = {},
+  schema?: ZodTypeAny,
+  context = "public-site-server.request",
 ) {
   const response = await fetch(buildAPIURL(path, options.query), {
     headers: {
@@ -370,7 +388,9 @@ async function requestPublicAPI<T>(
     throw new Error(`Vimob public API failed with ${response.status}`);
   }
 
-  return (await response.json()) as T;
+  const payload: unknown = await response.json();
+  if (schema) validateDomainResponse(schema, payload, context);
+  return payload as T;
 }
 
 function buildAPIURL(path: string, query?: PublicSiteQuery) {

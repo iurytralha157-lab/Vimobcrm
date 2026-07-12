@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": false,
+    "outDir": ".validation-tests",
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": [
+    "lib/validation/common.ts",
+    "lib/validation/leads.ts",
+    "lib/validation/pipelines.ts",
+    "lib/validation/users.ts",
+    "lib/validation/whatsapp.ts",
+    "lib/validation/*.test.ts"
+  ]
+}

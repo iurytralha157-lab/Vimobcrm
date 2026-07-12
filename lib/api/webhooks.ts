@@ -1,4 +1,5 @@
 import { vimobAPIRequest } from './vimob-client';
+import { apiWebhookListResponseSchema, apiWebhookResponseSchema, entityIdSchema, parseDomainInput, validateDomainResponse, webhookCreateInputSchema, webhookUpdateInputSchema } from '@/lib/validation';
 
 type Envelope<T> = {
   data: T;
@@ -55,40 +56,48 @@ export const webhooksAPI = {
     const response = await vimobAPIRequest<Envelope<WebhookIntegration[]>>('/v1/webhooks', {
       organizationId,
     });
+    validateDomainResponse(apiWebhookListResponseSchema, response, 'webhooks.list');
     return response.data;
   },
 
   async create(input: CreateWebhookInput, organizationId?: string | null) {
+    const body = parseDomainInput(webhookCreateInputSchema, input, 'webhooks.create');
     const response = await vimobAPIRequest<Envelope<WebhookIntegration>>('/v1/webhooks', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     });
+    validateDomainResponse(apiWebhookResponseSchema, response, 'webhooks.create');
     return response.data;
   },
 
   async update(input: UpdateWebhookInput, organizationId?: string | null) {
-    const { id, ...body } = input;
+    const validated = parseDomainInput(webhookUpdateInputSchema, input, 'webhooks.update');
+    const { id, ...body } = validated;
     const response = await vimobAPIRequest<Envelope<WebhookIntegration>>(`/v1/webhooks/${id}`, {
       method: 'PATCH',
       organizationId,
       body,
     });
+    validateDomainResponse(apiWebhookResponseSchema, response, 'webhooks.update');
     return response.data;
   },
 
   async delete(id: string, organizationId?: string | null) {
-    await vimobAPIRequest<null>(`/v1/webhooks/${id}`, {
+    const webhookId = parseDomainInput(entityIdSchema, id, 'webhooks.delete.id');
+    await vimobAPIRequest<null>(`/v1/webhooks/${webhookId}`, {
       method: 'DELETE',
       organizationId,
     });
   },
 
   async regenerateToken(id: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<WebhookIntegration>>(`/v1/webhooks/${id}/regenerate-token`, {
+    const webhookId = parseDomainInput(entityIdSchema, id, 'webhooks.regenerate-token.id');
+    const response = await vimobAPIRequest<Envelope<WebhookIntegration>>(`/v1/webhooks/${webhookId}/regenerate-token`, {
       method: 'POST',
       organizationId,
     });
+    validateDomainResponse(apiWebhookResponseSchema, response, 'webhooks.regenerate-token');
     return response.data;
   },
 };

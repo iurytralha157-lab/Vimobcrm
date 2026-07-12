@@ -1,5 +1,13 @@
 import { vimobAPIRequest } from './vimob-client'
 import type { Json } from '@/integrations/supabase/types'
+import {
+  activityListQuerySchema,
+  apiActivityListResponseSchema,
+  apiActivityResponseSchema,
+  createActivityInputSchema,
+  parseDomainInput,
+  validateDomainResponse,
+} from '@/lib/validation'
 
 export type Activity = {
   id: string
@@ -20,12 +28,11 @@ type Envelope<T> = {
 
 export const activitiesAPI = {
   async list(options?: { leadId?: string; limit?: number }) {
+    const query = parseDomainInput(activityListQuerySchema, options ?? {}, 'activities.list')
     const response = await vimobAPIRequest<Envelope<Activity[]>>('/v1/activities', {
-      query: {
-        leadId: options?.leadId,
-        limit: options?.limit,
-      },
+      query,
     })
+    validateDomainResponse(apiActivityListResponseSchema, response, 'activities.list')
     return response.data
   },
 
@@ -35,10 +42,12 @@ export const activitiesAPI = {
     content?: string
     metadata?: Json
   }) {
+    const body = parseDomainInput(createActivityInputSchema, activity, 'activities.create')
     const response = await vimobAPIRequest<Envelope<Activity>>('/v1/activities', {
       method: 'POST',
-      body: activity,
+      body,
     })
+    validateDomainResponse(apiActivityResponseSchema, response, 'activities.create')
     return response.data
   },
 }

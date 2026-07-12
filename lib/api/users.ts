@@ -1,3 +1,17 @@
+import {
+  apiCreateUserResponseSchema,
+  apiDeleteUserImpactResponseSchema,
+  apiDeleteUserResponseSchema,
+  apiUpdateUserResponseSchema,
+  apiUserListResponseSchema,
+  apiUserOrganizationListResponseSchema,
+  createUserInputSchema,
+  deleteUserInputSchema,
+  parseDomainInput,
+  updateUserInputSchema,
+  uuidSchema,
+  validateDomainResponse,
+} from '@/lib/validation';
 import { vimobAPIRequest } from './vimob-client';
 
 type Envelope<T> = {
@@ -70,6 +84,7 @@ export type UserOrganization = {
 export const usersAPI = {
   async listUserOrganizations() {
     const response = await vimobAPIRequest<Envelope<UserOrganization[]>>('/v1/user-organizations');
+    validateDomainResponse(apiUserOrganizationListResponseSchema, response, 'users.organizations');
     return response.data;
   },
 
@@ -77,42 +92,53 @@ export const usersAPI = {
     const response = await vimobAPIRequest<Envelope<User[]>>('/v1/users', {
       organizationId,
     });
+    validateDomainResponse(apiUserListResponseSchema, response, 'users.list');
     return response.data;
   },
 
   async createUser(input: CreateUserInput, organizationId?: string | null) {
-    return vimobAPIRequest<CreateUserResult>('/v1/users', {
+    const body = parseDomainInput(createUserInputSchema, input, 'users.create');
+    const response = await vimobAPIRequest<CreateUserResult>('/v1/users', {
       method: 'POST',
       organizationId,
-      body: input,
+      body,
     });
+    validateDomainResponse(apiCreateUserResponseSchema, response, 'users.create');
+    return response;
   },
 
   async updateUser(input: UpdateUserInput, organizationId?: string | null) {
-    const { id, ...updates } = input;
+    const validated = parseDomainInput(updateUserInputSchema, input, 'users.update');
+    const { id, ...updates } = validated;
     const response = await vimobAPIRequest<{ success: boolean; user: User }>(`/v1/users/${id}`, {
       method: 'PATCH',
       organizationId,
       body: { updates },
     });
+    validateDomainResponse(apiUpdateUserResponseSchema, response, 'users.update');
     return response.user;
   },
 
   async getDeleteUserImpact(userId: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<DeleteUserImpact>>(`/v1/users/${userId}/delete-impact`, {
+    const validatedUserId = parseDomainInput(uuidSchema, userId, 'users.delete-impact');
+    const response = await vimobAPIRequest<Envelope<DeleteUserImpact>>(`/v1/users/${validatedUserId}/delete-impact`, {
       organizationId,
     });
+    validateDomainResponse(apiDeleteUserImpactResponseSchema, response, 'users.delete-impact');
     return response.data;
   },
 
   async deleteUser(input: DeleteUserInput, organizationId?: string | null) {
-    return vimobAPIRequest<DeleteUserResult>(`/v1/users/${input.userId}`, {
+    const validated = parseDomainInput(deleteUserInputSchema, input, 'users.delete');
+    const response = await vimobAPIRequest<DeleteUserResult>(`/v1/users/${validated.userId}`, {
       method: 'DELETE',
       organizationId,
       body: {
-        transfer_leads_to_user_id: input.transferLeadsToUserId || null,
-        transfer_properties_to_user_id: input.transferPropertiesToUserId || null,
+        transfer_leads_to_user_id: validated.transferLeadsToUserId || null,
+        transfer_properties_to_user_id: validated.transferPropertiesToUserId || null,
       },
     });
+    validateDomainResponse(apiDeleteUserResponseSchema, response, 'users.delete');
+    return response;
   },
 };
