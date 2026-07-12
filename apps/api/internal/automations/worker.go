@@ -44,7 +44,7 @@ func (repo Repository) StartRuntimeWorker(ctx context.Context, logger *slog.Logg
 // probes deterministic without starting a background goroutine.
 func (repo Repository) ProcessRuntimeOnce(ctx context.Context) error {
 	return repo.functions.invoke(ctx, "automation-runner", map[string]any{
-		"event_batch_size":     10,
+		"event_batch_size":     5,
 		"execution_batch_size": 5,
 		"delay_batch_size":     10,
 		"run_inactivity":       false,

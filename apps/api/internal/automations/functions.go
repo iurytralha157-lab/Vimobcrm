@@ -27,7 +27,7 @@ func newFunctionsClient(config FunctionsConfig) functionsClient {
 	return functionsClient{
 		projectURL: strings.TrimRight(strings.TrimSpace(config.ProjectURL), "/"),
 		apiKey:     strings.TrimSpace(config.APIKey),
-		httpClient: &http.Client{Timeout: 45 * time.Second},
+		httpClient: &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
