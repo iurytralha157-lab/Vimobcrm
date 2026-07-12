@@ -1352,7 +1352,13 @@ func (repo Repository) CreateLeadAttachment(ctx context.Context, tenantContext t
 		add("metadata", jsonb(metadata), "::jsonb")
 	}
 
-	attachment, err := scanLeadAttachment(repo.db.Pool().QueryRow(ctx, `
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return LeadAttachment{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	attachment, err := scanLeadAttachment(tx.QueryRow(ctx, `
 		with inserted as (
 			insert into public.lead_attachments (`+strings.Join(insertColumns, ", ")+`)
 			values (`+strings.Join(values, ", ")+`)
@@ -1365,9 +1371,8 @@ func (repo Repository) CreateLeadAttachment(ctx context.Context, tenantContext t
 	if err != nil {
 		return LeadAttachment{}, err
 	}
-	repo.signLeadAttachmentURL(ctx, &attachment)
 
-	_, err = repo.db.Pool().Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		insert into public.activities (
 			organization_id,
 			lead_id,
@@ -1384,6 +1389,9 @@ func (repo Repository) CreateLeadAttachment(ctx context.Context, tenantContext t
 		"message_id": input.MessageID,
 	}))
 	if err != nil {
+		return LeadAttachment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return LeadAttachment{}, err
 	}
 
@@ -1473,7 +1481,9 @@ func (repo Repository) PatchLeadTask(ctx context.Context, tenantContext tenant.C
 		return LeadTask{}, err
 	}
 	if request.IsDone != nil && *request.IsDone {
-		_ = repo.insertTaskCompletedActivity(ctx, tenantContext.OrganizationID, current.LeadID, task.ID, task.Type, task.DayOffset, task.Title, tenantContext.UserID, nil, request.Outcome, request.OutcomeNotes)
+		if err := repo.insertTaskCompletedActivity(ctx, tenantContext.OrganizationID, current.LeadID, task.ID, task.Type, task.DayOffset, task.Title, tenantContext.UserID, nil, request.Outcome, request.OutcomeNotes); err != nil {
+			return LeadTask{}, err
+		}
 	}
 	return task, nil
 }
@@ -1522,7 +1532,9 @@ func (repo Repository) CompleteCadenceTask(ctx context.Context, tenantContext te
 	if err != nil {
 		return LeadTask{}, err
 	}
-	_ = repo.insertTaskCompletedActivity(ctx, tenantContext.OrganizationID, request.LeadID, task.ID, task.Type, task.DayOffset, task.Title, tenantContext.UserID, &request.TemplateTaskID, request.Outcome, request.OutcomeNotes)
+	if err := repo.insertTaskCompletedActivity(ctx, tenantContext.OrganizationID, request.LeadID, task.ID, task.Type, task.DayOffset, task.Title, tenantContext.UserID, &request.TemplateTaskID, request.Outcome, request.OutcomeNotes); err != nil {
+		return LeadTask{}, err
+	}
 	return task, nil
 }
 
@@ -3353,18 +3365,28 @@ func (repo Repository) insertTaskCompletedActivity(
 		values ($1::uuid, $2::uuid, 'task_completed', $3, $4::uuid, $5::jsonb)
 	`, organizationID, leadID, "Cadencia concluida: "+title, userID, jsonb(metadata))
 
-	if err == nil && repo.gamificationRecorder != nil {
-		tenantCtx := tenant.Context{OrganizationID: organizationID, UserID: userID}
-		if taskType != nil && *taskType == "call" {
-			_ = repo.gamificationRecorder.RecordAction(ctx, tenantCtx, "call_made", 1, taskID)
+	if err != nil {
+		return err
+	}
+	repo.recordTaskGamification(organizationID, userID, taskID, taskType, outcome)
+	return nil
+}
 
-			if outcome != nil && (strings.EqualFold(*outcome, "efetivo") || strings.EqualFold(*outcome, "contato efetivo")) {
-				_ = repo.gamificationRecorder.RecordAction(ctx, tenantCtx, "contact_made", 1, taskID)
-			}
-		}
+func (repo Repository) recordTaskGamification(organizationID string, userID string, taskID string, taskType *string, outcome *string) {
+	if repo.gamificationRecorder == nil || taskType == nil || *taskType != "call" {
+		return
 	}
 
-	return err
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		tenantCtx := tenant.Context{OrganizationID: organizationID, UserID: userID}
+		_ = repo.gamificationRecorder.RecordAction(ctx, tenantCtx, "call_made", 1, taskID)
+		if outcome != nil && (strings.EqualFold(*outcome, "efetivo") || strings.EqualFold(*outcome, "contato efetivo")) {
+			_ = repo.gamificationRecorder.RecordAction(ctx, tenantCtx, "contact_made", 1, taskID)
+		}
+	}()
 }
 
 func storagePathFromPublicURL(fileURL string, _ string) string {

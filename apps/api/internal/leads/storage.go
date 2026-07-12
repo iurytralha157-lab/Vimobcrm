@@ -103,6 +103,36 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 	return nil
 }
 
+func (client storageClient) delete(ctx context.Context, bucket string, objectPath string) error {
+	if client.projectURL == "" || client.apiKey == "" {
+		return ErrStorageNotConfigured
+	}
+
+	endpoint := fmt.Sprintf(
+		"%s/storage/v1/object/%s/%s",
+		client.projectURL,
+		url.PathEscape(bucket),
+		escapeStorageObjectPath(objectPath),
+	)
+	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("apikey", client.apiKey)
+	request.Header.Set("Authorization", "Bearer "+client.apiKey)
+
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrStorageOperation, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		payload, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return fmt.Errorf("%w: %s", ErrStorageOperation, strings.TrimSpace(string(payload)))
+	}
+	return nil
+}
+
 func (client storageClient) signedURL(ctx context.Context, bucket string, objectPath string, expiresIn int) (string, error) {
 	if client.projectURL == "" || client.apiKey == "" || strings.TrimSpace(objectPath) == "" {
 		return "", nil

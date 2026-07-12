@@ -1,6 +1,11 @@
 package leads
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestResolveSignedURL(t *testing.T) {
 	client := storageClient{projectURL: "https://example.supabase.co"}
@@ -38,5 +43,32 @@ func TestResolveSignedURL(t *testing.T) {
 				t.Fatalf("resolveSignedURL() = %q, want %q", got, test.output)
 			}
 		})
+	}
+}
+
+func TestDeleteStorageObject(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Fatalf("method = %s, want DELETE", r.Method)
+		}
+		if r.URL.Path != "/storage/v1/object/whatsapp-media/orgs/org-1/leads/lead-1/file.txt" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer secret" {
+			t.Fatal("missing storage authorization")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := storageClient{
+		projectURL: server.URL,
+		apiKey:     "secret",
+		httpClient: server.Client(),
+	}
+	if err := client.delete(context.Background(), "whatsapp-media", "orgs/org-1/leads/lead-1/file.txt"); err != nil {
+		t.Fatalf("delete() error = %v", err)
 	}
 }

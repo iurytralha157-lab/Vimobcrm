@@ -597,26 +597,12 @@ export function LeadDetailDialog({
 
   const handleSaveFeedback = async () => {
     if (!feedback.trim()) return;
+    const savedFeedback = feedback.trim();
     try {
-      // Registrar no histórico como uma nota
-      await createActivityMutation.mutateAsync({
-        lead_id: lead.id,
-        type: 'note',
-        content: feedback,
-        metadata: { kind: 'feedback' },
+      await updateLead.mutateAsync({
+        id: lead.id,
+        feedback: savedFeedback,
       });
-
-      // Também podemos salvar como o feedback mais recente no lead
-      // (Isso requer a coluna 'feedback' que você solicitou via SQL)
-      try {
-        await updateLead.mutateAsync({
-          id: lead.id,
-          feedback: feedback
-        });
-      } catch {
-        // Se a coluna ainda não existir, apenas ignoramos o erro de persistência única
-        console.log("Coluna 'feedback' ainda não existe na tabela leads");
-      }
 
       setFeedback('');
       toast.success('Feedback registrado com sucesso!');
@@ -840,29 +826,14 @@ export function LeadDetailDialog({
       updateData.commission_percentage = nextPropertyCommission;
     }
 
-    await updateLead.mutateAsync(updateData);
-    await queryClient.invalidateQueries({ queryKey: ['lead'] });
-    await queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
-
     try {
-      await createActivityMutation.mutateAsync({
-        lead_id: lead.id,
-        type: 'property_selected',
-        content: [propertyCode, propertyTitle].filter(Boolean).join(' - ') || 'Imovel selecionado',
-        metadata: {
-          property_id: property.id,
-          property_title: propertyTitle,
-          property_code: propertyCode,
-          property_price: nextPropertyPrice,
-          commission_percentage: nextPropertyCommission,
-        },
-      });
-    } catch (historyError) {
-      console.warn('Nao foi possivel registrar imovel selecionado no historico:', historyError);
-      await queryClient.invalidateQueries({ queryKey: ['lead-history-v2', lead.id] });
+      await updateLead.mutateAsync(updateData);
+      refreshPipelineInBackground();
+    } catch (error) {
+      setLocalLead(lead);
+      updatePipelineLeadCache(lead.id, lead);
+      throw error;
     }
-
-    refetchStages();
   };
 
   // Quick action handlers for phone/email with outcome dialog
@@ -1134,6 +1105,28 @@ export function LeadDetailDialog({
     }
   };
 
+  const loadAssigneeAvailability = () => {
+    const teamMemberIds = teams
+      .flatMap((team) => team.members || [])
+      .map((member) => member.id)
+      .filter(Boolean)
+      .sort();
+    const organizationId = lead.organization_id || profile?.organization_id || organization?.id;
+
+    if (teamMemberIds.length === 0) return Promise.resolve([]);
+
+    return queryClient.fetchQuery({
+      queryKey: ['lead-assignee-availability', organizationId, teamMemberIds],
+      queryFn: () => teamsAPI.listMemberAvailability({ teamMemberIds, organizationId }),
+      staleTime: 60_000,
+    });
+  };
+
+  const handleAssigneePopoverChange = (open: boolean) => {
+    setAssigneePopoverOpen(open);
+    if (open) void loadAssigneeAvailability();
+  };
+
   const handleAssignUser = async (userId: string | null) => {
     if (!canTransferLead) {
       toast.error('Você não tem permissão para trocar o responsável deste lead');
@@ -1190,11 +1183,10 @@ export function LeadDetailDialog({
         .find((member) => member.user_id === userId);
 
       if (teamMember) {
-        const availabilityList = await teamsAPI.listMemberAvailability({
-          teamMemberId: teamMember.id,
-          organizationId: lead.organization_id || profile?.organization_id || organization?.id,
-        });
-        const availability = availabilityList.find((item) => item.day_of_week === currentDay && item.is_active);
+        const availabilityList = await loadAssigneeAvailability();
+        const availability = availabilityList.find((item) =>
+          item.team_member_id === teamMember.id && item.day_of_week === currentDay && item.is_active
+        );
 
         if (availability) {
           const isOutsideSchedule = !availability.is_all_day &&
@@ -1436,21 +1428,26 @@ export function LeadDetailDialog({
     try {
       const isProposal = stage?.name?.toLowerCase().includes('proposta');
 
-      const updatedLead = await updateLead.mutateAsync({
-        id: lead.id,
-        stage_id: stageId
-      });
+      const organizationId = lead.organization_id || profile?.organization_id || organization?.id;
+      const { data: updatedLead, error } = await leadsAPI.moveLeadStage(lead.id, {
+        stageId,
+      }, organizationId);
+      if (error) throw error;
+
+      setLocalLead((current) => current ? { ...current, ...updatedLead } : current);
+      updatePipelineLeadCache(lead.id, updatedLead);
+      void queryClient.invalidateQueries({ queryKey: ['lead-history-v2', lead.id] });
+      refreshPipelineInBackground();
 
       // Se moveu para estágio de Proposta, registrar atividade de gamificação
       if (isProposal) {
-        await createActivityMutation.mutateAsync({
+        createActivityMutation.mutate({
           lead_id: lead.id,
           type: 'proposal_sent',
           content: 'Lead movido para estágio de Proposta',
         });
       }
 
-      refetchStages();
       toast.success('Lead movido!');
 
       // Se a automação da coluna mudou para perdido, abrir diálogo para salvar o motivo
@@ -1895,7 +1892,7 @@ export function LeadDetailDialog({
                   <Button
                     className="rounded-xl px-4"
                     size="sm"
-                    disabled={!feedback.trim() || createActivityMutation.isPending}
+                    disabled={!feedback.trim() || updateLead.isPending}
                     onClick={handleSaveFeedback}
                   >
                     Registrar feedback
@@ -2166,7 +2163,7 @@ export function LeadDetailDialog({
                   <User className="h-4 w-4 text-primary" />
                   Responsável
                 </Label>
-                <Popover open={assigneePopoverOpen} onOpenChange={setAssigneePopoverOpen}>
+                <Popover open={assigneePopoverOpen} onOpenChange={handleAssigneePopoverChange}>
                   <PopoverTrigger asChild>
                     <button
                       disabled={!canTransferLead}
@@ -2592,7 +2589,7 @@ export function LeadDetailDialog({
           </div>
 
           <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-            <Popover open={assigneePopoverOpen} onOpenChange={setAssigneePopoverOpen}>
+            <Popover open={assigneePopoverOpen} onOpenChange={handleAssigneePopoverChange}>
               <PopoverTrigger asChild>
                 <Button
                   variant="ghost"
@@ -2852,7 +2849,7 @@ export function LeadDetailDialog({
                     className="min-h-[92px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"
                   />
                   <div className="mt-2 flex justify-end">
-                    <Button className="h-8 rounded-[6px] px-3" disabled={!feedback.trim() || createActivityMutation.isPending} onClick={handleSaveFeedback}>
+                    <Button className="h-8 rounded-[6px] px-3" disabled={!feedback.trim() || updateLead.isPending} onClick={handleSaveFeedback}>
                       Registrar feedback
                     </Button>
                   </div>
@@ -2995,7 +2992,7 @@ export function LeadDetailDialog({
                 </div>
 
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                  <Popover open={assigneePopoverOpen} onOpenChange={setAssigneePopoverOpen}>
+                  <Popover open={assigneePopoverOpen} onOpenChange={handleAssigneePopoverChange}>
                     <PopoverTrigger asChild>
                       <Button
                         variant="ghost"
@@ -3233,7 +3230,7 @@ export function LeadDetailDialog({
                   <div className="mt-2 flex justify-end">
                     <Button
                       className="h-8 rounded-[6px] px-3"
-                      disabled={!feedback.trim() || createActivityMutation.isPending}
+                      disabled={!feedback.trim() || updateLead.isPending}
                       onClick={handleSaveFeedback}
                     >
                       Registrar feedback
@@ -3382,7 +3379,7 @@ export function LeadDetailDialog({
                     <span className="truncate">{lead.empresa}</span>
                   </p>}
                 {/* Assignee Selector */}
-                <Popover open={assigneePopoverOpen} onOpenChange={setAssigneePopoverOpen}>
+                <Popover open={assigneePopoverOpen} onOpenChange={handleAssigneePopoverChange}>
                   <PopoverTrigger asChild>
                     <button
                       disabled={!canTransferLead}
@@ -3623,7 +3620,7 @@ export function LeadDetailDialog({
                   <div className="flex justify-end">
                     <Button
                       className="rounded-xl px-4"
-                      disabled={!feedback.trim() || createActivityMutation.isPending}
+                      disabled={!feedback.trim() || updateLead.isPending}
                       onClick={handleSaveFeedback}
                     >
                       Registrar feedback

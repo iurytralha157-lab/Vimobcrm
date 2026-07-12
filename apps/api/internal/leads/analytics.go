@@ -204,8 +204,9 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 	if err := repo.ensureLeadVisible(ctx, tenantContext, leadID); err != nil {
 		return nil, err
 	}
+	batch := &pgx.Batch{}
 
-	timelineEvents, err := repo.queryJSONArray(ctx, `
+	timelineEvents, err := queueHistoryJSONArray(batch, `
 		select coalesce(jsonb_agg(
 			jsonb_strip_nulls(
 				to_jsonb(e)
@@ -239,7 +240,7 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		return nil, err
 	}
 
-	activityEvents, err := repo.queryJSONArray(ctx, `
+	activityEvents, err := queueHistoryJSONArray(batch, `
 		select coalesce(jsonb_agg(
 			jsonb_strip_nulls(
 				to_jsonb(a)
@@ -279,7 +280,7 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		return nil, err
 	}
 
-	entryEvents, err := repo.queryJSONArray(ctx, `
+	entryEvents, err := queueHistoryJSONArray(batch, `
 		select coalesce(jsonb_agg(
 			jsonb_strip_nulls(
 				to_jsonb(e)
@@ -300,7 +301,7 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		return nil, err
 	}
 
-	lead, err := repo.queryJSONObject(ctx, `
+	lead, err := queueHistoryJSONObject(batch, `
 		select jsonb_strip_nulls(jsonb_build_object(
 			'id', l.id::text,
 			'source', l.source,
@@ -325,7 +326,7 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		return nil, err
 	}
 
-	leadMeta, err := repo.queryJSONObject(ctx, `
+	leadMeta, err := queueHistoryJSONObject(batch, `
 		select coalesce((
 			select jsonb_strip_nulls(jsonb_build_object(
 				'id', lm.id::text,
@@ -358,7 +359,7 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		return nil, err
 	}
 
-	distributionLogs, err := repo.queryJSONArray(ctx, `
+	distributionLogs, err := queueHistoryJSONArray(batch, `
 		select coalesce(jsonb_agg(
 			jsonb_strip_nulls(
 				to_jsonb(rrl)
@@ -393,7 +394,7 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		return nil, err
 	}
 
-	assignmentLogs, err := repo.queryJSONArray(ctx, `
+	assignmentLogs, err := queueHistoryJSONArray(batch, `
 		select coalesce(jsonb_agg(
 			jsonb_strip_nulls(jsonb_build_object(
 				'id', al.id::text,
@@ -436,7 +437,7 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		return nil, err
 	}
 
-	auditLogs, err := repo.queryJSONArray(ctx, `
+	auditLogs, err := queueHistoryJSONArray(batch, `
 		select coalesce(jsonb_agg(
 			jsonb_strip_nulls(jsonb_build_object(
 				'id', al.id::text,
@@ -467,7 +468,7 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		return nil, err
 	}
 
-	users, err := repo.queryJSONArray(ctx, `
+	users, err := queueHistoryJSONArray(batch, `
 		select coalesce(jsonb_agg(jsonb_build_object(
 			'id', u.id::text,
 			'name', coalesce(nullif(u.name, ''), u.email, 'Usuario'),
@@ -481,6 +482,40 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 		  and coalesce(om.is_active, false) = true
 	`, tenantContext.OrganizationID)
 	if err != nil {
+		return nil, err
+	}
+
+	results := repo.db.Pool().SendBatch(ctx, batch)
+	defer results.Close()
+
+	if timelineEvents, err = scanHistoryJSONArray(results.QueryRow()); err != nil {
+		return nil, err
+	}
+	if activityEvents, err = scanHistoryJSONArray(results.QueryRow()); err != nil {
+		return nil, err
+	}
+	if entryEvents, err = scanHistoryJSONArray(results.QueryRow()); err != nil {
+		return nil, err
+	}
+	if lead, err = scanHistoryJSONObject(results.QueryRow()); err != nil {
+		return nil, err
+	}
+	if leadMeta, err = scanHistoryJSONObject(results.QueryRow()); err != nil {
+		return nil, err
+	}
+	if distributionLogs, err = scanHistoryJSONArray(results.QueryRow()); err != nil {
+		return nil, err
+	}
+	if assignmentLogs, err = scanHistoryJSONArray(results.QueryRow()); err != nil {
+		return nil, err
+	}
+	if auditLogs, err = scanHistoryJSONArray(results.QueryRow()); err != nil {
+		return nil, err
+	}
+	if users, err = scanHistoryJSONArray(results.QueryRow()); err != nil {
+		return nil, err
+	}
+	if err := results.Close(); err != nil {
 		return nil, err
 	}
 
@@ -703,6 +738,48 @@ func (repo Repository) queryJSONArray(ctx context.Context, sql string, args ...a
 	}
 	if out == nil {
 		return []map[string]any{}, nil
+	}
+	return out, nil
+}
+
+func queueHistoryJSONArray(batch *pgx.Batch, sql string, args ...any) ([]map[string]any, error) {
+	batch.Queue(sql, args...)
+	return nil, nil
+}
+
+func queueHistoryJSONObject(batch *pgx.Batch, sql string, args ...any) (map[string]any, error) {
+	batch.Queue(sql, args...)
+	return nil, nil
+}
+
+func scanHistoryJSONArray(row pgx.Row) ([]map[string]any, error) {
+	var raw []byte
+	if err := row.Scan(&raw); err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return []map[string]any{}, nil
+	}
+
+	var out []map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func scanHistoryJSONObject(row pgx.Row) (map[string]any, error) {
+	var raw []byte
+	if err := row.Scan(&raw); err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return map[string]any{}, nil
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

@@ -250,9 +250,6 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 			return Event{}, err
 		}
 
-		if repo.gamificationRecorder != nil && snapshot.EventType == "visit" {
-			_ = repo.gamificationRecorder.RecordAction(ctx, tenantContext, "visit_scheduled", 1, snapshot.ID)
-		}
 	}
 	if err := repo.insertScheduleNotifications(ctx, tx, tenantContext.OrganizationID, tenantContext.UserID, append(input.AssigneeIDs, input.UserID), "Nova atividade", input.Title, map[string]any{
 		"schedule_event_id": eventID,
@@ -263,6 +260,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 
 	if err := tx.Commit(ctx); err != nil {
 		return Event{}, err
+	}
+	if snapshot.LeadID != "" && snapshot.EventType == "visit" {
+		repo.recordScheduleGamification(tenantContext, "visit_scheduled", snapshot.ID)
 	}
 
 	return repo.Get(ctx, tenantContext, eventID)
@@ -420,17 +420,29 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 				return Event{}, err
 			}
 
-			if repo.gamificationRecorder != nil && updated.EventType == "visit" {
-				_ = repo.gamificationRecorder.RecordAction(ctx, tenantContext, "visit_confirmed", 1, updated.ID)
-			}
 		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return Event{}, err
 	}
+	if statusChangedToCompleted && updated.LeadID != "" && updated.EventType == "visit" {
+		repo.recordScheduleGamification(tenantContext, "visit_confirmed", updated.ID)
+	}
 
 	return repo.Get(ctx, tenantContext, updatedID)
+}
+
+func (repo Repository) recordScheduleGamification(tenantContext tenant.Context, actionType string, referenceID string) {
+	if repo.gamificationRecorder == nil {
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = repo.gamificationRecorder.RecordAction(ctx, tenantContext, actionType, 1, referenceID)
+	}()
 }
 
 func (repo Repository) Complete(ctx context.Context, tenantContext tenant.Context, eventID string, status string) (Event, error) {

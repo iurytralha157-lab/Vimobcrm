@@ -4,7 +4,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import { whatsappAPI } from "@/lib/api/whatsapp";
 import { createClientId } from "@/lib/client-id";
-import { supabase } from "@/integrations/supabase/client";
 
 const WHATSAPP_SEND_COOLDOWN_MS = 1000;
 const lastWhatsAppSendByUser = new Map<string, number>();
@@ -168,7 +167,7 @@ export function useWhatsAppConversations(
       }) as Promise<WhatsAppConversation[]>;
     },
     enabled: !!profile?.organization_id,
-    refetchInterval: 20_000,
+    refetchInterval: 60_000,
     refetchIntervalInBackground: false,
     refetchOnReconnect: true,
     refetchOnWindowFocus: false,
@@ -200,7 +199,7 @@ export function useWhatsAppMessages(
 ) {
   const { profile } = useAuth();
   const includeLeadHistory = options.includeLeadHistory ?? true;
-  const refetchInterval = options.refetchIntervalMs ?? (conversationId || leadId ? 5_000 : false);
+  const refetchInterval = options.refetchIntervalMs ?? (conversationId || leadId ? 15_000 : false);
 
   return useQuery({
     queryKey: [

@@ -88,10 +88,48 @@ export function useCompleteCadenceTask() {
       outcome?: string;
       outcomeNotes?: string;
     }) => leadTasksAPI.completeCadence(input),
+    onMutate: async (input) => {
+      const queryKey = ['lead-tasks', input.leadId] as const;
+      await queryClient.cancelQueries({ queryKey });
+      const previous = queryClient.getQueryData<LeadTask[]>(queryKey) || [];
+      const now = new Date().toISOString();
+      let matched = false;
+      const optimistic = previous.map((task) => {
+        if (task.title !== input.title || task.day_offset !== input.dayOffset || task.type !== input.type) return task;
+        matched = true;
+        return {
+          ...task,
+          is_done: true,
+          done_at: now,
+          outcome: input.outcome || null,
+          outcome_notes: input.outcomeNotes || null,
+        };
+      });
+      if (!matched) {
+        optimistic.push({
+          id: `optimistic-${input.templateTaskId}`,
+          lead_id: input.leadId,
+          day_offset: input.dayOffset,
+          type: input.type,
+          title: input.title,
+          description: input.description || null,
+          due_date: null,
+          is_done: true,
+          done_at: now,
+          done_by: null,
+          outcome: input.outcome || null,
+          outcome_notes: input.outcomeNotes || null,
+          created_at: now,
+        });
+      }
+      queryClient.setQueryData(queryKey, optimistic);
+      return { previous, queryKey };
+    },
     onSuccess: (data) => {
       invalidateLeadTaskCaches(queryClient, data?.lead_id);
     },
-    onError: (error) => {
+    onError: (error, _input, context) => {
+      if (context) queryClient.setQueryData(context.queryKey, context.previous);
       toast.error('Erro ao completar tarefa: ' + error.message);
     },
   });

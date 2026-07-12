@@ -1592,7 +1592,6 @@ export function useLeadHistory(leadId: string | null) {
       );
     },
     enabled: !!leadId,
-    placeholderData: (previousData) => previousData ?? [],
     staleTime: 30_000,
     refetchOnWindowFocus: false,
   });

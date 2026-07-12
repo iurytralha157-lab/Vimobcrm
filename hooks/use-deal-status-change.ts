@@ -2,7 +2,6 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { TablesUpdate } from '@/integrations/supabase/types';
 import { toast } from 'sonner';
 import { leadsAPI } from '@/lib/api/leads';
-import { useCreateCommissionOnWon, useCreateReceivableOnWon } from './use-create-commission';
 import { lostReasonSchema } from '@/lib/validation';
 
 interface ChangeDealStatusParams {
@@ -20,8 +19,6 @@ interface ChangeDealStatusParams {
 
 export function useDealStatusChange() {
   const queryClient = useQueryClient();
-  const createCommission = useCreateCommissionOnWon();
-  const createReceivable = useCreateReceivableOnWon();
 
   return useMutation({
     mutationFn: async (params: ChangeDealStatusParams) => {
@@ -46,7 +43,7 @@ export function useDealStatusChange() {
 
       return { lead, newStatus };
     },
-    onSuccess: async ({ newStatus }, variables) => {
+    onSuccess: ({ newStatus }, variables) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['lead', variables.leadId] });
       queryClient.invalidateQueries({ queryKey: ['stages'] });
@@ -65,31 +62,7 @@ export function useDealStatusChange() {
           queryClient.invalidateQueries({ queryKey: ['property', variables.organizationId, variables.propertyId] });
         }
 
-        if (variables.valorInteresse && variables.valorInteresse > 0) {
-          try {
-            await createCommission.mutateAsync({
-              leadId: variables.leadId,
-              organizationId: variables.organizationId,
-              userId: variables.userId,
-              propertyId: variables.propertyId,
-              valorInteresse: variables.valorInteresse,
-              leadCommissionPercentage: variables.commissionPercentage,
-            });
-          } catch (err) {
-            console.error('Failed to create commission:', err);
-          }
-
-          try {
-            await createReceivable.mutateAsync({
-              leadId: variables.leadId,
-              organizationId: variables.organizationId,
-              valorInteresse: variables.valorInteresse,
-              description: `Venda - ${variables.leadName}`,
-            });
-          } catch (err) {
-            console.error('Failed to create receivable:', err);
-          }
-        } else {
+        if (!variables.valorInteresse || variables.valorInteresse <= 0) {
           toast.warning('Lead marcado como ganho sem valor de interesse', {
             description: 'Preencha o valor para gerar comissao e conta a receber',
           });

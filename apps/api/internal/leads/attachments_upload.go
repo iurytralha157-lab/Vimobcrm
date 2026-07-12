@@ -43,13 +43,20 @@ func (repo Repository) UploadLeadAttachment(ctx context.Context, tenantContext t
 	fileSize := size
 	fileType := attachmentFileType(contentType, cleanName)
 
-	return repo.CreateLeadAttachment(ctx, tenantContext, leadAttachmentCreateInput{
+	attachment, err := repo.CreateLeadAttachment(ctx, tenantContext, leadAttachmentCreateInput{
 		LeadID:   leadID,
 		FileName: cleanName,
 		FileURL:  publicURL,
 		FileType: &fileType,
 		FileSize: &fileSize,
 	})
+	if err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = repo.storage.delete(cleanupCtx, leadAttachmentBucket, objectPath)
+		return LeadAttachment{}, err
+	}
+	return attachment, nil
 }
 
 func sanitizeAttachmentFileName(value string) string {

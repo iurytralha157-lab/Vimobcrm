@@ -457,14 +457,32 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return Lead{}, err
 	}
 
+	if err := repo.insertLeadUpdateActivities(ctx, tx, tenantContext, current, input); err != nil {
+		return Lead{}, err
+	}
+
+	updatedLead, err := repo.getLeadForMutation(ctx, tx, tenantContext.OrganizationID, updatedID)
+	if err != nil {
+		return Lead{}, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return Lead{}, err
 	}
 
-	repo.dispatchDealWonNotification(ctx, tenantContext, current, input)
-	repo.recordDealStatusGamification(ctx, tenantContext, current, input)
+	repo.dispatchDealStatusSideEffects(tenantContext, current, input)
 
-	return repo.Get(ctx, tenantContext, updatedID)
+	return updatedLead, nil
+}
+
+func (repo Repository) dispatchDealStatusSideEffects(tenantContext tenant.Context, current leadSnapshot, input updateInput) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		repo.dispatchDealWonNotification(ctx, tenantContext, current, input)
+		repo.recordDealStatusGamification(ctx, tenantContext, current, input)
+	}()
 }
 
 func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Context, leadID string, input moveStageInput) (Lead, error) {
@@ -559,11 +577,16 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 		}
 	}
 
+	updatedLead, err := repo.getLeadForMutation(ctx, tx, tenantContext.OrganizationID, updatedID)
+	if err != nil {
+		return Lead{}, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return Lead{}, err
 	}
 
-	return repo.Get(ctx, tenantContext, updatedID)
+	return updatedLead, nil
 }
 
 func (repo Repository) Assign(ctx context.Context, tenantContext tenant.Context, leadID string, input assignInput) (Lead, error) {
@@ -597,11 +620,16 @@ func (repo Repository) Assign(ctx context.Context, tenantContext tenant.Context,
 		return Lead{}, err
 	}
 
+	updatedLead, err := repo.getLeadForMutation(ctx, tx, tenantContext.OrganizationID, leadID)
+	if err != nil {
+		return Lead{}, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return Lead{}, err
 	}
 
-	return repo.Get(ctx, tenantContext, leadID)
+	return updatedLead, nil
 }
 
 func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext tenant.Context, leadID string) (RoundRobinResult, error) {
@@ -1717,6 +1745,24 @@ func (repo Repository) getLeadSnapshotForUpdate(ctx context.Context, tx pgx.Tx, 
 	return snapshot, nil
 }
 
+func (repo Repository) getLeadForMutation(ctx context.Context, tx pgx.Tx, organizationID string, leadID string) (Lead, error) {
+	lead, err := scanLead(tx.QueryRow(ctx, `
+		select `+leadSelectFields()+`
+		from public.leads l
+		left join public.stages s
+		  on s.id = l.stage_id
+		 and s.organization_id = l.organization_id
+		left join public.users u on u.id = l.assigned_user_id
+		where l.organization_id = $1::uuid
+		  and l.id = $2::uuid
+		limit 1
+	`, organizationID, leadID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Lead{}, ErrLeadNotFound
+	}
+	return lead, err
+}
+
 func (repo Repository) canEditLead(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, assignedUserID string) (bool, error) {
 	if canEditAllLeads(tenantContext) {
 		return true, nil
@@ -1988,6 +2034,96 @@ func (repo Repository) insertDealStatusActivities(ctx context.Context, tx pgx.Tx
 		"new_status":      "won",
 		"to_status":       "won",
 		"valor_interesse": nullableString(interestValue),
+	})
+}
+
+func (repo Repository) insertLeadUpdateActivities(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, input updateInput) error {
+	if input.Feedback.Set && input.Feedback.Value != nil {
+		feedback := strings.TrimSpace(*input.Feedback.Value)
+		if feedback != "" {
+			if err := repo.insertActivity(ctx, tx, tenantContext.OrganizationID, current.ID, tenantContext.UserID, "note", feedback, map[string]any{
+				"kind":   "feedback",
+				"origin": "lead_update",
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
+	if input.StageID.Set && input.StageID.Value != nil && *input.StageID.Value != current.StageID {
+		var stageName, pipelineID string
+		if err := tx.QueryRow(ctx, `
+			select s.name, s.pipeline_id::text
+			from public.stages s
+			where s.organization_id = $1::uuid
+			  and s.id = $2::uuid
+			limit 1
+		`, tenantContext.OrganizationID, *input.StageID.Value).Scan(&stageName, &pipelineID); err != nil {
+			return err
+		}
+		if err := repo.insertActivity(ctx, tx, tenantContext.OrganizationID, current.ID, tenantContext.UserID, "stage_change", fmt.Sprintf(`Lead "%s" movido de etapa`, current.Name), map[string]any{
+			"from_stage_id": nullableString(current.StageID),
+			"to_stage_id":   *input.StageID.Value,
+			"from_stage":    nullableString(current.StageName),
+			"to_stage":      stageName,
+			"from_pipeline": nullableString(current.PipelineID),
+			"to_pipeline":   pipelineID,
+		}); err != nil {
+			return err
+		}
+	}
+
+	propertyID := current.InterestPropertyID
+	if propertyID == "" {
+		propertyID = current.PropertyID
+	}
+	if input.PropertyID.Set {
+		propertyID = ""
+		if input.PropertyID.Value != nil {
+			propertyID = *input.PropertyID.Value
+		}
+	}
+	if input.InterestPropertyID.Set {
+		propertyID = ""
+		if input.InterestPropertyID.Value != nil {
+			propertyID = *input.InterestPropertyID.Value
+		}
+	}
+
+	currentPropertyID := current.InterestPropertyID
+	if currentPropertyID == "" {
+		currentPropertyID = current.PropertyID
+	}
+	if propertyID == "" || propertyID == currentPropertyID {
+		return nil
+	}
+
+	var title, code, price, commission pgtype.Text
+	if err := tx.QueryRow(ctx, `
+		select title, code, preco::text, commission_percentage::text
+		from public.properties
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		limit 1
+	`, tenantContext.OrganizationID, propertyID).Scan(&title, &code, &price, &commission); err != nil {
+		return err
+	}
+
+	propertyTitle := textValue(title)
+	propertyCode := textValue(code)
+	content := strings.TrimSpace(strings.Join([]string{propertyCode, propertyTitle}, " - "))
+	content = strings.Trim(content, "- ")
+	if content == "" {
+		content = "Imovel selecionado"
+	}
+
+	return repo.insertActivity(ctx, tx, tenantContext.OrganizationID, current.ID, tenantContext.UserID, "property_selected", content, map[string]any{
+		"property_id":           propertyID,
+		"property_title":        nullableString(propertyTitle),
+		"property_code":         nullableString(propertyCode),
+		"property_price":        nullableString(textValue(price)),
+		"commission_percentage": nullableString(textValue(commission)),
+		"origin":                "lead_update",
 	})
 }
 
