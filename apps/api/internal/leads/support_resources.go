@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -2250,21 +2252,82 @@ func renderNotificationTemplateText(template string, variables map[string]any) s
 	if template == "" {
 		return ""
 	}
-	replacements := []string{}
+	values := notificationTemplateValues(variables)
+	lines := make([]string, 0)
+	for _, line := range strings.Split(template, "\n") {
+		hadPlaceholder := notificationTemplatePlaceholderPattern.MatchString(line)
+		line = notificationTemplatePlaceholderPattern.ReplaceAllStringFunc(line, func(match string) string {
+			parts := notificationTemplatePlaceholderPattern.FindStringSubmatch(match)
+			if len(parts) < 2 {
+				return ""
+			}
+			return values[parts[1]]
+		})
+		line = strings.TrimSpace(line)
+		if line == "" || (hadPlaceholder && strings.HasSuffix(line, ":")) {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+var notificationTemplatePlaceholderPattern = regexp.MustCompile(`\{\{?\s*([A-Za-z0-9_.-]+)\s*\}\}?`)
+
+func notificationTemplateValues(variables map[string]any) map[string]string {
+	values := make(map[string]string, len(variables)+4)
 	for key, value := range variables {
 		if strings.HasPrefix(key, "__") {
 			continue
 		}
-		text := strings.TrimSpace(fmt.Sprint(value))
-		replacements = append(replacements,
-			"{{"+key+"}}", text,
-			"{{ "+key+" }}", text,
-		)
+		values[key] = strings.TrimSpace(fmt.Sprint(value))
 	}
-	if len(replacements) == 0 {
-		return template
+
+	rawDate := firstNotificationText(
+		values["lead_created_at"],
+		values["created_time"],
+		values["created_at"],
+		values["date"],
+	)
+	if rawDate != "" {
+		formattedDate := formatNotificationTemplateDate(rawDate)
+		values["lead_created_at"] = formattedDate
+		values["created_time"] = formattedDate
+		values["created_at"] = formattedDate
+		values["date"] = formattedDate
 	}
-	return strings.NewReplacer(replacements...).Replace(template)
+
+	return values
+}
+
+func formatNotificationTemplateDate(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+
+	location, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		location = time.FixedZone("America/Sao_Paulo", -3*60*60)
+	}
+	format := func(value time.Time) string {
+		return value.In(location).Format("02/01/2006 | 15:04")
+	}
+
+	if timestamp, err := strconv.ParseInt(value, 10, 64); err == nil && timestamp > 0 {
+		if timestamp > 100_000_000_000 {
+			timestamp /= 1_000
+		}
+		return format(time.Unix(timestamp, 0))
+	}
+
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05-07:00"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return format(parsed)
+		}
+	}
+
+	return value
 }
 
 func (repo Repository) getNotificationWhatsAppConfig(ctx context.Context) (notificationWhatsAppConfig, error) {

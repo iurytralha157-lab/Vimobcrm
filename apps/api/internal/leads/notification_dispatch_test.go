@@ -101,3 +101,39 @@ func TestNotificationVariablesMergesLegacyMetadata(t *testing.T) {
 		t.Fatal("dispatch metadata must not be exposed as template variable")
 	}
 }
+
+func TestRenderNotificationTemplateTextSupportsLegacyPlaceholders(t *testing.T) {
+	t.Parallel()
+
+	template := "🔔 NOVO LEAD\n👤 Nome: {lead_name}\n📱 Origem: {source}\n🎯 Campanha: {campaign_name}\n📅 Data: {lead_created_at}\nIgnorar: {unknown_value}"
+	text := renderNotificationTemplateText(template, map[string]any{
+		"lead_name":     "Maria Silva",
+		"source":        "Meta Ads",
+		"campaign_name": "",
+		"created_time":  "1783850804",
+	})
+
+	expected := []string{
+		"🔔 NOVO LEAD",
+		"👤 Nome: Maria Silva",
+		"📱 Origem: Meta Ads",
+		"📅 Data: 12/07/2026 | 07:06",
+	}
+	for _, item := range expected {
+		if !strings.Contains(text, item) {
+			t.Fatalf("expected rendered template to contain %q, got %q", item, text)
+		}
+	}
+	if strings.Contains(text, "Campanha:") || strings.Contains(text, "Ignorar:") || strings.Contains(text, "{") {
+		t.Fatalf("rendered template must not expose empty or unresolved placeholders, got %q", text)
+	}
+}
+
+func TestRenderNotificationTemplateTextKeepsDoubleBraceFormat(t *testing.T) {
+	t.Parallel()
+
+	text := renderNotificationTemplateText("Lead: {{ lead_name }}", map[string]any{"lead_name": "Joao"})
+	if text != "Lead: Joao" {
+		t.Fatalf("expected double-brace placeholder to remain supported, got %q", text)
+	}
+}
