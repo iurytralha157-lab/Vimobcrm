@@ -21,6 +21,7 @@ interface ImageUploadProps {
   className?: string;
   disabled?: boolean;
   aspectRatio?: 'square' | 'video' | 'banner' | 'any';
+  previewFit?: 'contain' | 'cover';
 }
 
 export function ImageUpload({
@@ -34,7 +35,8 @@ export function ImageUpload({
   maxSizeInMB = 5,
   className,
   disabled = false,
-  aspectRatio = 'any'
+  aspectRatio = 'any',
+  previewFit = 'contain'
 }: ImageUploadProps) {
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -107,7 +109,7 @@ export function ImageUpload({
               alt={label || "Preview"}
               fill
               sizes="320px"
-              className="object-contain p-2"
+              className={previewFit === 'cover' ? "object-cover" : "object-contain p-2"}
               unoptimized
             />
             <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">

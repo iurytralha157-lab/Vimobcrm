@@ -39,10 +39,9 @@ func (ctx Context) HasRole(roles ...string) bool {
 	}
 
 	memberRole := normalizeRole(ctx.MemberRole)
-	userRole := normalizeRole(ctx.UserRole)
 	for _, role := range roles {
 		role = normalizeRole(role)
-		if memberRole == role || userRole == role {
+		if memberRole == role {
 			return true
 		}
 	}

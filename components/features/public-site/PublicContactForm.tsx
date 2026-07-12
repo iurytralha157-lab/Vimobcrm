@@ -14,31 +14,41 @@ type FormState = {
   email: string;
   phone: string;
   message: string;
+  bestTime: string;
+  privacyAccepted: boolean;
 };
 
-const initialState: FormState = {
+const buildInitialState = (defaultMessage = ""): FormState => ({
   name: "",
   email: "",
   phone: "",
-  message: "",
-};
+  message: defaultMessage,
+  bestTime: "",
+  privacyAccepted: false,
+});
 
 export function PublicContactForm({
   className,
+  defaultMessage,
   organizationId,
   primaryColor,
+  privacyHref,
   propertyCode,
   propertyId,
+  siteTitle = "imobiliaria",
 }: Readonly<{
   className?: string;
+  defaultMessage?: string;
   organizationId: string;
   primaryColor: string;
+  privacyHref?: string;
   propertyCode?: string;
   propertyId?: string;
+  siteTitle?: string;
 }>) {
-  const [formData, setFormData] = useState(initialState);
+  const [formData, setFormData] = useState(() => buildInitialState(defaultMessage));
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const fieldClass = "mt-1 w-full rounded-[10px] border-0 bg-zinc-100 px-3 text-sm font-normal text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:bg-zinc-50";
+  const fieldClass = "w-full rounded-[10px] border-0 bg-[#282828] px-3 text-sm font-normal text-white outline-none transition placeholder:text-zinc-400 focus:bg-[#303030]";
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -49,6 +59,9 @@ export function PublicContactForm({
       email: formData.email,
       phone: formData.phone,
       message: formData.message,
+      best_time: formData.bestTime,
+      privacy_accepted: formData.privacyAccepted,
+      privacy_url: privacyHref,
       property_id: propertyId,
       property_code: propertyCode,
     };
@@ -62,8 +75,8 @@ export function PublicContactForm({
     setIsSubmitting(true);
     try {
       await submitContactForm(parsed.data);
-      toast.success("Mensagem enviada. Em breve entraremos em contato.");
-      setFormData(initialState);
+      toast.success("Interesse enviado. Em breve entraremos em contato.");
+      setFormData(buildInitialState(defaultMessage));
     } catch (error) {
       const message = error instanceof z.ZodError
         ? error.issues[0]?.message
@@ -76,9 +89,9 @@ export function PublicContactForm({
 
   return (
     <form onSubmit={handleSubmit} className={cn("space-y-4", className)}>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="space-y-2 text-sm font-normal">
-          Nome
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="sr-only">Nome</span>
           <input
             required
             value={formData.name}
@@ -88,8 +101,8 @@ export function PublicContactForm({
           />
         </label>
 
-        <label className="space-y-2 text-sm font-normal">
-          Telefone
+        <label className="block">
+          <span className="sr-only">Telefone</span>
           <input
             required
             value={formData.phone}
@@ -100,8 +113,8 @@ export function PublicContactForm({
         </label>
       </div>
 
-      <label className="block space-y-2 text-sm font-normal">
-        E-mail
+      <label className="block">
+        <span className="sr-only">E-mail</span>
         <input
           type="email"
           value={formData.email}
@@ -111,9 +124,32 @@ export function PublicContactForm({
         />
       </label>
 
-      <label className="block space-y-2 text-sm font-normal">
-        Mensagem
+      <label className="block">
+        <span className="sr-only">Melhor horario para ligar</span>
+        <select
+          value={formData.bestTime}
+          onChange={(event) => setFormData((current) => ({ ...current, bestTime: event.target.value }))}
+          className={`${fieldClass} h-11 appearance-none`}
+        >
+          <option value="">Selecione um horario</option>
+          <option value="08h as 09h">08h as 09h</option>
+          <option value="09h as 10h">09h as 10h</option>
+          <option value="10h as 11h">10h as 11h</option>
+          <option value="11h as 12h">11h as 12h</option>
+          <option value="12h as 13h">12h as 13h</option>
+          <option value="13h as 14h">13h as 14h</option>
+          <option value="14h as 15h">14h as 15h</option>
+          <option value="15h as 16h">15h as 16h</option>
+          <option value="16h as 17h">16h as 17h</option>
+          <option value="17h as 18h">17h as 18h</option>
+        </select>
+      </label>
+
+      <label className="block">
+        <span className="sr-only">Mensagem</span>
         <textarea
+          required
+          minLength={2}
           value={formData.message}
           onChange={(event) => setFormData((current) => ({ ...current, message: event.target.value }))}
           className={`${fieldClass} min-h-32 py-3`}
@@ -121,14 +157,31 @@ export function PublicContactForm({
         />
       </label>
 
+      <label className="flex items-start gap-3 text-xs leading-5 opacity-80">
+        <input
+          required
+          type="checkbox"
+          checked={formData.privacyAccepted}
+          onChange={(event) => setFormData((current) => ({ ...current, privacyAccepted: event.target.checked }))}
+          className="mt-1 h-4 w-4 rounded border-zinc-300 accent-[var(--site-primary)]"
+        />
+        <span>
+          Li e concordo com a{" "}
+          <a href={privacyHref || "/politica-de-privacidade"} className="font-medium underline underline-offset-4" style={{ color: primaryColor }} target="_blank" rel="noreferrer">
+            Politica de Privacidade
+          </a>{" "}
+          da {siteTitle}.
+        </span>
+      </label>
+
       <button
         type="submit"
         disabled={isSubmitting}
-        className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-5 text-sm font-normal text-white transition disabled:cursor-not-allowed disabled:opacity-70"
+        className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-[10px] px-5 text-sm font-normal text-white transition disabled:cursor-not-allowed disabled:opacity-70"
         style={{ backgroundColor: primaryColor }}
       >
         <Send className="h-4 w-4" />
-        {isSubmitting ? "Enviando..." : "Enviar mensagem"}
+        {isSubmitting ? "Enviando..." : "Solicitar atendimento"}
       </button>
     </form>
   );

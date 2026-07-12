@@ -3,7 +3,7 @@ import {
   activateOrganizationPayment,
   asaasRequest,
   ensureAsaasCustomer,
-  getCheckoutRecord,
+  getAuthorizedCheckoutRecord,
   getCheckoutValue,
   getClientIp,
   getSupabaseAdmin,
@@ -53,7 +53,7 @@ Deno.serve(async (request) => {
     }
 
     const body = (await request.json()) as ChargeRequest;
-    const record = await getCheckoutRecord({
+    const record = await getAuthorizedCheckoutRecord(request, {
       token: body.checkout_token,
       organizationId: body.organization_id,
     });

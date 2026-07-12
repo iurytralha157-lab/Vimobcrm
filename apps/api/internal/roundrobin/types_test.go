@@ -62,6 +62,30 @@ func TestUpdateRequestDetectsConditionsSet(t *testing.T) {
 	}
 }
 
+func TestCreateRequestValidatePreservesTeamMember(t *testing.T) {
+	teamID := "11111111-1111-1111-1111-111111111111"
+	request := CreateRequest{
+		Name: "Fila com equipe",
+		Members: []MemberInput{
+			{Type: "team", EntityID: teamID},
+		},
+	}
+
+	input, err := request.Validate()
+	if err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if len(input.Members) != 1 {
+		t.Fatalf("expected 1 member, got %d", len(input.Members))
+	}
+	if input.Members[0].TeamID == nil || *input.Members[0].TeamID != teamID {
+		t.Fatalf("expected team id %q, got %#v", teamID, input.Members[0].TeamID)
+	}
+	if input.Members[0].UserID != nil {
+		t.Fatalf("expected no expanded user id, got %#v", input.Members[0].UserID)
+	}
+}
+
 func assertMatchList(t *testing.T, match map[string]any, key string, expected []string) {
 	t.Helper()
 	if expected == nil {

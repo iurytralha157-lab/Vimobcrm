@@ -1,5 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
-import type { Json } from "@/integrations/supabase/types";
+import { auditAPI } from "@/lib/api/audit";
 /**
  * Hook para logging de eventos de segurança
  * Registra:
@@ -68,17 +68,16 @@ export function useSecurityLogger() {
           return;
         }
 
-        await supabase.from('audit_logs').insert([{
+        await auditAPI.create({
           action: event.type,
           entity_type: 'security_event',
-          user_id: user.id,
           new_data: {
             email: event.email,
             details: event.details,
             ipHint: event.ipHint
-          } as Json,
+          },
           user_agent: navigator.userAgent,
-        }]);
+        });
       } catch (err) {
         console.error('[Security] Failed to sync log with server:', err);
       }

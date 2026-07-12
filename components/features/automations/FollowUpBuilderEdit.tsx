@@ -770,9 +770,9 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
           </div>
           <div className="flex items-center gap-2">
             <Button
-              variant={showSimulator ? "default" : "outline"}
+              variant={showSimulator ? "default" : "ghost"}
               onClick={() => setShowSimulator(!showSimulator)}
-              className="gap-2"
+              className="gap-2 border-0"
             >
               <Play className="h-4 w-4" />
               Preview

@@ -272,13 +272,16 @@ func (repo Repository) SlaPerformanceByUser(ctx context.Context, tenantContext t
 			'sla_compliance_rate', null
 		)
 		from public.users u
+		join public.organization_members om
+		  on om.user_id = u.id
+		 and om.organization_id = $1::uuid
 		left join public.leads l on l.assigned_user_id = u.id
 		  and l.organization_id = $1::uuid
 		  and ($2 = '' or l.pipeline_id = nullif($2, '')::uuid)
 		  and ($3 = '' or l.created_at >= nullif($3, '')::timestamptz)
 		  and ($4 = '' or l.created_at <= nullif($4, '')::timestamptz)
-		where u.organization_id = $1::uuid
-		  and u.is_active = true
+		where coalesce(u.is_active, false) = true
+		  and coalesce(om.is_active, false) = true
 		group by u.id, u.name
 		order by count(l.id) desc
 	`, tenantContext.OrganizationID, values.Get("pipelineId"), values.Get("startDate"), values.Get("endDate"))
@@ -287,10 +290,13 @@ func (repo Repository) SlaPerformanceByUser(ctx context.Context, tenantContext t
 func (repo Repository) TeamRanking(ctx context.Context, tenantContext tenant.Context, values url.Values) (map[string]any, error) {
 	return repo.queryJSONObject(ctx, `
 		with users as (
-			select id::text, name, avatar_url
-			from public.users
-			where organization_id = $1::uuid
-			  and is_active = true
+			select u.id::text, u.name, u.avatar_url
+			from public.users u
+			join public.organization_members om
+			  on om.user_id = u.id
+			 and om.organization_id = $1::uuid
+			where coalesce(u.is_active, false) = true
+			  and coalesce(om.is_active, false) = true
 		),
 		counts as (
 			select assigned_user_id::text as user_id, count(*)::int as closed_count
@@ -358,15 +364,23 @@ func (repo Repository) VGVByBroker(ctx context.Context, tenantContext tenant.Con
 			'won_vgv', coalesce(sum(l.valor_interesse) filter (where l.deal_status = 'won'), 0),
 			'open_count', count(l.id) filter (where coalesce(l.deal_status, 'open') not in ('won', 'lost')),
 			'open_vgv', coalesce(sum(l.valor_interesse) filter (where coalesce(l.deal_status, 'open') not in ('won', 'lost')), 0),
-			'total_commission', coalesce((select sum(c.amount) from public.commissions c where c.user_id = u.id), 0)
+			'total_commission', coalesce((
+				select sum(c.amount)
+				from public.commissions c
+				where c.user_id = u.id
+				  and c.organization_id = $1::uuid
+			), 0)
 		)
 		from public.users u
+		join public.organization_members om
+		  on om.user_id = u.id
+		 and om.organization_id = $1::uuid
 		left join public.leads l on l.assigned_user_id = u.id
 		  and l.organization_id = $1::uuid
 		  and ($2 = '' or l.created_at >= nullif($2, '')::timestamptz)
 		  and ($3 = '' or l.created_at <= nullif($3, '')::timestamptz)
-		where u.organization_id = $1::uuid
-		  and u.is_active = true
+		where coalesce(u.is_active, false) = true
+		  and coalesce(om.is_active, false) = true
 		group by u.id, u.name, u.avatar_url
 		order by coalesce(sum(l.valor_interesse) filter (where l.deal_status = 'won'), 0) desc
 	`, tenantContext.OrganizationID, values.Get("dateFrom"), values.Get("dateTo"))

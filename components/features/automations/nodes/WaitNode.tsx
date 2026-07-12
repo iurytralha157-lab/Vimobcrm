@@ -14,7 +14,7 @@ export const WaitNode = memo(({ data, selected }: NodeProps) => {
 
   return (
     <div className={`automation-node px-4 py-3 rounded-xl min-w-[180px] ${
-      selected ? 'ring-2 ring-purple-400/60' : ''
+      selected ? 'automation-node-selected' : ''
     }`} style={{ '--node-accent': '#a855f7' } as React.CSSProperties}>
       <Handle type="target" position={Position.Left} className="!bg-purple-400 !w-3 !h-3 !border-2 !border-purple-500/50" />
       <div className="flex items-center gap-3">

@@ -114,6 +114,7 @@ func (repo Repository) processRedistributionWarnings(ctx context.Context, tx pgx
 			"warning_minutes": job.WarningMinutes,
 			"round_robin_id":  job.RoundRobinID,
 			"job_id":          job.ID,
+			"dedupe_key":      notificationDedupeKey("lead_redistribution_warning", job.ID, job.CurrentAssignedUserID),
 		}); err != nil {
 			return err
 		}
@@ -198,6 +199,8 @@ func (repo Repository) processDueRedistributions(ctx context.Context, tx pgx.Tx)
 			"timeout_minutes": job.TimeoutMinutes,
 			"round_robin_id":  job.RoundRobinID,
 			"job_id":          job.ID,
+			"attempt_count":   nextAttemptCount,
+			"dedupe_key":      notificationDedupeKey("lead_redistributed_received", job.ID, selection.UserID, fmt.Sprint(nextAttemptCount)),
 		}); err != nil {
 			return err
 		}
@@ -207,6 +210,8 @@ func (repo Repository) processDueRedistributions(ctx context.Context, tx pgx.Tx)
 			"timeout_minutes": job.TimeoutMinutes,
 			"round_robin_id":  job.RoundRobinID,
 			"job_id":          job.ID,
+			"attempt_count":   nextAttemptCount,
+			"dedupe_key":      notificationDedupeKey("lead_redistributed_away", job.ID, previousUserID, fmt.Sprint(nextAttemptCount)),
 		}); err != nil {
 			return err
 		}
@@ -385,47 +390,107 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 	selection.RoundRobinID = roundRobinID
 
 	err := tx.QueryRow(ctx, `
-		select rrm.id::text, rrm.user_id::text
-		from public.round_robin_members rrm
-		join public.round_robins rr
-		  on rr.id = rrm.round_robin_id
-		 and rr.organization_id = rrm.organization_id
+		with entries as (
+			select
+				rrm.id,
+				rrm.round_robin_id,
+				rrm.organization_id,
+				rrm.user_id,
+				rrm.team_id,
+				coalesce(rrm.position, 0) as position,
+				rrm.created_at,
+				coalesce(entry_logs.total, 0) as entry_total
+			from public.round_robin_members rrm
+			join public.round_robins rr
+			  on rr.id = rrm.round_robin_id
+			 and rr.organization_id = rrm.organization_id
+			left join lateral (
+				select count(*)::bigint as total
+				from public.round_robin_logs rrl
+				where rrl.organization_id = rrm.organization_id
+				  and rrl.round_robin_id = rrm.round_robin_id
+				  and (
+				    rrl.metadata->>'member_id' = rrm.id::text
+				    or (rrm.user_id is not null and rrl.assigned_user_id = rrm.user_id)
+				  )
+			) entry_logs on true
+			where rrm.organization_id = $1::uuid
+			  and rrm.round_robin_id = $2::uuid
+			  and coalesce(rrm.is_active, true) = true
+		),
+		candidates as (
+			select
+				entries.id,
+				entries.round_robin_id,
+				entries.organization_id,
+				entries.user_id,
+				entries.position,
+				entries.created_at,
+				entries.entry_total,
+				tm.id as team_member_id,
+				tm.created_at as team_member_created_at
+			from entries
+			left join public.team_members tm
+			  on tm.organization_id = entries.organization_id
+			 and tm.team_id = entries.team_id
+			 and tm.user_id = entries.user_id
+			 and coalesce(tm.is_active, true) = true
+			where entries.user_id is not null
+
+			union all
+
+			select
+				entries.id,
+				entries.round_robin_id,
+				entries.organization_id,
+				tm.user_id,
+				entries.position,
+				entries.created_at,
+				entries.entry_total,
+				tm.id as team_member_id,
+				tm.created_at as team_member_created_at
+			from entries
+			join public.teams t
+			  on t.id = entries.team_id
+			 and t.organization_id = entries.organization_id
+			 and coalesce(t.is_active, true) = true
+			join public.team_members tm
+			  on tm.organization_id = entries.organization_id
+			 and tm.team_id = entries.team_id
+			 and coalesce(tm.is_active, true) = true
+			where entries.user_id is null
+			  and entries.team_id is not null
+		)
+		select candidates.id::text, candidates.user_id::text
+		from candidates
 		join public.organization_members om
-		  on om.organization_id = rrm.organization_id
-		 and om.user_id = rrm.user_id
+		  on om.organization_id = candidates.organization_id
+		 and om.user_id = candidates.user_id
 		 and coalesce(om.is_active, true) = true
 		join public.users u
-		  on u.id = rrm.user_id
+		  on u.id = candidates.user_id
 		 and coalesce(u.is_active, true) = true
-		left join public.team_members tm
-		  on tm.organization_id = rrm.organization_id
-		 and tm.team_id = rrm.team_id
-		 and tm.user_id = rrm.user_id
-		 and coalesce(tm.is_active, true) = true
 		left join lateral (
 			select count(*)::bigint as total
 			from public.round_robin_logs rrl
-			where rrl.organization_id = rrm.organization_id
-			  and rrl.round_robin_id = rrm.round_robin_id
-			  and rrl.assigned_user_id = rrm.user_id
-		) logs on true
-		where rrm.organization_id = $1::uuid
-		  and rrm.round_robin_id = $2::uuid
-		  and coalesce(rrm.is_active, true) = true
-		  and (nullif($3, '')::uuid is null or rrm.user_id <> nullif($3, '')::uuid)
+			where rrl.organization_id = candidates.organization_id
+			  and rrl.round_robin_id = candidates.round_robin_id
+			  and rrl.assigned_user_id = candidates.user_id
+		) user_logs on true
+		where (nullif($3, '')::uuid is null or candidates.user_id <> nullif($3, '')::uuid)
 		  and (
-		    tm.id is null
+		    candidates.team_member_id is null
 		    or not exists (
 		      select 1
 		      from public.member_availability ma_any
-		      where ma_any.organization_id = rrm.organization_id
-		        and ma_any.team_member_id = tm.id
+		      where ma_any.organization_id = candidates.organization_id
+		        and ma_any.team_member_id = candidates.team_member_id
 		    )
 		    or exists (
 		      select 1
 		      from public.member_availability ma
-		      where ma.organization_id = rrm.organization_id
-		        and ma.team_member_id = tm.id
+		      where ma.organization_id = candidates.organization_id
+		        and ma.team_member_id = candidates.team_member_id
 		        and ma.day_of_week = extract(dow from now() at time zone 'America/Sao_Paulo')::int
 		        and coalesce(ma.is_active, true) = true
 		        and (
@@ -441,7 +506,7 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 		        )
 		    )
 		  )
-		order by coalesce(logs.total, 0) asc, coalesce(rrm.position, 0) asc, rrm.created_at asc
+		order by candidates.entry_total asc, candidates.position asc, candidates.created_at asc, coalesce(user_logs.total, 0) asc, candidates.team_member_created_at asc nulls last, candidates.user_id asc
 		limit 1
 	`, organizationID, roundRobinID, excludedUserID).Scan(&selection.MemberID, &selection.UserID)
 	if errors.Is(err, pgx.ErrNoRows) {

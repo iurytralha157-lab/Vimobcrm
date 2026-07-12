@@ -7,7 +7,7 @@ export const VideoNode = memo(({ data, selected }: NodeProps) => {
 
   return (
     <div className={`automation-node px-4 py-3 rounded-xl min-w-[220px] max-w-[280px] ${
-      selected ? 'ring-2 ring-rose-400/60' : ''
+      selected ? 'automation-node-selected' : ''
     }`} style={{ '--node-accent': '#f43f5e' } as React.CSSProperties}>
       <Handle type="target" position={Position.Left} className="!bg-rose-400 !w-3 !h-3 !border-2 !border-rose-500/50" />
       <div className="flex items-center gap-3">

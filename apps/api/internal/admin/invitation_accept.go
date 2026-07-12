@@ -181,7 +181,6 @@ func (repo Repository) activateInvitationForUser(ctx context.Context, invitation
 	}
 	defer tx.Rollback(ctx)
 
-	userRole := userRoleFromInvitation(invitation.Role)
 	memberRole := memberRoleFromInvitation(invitation.Role)
 
 	if _, err := tx.Exec(ctx, `
@@ -194,15 +193,16 @@ func (repo Repository) activateInvitationForUser(ctx context.Context, invitation
 			whatsapp,
 			is_active
 		)
-		values ($1::uuid, $2::uuid, $3, $4, $5, $6, true)
+		values ($1::uuid, $2::uuid, $3, $4, 'user', $5, true)
 		on conflict (id)
 		do update set
 			organization_id = coalesce(public.users.organization_id, excluded.organization_id),
 			name = coalesce(nullif(public.users.name, ''), excluded.name),
+			role = case when public.users.role = 'super_admin' then public.users.role else 'user' end,
 			whatsapp = coalesce(excluded.whatsapp, public.users.whatsapp),
 			is_active = true,
 			updated_at = now()
-	`, userID, invitation.OrganizationID, name, invitation.Email, userRole, whatsapp); err != nil {
+	`, userID, invitation.OrganizationID, name, invitation.Email, whatsapp); err != nil {
 		return err
 	}
 

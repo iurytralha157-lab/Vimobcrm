@@ -325,10 +325,13 @@ export function SignupPaymentPanel({
   };
 
   useEffect(() => {
-    if (!pixResult?.payment_id || paid) return;
+    if (!pixResult?.payment_id || !checkoutToken || paid) return;
 
     const interval = window.setInterval(async () => {
-      const data = await paymentsAPI.paymentStatus<PaymentStatusResponse>(pixResult.payment_id);
+      const data = await paymentsAPI.paymentStatus<PaymentStatusResponse>(
+        pixResult.payment_id,
+        checkoutToken,
+      );
 
       if (isPaidStatus(data?.payment?.status)) {
         setPaid(true);
@@ -338,7 +341,7 @@ export function SignupPaymentPanel({
     }, 5000);
 
     return () => window.clearInterval(interval);
-  }, [paid, pixResult?.payment_id]);
+  }, [checkoutToken, paid, pixResult?.payment_id]);
 
   useEffect(() => {
     if (!paid) return;

@@ -1,3 +1,25 @@
+create or replace function public.normalize_phone(p_phone text)
+returns text
+language sql
+immutable
+parallel safe
+set search_path = pg_catalog, pg_temp
+as $$
+  with normalized as (
+    select regexp_replace(coalesce(p_phone, ''), '[^0-9]', '', 'g') as digits
+  )
+  select case
+    when length(digits) >= 12 and left(digits, 2) = '55' then substring(digits from 3)
+    else digits
+  end
+  from normalized;
+$$;
+
+revoke all on function public.normalize_phone(text) from public;
+revoke all on function public.normalize_phone(text) from anon;
+revoke all on function public.normalize_phone(text) from authenticated;
+grant execute on function public.normalize_phone(text) to service_role;
+
 create or replace function public.find_lead_by_normalized_phone(
   p_organization_id uuid,
   p_phone text

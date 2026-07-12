@@ -9,7 +9,7 @@ export const MessageNode = memo(({ data, selected }: NodeProps) => {
 
   return (
     <div className={`automation-node px-4 py-3 rounded-xl min-w-[220px] max-w-[280px] ${
-      selected ? 'ring-2 ring-green-400/60' : ''
+      selected ? 'automation-node-selected' : ''
     }`} style={{ '--node-accent': '#22c55e' } as React.CSSProperties}>
       <Handle type="target" position={Position.Left} className="!bg-green-400 !w-3 !h-3 !border-2 !border-green-500/50" />
       <div className="flex items-start gap-3">
@@ -19,7 +19,7 @@ export const MessageNode = memo(({ data, selected }: NodeProps) => {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[10px] font-bold text-green-600 dark:text-green-400 uppercase tracking-wider">Mensagem</span>
-            <span className="text-[10px] bg-green-500/20 text-green-700 dark:text-green-300 px-1.5 py-0.5 rounded-md font-medium">
+            <span className="text-[10px] bg-white/20 text-white px-1.5 py-0.5 rounded-md font-medium">
               Dia {day}
             </span>
           </div>

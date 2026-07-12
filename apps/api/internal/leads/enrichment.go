@@ -278,15 +278,12 @@ func (repo Repository) attachLeadEnrichmentUsers(ctx context.Context, tenantCont
 			u.name,
 			u.avatar_url
 		from public.users u
-		left join public.organization_members om
+		join public.organization_members om
 		  on om.user_id = u.id
 		 and om.organization_id = $1::uuid
-		 and om.is_active = true
 		where u.id in (`+uuidPlaceholders(2, userIDs)+`)
-		  and (
-		    u.organization_id = $1::uuid
-		    or om.id is not null
-		  )
+		  and coalesce(u.is_active, false) = true
+		  and coalesce(om.is_active, false) = true
 	`, args...)
 	if err != nil {
 		return err

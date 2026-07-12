@@ -71,14 +71,8 @@ func (repo Repository) SwitchOrganization(ctx context.Context, tenantContext ten
 		return err
 	}
 
-	memberRole, err := repo.activeMemberRole(ctx, tenantContext.UserID, organizationID)
-	if err != nil {
+	if _, err := repo.activeMemberRole(ctx, tenantContext.UserID, organizationID); err != nil {
 		return err
-	}
-
-	userRole := "user"
-	if memberRole == "owner" || memberRole == "admin" {
-		userRole = "admin"
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
@@ -90,10 +84,9 @@ func (repo Repository) SwitchOrganization(ctx context.Context, tenantContext ten
 	if _, err := tx.Exec(ctx, `
 		update public.users
 		set organization_id = $2::uuid,
-		    role = $3,
 		    updated_at = now()
 		where id = $1::uuid
-	`, tenantContext.UserID, organizationID, userRole); err != nil {
+	`, tenantContext.UserID, organizationID); err != nil {
 		return err
 	}
 

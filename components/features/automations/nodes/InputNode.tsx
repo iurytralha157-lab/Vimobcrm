@@ -21,7 +21,7 @@ export const InputNode = memo(({ data, selected }: NodeProps) => {
 
   return (
     <div className={`automation-node px-4 py-3 rounded-xl min-w-[220px] max-w-[280px] ${
-      selected ? 'ring-2 ring-cyan-400/60' : ''
+      selected ? 'automation-node-selected' : ''
     }`} style={{ '--node-accent': '#06b6d4' } as React.CSSProperties}>
       <Handle type="target" position={Position.Left} className="!bg-cyan-400 !w-3 !h-3 !border-2 !border-cyan-500/50" />
       <div className="flex items-start gap-3">
@@ -31,7 +31,7 @@ export const InputNode = memo(({ data, selected }: NodeProps) => {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[10px] font-bold text-cyan-600 dark:text-cyan-400 uppercase tracking-wider">Input</span>
-            <span className="text-[10px] bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 px-1.5 py-0.5 rounded-md">
+            <span className="text-[10px] bg-white/20 text-white px-1.5 py-0.5 rounded-md">
               {config.label}
             </span>
           </div>
@@ -39,7 +39,7 @@ export const InputNode = memo(({ data, selected }: NodeProps) => {
             {prompt || 'Clique para configurar...'}
           </p>
           {variable && (
-            <code className="text-[10px] text-cyan-700 dark:text-cyan-300 bg-cyan-500/15 px-1 rounded mt-1 inline-block">
+            <code className="text-[10px] bg-white/20 text-white px-1 rounded mt-1 inline-block">
               {`{{${variable}}}`}
             </code>
           )}

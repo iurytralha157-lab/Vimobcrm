@@ -1054,8 +1054,9 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 
 	if input.AssignedUserID != nil {
 		if err := repo.insertNotification(ctx, tx, tenantContext.OrganizationID, *input.AssignedUserID, leadID, "Novo lead recebido", fmt.Sprintf("%s foi atribuido a voce", input.Name), "new_lead_received", map[string]any{
-			"lead_name": input.Name,
-			"source":    input.Source,
+			"lead_name":  input.Name,
+			"source":     input.Source,
+			"dedupe_key": notificationDedupeKey("new_lead_received", leadID, *input.AssignedUserID),
 		}); err != nil {
 			return CreateResult{}, err
 		}
@@ -1190,6 +1191,7 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 		if err := repo.insertNotification(ctx, tx, tenantContext.OrganizationID, existingLead.AssignedUserID, existingLead.ID, "Lead retornou", fmt.Sprintf("%s teve uma nova entrada", input.Name), "lead_reentry", map[string]any{
 			"lead_name": input.Name,
 			"source":    input.Source,
+			"entry_at":  time.Now().UTC().Format(time.RFC3339Nano),
 		}); err != nil {
 			return CreateResult{}, err
 		}
@@ -1391,46 +1393,106 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 	selection.RoundRobinID = roundRobinID
 
 	err = tx.QueryRow(ctx, `
-		select rrm.id::text, rrm.user_id::text
-		from public.round_robin_members rrm
-		join public.round_robins rr
-		  on rr.id = rrm.round_robin_id
-		 and rr.organization_id = rrm.organization_id
+		with entries as (
+			select
+				rrm.id,
+				rrm.round_robin_id,
+				rrm.organization_id,
+				rrm.user_id,
+				rrm.team_id,
+				coalesce(rrm.position, 0) as position,
+				rrm.created_at,
+				coalesce(entry_logs.total, 0) as entry_total
+			from public.round_robin_members rrm
+			join public.round_robins rr
+			  on rr.id = rrm.round_robin_id
+			 and rr.organization_id = rrm.organization_id
+			left join lateral (
+			  select count(*)::bigint as total
+			  from public.round_robin_logs rrl
+			  where rrl.organization_id = rrm.organization_id
+			    and rrl.round_robin_id = rrm.round_robin_id
+			    and (
+			      rrl.metadata->>'member_id' = rrm.id::text
+			      or (rrm.user_id is not null and rrl.assigned_user_id = rrm.user_id)
+			    )
+			) entry_logs on true
+			where rrm.organization_id = $1::uuid
+			  and rrm.round_robin_id = $2::uuid
+			  and coalesce(rrm.is_active, true) = true
+		),
+		candidates as (
+			select
+				entries.id,
+				entries.round_robin_id,
+				entries.organization_id,
+				entries.user_id,
+				entries.position,
+				entries.created_at,
+				entries.entry_total,
+				tm.id as team_member_id,
+				tm.created_at as team_member_created_at
+			from entries
+			left join public.team_members tm
+			  on tm.organization_id = entries.organization_id
+			 and tm.team_id = entries.team_id
+			 and tm.user_id = entries.user_id
+			 and coalesce(tm.is_active, true) = true
+			where entries.user_id is not null
+
+			union all
+
+			select
+				entries.id,
+				entries.round_robin_id,
+				entries.organization_id,
+				tm.user_id,
+				entries.position,
+				entries.created_at,
+				entries.entry_total,
+				tm.id as team_member_id,
+				tm.created_at as team_member_created_at
+			from entries
+			join public.teams t
+			  on t.id = entries.team_id
+			 and t.organization_id = entries.organization_id
+			 and coalesce(t.is_active, true) = true
+			join public.team_members tm
+			  on tm.organization_id = entries.organization_id
+			 and tm.team_id = entries.team_id
+			 and coalesce(tm.is_active, true) = true
+			where entries.user_id is null
+			  and entries.team_id is not null
+		)
+		select candidates.id::text, candidates.user_id::text
+		from candidates
 		join public.organization_members om
-		  on om.organization_id = rrm.organization_id
-		 and om.user_id = rrm.user_id
+		  on om.organization_id = candidates.organization_id
+		 and om.user_id = candidates.user_id
 		 and om.is_active = true
 		join public.users u
-		  on u.id = rrm.user_id
+		  on u.id = candidates.user_id
 		 and u.is_active = true
-		left join public.team_members tm
-		  on tm.organization_id = rrm.organization_id
-		 and tm.team_id = rrm.team_id
-		 and tm.user_id = rrm.user_id
-		 and coalesce(tm.is_active, true) = true
 		left join lateral (
 		  select count(*)::bigint as total
 		  from public.round_robin_logs rrl
-		  where rrl.organization_id = rrm.organization_id
-		    and rrl.round_robin_id = rrm.round_robin_id
-		    and rrl.assigned_user_id = rrm.user_id
-		) logs on true
-		where rrm.organization_id = $1::uuid
-		  and rrm.round_robin_id = $2::uuid
-		  and rrm.is_active = true
-		  and (
-		    tm.id is null
+		  where rrl.organization_id = candidates.organization_id
+		    and rrl.round_robin_id = candidates.round_robin_id
+		    and rrl.assigned_user_id = candidates.user_id
+		) user_logs on true
+		where (
+		    candidates.team_member_id is null
 		    or not exists (
 		      select 1
 		      from public.member_availability ma_any
-		      where ma_any.organization_id = rrm.organization_id
-		        and ma_any.team_member_id = tm.id
+		      where ma_any.organization_id = candidates.organization_id
+		        and ma_any.team_member_id = candidates.team_member_id
 		    )
 		    or exists (
 		      select 1
 		      from public.member_availability ma
-		      where ma.organization_id = rrm.organization_id
-		        and ma.team_member_id = tm.id
+		      where ma.organization_id = candidates.organization_id
+		        and ma.team_member_id = candidates.team_member_id
 		        and ma.day_of_week = extract(dow from now() at time zone 'America/Sao_Paulo')::int
 		        and coalesce(ma.is_active, true) = true
 		        and (
@@ -1446,7 +1508,7 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 		        )
 		    )
 		  )
-		order by coalesce(logs.total, 0) asc, coalesce(rrm.position, 0) asc, rrm.created_at asc
+		order by candidates.entry_total asc, candidates.position asc, candidates.created_at asc, coalesce(user_logs.total, 0) asc, candidates.team_member_created_at asc nulls last, candidates.user_id asc
 		limit 1
 	`, organizationID, roundRobinID).Scan(&selection.MemberID, &selection.UserID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1495,7 +1557,10 @@ func (repo Repository) transferLeadAssignee(ctx context.Context, tx pgx.Tx, tena
 				$6::uuid
 			)
 		`, tenantContext.OrganizationID, current.ID, nullableString(current.AssignedUserID), nullable(assignedUserID), reason, nullableString(tenantContext.UserID))
-		return err
+		if err != nil {
+			return err
+		}
+		return repo.insertTransferNotification(ctx, tx, tenantContext, current, assignedUserID, reason)
 	}
 
 	_, err = tx.Exec(ctx, `
@@ -1516,7 +1581,33 @@ func (repo Repository) transferLeadAssignee(ctx context.Context, tx pgx.Tx, tena
 			now()
 		)
 	`, tenantContext.OrganizationID, current.ID, nullable(assignedUserID), nullableString(tenantContext.UserID), reason)
-	return err
+	if err != nil {
+		return err
+	}
+	return repo.insertTransferNotification(ctx, tx, tenantContext, current, assignedUserID, reason)
+}
+
+func (repo Repository) insertTransferNotification(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, assignedUserID *string, reason string) error {
+	if assignedUserID == nil || strings.TrimSpace(*assignedUserID) == "" || current.AssignedUserID == *assignedUserID {
+		return nil
+	}
+
+	oldUserName := ""
+	if current.AssignedUserID != "" {
+		oldUserName, _ = repo.getUserDisplayName(ctx, tx, current.AssignedUserID)
+	}
+	eventAt := time.Now().UTC()
+	return repo.insertNotification(ctx, tx, tenantContext.OrganizationID, *assignedUserID, current.ID, "Lead transferido para voce", fmt.Sprintf("%s foi transferido para voce", current.Name), "lead_transferred", map[string]any{
+		"lead_name":         current.Name,
+		"from_user_id":      nullableString(current.AssignedUserID),
+		"from_user_name":    oldUserName,
+		"transfer_reason":   reason,
+		"transferred_by":    nullableString(tenantContext.UserID),
+		"transfer_event_at": eventAt.Format(time.RFC3339Nano),
+		"pipeline_id":       nullableString(current.PipelineID),
+		"stage_id":          nullableString(current.StageID),
+		"dedupe_key":        notificationDedupeKey("lead_transferred", current.ID, *assignedUserID, current.AssignedUserID, reason, eventAt.Format(time.RFC3339Nano)),
+	})
 }
 
 func (repo Repository) assignmentLogUsesCanonicalSchema(ctx context.Context, tx pgx.Tx) (bool, error) {
@@ -2090,6 +2181,7 @@ func (repo Repository) notifyInterestedLeadsForReservedProperty(ctx context.Cont
 			"event_key":             "interest_property_reserved",
 			"notification_reason":   "same_interest_property_reserved",
 			"source":                "deal_won_property_reservation",
+			"dedupe_key":            notificationDedupeKey("interest_property_reserved", current.ID, leadID, assignedUserID),
 		}
 
 		if err := repo.insertActivity(ctx, tx, tenantContext.OrganizationID, leadID, tenantContext.UserID, "property_interest_reserved", content, metadata); err != nil {
@@ -2143,7 +2235,7 @@ func (repo Repository) dispatchDealWonNotification(ctx context.Context, tenantCo
 	`, tenantContext.OrganizationID).Scan(&organizationName)
 
 	for _, recipientID := range recipients {
-		_, _ = repo.DispatchNotification(ctx, tenantContext, DispatchNotificationRequest{
+		_, _ = repo.enqueueDispatchNotification(ctx, tenantContext.OrganizationID, recipientID, DispatchNotificationRequest{
 			EventKey:  "deal_won",
 			UserID:    recipientID,
 			LeadID:    &current.ID,
@@ -2171,15 +2263,11 @@ func (repo Repository) listDealWonNotificationRecipients(ctx context.Context, or
 		admins as (
 			select distinct om.user_id
 			from public.organization_members om
+			join public.users u on u.id = om.user_id
 			where om.organization_id = $1::uuid
-			  and coalesce(om.is_active, true) = true
+			  and coalesce(om.is_active, false) = true
+			  and coalesce(u.is_active, false) = true
 			  and om.role in ('owner', 'admin', 'manager')
-			union
-			select distinct u.id
-			from public.users u
-			where u.organization_id = $1::uuid
-			  and coalesce(u.is_active, true) = true
-			  and u.role in ('admin', 'super_admin')
 		),
 		leaders as (
 			select distinct leader.user_id
@@ -2227,11 +2315,12 @@ func (repo Repository) getNotificationUserName(ctx context.Context, organization
 	err := repo.db.Pool().QueryRow(ctx, `
 		select u.name
 		from public.users u
-		left join public.organization_members om
+		join public.organization_members om
 		  on om.user_id = u.id
 		 and om.organization_id = $1::uuid
 		where u.id = $2::uuid
-		  and (u.organization_id = $1::uuid or om.id is not null)
+		  and coalesce(u.is_active, false) = true
+		  and coalesce(om.is_active, false) = true
 		limit 1
 	`, organizationID, userID).Scan(&name)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -2372,8 +2461,12 @@ func (repo Repository) insertNotificationWithType(ctx context.Context, tx pgx.Tx
 		metadata = map[string]any{}
 	}
 	metadata = applyNotificationDispatchMetadata(metadata, eventKey, nil)
+	dedupeKey := stringFromMap(metadata, "dedupe_key")
 
 	_, err := tx.Exec(ctx, `
+		with input as (
+			select nullif($8, '') as dedupe_key
+		)
 		insert into public.notifications (
 			organization_id,
 			user_id,
@@ -2386,7 +2479,7 @@ func (repo Repository) insertNotificationWithType(ctx context.Context, tx pgx.Tx
 			target_url,
 			metadata
 		)
-		values (
+		select
 			$1::uuid,
 			$2::uuid,
 			$3,
@@ -2397,9 +2490,31 @@ func (repo Repository) insertNotificationWithType(ctx context.Context, tx pgx.Tx
 			$5::uuid,
 			'/crm/pipelines?lead=' || $5::text,
 			$7::jsonb
-		)
-	`, organizationID, userID, title, content, leadID, notificationType, jsonb(metadata))
+		from input
+		where input.dedupe_key is null
+		   or not exists (
+		     select 1
+		     from public.notifications n
+		     where n.organization_id = $1::uuid
+		       and n.user_id = $2::uuid
+		       and n.metadata->>'dedupe_key' = input.dedupe_key
+		   )
+	`, organizationID, userID, title, content, leadID, notificationType, jsonb(metadata), dedupeKey)
+	if isNotificationDedupeConflict(err) {
+		return nil
+	}
 	return err
+}
+
+func notificationDedupeKey(parts ...string) string {
+	cleaned := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			cleaned = append(cleaned, part)
+		}
+	}
+	return strings.Join(cleaned, ":")
 }
 
 func (repo Repository) getUserDisplayName(ctx context.Context, tx pgx.Tx, userID string) (string, error) {

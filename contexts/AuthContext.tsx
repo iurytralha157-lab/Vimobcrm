@@ -8,6 +8,7 @@ import { logAuditAction } from '@/hooks/use-audit-logs';
 import { performanceTracker } from '@/lib/performance';
 import { performFullCacheClear } from '@/lib/cache-utils';
 import { ROUTES, getPublicAppUrl } from '@/config/constants';
+import { meAPI } from '@/lib/api/me';
 
 const isAuthDebugEnabled =
   process.env.NODE_ENV !== 'production' ||
@@ -197,66 +198,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const fetchProfile = async (userId: string): Promise<boolean> => {
     return performanceTracker.trackTimed('fetchProfile', async () => {
       try {
-        // Fetch profile and check super admin status in parallel
-        // Optimized: Select only required fields
-        const [userResult, superAdmin] = await Promise.all([
-          supabase
-            .from('users')
-            .select('id, organization_id, name, email, role, avatar_url, is_active, language, theme_mode, whatsapp, cpf')
-            .eq('id', userId)
-            .single(),
-          checkSuperAdmin(userId)
-        ]);
+        const storedImpersonating = localStorage.getItem('impersonating');
+        const activeImpersonation: ImpersonateSession | null = storedImpersonating
+          ? JSON.parse(storedImpersonating)
+          : null;
+        const preferredOrganizationId = activeImpersonation?.orgId
+          || localStorage.getItem(`vimob_active_organization_${userId}`);
+        const response = await meAPI.getProfile(preferredOrganizationId);
+        const superAdmin = response.context.isSuperAdmin;
+        const profileData: UserProfile = {
+          ...response.profile,
+          organization_id: response.context.organizationId || response.profile.organization_id,
+          role: superAdmin ? 'super_admin' : normalizeProfileRole(response.context.memberRole),
+        } as UserProfile;
 
-        const profileData = userResult.data;
-
-        if (profileData) {
-          setIsSuperAdmin(superAdmin);
-
-          // Block inactive users (super_admins bypass this check)
-          if (!profileData.is_active && !superAdmin) {
-            authDebugWarn('User is deactivated, signing out');
-            await supabase.auth.signOut();
-            // Removed intrusive alert to prevent blocking the UI
-            // toast handles this in the UI
-
-            return false;
-          }
-
-          setProfile(profileData as UserProfile);
-
-          const storedImpersonating = localStorage.getItem('impersonating');
-          const activeImpersonation: ImpersonateSession | null = storedImpersonating
-            ? JSON.parse(storedImpersonating)
-            : null;
-
-          const orgIdToFetch = activeImpersonation?.orgId || profileData.organization_id;
-
-          if (orgIdToFetch) {
-            // Optimized: Select only required fields
-            const { data: orgData } = await supabase
-              .from('organizations')
-              .select('id, name, logo_url, is_active, subscription_status, segment, cnpj, creci, inscricao_estadual, razao_social, nome_fantasia, cep, endereco, numero, complemento, bairro, cidade, uf, telefone, whatsapp, email, website, default_commission_percentage, property_edit_policy, property_owner_contact_visibility')
-              .eq('id', orgIdToFetch)
-              .single();
-
-            if (orgData) {
-              if (!orgData.is_active && !superAdmin && !activeImpersonation) {
-                authDebugWarn('Organization is deactivated, signing out');
-                await supabase.auth.signOut();
-                // Removed intrusive alert
-                return false;
-              }
-              setOrganization(orgData as Organization);
-            }
-          }
-          
-          // Fetch full profile data in background after critical data is loaded
-          fetchFullProfile(userId);
-          
-          return true;
+        setIsSuperAdmin(superAdmin);
+        if (!profileData.is_active && !superAdmin) {
+          authDebugWarn('User is deactivated, signing out');
+          await supabase.auth.signOut();
+          return false;
         }
-        return false;
+
+        setProfile(profileData);
+        setOrganization(response.organization as Organization | null);
+
+        if (response.context.organizationId) {
+          localStorage.setItem(
+            `vimob_active_organization_${userId}`,
+            response.context.organizationId,
+          );
+        }
+
+        fetchFullProfile(userId);
+        return true;
       } catch (error) {
         console.error('Error fetching profile:', error);
         return false;
@@ -328,19 +302,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const activeUser = userRef.current || user;
     if (!activeUser) return;
 
-    localStorage.setItem(`vimob_active_organization_${activeUser.id}`, orgId);
     authDebug('[AuthContext] switching organization to:', orgId);
 
-    await supabase
-      .from('users')
-      .update({ organization_id: orgId })
-      .eq('id', activeUser.id);
-
-    await supabase
-      .from('organization_members')
-      .update({ updated_at: new Date().toISOString() })
-      .eq('user_id', activeUser.id)
-      .eq('organization_id', orgId);
+    await meAPI.switchOrganization(orgId);
+    localStorage.setItem(`vimob_active_organization_${activeUser.id}`, orgId);
 
     const { data: orgData } = await supabase
       .from('organizations')
@@ -362,11 +327,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (memberData) {
       const memberRole = memberData.role;
       const newRole = normalizeProfileRole(memberRole);
-      await supabase
-        .from('users')
-        .update({ role: memberRole })
-        .eq('id', activeUser.id);
-
       setProfile(prev => prev ? { ...prev, organization_id: orgId, role: newRole } : prev);
     } else {
       setProfile(prev => prev ? { ...prev, organization_id: orgId } : prev);

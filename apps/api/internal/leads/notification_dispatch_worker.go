@@ -18,6 +18,7 @@ const (
 	notificationDispatchWorkerInterval = 15 * time.Second
 	notificationDispatchBatchLimit     = 25
 	notificationDispatchMaxAttempts    = 5
+	notificationDispatchClaimTimeout   = 5 * time.Minute
 	notificationDispatchLockKey        = int64(860421705)
 	scheduleReminderLockKey            = int64(860421706)
 )
@@ -91,6 +92,11 @@ func (repo Repository) ProcessNotificationDeliveries(ctx context.Context) error 
 		return err
 	}
 
+	notifications, err = repo.claimPendingNotificationDeliveries(ctx, tx, notifications)
+	if err != nil {
+		return err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
@@ -155,16 +161,28 @@ func (repo Repository) listPendingNotificationDeliveries(ctx context.Context, tx
 		      lower(coalesce(metadata->'dispatch'->'whatsapp'->>'required', metadata->>'whatsapp_dispatch_required', 'false')) in ('true', '1', 'yes')
 		      and coalesce(metadata->'dispatch'->'whatsapp'->>'status', metadata->'whatsapp_dispatch'->>'status', 'pending') not in ('sent', 'skipped', 'permanent_failed')
 		      and coalesce(nullif(coalesce(metadata->'dispatch'->'whatsapp'->>'attempts', metadata->'whatsapp_dispatch'->>'attempts'), '')::int, 0) < $1
+		      and (
+		        coalesce(metadata->'dispatch'->'whatsapp'->>'status', metadata->'whatsapp_dispatch'->>'status', 'pending') <> 'processing'
+		        or coalesce(nullif(metadata->'dispatch'->'whatsapp'->>'claimed_at', '')::timestamptz, now() - interval '1 hour') < now() - interval '5 minutes'
+		      )
 		    )
 		    or (
 		      lower(coalesce(metadata->'dispatch'->'push'->>'required', 'false')) in ('true', '1', 'yes')
 		      and coalesce(metadata->'dispatch'->'push'->>'status', 'pending') not in ('sent', 'skipped', 'permanent_failed')
 		      and coalesce(nullif(metadata->'dispatch'->'push'->>'attempts', '')::int, 0) < $1
+		      and (
+		        coalesce(metadata->'dispatch'->'push'->>'status', 'pending') <> 'processing'
+		        or coalesce(nullif(metadata->'dispatch'->'push'->>'claimed_at', '')::timestamptz, now() - interval '1 hour') < now() - interval '5 minutes'
+		      )
 		    )
 		    or (
 		      lower(coalesce(metadata->'dispatch'->'email'->>'required', 'false')) in ('true', '1', 'yes')
 		      and coalesce(metadata->'dispatch'->'email'->>'status', 'pending') not in ('sent', 'skipped', 'permanent_failed')
 		      and coalesce(nullif(metadata->'dispatch'->'email'->>'attempts', '')::int, 0) < $1
+		      and (
+		        coalesce(metadata->'dispatch'->'email'->>'status', 'pending') <> 'processing'
+		        or coalesce(nullif(metadata->'dispatch'->'email'->>'claimed_at', '')::timestamptz, now() - interval '1 hour') < now() - interval '5 minutes'
+		      )
 		    )
 		  )
 		order by created_at asc
@@ -194,6 +212,43 @@ func (repo Repository) listPendingNotificationDeliveries(ctx context.Context, tx
 		notifications = append(notifications, item)
 	}
 	return notifications, rows.Err()
+}
+
+func (repo Repository) claimPendingNotificationDeliveries(ctx context.Context, tx pgx.Tx, notifications []pendingNotification) ([]pendingNotification, error) {
+	claimed := make([]pendingNotification, 0, len(notifications))
+	claimToken := fmt.Sprintf("%d", time.Now().UTC().UnixNano())
+
+	for _, notification := range notifications {
+		metadata := notification.Metadata
+		if metadata == nil {
+			metadata = map[string]any{}
+		}
+
+		channelClaimed := false
+		for _, channel := range []string{"whatsapp", "push", "email"} {
+			if !shouldClaimNotificationChannel(metadata, channel) {
+				continue
+			}
+			metadata = setNotificationChannelProcessing(metadata, channel, claimToken)
+			channelClaimed = true
+		}
+		if !channelClaimed {
+			continue
+		}
+
+		if _, err := tx.Exec(ctx, `
+			update public.notifications
+			set metadata = $2::jsonb
+			where id = $1::uuid
+		`, notification.ID, jsonb(metadata)); err != nil {
+			return nil, err
+		}
+
+		notification.Metadata = metadata
+		claimed = append(claimed, notification)
+	}
+
+	return claimed, nil
 }
 
 func (repo Repository) dispatchPendingNotification(ctx context.Context, notification pendingNotification, channels []string) notificationDeliveryResult {
@@ -396,6 +451,34 @@ func setNotificationChannelDispatch(metadata map[string]any, channel string, res
 	return metadata
 }
 
+func setNotificationChannelProcessing(metadata map[string]any, channel string, claimToken string) map[string]any {
+	dispatch := mapFromAny(metadata["dispatch"])
+	current := mapFromAny(dispatch[channel])
+	current["required"] = true
+	current["status"] = "processing"
+	current["claim_token"] = claimToken
+	current["claimed_at"] = time.Now().UTC().Format(time.RFC3339)
+	current["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+	dispatch[channel] = current
+	metadata["dispatch"] = dispatch
+	if channel == "whatsapp" {
+		metadata["whatsapp_dispatch"] = mapFromAny(current)
+		metadata["whatsapp_dispatch_required"] = true
+	}
+	return metadata
+}
+
+func shouldClaimNotificationChannel(metadata map[string]any, channel string) bool {
+	if !shouldAttemptNotificationChannel(metadata, channel, nil) {
+		return false
+	}
+	status := notificationChannelStatus(metadata, channel)
+	if status != "processing" {
+		return true
+	}
+	return notificationChannelClaimExpired(metadata, channel)
+}
+
 func shouldAttemptNotificationChannel(metadata map[string]any, channel string, requested []string) bool {
 	if !requestWantsChannel(requested, channel) {
 		return false
@@ -409,6 +492,16 @@ func shouldAttemptNotificationChannel(metadata map[string]any, channel string, r
 	if !required {
 		return false
 	}
+	status := notificationChannelStatus(metadata, channel)
+	switch status {
+	case "sent", "skipped", "permanent_failed":
+		return false
+	}
+	return notificationDispatchAttempts(metadata, channel) < notificationDispatchMaxAttempts
+}
+
+func notificationChannelStatus(metadata map[string]any, channel string) string {
+	channelDispatch := mapFromAny(mapFromAny(metadata["dispatch"])[channel])
 	status := strings.TrimSpace(fmt.Sprint(channelDispatch["status"]))
 	if status == "" && channel == "whatsapp" {
 		status = strings.TrimSpace(fmt.Sprint(mapFromAny(metadata["whatsapp_dispatch"])["status"]))
@@ -416,11 +509,23 @@ func shouldAttemptNotificationChannel(metadata map[string]any, channel string, r
 	if status == "" {
 		status = "pending"
 	}
-	switch status {
-	case "sent", "skipped", "permanent_failed":
-		return false
+	return status
+}
+
+func notificationChannelClaimExpired(metadata map[string]any, channel string) bool {
+	channelDispatch := mapFromAny(mapFromAny(metadata["dispatch"])[channel])
+	claimedAt := strings.TrimSpace(fmt.Sprint(channelDispatch["claimed_at"]))
+	if claimedAt == "" && channel == "whatsapp" {
+		claimedAt = strings.TrimSpace(fmt.Sprint(mapFromAny(metadata["whatsapp_dispatch"])["claimed_at"]))
 	}
-	return notificationDispatchAttempts(metadata, channel) < notificationDispatchMaxAttempts
+	if claimedAt == "" {
+		return true
+	}
+	parsed, err := time.Parse(time.RFC3339, claimedAt)
+	if err != nil {
+		return true
+	}
+	return time.Since(parsed) > notificationDispatchClaimTimeout
 }
 
 func notificationDispatchAttempts(metadata map[string]any, channel string) int {
@@ -583,6 +688,7 @@ func (repo Repository) CreateDueScheduleReminderNotifications(ctx context.Contex
 			'/agenda',
 			jsonb_build_object(
 				'event_key', 'schedule_reminder',
+				'dedupe_key', 'schedule_reminder:' || id::text || ':' || user_id::text,
 				'schedule_event_id', id::text,
 				'start_time', start_time,
 				'dispatch', jsonb_build_object(

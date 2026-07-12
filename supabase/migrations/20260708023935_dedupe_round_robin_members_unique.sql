@@ -1,16 +1,47 @@
 -- Keep the round-robin member contract aligned with the backend:
 -- one active membership row per queue/user pair.
 
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'round_robin_members'
+      and column_name = 'leads_count'
+  ) then
+    execute $sql$
+      with ranked_members as (
+        select
+          id,
+          row_number() over (
+            partition by round_robin_id, user_id
+            order by is_active desc, created_at desc, id desc
+          ) as row_rank,
+          sum(coalesce(leads_count, 0)) over (
+            partition by round_robin_id, user_id
+          ) as merged_leads_count
+        from public.round_robin_members
+        where round_robin_id is not null
+          and user_id is not null
+      )
+      update public.round_robin_members member
+      set leads_count = ranked_members.merged_leads_count
+      from ranked_members
+      where member.id = ranked_members.id
+        and ranked_members.row_rank = 1
+    $sql$;
+  end if;
+end
+$$;
+
 with ranked_members as (
   select
     id,
     row_number() over (
       partition by round_robin_id, user_id
-      order by is_active desc, coalesce(updated_at, created_at) desc, created_at desc, id desc
+      order by is_active desc, created_at desc, id desc
     ) as row_rank,
-    sum(coalesce(leads_count, 0)) over (
-      partition by round_robin_id, user_id
-    ) as merged_leads_count,
     min(position) over (
       partition by round_robin_id, user_id
     ) as merged_position
@@ -20,9 +51,7 @@ with ranked_members as (
 ),
 updated_keepers as (
   update public.round_robin_members member
-     set leads_count = ranked_members.merged_leads_count,
-         position = ranked_members.merged_position,
-         updated_at = now()
+     set position = ranked_members.merged_position
     from ranked_members
    where member.id = ranked_members.id
      and ranked_members.row_rank = 1

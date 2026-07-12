@@ -114,7 +114,7 @@ export const AudioNode = memo(({ data, selected }: NodeProps) => {
 
   return (
     <div className={`automation-node px-4 py-3 rounded-xl min-w-[220px] max-w-[280px] ${
-      selected ? 'ring-2 ring-amber-400/60' : ''
+      selected ? 'automation-node-selected' : ''
     }`} style={{ '--node-accent': '#f59e0b' } as React.CSSProperties}>
       <Handle type="target" position={Position.Left} className="!bg-amber-400 !w-3 !h-3 !border-2 !border-amber-500/50" />
       <div className="flex items-center gap-3">
@@ -144,15 +144,15 @@ export const AudioNode = memo(({ data, selected }: NodeProps) => {
         <div className="mt-2 space-y-1.5">
           <div
             ref={progressRef}
-            className="relative h-2 bg-amber-500/20 rounded-full cursor-pointer group"
+            className="relative h-2 bg-white/20 rounded-full cursor-pointer group"
             onClick={handleSeek}
           >
             <div
-              className="absolute inset-y-0 left-0 bg-amber-500 rounded-full"
+              className="absolute inset-y-0 left-0 bg-white rounded-full"
               style={{ width: `${pct}%` }}
             />
             <div
-              className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-amber-500 rounded-full shadow-sm border-2 border-white dark:border-gray-800 opacity-0 group-hover:opacity-100 transition-opacity"
+              className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
               style={{ left: `calc(${pct}% - 6px)` }}
             />
           </div>

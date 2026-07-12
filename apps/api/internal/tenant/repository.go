@@ -24,7 +24,7 @@ var (
 	ErrTenantResolutionUnhealthy = errors.New("tenant resolution failed")
 )
 
-const resolveCacheTTL = 60 * time.Second
+const resolveCacheTTL = 5 * time.Second
 
 type Repository struct {
 	db    *dbpkg.Postgres
@@ -67,8 +67,10 @@ func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrga
 	}
 
 	cacheKey := userID + "|" + requestedOrganizationID
-	if cached, ok := repo.getCachedContext(cacheKey); ok {
-		return repo.applyTeamLeadershipScope(ctx, cached)
+	if requestedOrganizationID != "" {
+		if cached, ok := repo.getCachedContext(ctx, cacheKey); ok {
+			return repo.applyTeamLeadershipScope(ctx, cached)
+		}
 	}
 
 	profile, err := repo.getUserProfile(ctx, userID)
@@ -88,7 +90,7 @@ func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrga
 
 	if isSuperAdmin {
 		resolved, err := repo.resolveSuperAdmin(ctx, profile, organizationID)
-		if err == nil {
+		if err == nil && requestedOrganizationID != "" {
 			repo.storeCachedContext(cacheKey, resolved)
 		}
 		return resolved, err
@@ -123,11 +125,13 @@ func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrga
 		return Context{}, err
 	}
 
-	repo.storeCachedContext(cacheKey, resolved)
+	if requestedOrganizationID != "" {
+		repo.storeCachedContext(cacheKey, resolved)
+	}
 	return resolved, nil
 }
 
-func (repo Repository) getCachedContext(key string) (Context, bool) {
+func (repo Repository) getCachedContext(ctx context.Context, key string) (Context, bool) {
 	if repo.cache == nil || key == "" {
 		return Context{}, false
 	}
@@ -143,7 +147,44 @@ func (repo Repository) getCachedContext(key string) (Context, bool) {
 		return Context{}, false
 	}
 
-	return cloneContext(entry.context), true
+	cached := cloneContext(entry.context)
+	if !repo.contextIsStillActive(ctx, cached) {
+		repo.cache.values.Delete(key)
+		return Context{}, false
+	}
+
+	return cached, true
+}
+
+func (repo Repository) contextIsStillActive(ctx context.Context, tenantContext Context) bool {
+	if tenantContext.IsSuperAdmin {
+		var active bool
+		err := repo.db.Pool().QueryRow(ctx, `
+			select exists (
+				select 1
+				from public.users u
+				where u.id = $1::uuid
+				  and coalesce(u.is_active, false) = true
+				  and u.role = 'super_admin'
+			)
+		`, tenantContext.UserID).Scan(&active)
+		return err == nil && active
+	}
+
+	var memberRole string
+	err := repo.db.Pool().QueryRow(ctx, `
+		select coalesce(nullif(om.role, ''), 'user')
+		from public.organization_members om
+		join public.users u on u.id = om.user_id
+		join public.organizations o on o.id = om.organization_id
+		where om.user_id = $1::uuid
+		  and om.organization_id = $2::uuid
+		  and coalesce(om.is_active, false) = true
+		  and coalesce(u.is_active, false) = true
+		  and coalesce(o.is_active, true) = true
+		limit 1
+	`, tenantContext.UserID, tenantContext.OrganizationID).Scan(&memberRole)
+	return err == nil && normalizeRole(memberRole) == normalizeRole(tenantContext.MemberRole)
 }
 
 func (repo Repository) storeCachedContext(key string, tenantContext Context) {
@@ -261,20 +302,16 @@ func (repo Repository) getActiveMembership(ctx context.Context, userID string, o
 			o.id::text,
 			o.name,
 			o.logo_url,
-			coalesce(nullif(om.role, ''), nullif(u.role, ''), 'user')
+			coalesce(nullif(om.role, ''), 'user')
 		from public.users u
 		join public.organizations o on o.id = $2::uuid
-		left join public.organization_members om
+		join public.organization_members om
 		  on om.user_id = u.id
 		 and om.organization_id = o.id
 		 and coalesce(om.is_active, false) = true
 		where u.id = $1::uuid
 		  and coalesce(u.is_active, false) = true
 		  and coalesce(o.is_active, true) = true
-		  and (
-		    om.id is not null
-		    or u.organization_id = o.id
-		  )
 		limit 1
 	`, userID, organizationID).Scan(
 		&resolved.UserID,
@@ -301,35 +338,18 @@ func (repo Repository) defaultActiveOrganizationID(ctx context.Context, userID s
 	var organizationID string
 
 	err := repo.db.Pool().QueryRow(ctx, `
-		with memberships as (
-			select
-				om.organization_id,
-				1 as priority,
-				om.updated_at,
-				om.joined_at
-			from public.organization_members om
-			where om.user_id = $1::uuid
-			  and coalesce(om.is_active, false) = true
-			union all
-			select
-				u.organization_id,
-				2 as priority,
-				u.updated_at,
-				u.created_at
-			from public.users u
-			where u.id = $1::uuid
-			  and u.organization_id is not null
-			  and coalesce(u.is_active, false) = true
-		)
-		select m.organization_id::text
-		from memberships m
-		join public.organizations o on o.id = m.organization_id
-		where coalesce(o.is_active, true) = true
+		select om.organization_id::text
+		from public.organization_members om
+		join public.users u on u.id = om.user_id
+		join public.organizations o on o.id = om.organization_id
+		where om.user_id = $1::uuid
+		  and coalesce(om.is_active, false) = true
+		  and coalesce(u.is_active, false) = true
+		  and coalesce(o.is_active, true) = true
 		order by
-		  m.priority asc,
-		  m.updated_at desc nulls last,
-		  m.joined_at desc nulls last,
-		  m.organization_id asc
+		  om.updated_at desc nulls last,
+		  om.joined_at desc nulls last,
+		  om.organization_id asc
 		limit 1
 	`, userID).Scan(&organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {

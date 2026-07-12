@@ -31,7 +31,7 @@ export const StartNode = memo(({ data, selected }: NodeProps) => {
 
   return (
     <div className={`automation-node px-4 py-3 rounded-xl min-w-[180px] cursor-pointer ${
-      selected ? 'ring-2 ring-orange-400/60' : ''
+      selected ? 'automation-node-selected' : ''
     }`} style={{ '--node-accent': '#f97316' } as React.CSSProperties}>
       <div className="flex items-center gap-3">
         <div className="p-2 rounded-lg bg-orange-500 shrink-0">

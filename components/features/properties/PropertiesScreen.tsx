@@ -30,7 +30,7 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useUsers } from '@/hooks/use-users';
 import { usePropertyTypes } from '@/hooks/use-property-types';
 import { usePropertyOwners } from '@/hooks/use-property-owners';
-import { usePropertyCondominiums } from '@/hooks/use-property-locations';
+import { usePropertyCities, usePropertyCondominiums, usePropertyNeighborhoods } from '@/hooks/use-property-locations';
 import { cn } from '@/lib/utils';
 import { getPropertySiteInfo } from '@/lib/api/property-support';
 import { toast } from 'sonner';
@@ -79,6 +79,9 @@ export default function Properties() {
   const { data: users = [] } = useUsers();
   const { data: propertyTypes = [] } = usePropertyTypes();
   const { data: propertyOwners = [] } = usePropertyOwners();
+  const { data: cities = [] } = usePropertyCities();
+  const selectedCity = cities.find((city) => city.name === filters.cidade);
+  const { data: neighborhoods = [] } = usePropertyNeighborhoods(selectedCity?.id);
   const { data: condominiums = [] } = usePropertyCondominiums();
   const { data: siteInfo = null } = useQuery({
     queryKey: ['org-site-info', organizationId],
@@ -152,6 +155,25 @@ export default function Properties() {
     }));
   };
 
+  const updateCityFilter = (value: string) => {
+    const city = cities.find((item) => item.id === value);
+
+    setFilters((current) => ({
+      ...current,
+      cidade: city ? city.name : undefined,
+      bairro: undefined,
+    }));
+  };
+
+  const updateNeighborhoodFilter = (value: string) => {
+    const neighborhood = neighborhoods.find((item) => item.id === value);
+
+    setFilters((current) => ({
+      ...current,
+      bairro: neighborhood ? neighborhood.name : undefined,
+    }));
+  };
+
   const clearFilters = () => {
     setSearch('');
     setFilters({});
@@ -180,7 +202,12 @@ export default function Properties() {
   const availabilityValue = getAvailabilityValue(filters);
   const selectedResponsible = users.find((user) => user.id === filters.responsavel_id);
   const selectedOwner = propertyOwners.find((owner) => owner.id === filters.owner_id);
+  const selectedNeighborhood = neighborhoods.find((neighborhood) => neighborhood.name === filters.bairro);
   const selectedCondominium = condominiums.find((condominium) => condominium.id === filters.condominium_id);
+  const cityLabel = selectedCity
+    ? `${selectedCity.name}${selectedCity.uf ? ` (${selectedCity.uf})` : ''}`
+    : 'Cidade';
+  const neighborhoodLabel = selectedNeighborhood?.name || 'Bairro';
   const modalidadeLabel =
     filters.tipo_de_negocio === 'Aluguel'
       ? 'Locação'
@@ -332,6 +359,37 @@ export default function Properties() {
                 <SelectItem value={ALL_FILTER_VALUE}>Todos</SelectItem>
                 {propertyTypes.map((type) => (
                   <SelectItem key={type} value={type}>{type}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <Select value={selectedCity?.id || ALL_FILTER_VALUE} onValueChange={updateCityFilter}>
+              <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
+                <span className={cn("truncate", !filters.cidade && "text-muted-foreground")}>
+                  {cityLabel}
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_FILTER_VALUE}>Todas</SelectItem>
+                {cities.map((city) => (
+                  <SelectItem key={city.id} value={city.id}>
+                    {city.name}{city.uf ? ` (${city.uf})` : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={selectedNeighborhood?.id || ALL_FILTER_VALUE} onValueChange={updateNeighborhoodFilter}>
+              <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
+                <span className={cn("truncate", !filters.bairro && "text-muted-foreground")}>
+                  {neighborhoodLabel}
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_FILTER_VALUE}>Todos</SelectItem>
+                {neighborhoods.map((neighborhood) => (
+                  <SelectItem key={neighborhood.id} value={neighborhood.id}>{neighborhood.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

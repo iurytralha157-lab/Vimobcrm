@@ -44,6 +44,42 @@ func TestContextHasPermission(t *testing.T) {
 	}
 }
 
+func TestContextHasRoleUsesOrganizationMembershipOnly(t *testing.T) {
+	tests := []struct {
+		name string
+		ctx  Context
+		role string
+		want bool
+	}{
+		{
+			name: "organization admin allowed",
+			ctx:  Context{MemberRole: "admin", UserRole: "user"},
+			role: "admin",
+			want: true,
+		},
+		{
+			name: "global admin does not leak into organization",
+			ctx:  Context{MemberRole: "user", UserRole: "admin"},
+			role: "admin",
+			want: false,
+		},
+		{
+			name: "super admin remains platform scoped",
+			ctx:  Context{IsSuperAdmin: true},
+			role: "admin",
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.ctx.HasRole(tt.role); got != tt.want {
+				t.Fatalf("HasRole(%q) = %v, want %v", tt.role, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNormalizeUUID(t *testing.T) {
 	valid := "550e8400-e29b-41d4-a716-446655440000"
 

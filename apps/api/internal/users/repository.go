@@ -33,24 +33,21 @@ func (repo Repository) ListOrganizationUsers(ctx context.Context, tenantContext 
 	rows, err := repo.db.Pool().Query(ctx, `
 		select distinct on (u.id)
 			u.id::text,
-			u.organization_id,
+			om.organization_id,
 			u.name,
 			u.email,
-			u.role,
+			case when om.role in ('owner', 'admin') then 'admin' else 'user' end,
 			u.avatar_url,
-			coalesce(u.is_active, false),
+			(coalesce(u.is_active, false) and coalesce(om.is_active, false)),
 			u.whatsapp,
 			u.created_at::text,
 			u.updated_at::text
 		from public.users u
-		left join public.organization_members om
+		join public.organization_members om
 		  on om.user_id = u.id
 		 and om.organization_id = $1::uuid
 		where coalesce(u.is_active, false) = true
-		  and (
-			(om.id is not null and coalesce(om.is_active, false) = true)
-			or (u.organization_id = $1::uuid and coalesce(om.is_active, true) = true)
-		  )
+		  and coalesce(om.is_active, false) = true
 		order by u.id, u.name
 	`, tenantContext.OrganizationID)
 	if err != nil {
@@ -72,40 +69,22 @@ func (repo Repository) ListOrganizationUsers(ctx context.Context, tenantContext 
 
 func (repo Repository) ListUserOrganizations(ctx context.Context, userID string) ([]UserOrganization, error) {
 	rows, err := repo.db.Pool().Query(ctx, `
-		with memberships as (
-			select
-				om.organization_id,
-				coalesce(nullif(om.role, ''), 'user') as role,
-				coalesce(om.is_active, false) as is_active,
-				om.joined_at,
-				om.updated_at
-			from public.organization_members om
-			where om.user_id = $1::uuid
-			  and coalesce(om.is_active, false) = true
-			union
-			select
-				u.organization_id,
-				coalesce(nullif(u.role, ''), 'user') as role,
-				coalesce(u.is_active, false) as is_active,
-				u.created_at as joined_at,
-				u.updated_at
-			from public.users u
-			where u.id = $1::uuid
-			  and u.organization_id is not null
-			  and coalesce(u.is_active, false) = true
-		)
-		select distinct on (m.organization_id)
-			m.organization_id::text,
+		select
+			om.organization_id::text,
 			o.name,
 			o.logo_url,
-			m.role,
-			m.is_active,
-			m.joined_at::text,
-			m.updated_at::text
-		from memberships m
-		join public.organizations o on o.id = m.organization_id
-		where coalesce(o.is_active, true) = true
-		order by m.organization_id, o.name asc
+			coalesce(nullif(om.role, ''), 'user'),
+			coalesce(om.is_active, false),
+			om.joined_at::text,
+			om.updated_at::text
+		from public.organization_members om
+		join public.users u on u.id = om.user_id
+		join public.organizations o on o.id = om.organization_id
+		where om.user_id = $1::uuid
+		  and coalesce(om.is_active, false) = true
+		  and coalesce(u.is_active, false) = true
+		  and coalesce(o.is_active, true) = true
+		order by o.name asc, om.organization_id
 	`, userID)
 	if err != nil {
 		return nil, err
@@ -240,14 +219,18 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 		isActive = *input.IsActive
 	}
 
-	user, err := scanUser(repo.db.Pool().QueryRow(ctx, `
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `
 		update public.users
 		set
 			name = $3,
-			role = $4,
-			is_active = $5,
-			avatar_url = coalesce($6, avatar_url),
-			whatsapp = coalesce($7, whatsapp),
+			avatar_url = coalesce($4, avatar_url),
+			whatsapp = coalesce($5, whatsapp),
 			updated_at = now()
 		where id = $1::uuid
 		  and exists (
@@ -256,39 +239,31 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 		    where om.user_id = public.users.id
 		      and om.organization_id = $2::uuid
 		  )
-		returning
-			id::text,
-			organization_id,
-			name,
-			email,
-			role,
-			avatar_url,
-			coalesce(is_active, false),
-			whatsapp,
-			created_at::text,
-			updated_at::text
-	`, userID, tenantContext.OrganizationID, name, role, isActive, input.AvatarURL, input.Whatsapp))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return User{}, ErrUserNotFound
-	}
+	`, userID, tenantContext.OrganizationID, name, input.AvatarURL, input.Whatsapp)
 	if err != nil {
 		return User{}, err
 	}
+	if tag.RowsAffected() == 0 {
+		return User{}, ErrUserNotFound
+	}
 
 	memberRole := memberRoleFromUserRole(role)
-	_, err = repo.db.Pool().Exec(ctx, `
+	if _, err = tx.Exec(ctx, `
 		update public.organization_members
 		set role = $3,
 		    is_active = $4,
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and user_id = $2::uuid
-	`, tenantContext.OrganizationID, userID, memberRole, isActive)
-	if err != nil {
+	`, tenantContext.OrganizationID, userID, memberRole, isActive); err != nil {
 		return User{}, err
 	}
 
-	return user, nil
+	if err := tx.Commit(ctx); err != nil {
+		return User{}, err
+	}
+
+	return repo.getOrganizationUser(ctx, tenantContext.OrganizationID, userID)
 }
 
 func (repo Repository) GetDeleteUserImpact(ctx context.Context, tenantContext tenant.Context, userID string) (DeleteUserImpact, error) {
@@ -511,15 +486,12 @@ func (repo Repository) ListSummaries(ctx context.Context, tenantContext tenant.C
 			u.name,
 			u.avatar_url
 		from public.users u
-		left join public.organization_members om
+		join public.organization_members om
 		  on om.user_id = u.id
 		 and om.organization_id = $1::uuid
 		 and om.is_active = true
 		where u.id in (`+strings.Join(placeholders, ", ")+`)
-		  and (
-		    u.organization_id = $1::uuid
-		    or om.id is not null
-		  )
+		  and coalesce(u.is_active, false) = true
 	`, args...)
 	if err != nil {
 		return nil, err
@@ -575,22 +547,20 @@ func (repo Repository) getOrganizationUser(ctx context.Context, organizationID s
 	user, err := scanUser(repo.db.Pool().QueryRow(ctx, `
 		select
 			u.id::text,
-			u.organization_id,
+			om.organization_id,
 			u.name,
 			u.email,
-			u.role,
+			case when om.role in ('owner', 'admin') then 'admin' else 'user' end,
 			u.avatar_url,
-			coalesce(u.is_active, false),
+			(coalesce(u.is_active, false) and coalesce(om.is_active, false)),
 			u.whatsapp,
 			u.created_at::text,
 			u.updated_at::text
 		from public.users u
-		left join public.organization_members om
+		join public.organization_members om
 		  on om.user_id = u.id
 		 and om.organization_id = $1::uuid
-		 and om.is_active = true
 		where u.id = $2::uuid
-		  and (u.organization_id = $1::uuid or om.id is not null)
 		limit 1
 	`, organizationID, userID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -662,17 +632,17 @@ func (repo Repository) insertNewUser(ctx context.Context, tenantContext tenant.C
 			whatsapp,
 			is_active
 		)
-		values ($1::uuid, $2::uuid, $3, $4, $5, $6, true)
+		values ($1::uuid, $2::uuid, $3, $4, 'user', $5, true)
 		on conflict (id)
 		do update set
 			organization_id = excluded.organization_id,
 			name = excluded.name,
 			email = excluded.email,
-			role = excluded.role,
+			role = case when public.users.role = 'super_admin' then public.users.role else 'user' end,
 			whatsapp = excluded.whatsapp,
 			is_active = true,
 			updated_at = now()
-	`, authUserID, tenantContext.OrganizationID, input.Name, input.Email, input.Role, firstNonNilString(input.Whatsapp, input.Phone)); err != nil {
+	`, authUserID, tenantContext.OrganizationID, input.Name, input.Email, firstNonNilString(input.Whatsapp, input.Phone)); err != nil {
 		return User{}, err
 	}
 

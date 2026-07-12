@@ -6494,7 +6494,7 @@ export type Database = {
           position: number
           round_robin_id: string
           team_id: string | null
-          user_id: string
+          user_id: string | null
           weight: number | null
         }
         Insert: {
@@ -6503,7 +6503,7 @@ export type Database = {
           position?: number
           round_robin_id: string
           team_id?: string | null
-          user_id: string
+          user_id?: string | null
           weight?: number | null
         }
         Update: {
@@ -6512,7 +6512,7 @@ export type Database = {
           position?: number
           round_robin_id?: string
           team_id?: string | null
-          user_id?: string
+          user_id?: string | null
           weight?: number | null
         }
         Relationships: [

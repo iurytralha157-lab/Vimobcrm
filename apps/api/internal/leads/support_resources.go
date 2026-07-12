@@ -397,6 +397,11 @@ type DispatchChannelResult struct {
 
 type DispatchWhatsAppResult = DispatchChannelResult
 
+type notificationTemplateContent struct {
+	Title   string
+	Message string
+}
+
 type notificationRecipient struct {
 	ID       string
 	Name     string
@@ -1662,47 +1667,9 @@ func (repo Repository) DispatchNotification(ctx context.Context, tenantContext t
 		return DispatchNotificationResult{}, err
 	}
 
-	variables := request.Variables
-	if variables == nil {
-		variables = map[string]any{}
-	}
-	request.Variables = variables
-	title, content, notificationType := buildDispatchNotificationContent(eventKey, request, variables)
-	if title == "" {
-		return DispatchNotificationResult{}, fmt.Errorf("%w: notification title is required", ErrInvalidInput)
-	}
-
-	dedupeKey := trimMax(request.DedupeKey, 180)
-	if dedupeKey != "" {
-		if existing, found, err := repo.findRecentNotificationByDedupeKey(ctx, tenantContext.OrganizationID, normalizedUserID, dedupeKey); err != nil {
-			return DispatchNotificationResult{}, err
-		} else if found {
-			delivery := repo.dispatchNotificationDeliveries(ctx, existing, request.Channels)
-			return DispatchNotificationResult{
-				Success:      delivery.Error == "",
-				Notification: &existing,
-				WhatsApp:     delivery.WhatsApp,
-				Push:         delivery.Push,
-				Email:        delivery.Email,
-				Error:        delivery.Error,
-			}, nil
-		}
-	}
-
-	metadata := map[string]any{
-		"event_key": eventKey,
-		"variables": variables,
-		"is_test":   request.IsTest,
-	}
-	if dedupeKey != "" {
-		metadata["dedupe_key"] = dedupeKey
-	}
-	if request.Recipient != "" {
-		metadata["requested_recipient"] = trimMax(request.Recipient, 180)
-	}
-	metadata = applyNotificationDispatchMetadata(metadata, eventKey, request.Channels)
-
-	notification, err := repo.createNotificationRow(ctx, tenantContext.OrganizationID, normalizedUserID, title, content, notificationType, request.LeadID, metadata)
+	request.EventKey = eventKey
+	request.UserID = normalizedUserID
+	notification, err := repo.enqueueDispatchNotification(ctx, tenantContext.OrganizationID, normalizedUserID, request)
 	if err != nil {
 		return DispatchNotificationResult{}, err
 	}
@@ -1720,6 +1687,61 @@ func (repo Repository) DispatchNotification(ctx context.Context, tenantContext t
 	}, nil
 }
 
+func (repo Repository) enqueueDispatchNotification(ctx context.Context, organizationID string, userID string, request DispatchNotificationRequest) (Notification, error) {
+	eventKey := trimMax(firstNotificationText(request.EventKey, request.TemplateSlug), 80)
+	if eventKey == "" {
+		return Notification{}, fmt.Errorf("%w: event_key is required", ErrInvalidInput)
+	}
+
+	variables := request.Variables
+	if variables == nil {
+		variables = map[string]any{}
+	}
+	request.Variables = variables
+	title, content, notificationType := buildDispatchNotificationContent(eventKey, request, variables)
+	if title == "" {
+		return Notification{}, fmt.Errorf("%w: notification title is required", ErrInvalidInput)
+	}
+	if rendered, found, err := repo.renderNotificationTemplateContent(ctx, organizationID, eventKey, "system", variables); err != nil {
+		return Notification{}, err
+	} else if found {
+		title = trimMax(firstNotificationText(rendered.Title, title), 180)
+		content = trimMax(firstNotificationText(rendered.Message, content), 1_000)
+	}
+
+	dedupeKey := trimMax(request.DedupeKey, 180)
+	if dedupeKey != "" {
+		if existing, found, err := repo.findRecentNotificationByDedupeKey(ctx, organizationID, userID, dedupeKey); err != nil {
+			return Notification{}, err
+		} else if found {
+			return existing, nil
+		}
+	}
+
+	metadata := map[string]any{
+		"event_key": eventKey,
+		"variables": variables,
+		"is_test":   request.IsTest,
+	}
+	if dedupeKey != "" {
+		metadata["dedupe_key"] = dedupeKey
+	}
+	if request.Recipient != "" {
+		metadata["requested_recipient"] = trimMax(request.Recipient, 180)
+	}
+	metadata = applyNotificationDispatchMetadata(metadata, eventKey, request.Channels)
+
+	notification, err := repo.createNotificationRow(ctx, organizationID, userID, title, content, notificationType, request.LeadID, metadata)
+	if isNotificationDedupeConflict(err) && dedupeKey != "" {
+		if existing, found, findErr := repo.findRecentNotificationByDedupeKey(ctx, organizationID, userID, dedupeKey); findErr != nil {
+			return Notification{}, findErr
+		} else if found {
+			return existing, nil
+		}
+	}
+	return notification, err
+}
+
 func (repo Repository) createNotificationRow(ctx context.Context, organizationID string, userID string, title string, content string, notificationType string, leadID *string, metadata map[string]any) (Notification, error) {
 	return scanNotification(repo.db.Pool().QueryRow(ctx, `
 		insert into public.notifications (user_id, organization_id, title, content, type, lead_id, is_read, metadata)
@@ -1735,7 +1757,6 @@ func (repo Repository) findRecentNotificationByDedupeKey(ctx context.Context, or
 		where organization_id = $1::uuid
 		  and user_id = $2::uuid
 		  and metadata->>'dedupe_key' = $3
-		  and created_at >= now() - interval '6 hours'
 		order by created_at desc
 		limit 1
 	`, organizationID, userID, dedupeKey))
@@ -1758,11 +1779,12 @@ func (repo Repository) getNotificationRecipient(ctx context.Context, organizatio
 		  u.email,
 		  coalesce(nullif(u.whatsapp, ''), nullif(u.phone, ''))
 		from public.users u
-		left join public.organization_members om
+		join public.organization_members om
 		  on om.user_id = u.id
 		 and om.organization_id = $1::uuid
 		where u.id = $2::uuid
-		  and (u.organization_id = $1::uuid or om.id is not null)
+		  and coalesce(u.is_active, false) = true
+		  and coalesce(om.is_active, false) = true
 		limit 1
 	`, organizationID, userID).Scan(&recipient.ID, &name, &email, &whatsapp)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1793,6 +1815,18 @@ func (repo Repository) dispatchWhatsAppNotification(ctx context.Context, tenantC
 		result.Attempted = false
 		result.Error = "recipient_whatsapp_missing"
 		return result, nil
+	}
+	if rendered, found, err := repo.renderNotificationTemplateContent(ctx, tenantContext.OrganizationID, eventKey, "whatsapp", request.Variables); err != nil {
+		return result, err
+	} else if found {
+		title = firstNotificationText(rendered.Title, title)
+		content = firstNotificationText(rendered.Message, content)
+		if rendered.Message != "" {
+			if request.Variables == nil {
+				request.Variables = map[string]any{}
+			}
+			request.Variables["__rendered_whatsapp_message"] = rendered.Message
+		}
 	}
 	messageText := buildWhatsAppNotificationText(eventKey, title, content, request.Variables)
 
@@ -2015,6 +2049,10 @@ func normalizeNotificationWhatsAppRecipient(value string) string {
 }
 
 func buildWhatsAppNotificationText(eventKey string, title string, content string, variables map[string]any) string {
+	if rendered := stringFromMap(variables, "__rendered_whatsapp_message"); rendered != "" {
+		return rendered
+	}
+
 	eventKey = strings.TrimSpace(eventKey)
 	title = strings.TrimSpace(title)
 	content = strings.TrimSpace(content)
@@ -2161,6 +2199,60 @@ func cleanNotificationTemplateLines(lines []string) []string {
 		}
 	}
 	return cleaned
+}
+
+func (repo Repository) renderNotificationTemplateContent(ctx context.Context, organizationID string, eventKey string, channel string, variables map[string]any) (notificationTemplateContent, bool, error) {
+	var content notificationTemplateContent
+	var title, message pgtype.Text
+	err := repo.db.Pool().QueryRow(ctx, `
+		select
+			title,
+			message
+		from public.notification_templates
+		where coalesce(is_active, true) = true
+		  and (organization_id = $1::uuid or organization_id is null)
+		  and (event_key = $2 or slug = $2)
+		  and (
+		    channel = $3
+		    or $3 = any(coalesce(channels, array[]::text[]))
+		  )
+		order by
+			case when organization_id = $1::uuid then 0 else 1 end,
+			updated_at desc nulls last,
+			created_at desc nulls last
+		limit 1
+	`, organizationID, eventKey, channel).Scan(&title, &message)
+	if errors.Is(err, pgx.ErrNoRows) || isUndefinedTableError(err) || isUndefinedColumnError(err) {
+		return notificationTemplateContent{}, false, nil
+	}
+	if err != nil {
+		return notificationTemplateContent{}, false, err
+	}
+	content.Title = renderNotificationTemplateText(textValue(title), variables)
+	content.Message = renderNotificationTemplateText(textValue(message), variables)
+	return content, content.Title != "" || content.Message != "", nil
+}
+
+func renderNotificationTemplateText(template string, variables map[string]any) string {
+	template = strings.TrimSpace(template)
+	if template == "" {
+		return ""
+	}
+	replacements := []string{}
+	for key, value := range variables {
+		if strings.HasPrefix(key, "__") {
+			continue
+		}
+		text := strings.TrimSpace(fmt.Sprint(value))
+		replacements = append(replacements,
+			"{{"+key+"}}", text,
+			"{{ "+key+" }}", text,
+		)
+	}
+	if len(replacements) == 0 {
+		return template
+	}
+	return strings.NewReplacer(replacements...).Replace(template)
 }
 
 func (repo Repository) getNotificationWhatsAppConfig(ctx context.Context) (notificationWhatsAppConfig, error) {
@@ -2409,6 +2501,13 @@ func isUndefinedTableError(err error) bool {
 func isUndefinedColumnError(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "42703"
+}
+
+func isNotificationDedupeConflict(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == "23505" &&
+		pgErr.ConstraintName == "notifications_unique_dedupe_key"
 }
 
 func (repo Repository) GetLeadVisibility(ctx context.Context, tenantContext tenant.Context) (LeadVisibility, error) {

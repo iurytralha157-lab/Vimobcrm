@@ -2,6 +2,7 @@ import {
   AsaasRequestError,
   activateOrganizationPayment,
   asaasRequest,
+  canAccessOrganizationPayment,
   getSupabaseAdmin,
   handleOptions,
   isPaidStatus,
@@ -20,6 +21,7 @@ Deno.serve(async (request) => {
 
     const url = new URL(request.url);
     const paymentId = url.searchParams.get("payment_id");
+    const checkoutToken = url.searchParams.get("checkout_token");
 
     if (!paymentId) {
       return jsonResponse({ error: "payment_id obrigatorio." }, 400);
@@ -31,6 +33,14 @@ Deno.serve(async (request) => {
       .select("organization_id,status,asaas_customer_id,asaas_subscription_id")
       .eq("asaas_payment_id", paymentId)
       .maybeSingle();
+
+    if (!paymentRow?.organization_id) {
+      return jsonResponse({ error: "Pagamento nao encontrado." }, 404);
+    }
+
+    if (!await canAccessOrganizationPayment(request, paymentRow.organization_id, checkoutToken)) {
+      return jsonResponse({ error: "Acesso negado para este pagamento." }, 403);
+    }
 
     if (paymentRow?.organization_id && isPaidStatus(paymentRow.status)) {
       await activateOrganizationPayment({

@@ -176,7 +176,7 @@ func (repo Repository) UploadAsset(ctx context.Context, tenantContext tenant.Con
 		ext = ".bin"
 	}
 
-	objectPath := fmt.Sprintf("sites/%s/%s-%d%s", tenantContext.OrganizationID, assetType, time.Now().UTC().UnixMilli(), ext)
+	objectPath := fmt.Sprintf("organizations/%s/sites/%s-%d%s", tenantContext.OrganizationID, assetType, time.Now().UTC().UnixMilli(), ext)
 	if err := repo.storage.upload(ctx, "logos", objectPath, contentType, body); err != nil {
 		return AssetUpload{}, err
 	}
@@ -497,19 +497,7 @@ func (repo Repository) PublicSiteData(ctx context.Context, organizationID string
 		if err != nil {
 			return nil, err
 		}
-		types, err := repo.listPublicPropertyTypes(ctx, organizationID)
-		if err != nil {
-			return nil, err
-		}
-		cities, err := repo.listPublicCities(ctx, organizationID)
-		if err != nil {
-			return nil, err
-		}
-		neighborhoods, err := repo.listPublicNeighborhoods(ctx, organizationID, values.Get("cidade"))
-		if err != nil {
-			return nil, err
-		}
-		purposes, err := repo.listPublicPropertyPurposes(ctx, organizationID)
+		filterOptions, err := repo.listPublicPropertyFilterOptions(ctx, organizationID, values.Get("cidade"), values.Get("bairro"))
 		if err != nil {
 			return nil, err
 		}
@@ -523,10 +511,11 @@ func (repo Repository) PublicSiteData(ctx context.Context, organizationID string
 			"page":          page,
 			"limit":         limit,
 			"totalPages":    totalPages,
-			"types":         types,
-			"cities":        cities,
-			"neighborhoods": neighborhoods,
-			"purposes":      purposes,
+			"types":         filterOptions.Types,
+			"cities":        filterOptions.Cities,
+			"neighborhoods": filterOptions.Neighborhoods,
+			"condominiums":  filterOptions.Condominiums,
+			"purposes":      filterOptions.Purposes,
 		}, nil
 	case "property":
 		property, err := repo.getPublicProperty(ctx, organizationID, values.Get("property_code"))
@@ -564,6 +553,12 @@ func (repo Repository) PublicSiteData(ctx context.Context, organizationID string
 			return nil, err
 		}
 		return map[string]any{"neighborhoods": neighborhoods}, nil
+	case "condominiums":
+		condominiums, err := repo.listPublicCondominiums(ctx, organizationID, values.Get("cidade"), values.Get("bairro"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"condominiums": condominiums}, nil
 	case "home":
 		featured, _, err := repo.listPublicProperties(ctx, organizationID, values, "featured", 1, 6)
 		if err != nil {
@@ -577,11 +572,7 @@ func (repo Repository) PublicSiteData(ctx context.Context, organizationID string
 		if err != nil {
 			return nil, err
 		}
-		types, err := repo.listPublicPropertyTypes(ctx, organizationID)
-		if err != nil {
-			return nil, err
-		}
-		cities, err := repo.listPublicCities(ctx, organizationID)
+		filterOptions, err := repo.listPublicPropertyFilterOptions(ctx, organizationID, "", "")
 		if err != nil {
 			return nil, err
 		}
@@ -589,8 +580,8 @@ func (repo Repository) PublicSiteData(ctx context.Context, organizationID string
 			"featured":  featured,
 			"exclusive": exclusive,
 			"latest":    latest,
-			"types":     types,
-			"cities":    cities,
+			"types":     filterOptions.Types,
+			"cities":    filterOptions.Cities,
 		}, nil
 	default:
 		return nil, ErrInvalidInput
@@ -671,7 +662,14 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 	}
 	name := strings.TrimSpace(request.Name)
 	phone := strings.TrimSpace(request.Phone)
-	if name == "" || phone == "" {
+	message := ""
+	if request.Message != nil {
+		message = strings.TrimSpace(*request.Message)
+	}
+	if name == "" || phone == "" || message == "" {
+		return nil, ErrInvalidInput
+	}
+	if !request.PrivacyAccepted {
 		return nil, ErrInvalidInput
 	}
 
@@ -724,10 +722,15 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 			'new',
 			'open',
 			now(),
-			jsonb_build_object('property_code', $6)
+			jsonb_build_object(
+				'property_code', $6,
+				'best_time', $9,
+				'privacy_accepted', $10,
+				'privacy_url', $11
+			)
 		)
 		returning id::text
-	`, organizationID, propertyID, name, optionalText(request.Email), phone, optionalText(request.PropertyCode), optionalText(request.Message), optionalText(request.SessionID)).Scan(&leadID)
+	`, organizationID, propertyID, name, optionalText(request.Email), phone, optionalText(request.PropertyCode), message, optionalText(request.SessionID), optionalText(request.BestTime), request.PrivacyAccepted, optionalText(request.PrivacyURL)).Scan(&leadID)
 	if err != nil {
 		return nil, err
 	}
@@ -910,7 +913,7 @@ func (repo Repository) listPublicNeighborhoods(ctx context.Context, organization
 	cityFilter := ""
 	if city != "" {
 		args = append(args, city)
-		cityFilter = " and p.cidade = $2"
+		cityFilter = " and lower(trim(coalesce(p.cidade, ''))) = lower(trim($2::text))"
 	}
 	return repo.queryStringArray(ctx, `
 		select coalesce(jsonb_agg(value order by value), '[]'::jsonb)
@@ -920,6 +923,34 @@ func (repo Repository) listPublicNeighborhoods(ctx context.Context, organization
 			where p.organization_id = $1::uuid
 			  and p.published_on_site = true
 			  and `+publicPropertyActiveSQL()+cityFilter+`
+		) items
+		where value is not null
+	`, args...)
+}
+
+func (repo Repository) listPublicCondominiums(ctx context.Context, organizationID string, city string, neighborhood string) ([]string, error) {
+	args := []any{organizationID}
+	filters := ""
+	city = strings.TrimSpace(city)
+	neighborhood = strings.TrimSpace(neighborhood)
+	if city != "" {
+		args = append(args, city)
+		filters += fmt.Sprintf(" and lower(trim(coalesce(p.cidade, ''))) = lower(trim($%d::text))", len(args))
+	}
+	if neighborhood != "" {
+		args = append(args, neighborhood)
+		filters += fmt.Sprintf(" and lower(trim(coalesce(p.bairro, ''))) = lower(trim($%d::text))", len(args))
+	}
+
+	return repo.queryStringArray(ctx, `
+		select coalesce(jsonb_agg(value order by value), '[]'::jsonb)
+		from (
+			select distinct nullif(trim(co.name), '') as value
+			from public.properties p
+			join public.property_condominiums co on co.id = p.condominium_id
+			where p.organization_id = $1::uuid
+			  and p.published_on_site = true
+			  and `+publicPropertyActiveSQL()+filters+`
 		) items
 		where value is not null
 	`, args...)
@@ -937,6 +968,128 @@ func (repo Repository) listPublicPropertyPurposes(ctx context.Context, organizat
 		) items
 		where value is not null
 	`, organizationID)
+}
+
+type publicPropertyFilterOptions struct {
+	Types         []string
+	Cities        []string
+	Neighborhoods []string
+	Condominiums  []string
+	Purposes      []string
+}
+
+func (repo Repository) listPublicPropertyFilterOptions(ctx context.Context, organizationID string, city string, neighborhood string) (publicPropertyFilterOptions, error) {
+	args := []any{organizationID}
+	city = strings.TrimSpace(city)
+	neighborhood = strings.TrimSpace(neighborhood)
+
+	cityFilter := ""
+	if city != "" {
+		args = append(args, city)
+		cityFilter = fmt.Sprintf(" and lower(trim(coalesce(p.cidade, ''))) = lower(trim($%d::text))", len(args))
+	}
+
+	neighborhoodFilter := ""
+	if neighborhood != "" {
+		args = append(args, neighborhood)
+		neighborhoodFilter = fmt.Sprintf(" and lower(trim(coalesce(p.bairro, ''))) = lower(trim($%d::text))", len(args))
+	}
+
+	var rawTypes []byte
+	var rawCities []byte
+	var rawNeighborhoods []byte
+	var rawCondominiums []byte
+	var rawPurposes []byte
+	err := repo.db.Pool().QueryRow(ctx, `
+		with public_props as (
+			select p.*
+			from public.properties p
+			where p.organization_id = $1::uuid
+			  and p.published_on_site = true
+			  and `+publicPropertyActiveSQL()+`
+		)
+		select
+			coalesce((
+				select jsonb_agg(value order by lower(value), value)
+				from (
+					select distinct on (lower(trim(p.tipo))) nullif(trim(p.tipo), '') as value
+					from public_props p
+					where nullif(trim(p.tipo), '') is not null
+					order by lower(trim(p.tipo)), trim(p.tipo)
+				) items
+			), '[]'::jsonb) as types,
+			coalesce((
+				select jsonb_agg(value order by lower(value), value)
+				from (
+					select distinct on (lower(trim(p.cidade))) nullif(trim(p.cidade), '') as value
+					from public_props p
+					where nullif(trim(p.cidade), '') is not null
+					order by lower(trim(p.cidade)), trim(p.cidade)
+				) items
+			), '[]'::jsonb) as cities,
+			coalesce((
+				select jsonb_agg(value order by lower(value), value)
+				from (
+					select distinct on (lower(trim(p.bairro))) nullif(trim(p.bairro), '') as value
+					from public_props p
+					where nullif(trim(p.bairro), '') is not null
+					`+cityFilter+`
+					order by lower(trim(p.bairro)), trim(p.bairro)
+				) items
+			), '[]'::jsonb) as neighborhoods,
+			coalesce((
+				select jsonb_agg(value order by lower(value), value)
+				from (
+					select distinct on (lower(trim(co.name))) nullif(trim(co.name), '') as value
+					from public_props p
+					join public.property_condominiums co on co.id = p.condominium_id
+					where nullif(trim(co.name), '') is not null
+					`+cityFilter+neighborhoodFilter+`
+					order by lower(trim(co.name)), trim(co.name)
+				) items
+			), '[]'::jsonb) as condominiums,
+			coalesce((
+				select jsonb_agg(value order by lower(value), value)
+				from (
+					select distinct on (lower(trim(p.finalidade))) nullif(trim(p.finalidade), '') as value
+					from public_props p
+					where nullif(trim(p.finalidade), '') is not null
+					order by lower(trim(p.finalidade)), trim(p.finalidade)
+				) items
+			), '[]'::jsonb) as purposes
+	`, args...).Scan(&rawTypes, &rawCities, &rawNeighborhoods, &rawCondominiums, &rawPurposes)
+	if err != nil {
+		return publicPropertyFilterOptions{}, err
+	}
+
+	types, err := decodePublicStringArray(rawTypes)
+	if err != nil {
+		return publicPropertyFilterOptions{}, err
+	}
+	cities, err := decodePublicStringArray(rawCities)
+	if err != nil {
+		return publicPropertyFilterOptions{}, err
+	}
+	neighborhoods, err := decodePublicStringArray(rawNeighborhoods)
+	if err != nil {
+		return publicPropertyFilterOptions{}, err
+	}
+	condominiums, err := decodePublicStringArray(rawCondominiums)
+	if err != nil {
+		return publicPropertyFilterOptions{}, err
+	}
+	purposes, err := decodePublicStringArray(rawPurposes)
+	if err != nil {
+		return publicPropertyFilterOptions{}, err
+	}
+
+	return publicPropertyFilterOptions{
+		Types:         types,
+		Cities:        cities,
+		Neighborhoods: neighborhoods,
+		Condominiums:  condominiums,
+		Purposes:      purposes,
+	}, nil
 }
 
 func (repo Repository) queryJSONRows(ctx context.Context, sql string, args ...any) ([]map[string]any, error) {
@@ -978,6 +1131,10 @@ func (repo Repository) queryStringArray(ctx context.Context, sql string, args ..
 	if err := repo.db.Pool().QueryRow(ctx, sql, args...).Scan(&raw); err != nil {
 		return nil, err
 	}
+	return decodePublicStringArray(raw)
+}
+
+func decodePublicStringArray(raw []byte) ([]string, error) {
 	items := []string{}
 	if err := json.Unmarshal(raw, &items); err != nil {
 		return nil, err
@@ -1014,7 +1171,7 @@ func publicPropertyWhereClauses(values url.Values, mode string, args *[]any) []s
 		)`, placeholder))
 	}
 	if tipo := strings.TrimSpace(values.Get("tipo")); tipo != "" {
-		add(tipo, "p.tipo = $%d")
+		add(tipo, "lower(trim(coalesce(p.tipo, ''))) = lower(trim($%d::text))")
 	}
 	if finalidade := strings.TrimSpace(values.Get("finalidade")); finalidade != "" {
 		aliases := publicDealTypeAliases(finalidade)
@@ -1023,16 +1180,39 @@ func publicPropertyWhereClauses(values url.Values, mode string, args *[]any) []s
 		}
 	}
 	if cidade := strings.TrimSpace(values.Get("cidade")); cidade != "" {
-		add(cidade, "p.cidade = $%d")
+		add(cidade, "lower(trim(coalesce(p.cidade, ''))) = lower(trim($%d::text))")
 	}
 	if bairro := strings.TrimSpace(values.Get("bairro")); bairro != "" {
-		add(bairro, "p.bairro = $%d")
+		add(bairro, "lower(trim(coalesce(p.bairro, ''))) = lower(trim($%d::text))")
+	}
+	if ids := parsePublicUUIDList(values.Get("ids"), 60); len(ids) > 0 {
+		add(ids, "p.id::text = any($%d::text[])")
+	}
+	if condominium := strings.TrimSpace(values.Get("condominio")); condominium != "" {
+		add(condominium, `exists (
+			select 1
+			from public.property_condominiums co
+			where co.id = p.condominium_id
+			  and lower(trim(co.name)) = lower(trim($%d::text))
+		)`)
 	}
 	if minPrice, ok := parsePublicDecimal(values.Get("min_price")); ok {
 		add(minPrice, "coalesce(p.preco, p.valor_locacao, 0) >= $%d")
 	}
 	if maxPrice, ok := parsePublicDecimal(values.Get("max_price")); ok {
 		add(maxPrice, "coalesce(p.preco, p.valor_locacao, 0) <= $%d")
+	}
+	if minUsableArea, ok := parsePublicDecimal(values.Get("area_util_min")); ok {
+		add(minUsableArea, "coalesce(p.area_util, 0) >= $%d")
+	}
+	if maxUsableArea, ok := parsePublicDecimal(values.Get("area_util_max")); ok {
+		add(maxUsableArea, "coalesce(p.area_util, 0) <= $%d")
+	}
+	if minTotalArea, ok := parsePublicDecimal(values.Get("area_total_min")); ok {
+		add(minTotalArea, "coalesce(p.area_total, 0) >= $%d")
+	}
+	if maxTotalArea, ok := parsePublicDecimal(values.Get("area_total_max")); ok {
+		add(maxTotalArea, "coalesce(p.area_total, 0) <= $%d")
 	}
 	for _, item := range []struct {
 		param  string
@@ -1046,6 +1226,12 @@ func publicPropertyWhereClauses(values url.Values, mode string, args *[]any) []s
 		if value, ok := parsePublicInt(values.Get(item.param)); ok {
 			add(value, "coalesce(p."+item.column+", 0) >= $%d")
 		}
+	}
+	if acceptsFinancing, ok := parsePublicBool(values.Get("aceita_financiamento")); ok {
+		add(acceptsFinancing, "coalesce(p.aceita_financiamento, false) = $%d::boolean")
+	}
+	if acceptsExchange, ok := parsePublicBool(values.Get("aceita_permuta")); ok {
+		add(acceptsExchange, "coalesce(p.aceita_permuta, false) = $%d::boolean")
 	}
 	if mobilia := strings.ToLower(strings.TrimSpace(values.Get("mobilia"))); mobilia != "" && mobilia != "all" {
 		if mobilia == "mobiliado" || mobilia == "true" || mobilia == "sim" || mobilia == "1" {
@@ -1063,6 +1249,26 @@ func publicPropertyWhereClauses(values url.Values, mode string, args *[]any) []s
 	}
 
 	return where
+}
+
+func parsePublicUUIDList(raw string, maxItems int) []string {
+	if maxItems <= 0 {
+		maxItems = 60
+	}
+	seen := map[string]bool{}
+	items := []string{}
+	for _, part := range strings.Split(raw, ",") {
+		if len(items) >= maxItems {
+			break
+		}
+		value, ok := normalizeUUID(part)
+		if !ok || seen[value] {
+			continue
+		}
+		seen[value] = true
+		items = append(items, value)
+	}
+	return items
 }
 
 func publicDealTypeAliases(dealType string) []string {
@@ -1134,32 +1340,89 @@ func publicPropertyJSONSQL() string {
 		'titulo', p.title,
 		'descricao', coalesce(p.descricao_site, p.descricao),
 		'tipo_imovel', p.tipo,
+		'finalidade', p.finalidade,
 		'valor_venda', p.preco,
 		'valor_aluguel', p.valor_locacao,
+		'valor_condominio', p.condominio,
+		'iptu', p.iptu,
+		'taxa_de_servico', p.taxa_de_servico,
+		'valor_itr', p.valor_itr,
+		'seguro_incendio', p.seguro_incendio,
+		'valor_venda_avaliado', p.valor_venda_avaliado,
+		'valor_locacao_avaliado', p.valor_locacao_avaliado,
 		'quartos', p.quartos,
 		'suites', p.suites,
 		'banheiros', p.banheiros,
 		'vagas', p.vagas,
 		'area_total', p.area_total,
 		'area_construida', p.area_util,
+		'andar', p.andar,
 		'endereco', case when p.address_visibility = 'full' then p.endereco else null end,
 		'public_address_visibility', p.address_visibility,
 		'bairro', p.bairro,
 		'cidade', p.cidade,
 		'estado', p.uf,
+		'condominio_nome', (
+			select co.name
+			from public.property_condominiums co
+			where co.id = p.condominium_id
+			limit 1
+		),
 		'cep', case when p.address_visibility = 'full' then p.cep else null end,
 		'imagem_principal', (
 			select img.url
-			from unnest(array_remove(array_prepend(nullif(p.imagem_principal, ''), coalesce(p.image_urls, '{}'::text[])), null)) with ordinality as img(url, ord)
+			from unnest(array_remove(array_prepend(nullif(p.imagem_principal, ''), array_cat(
+				coalesce(p.image_urls, '{}'::text[]),
+				coalesce((
+					select array_agg(nullif(trim(case
+						when jsonb_typeof(foto.value) = 'string' then foto.value #>> '{}'
+						when jsonb_typeof(foto.value) = 'object' then coalesce(foto.value->>'url', foto.value->>'src', foto.value->>'publicUrl')
+						else null
+					end), '') order by foto.ord)
+					from jsonb_array_elements(case when jsonb_typeof(p.fotos) = 'array' then p.fotos else '[]'::jsonb end) with ordinality as foto(value, ord)
+				), '{}'::text[])
+			)), null)) with ordinality as img(url, ord)
 			where not (coalesce(p.metadata->'hidden_site_image_urls', '[]'::jsonb) ? img.url)
 			order by img.ord
 			limit 1
 		),
 		'fotos', coalesce((
 			select jsonb_agg(img.url order by img.ord)
-			from unnest(array_remove(array_prepend(nullif(p.imagem_principal, ''), coalesce(p.image_urls, '{}'::text[])), null)) with ordinality as img(url, ord)
+			from unnest(array_remove(array_prepend(nullif(p.imagem_principal, ''), array_cat(
+				coalesce(p.image_urls, '{}'::text[]),
+				coalesce((
+					select array_agg(nullif(trim(case
+						when jsonb_typeof(foto.value) = 'string' then foto.value #>> '{}'
+						when jsonb_typeof(foto.value) = 'object' then coalesce(foto.value->>'url', foto.value->>'src', foto.value->>'publicUrl')
+						else null
+					end), '') order by foto.ord)
+					from jsonb_array_elements(case when jsonb_typeof(p.fotos) = 'array' then p.fotos else '[]'::jsonb end) with ordinality as foto(value, ord)
+				), '{}'::text[])
+			)), null)) with ordinality as img(url, ord)
 			where not (coalesce(p.metadata->'hidden_site_image_urls', '[]'::jsonb) ? img.url)
 		), '[]'::jsonb),
+		'detalhes_extras', coalesce((
+			select jsonb_agg(item.value order by item.value)
+			from (
+				select distinct nullif(trim(value), '') as value
+				from unnest(coalesce(p.detalhes_extras, '{}'::text[])) as value
+			) item
+			where item.value is not null
+		), '[]'::jsonb),
+		'proximidades', coalesce((
+			select jsonb_agg(item.value order by item.value)
+			from (
+				select distinct nullif(trim(value), '') as value
+				from unnest(coalesce(p.proximidades, '{}'::text[])) as value
+			) item
+			where item.value is not null
+		), '[]'::jsonb),
+		'video_imovel', p.video_imovel,
+		'tour_virtual', p.tour_virtual,
+		'aceita_financiamento', p.aceita_financiamento,
+		'aceita_permuta', p.aceita_permuta,
+		'usou_fgts', p.usou_fgts,
+		'exclusividade', p.exclusividade,
 		'destaque', p.is_featured,
 		'status', p.status,
 		'mobiliado', p.mobiliado
@@ -1774,6 +2037,17 @@ func parsePublicDecimal(value string) (float64, bool) {
 		return 0, false
 	}
 	return parsed, true
+}
+
+func parsePublicBool(value string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1", "sim", "yes":
+		return true, true
+	case "false", "0", "nao", "não", "no":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func isAllowedAssetType(value string) bool {

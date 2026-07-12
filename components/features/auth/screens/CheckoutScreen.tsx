@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import NextImage from 'next/image';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -92,9 +92,7 @@ export default function Checkout() {
   const params = useParams<{ token?: string | string[] }>();
   const rawToken = params.token;
   const token = Array.isArray(rawToken) ? rawToken[0] : rawToken;
-  const searchParams = useSearchParams();
   const { user, refreshProfile } = useAuth();
-  const orgId = searchParams.get('org');
   const [info, setInfo] = useState<CheckoutInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'PIX' | 'CREDIT_CARD'>('PIX');
@@ -120,7 +118,8 @@ export default function Checkout() {
   useEffect(() => {
     (async () => {
       try {
-        const data = await paymentsAPI.checkoutInfo<CheckoutInfo>(token ? { token } : { organization_id: orgId });
+        if (!token) return;
+        const data = await paymentsAPI.checkoutInfo<CheckoutInfo>({ token });
         setInfo(data);
       } catch (error: unknown) {
         toast.error('Erro ao carregar checkout: ' + getErrorMessage(error));
@@ -128,13 +127,13 @@ export default function Checkout() {
         setLoading(false);
       }
     })();
-  }, [token, orgId]);
+  }, [token]);
 
   // Poll payment status when PIX result is available
   useEffect(() => {
-    if (!pixResult?.payment_id || paid) return;
+    if (!pixResult?.payment_id || !token || paid) return;
     const t = setInterval(async () => {
-      const data = await paymentsAPI.paymentStatus<PaymentStatusResponse>(pixResult.payment_id);
+      const data = await paymentsAPI.paymentStatus<PaymentStatusResponse>(pixResult.payment_id, token);
       const status = data?.payment?.status;
       if (status === 'CONFIRMED' || status === 'RECEIVED') {
         setPaid(true);
@@ -143,7 +142,7 @@ export default function Checkout() {
       }
     }, 5000);
     return () => clearInterval(t);
-  }, [pixResult, paid]);
+  }, [pixResult, paid, token]);
 
   const handleSubmit = async (billingType: 'PIX' | 'CREDIT_CARD') => {
     if (!info) return;
@@ -155,8 +154,8 @@ export default function Checkout() {
         holder_cpf_cnpj: holderCpf,
         holder_phone: holderPhone,
       };
-      if (token) body.checkout_token = token;
-      else body.organization_id = orgId;
+      if (!token) throw new Error('Checkout invalido.');
+      body.checkout_token = token;
 
       if (billingType === 'CREDIT_CARD') {
         Object.assign(body, {

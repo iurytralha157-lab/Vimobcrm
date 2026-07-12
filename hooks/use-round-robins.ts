@@ -13,7 +13,7 @@ export interface RoundRobinRule {
 export interface RoundRobinMember {
   id: string;
   round_robin_id: string;
-  user_id: string;
+  user_id: string | null;
   team_id: string | null;
   position: number;
   weight: number | null;

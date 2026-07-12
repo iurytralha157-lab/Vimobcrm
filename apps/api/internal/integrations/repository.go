@@ -67,6 +67,8 @@ func (repo Repository) InvokeFunctionRequest(ctx context.Context, name string, m
 	}
 	if authorization != "" {
 		request.Header.Set("Authorization", authorization)
+	} else if repo.external.APIKey != "" {
+		request.Header.Set("Authorization", "Bearer "+repo.external.APIKey)
 	}
 
 	response, err := repo.client.Do(request)

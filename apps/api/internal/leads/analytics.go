@@ -474,14 +474,11 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 			'avatar_url', u.avatar_url
 		) order by u.name asc), '[]'::jsonb)
 		from public.users u
-		where u.organization_id = $1::uuid
-		   or exists (
-		     select 1
-		     from public.organization_members om
-		     where om.organization_id = $1::uuid
-		       and om.user_id = u.id
-		       and om.is_active = true
-		   )
+		join public.organization_members om
+		  on om.user_id = u.id
+		 and om.organization_id = $1::uuid
+		where coalesce(u.is_active, false) = true
+		  and coalesce(om.is_active, false) = true
 	`, tenantContext.OrganizationID)
 	if err != nil {
 		return nil, err

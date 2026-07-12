@@ -31,21 +31,55 @@ create index if not exists idx_property_proximity_catalog_org
 do $$
 begin
   if to_regclass('public.property_features') is not null then
-    insert into public.property_feature_catalog (organization_id, name, icon, created_at)
-    select organization_id, name, icon, coalesce(created_at, now())
-    from public.property_features
-    where organization_id is not null
-      and nullif(trim(name), '') is not null
-    on conflict do nothing;
+    if exists (
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'property_features'
+        and column_name = 'icon'
+    ) then
+      execute $sql$
+        insert into public.property_feature_catalog (organization_id, name, icon, created_at)
+        select organization_id, name, icon, coalesce(created_at, now())
+        from public.property_features
+        where organization_id is not null
+          and nullif(trim(name), '') is not null
+        on conflict do nothing
+      $sql$;
+    else
+      insert into public.property_feature_catalog (organization_id, name, created_at)
+      select organization_id, name, coalesce(created_at, now())
+      from public.property_features
+      where organization_id is not null
+        and nullif(trim(name), '') is not null
+      on conflict do nothing;
+    end if;
   end if;
 
   if to_regclass('public.property_proximities') is not null then
-    insert into public.property_proximity_catalog (organization_id, name, icon, created_at)
-    select organization_id, name, icon, coalesce(created_at, now())
-    from public.property_proximities
-    where organization_id is not null
-      and nullif(trim(name), '') is not null
-    on conflict do nothing;
+    if exists (
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'property_proximities'
+        and column_name = 'icon'
+    ) then
+      execute $sql$
+        insert into public.property_proximity_catalog (organization_id, name, icon, created_at)
+        select organization_id, name, icon, coalesce(created_at, now())
+        from public.property_proximities
+        where organization_id is not null
+          and nullif(trim(name), '') is not null
+        on conflict do nothing
+      $sql$;
+    else
+      insert into public.property_proximity_catalog (organization_id, name, created_at)
+      select organization_id, name, coalesce(created_at, now())
+      from public.property_proximities
+      where organization_id is not null
+        and nullif(trim(name), '') is not null
+      on conflict do nothing;
+    end if;
   end if;
 end $$;
 

@@ -908,7 +908,7 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 				content = fmt.Sprintf("%s teve uma nova entrada pela Meta sem responsavel definido", lead.Name)
 			}
 		}
-		if err := repo.insertLeadNotification(ctx, tx, integration.OrganizationID, recipientID, leadID, title, content, eventKey, map[string]any{
+		notificationMetadata := map[string]any{
 			"lead_name":     lead.Name,
 			"source":        source,
 			"campaign_name": metaText(details, change.Raw, "campaign_name"),
@@ -921,7 +921,13 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 			"leadgen_id":    change.LeadgenID,
 			"created_time":  change.CreatedTime,
 			"unassigned":    assignedUserID == nil,
-		}); err != nil {
+		}
+		if reentry && strings.TrimSpace(change.LeadgenID) != "" {
+			notificationMetadata["dedupe_key"] = metaNotificationDedupeKey(eventKey, leadID, recipientID, change.LeadgenID)
+		} else if !reentry {
+			notificationMetadata["dedupe_key"] = metaNotificationDedupeKey(eventKey, leadID, recipientID)
+		}
+		if err := repo.insertLeadNotification(ctx, tx, integration.OrganizationID, recipientID, leadID, title, content, eventKey, notificationMetadata); err != nil {
 			return "", false, err
 		}
 	}
@@ -1147,46 +1153,106 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 	var memberID pgtype.Text
 	var userID pgtype.Text
 	err := tx.QueryRow(ctx, `
-		select rrm.id::text, rrm.user_id::text
-		from public.round_robin_members rrm
-		join public.round_robins rr
-		  on rr.id = rrm.round_robin_id
-		 and rr.organization_id = rrm.organization_id
+		with entries as (
+			select
+				rrm.id,
+				rrm.round_robin_id,
+				rrm.organization_id,
+				rrm.user_id,
+				rrm.team_id,
+				coalesce(rrm.position, 0) as position,
+				rrm.created_at,
+				coalesce(entry_logs.total, 0) as entry_total
+			from public.round_robin_members rrm
+			join public.round_robins rr
+			  on rr.id = rrm.round_robin_id
+			 and rr.organization_id = rrm.organization_id
+			left join lateral (
+				select count(*)::bigint as total
+				from public.round_robin_logs rrl
+				where rrl.organization_id = rrm.organization_id
+				  and rrl.round_robin_id = rrm.round_robin_id
+				  and (
+				    rrl.metadata->>'member_id' = rrm.id::text
+				    or (rrm.user_id is not null and rrl.assigned_user_id = rrm.user_id)
+				  )
+			) entry_logs on true
+			where rrm.organization_id = $1::uuid
+			  and rrm.round_robin_id = $2::uuid
+			  and coalesce(rrm.is_active, true) = true
+		),
+		candidates as (
+			select
+				entries.id,
+				entries.round_robin_id,
+				entries.organization_id,
+				entries.user_id,
+				entries.position,
+				entries.created_at,
+				entries.entry_total,
+				tm.id as team_member_id,
+				tm.created_at as team_member_created_at
+			from entries
+			left join public.team_members tm
+			  on tm.organization_id = entries.organization_id
+			 and tm.team_id = entries.team_id
+			 and tm.user_id = entries.user_id
+			 and coalesce(tm.is_active, true) = true
+			where entries.user_id is not null
+
+			union all
+
+			select
+				entries.id,
+				entries.round_robin_id,
+				entries.organization_id,
+				tm.user_id,
+				entries.position,
+				entries.created_at,
+				entries.entry_total,
+				tm.id as team_member_id,
+				tm.created_at as team_member_created_at
+			from entries
+			join public.teams t
+			  on t.id = entries.team_id
+			 and t.organization_id = entries.organization_id
+			 and coalesce(t.is_active, true) = true
+			join public.team_members tm
+			  on tm.organization_id = entries.organization_id
+			 and tm.team_id = entries.team_id
+			 and coalesce(tm.is_active, true) = true
+			where entries.user_id is null
+			  and entries.team_id is not null
+		)
+		select candidates.id::text, candidates.user_id::text
+		from candidates
 		join public.organization_members om
-		  on om.organization_id = rrm.organization_id
-		 and om.user_id = rrm.user_id
+		  on om.organization_id = candidates.organization_id
+		 and om.user_id = candidates.user_id
 		 and coalesce(om.is_active, true) = true
 		join public.users u
-		  on u.id = rrm.user_id
+		  on u.id = candidates.user_id
 		 and coalesce(u.is_active, true) = true
-		left join public.team_members tm
-		  on tm.organization_id = rrm.organization_id
-		 and tm.team_id = rrm.team_id
-		 and tm.user_id = rrm.user_id
-		 and coalesce(tm.is_active, true) = true
 		left join lateral (
 			select count(*)::bigint as total
 			from public.round_robin_logs rrl
-			where rrl.organization_id = rrm.organization_id
-			  and rrl.round_robin_id = rrm.round_robin_id
-			  and rrl.assigned_user_id = rrm.user_id
-		) logs on true
-		where rrm.organization_id = $1::uuid
-		  and rrm.round_robin_id = $2::uuid
-		  and coalesce(rrm.is_active, true) = true
-		  and (
-		    tm.id is null
+			where rrl.organization_id = candidates.organization_id
+			  and rrl.round_robin_id = candidates.round_robin_id
+			  and rrl.assigned_user_id = candidates.user_id
+		) user_logs on true
+		where (
+		    candidates.team_member_id is null
 		    or not exists (
 		      select 1
 		      from public.member_availability ma_any
-		      where ma_any.organization_id = rrm.organization_id
-		        and ma_any.team_member_id = tm.id
+		      where ma_any.organization_id = candidates.organization_id
+		        and ma_any.team_member_id = candidates.team_member_id
 		    )
 		    or exists (
 		      select 1
 		      from public.member_availability ma
-		      where ma.organization_id = rrm.organization_id
-		        and ma.team_member_id = tm.id
+		      where ma.organization_id = candidates.organization_id
+		        and ma.team_member_id = candidates.team_member_id
 		        and ma.day_of_week = extract(dow from now() at time zone 'America/Sao_Paulo')::int
 		        and coalesce(ma.is_active, true) = true
 		        and (
@@ -1202,7 +1268,7 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 		        )
 		    )
 		  )
-		order by coalesce(logs.total, 0) asc, coalesce(rrm.position, 0) asc, rrm.created_at asc
+		order by candidates.entry_total asc, candidates.position asc, candidates.created_at asc, coalesce(user_logs.total, 0) asc, candidates.team_member_created_at asc nulls last, candidates.user_id asc
 		limit 1
 	`, organizationID, roundRobinID).Scan(&memberID, &userID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1592,12 +1658,6 @@ func (repo Repository) listFallbackLeadNotificationRecipients(ctx context.Contex
 			where om.organization_id = $1::uuid
 			  and coalesce(om.is_active, true) = true
 			  and om.role in ('owner', 'admin', 'manager')
-			union
-			select u.id
-			from public.users u
-			where u.organization_id = $1::uuid
-			  and coalesce(u.is_active, true) = true
-			  and u.role in ('admin', 'super_admin')
 		) recipients
 		where user_id is not null
 	`, organizationID)
@@ -1645,8 +1705,12 @@ func (repo Repository) insertLeadNotification(ctx context.Context, tx pgx.Tx, or
 			},
 		}
 	}
+	dedupeKey := metaStringFromMap(metadata, "dedupe_key")
 
 	_, err := tx.Exec(ctx, `
+		with input as (
+			select nullif($7, '') as dedupe_key
+		)
 		insert into public.notifications (
 			organization_id,
 			user_id,
@@ -1659,7 +1723,7 @@ func (repo Repository) insertLeadNotification(ctx context.Context, tx pgx.Tx, or
 			target_url,
 			metadata
 		)
-		values (
+		select
 			$1::uuid,
 			$2::uuid,
 			$3,
@@ -1670,8 +1734,19 @@ func (repo Repository) insertLeadNotification(ctx context.Context, tx pgx.Tx, or
 			$5::uuid,
 			'/crm/pipelines?lead=' || $5::text,
 			$6::jsonb
-		)
-	`, organizationID, userID, title, content, leadID, jsonb(metadata))
+		from input
+		where input.dedupe_key is null
+		   or not exists (
+		     select 1
+		     from public.notifications n
+		     where n.organization_id = $1::uuid
+		       and n.user_id = $2::uuid
+		       and n.metadata->>'dedupe_key' = input.dedupe_key
+		   )
+	`, organizationID, userID, title, content, leadID, jsonb(metadata), dedupeKey)
+	if isNotificationDedupeConflict(err) {
+		return nil
+	}
 	return err
 }
 
@@ -2321,4 +2396,37 @@ func isUndefinedColumn(err error) bool {
 		return pgErr.Code == "42703"
 	}
 	return strings.Contains(err.Error(), "does not exist")
+}
+
+func isNotificationDedupeConflict(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == "23505" &&
+		pgErr.ConstraintName == "notifications_unique_dedupe_key"
+}
+
+func metaNotificationDedupeKey(parts ...string) string {
+	cleaned := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			cleaned = append(cleaned, part)
+		}
+	}
+	return strings.Join(cleaned, ":")
+}
+
+func metaStringFromMap(values map[string]any, key string) string {
+	value, ok := values[key]
+	if !ok || value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	default:
+		return strings.TrimSpace(fmt.Sprint(typed))
+	}
 }

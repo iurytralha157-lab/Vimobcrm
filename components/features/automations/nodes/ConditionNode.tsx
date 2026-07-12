@@ -17,7 +17,7 @@ export const ConditionNode = memo(({ data, selected }: NodeProps) => {
 
   return (
     <div className={`automation-node px-4 py-3 rounded-xl min-w-[220px] max-w-[280px] ${
-      selected ? 'ring-2 ring-yellow-400/60' : ''
+      selected ? 'automation-node-selected' : ''
     }`} style={{ '--node-accent': '#eab308' } as React.CSSProperties}>
       <Handle type="target" position={Position.Left} className="!bg-yellow-400 !w-3 !h-3 !border-2 !border-yellow-500/50" />
       <div className="flex items-start gap-3">

@@ -9,7 +9,6 @@ import {
   Car,
   ChevronDown,
   CheckCircle2,
-  CircleDollarSign,
   Home,
   House,
   KeyRound,
@@ -19,7 +18,6 @@ import {
   Phone,
   Search,
   ShieldCheck,
-  SlidersHorizontal,
   SquareStack,
   Users,
 } from "lucide-react";
@@ -34,6 +32,7 @@ import type {
 import { PublicContactForm } from "./PublicContactForm";
 import { PublicPropertyCarousel } from "./PublicPropertyCarousel";
 import { PublicPropertyCard } from "./PublicPropertyCard";
+import { PublicFavoritesClient } from "./PublicFavoritesClient";
 import {
   DEFAULT_HERO_IMAGE,
   buildSiteHref,
@@ -130,6 +129,8 @@ export function PublicHomeScreen({
         { filter_key: "tipo", label: "Tipo de imovel", position: 1 },
         { filter_key: "finalidade", label: "Finalidade", position: 2 },
       ];
+  const featuredPropertyIds = new Set(data.featured.map((property) => property.id));
+  const allHomeProperties = data.latest.filter((property) => !featuredPropertyIds.has(property.id));
 
   return (
     <>
@@ -137,13 +138,13 @@ export function PublicHomeScreen({
         <img src={heroImage} alt="" className="absolute inset-0 h-full w-full object-cover" loading="eager" />
         <div className="absolute inset-0 bg-black/56" />
         <div className="relative z-10 mx-auto flex min-h-[720px] w-full max-w-7xl flex-col items-center justify-center px-4 pb-20 pt-36 text-center text-white sm:px-6 lg:min-h-[760px] lg:px-8">
-          <h1 className="mx-auto max-w-4xl text-3xl font-light leading-tight tracking-normal sm:text-5xl lg:text-[56px]">
+          <h1 className="mx-auto max-w-3xl text-[30px] font-extralight leading-[1.12] tracking-normal text-white/95 sm:text-[40px] lg:text-[46px]">
             {title}
           </h1>
 
           <form
             action={buildSiteHref(basePath, "/imoveis")}
-            className="mt-10 grid w-full max-w-5xl gap-3 rounded-[14px] bg-[#30332f]/78 p-3 text-left shadow-[0_18px_42px_rgba(0,0,0,0.18)] backdrop-blur-xl sm:p-4 md:grid-cols-4"
+            className="mt-10 grid w-full max-w-5xl gap-3 rounded-[14px] bg-[#30332f]/78 p-3 text-left backdrop-blur-xl sm:p-4 md:grid-cols-4"
           >
             {activeFilters.map((filter) => (
               <SearchFilterField
@@ -168,24 +169,17 @@ export function PublicHomeScreen({
 
       <PropertySection
         basePath={basePath}
-        eyebrow="Exclusivos"
-        properties={data.exclusive}
-        site={site}
-        title="Imoveis que merecem atencao especial"
-      />
-      <PropertySection
-        basePath={basePath}
         eyebrow="Destaques"
         properties={data.featured}
         site={site}
-        title="Selecionados pela equipe"
+        title="Imóveis de destaque"
       />
       <PropertySection
         basePath={basePath}
-        eyebrow="Portfolio"
-        properties={data.latest}
+        eyebrow="Portfólio"
+        properties={allHomeProperties}
         site={site}
-        title="Todos os imoveis disponiveis"
+        title="Todos os imóveis"
       />
 
       {site.show_about_on_home ? (
@@ -196,7 +190,6 @@ export function PublicHomeScreen({
         basePath={basePath}
         heroImage={heroImage}
         properties={[...data.featured, ...data.exclusive, ...data.latest]}
-        site={site}
       />
     </>
   );
@@ -215,19 +208,27 @@ export function PublicPropertiesScreen({
 }>) {
   const tokens = getThemeTokens(site);
   const banner = site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE;
+  const properties = sortFeaturedFirst(data.properties);
   const hasFilters = Boolean(
     stringQuery(query.search) ||
       stringQuery(query.tipo) ||
       stringQuery(query.finalidade) ||
       stringQuery(query.cidade) ||
       stringQuery(query.bairro) ||
+      stringQuery(query.condominio) ||
       stringQuery(query.min_price) ||
       stringQuery(query.max_price) ||
       stringQuery(query.quartos) ||
       stringQuery(query.suites) ||
       stringQuery(query.banheiros) ||
       stringQuery(query.vagas) ||
-      stringQuery(query.mobilia),
+      stringQuery(query.mobilia) ||
+      stringQuery(query.area_util_min) ||
+      stringQuery(query.area_util_max) ||
+      stringQuery(query.area_total_min) ||
+      stringQuery(query.area_total_max) ||
+      stringQuery(query.aceita_financiamento) ||
+      stringQuery(query.aceita_permuta),
   );
 
   return (
@@ -253,9 +254,9 @@ export function PublicPropertiesScreen({
             ) : null}
           </div>
 
-          {data.properties.length > 0 ? (
+          {properties.length > 0 ? (
             <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-              {data.properties.map((property) => (
+              {properties.map((property) => (
                 <PublicPropertyCard key={property.id} basePath={basePath} property={property} site={site} />
               ))}
             </div>
@@ -284,24 +285,17 @@ function PublicPropertiesFilterSidebar({
   site: PublicSiteConfig;
 }>) {
   const tokens = getThemeTokens(site);
-  const inputClass = "public-site-filter-field h-11 w-full rounded-[10px] border-0 px-3 text-sm outline-none transition";
+  const inputClass = "public-site-filter-field h-11 w-full rounded-[10px] border-0 px-3 text-sm font-light outline-none transition";
   const selectClass = `${inputClass} appearance-none pr-9`;
 
   return (
     <aside className="h-fit rounded-[14px] p-5 lg:sticky lg:top-32" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
-      <div className="mb-5 flex items-center gap-3">
-        <span className="inline-flex h-10 w-10 items-center justify-center rounded-[10px]" style={{ backgroundColor: `${tokens.primary}18`, color: tokens.primary }}>
-          <SlidersHorizontal className="h-5 w-5" />
-        </span>
-        <div>
-          <h2 className="text-lg font-semibold">Filtros</h2>
-          <p className="text-xs opacity-60">Refine por cidade, valor e perfil.</p>
-        </div>
+      <div className="mb-5">
+        <h2 className="text-lg font-light">Filtros</h2>
       </div>
 
-      <form action={buildSiteHref(basePath, "/imoveis")} className="space-y-4">
+      <form action={buildSiteHref(basePath, "/imoveis")} className="space-y-3">
         <label className="block">
-          <span className="mb-2 block text-xs font-semibold uppercase tracking-wide opacity-70">Buscar</span>
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 opacity-52" />
             <input
@@ -313,26 +307,23 @@ function PublicPropertiesFilterSidebar({
           </div>
         </label>
 
-        <FilterSelect className={selectClass} label="Cidade" name="cidade" options={data.cities} placeholder="Todas as cidades" value={stringQuery(query.cidade)} />
-        <FilterSelect className={selectClass} label="Bairro" name="bairro" options={data.neighborhoods} placeholder="Todos os bairros" value={stringQuery(query.bairro)} />
+        <FilterSelect className={selectClass} label="Cidade" name="cidade" options={data.cities} placeholder="Selecione sua cidade" value={stringQuery(query.cidade)} />
+        <FilterSelect className={selectClass} label="Bairro" name="bairro" options={data.neighborhoods} placeholder="Selecione seu bairro" value={stringQuery(query.bairro)} />
+        <FilterSelect className={selectClass} label="Tipo de imovel" name="tipo" options={data.types} placeholder="Tipo de imovel" value={stringQuery(query.tipo)} />
+        <FilterSelect className={selectClass} label="Finalidade" name="finalidade" options={buildPurposeOptions(data.purposes)} placeholder="Finalidade" value={stringQuery(query.finalidade)} />
 
-        <div>
-          <span className="mb-2 block text-xs font-semibold uppercase tracking-wide opacity-70">Faixa de preço</span>
-          <div className="grid grid-cols-2 gap-3">
-            <input name="min_price" defaultValue={stringQuery(query.min_price)} placeholder="Minimo" className={inputClass} inputMode="numeric" />
-            <input name="max_price" defaultValue={stringQuery(query.max_price)} placeholder="Maximo" className={inputClass} inputMode="numeric" />
-          </div>
+        <div className="grid grid-cols-2 gap-3">
+          <input name="min_price" defaultValue={stringQuery(query.min_price)} placeholder="Valor minimo" className={inputClass} inputMode="numeric" />
+          <input name="max_price" defaultValue={stringQuery(query.max_price)} placeholder="Valor maximo" className={inputClass} inputMode="numeric" />
         </div>
 
         <details className="group">
-          <summary className="flex h-11 cursor-pointer list-none items-center gap-2 rounded-[10px] px-3 text-sm font-semibold transition hover:brightness-105 public-site-filter-field">
-            <CircleDollarSign className="h-4 w-4" style={{ color: tokens.primary }} />
+          <summary className="public-site-filter-field flex h-11 cursor-pointer list-none items-center gap-2 rounded-[10px] px-3 text-sm font-light transition hover:brightness-105">
             Mais filtros
             <ChevronDown className="ml-auto h-4 w-4 opacity-55 transition group-open:rotate-180" />
           </summary>
           <div className="mt-3 space-y-3">
-            <FilterSelect className={selectClass} label="Tipo de imóvel" name="tipo" options={data.types} placeholder="Todos os tipos" value={stringQuery(query.tipo)} />
-            <FilterSelect className={selectClass} label="Finalidade" name="finalidade" options={buildPurposeOptions(data.purposes)} placeholder="Todas" value={stringQuery(query.finalidade)} />
+            <FilterSelect className={selectClass} label="Condominio" name="condominio" options={data.condominiums || []} placeholder="Condominio" value={stringQuery(query.condominio)} />
             <FilterSelect className={selectClass} label="Quartos" name="quartos" options={numericOptions} placeholder="Quartos" value={stringQuery(query.quartos)} />
             <FilterSelect className={selectClass} label="Suites" name="suites" options={numericOptions} placeholder="Suites" value={stringQuery(query.suites)} />
             <FilterSelect className={selectClass} label="Banheiros" name="banheiros" options={numericOptions} placeholder="Banheiros" value={stringQuery(query.banheiros)} />
@@ -345,8 +336,38 @@ function PublicPropertiesFilterSidebar({
                 { value: "mobiliado", label: "Mobiliado" },
                 { value: "nao", label: "Sem mobilia" },
               ]}
-              placeholder="Indiferente"
+              placeholder="Mobilia"
               value={stringQuery(query.mobilia)}
+            />
+            <div className="grid grid-cols-2 gap-3">
+              <input name="area_util_min" defaultValue={stringQuery(query.area_util_min)} placeholder="Area util min." className={inputClass} inputMode="numeric" />
+              <input name="area_util_max" defaultValue={stringQuery(query.area_util_max)} placeholder="Area util max." className={inputClass} inputMode="numeric" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <input name="area_total_min" defaultValue={stringQuery(query.area_total_min)} placeholder="Area total min." className={inputClass} inputMode="numeric" />
+              <input name="area_total_max" defaultValue={stringQuery(query.area_total_max)} placeholder="Area total max." className={inputClass} inputMode="numeric" />
+            </div>
+            <FilterSelect
+              className={selectClass}
+              label="Financiamento"
+              name="aceita_financiamento"
+              options={[
+                { value: "true", label: "Aceita financiamento" },
+                { value: "false", label: "Nao aceita financiamento" },
+              ]}
+              placeholder="Financiamento"
+              value={stringQuery(query.aceita_financiamento)}
+            />
+            <FilterSelect
+              className={selectClass}
+              label="Permuta"
+              name="aceita_permuta"
+              options={[
+                { value: "true", label: "Aceita permuta" },
+                { value: "false", label: "Nao aceita permuta" },
+              ]}
+              placeholder="Permuta"
+              value={stringQuery(query.aceita_permuta)}
             />
           </div>
         </details>
@@ -393,9 +414,8 @@ function FilterSelect({
 }>) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-semibold uppercase tracking-wide opacity-70">{label}</span>
       <div className="relative">
-        <select name={name} defaultValue={value} className={className}>
+        <select name={name} defaultValue={value} className={className} aria-label={label}>
           <option className="text-slate-900" value="">
             {placeholder}
           </option>
@@ -459,16 +479,36 @@ function normalizePurposeValue(value: string) {
 }
 
 export function PublicPropertyDetailScreen({
+  basePath,
   property,
+  relatedProperties = [],
   site,
 }: Readonly<{
   basePath: string;
   property: PublicProperty;
+  relatedProperties?: PublicProperty[];
   site: PublicSiteConfig;
 }>) {
   const tokens = getThemeTokens(site);
   const title = getPropertyTitle(property);
-  const images = Array.from(new Set([property.imagem_principal, ...(property.fotos || [])].filter(Boolean))) as string[];
+  const code = getPropertyCode(property);
+  const location = getPropertyLocation(property);
+  const mapSrc = location ? `https://www.google.com/maps?q=${encodeURIComponent(location)}&output=embed` : "";
+  const videoEmbedUrl = getYouTubeEmbedUrl(property.video_imovel || property.tour_virtual || "");
+  const valueItems = buildPropertyValueItems(property);
+  const extraDetails = buildPropertyExtraDetails(property);
+  const propertyStats = buildPropertyStats(property);
+  const proximities = normalizeStringList(property.proximidades);
+  const relatedSearches = buildRelatedSearches(property, basePath);
+  const images = Array.from(
+    new Set([
+      property.imagem_principal,
+      ...(property.fotos || []),
+      ...(property.image_urls || []),
+    ].filter(Boolean)),
+  ) as string[];
+  const contactMessage = `Ola, vim pelo site e tenho interesse no imovel ${title}${code ? ` (ref. ${code})` : ""}. Gostaria de receber mais informacoes.`;
+  const privacyHref = buildSiteHref(basePath, "/politica-de-privacidade");
 
   return (
     <article>
@@ -477,25 +517,44 @@ export function PublicPropertyDetailScreen({
       <section className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-9 sm:px-6 lg:grid-cols-[1fr_380px] lg:px-8">
         <div className="space-y-6">
           <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card }}>
-            <p className="inline-flex rounded-[8px] bg-blue-600 px-3 py-1 text-xs font-medium uppercase tracking-wide text-white">
-              Ref: {getPropertyCode(property)}
+            <p className="inline-flex rounded-[8px] px-3 py-1 text-xs font-medium uppercase tracking-wide text-white" style={{ backgroundColor: tokens.primary }}>
+              Ref: {code}
             </p>
             <h1 className="mt-4 text-3xl font-normal leading-tight sm:text-4xl" style={{ color: tokens.foreground }}>
               {title}
             </h1>
-            {getPropertyLocation(property) ? (
+            {location ? (
               <p className="mt-3 flex items-center gap-2 text-sm opacity-68" style={{ color: tokens.foreground }}>
                 <MapPin className="h-5 w-5" />
-                {getPropertyLocation(property)}
+                {location}
               </p>
             ) : null}
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <FeatureStat icon={<BedDouble className="h-5 w-5" />} label="Quartos" value={property.quartos} site={site} />
-            <FeatureStat icon={<Bath className="h-5 w-5" />} label="Banheiros" value={property.banheiros} site={site} />
-            <FeatureStat icon={<Car className="h-5 w-5" />} label="Vagas" value={property.vagas} site={site} />
-            <FeatureStat icon={<Maximize2 className="h-5 w-5" />} label="Area" value={property.area_construida || property.area_total} suffix="m2" site={site} />
+          <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card }}>
+            <h2 className="text-xl font-normal" style={{ color: tokens.foreground }}>
+              Detalhes do imovel
+            </h2>
+            <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              {propertyStats.map((stat) => (
+                <FeatureStat
+                  icon={stat.icon}
+                  key={stat.label}
+                  label={stat.label}
+                  site={site}
+                  value={stat.value}
+                />
+              ))}
+            </div>
+
+            {extraDetails.length > 0 ? (
+              <div className="mt-6">
+                <h3 className="text-sm font-normal opacity-70" style={{ color: tokens.foreground }}>
+                  Detalhes extras do imovel
+                </h3>
+                <TagList items={extraDetails} primaryColor={tokens.primary} />
+              </div>
+            ) : null}
           </div>
 
           <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card }}>
@@ -506,27 +565,258 @@ export function PublicPropertyDetailScreen({
               {property.descricao || "Entre em contato para saber mais detalhes sobre este imovel."}
             </p>
           </div>
+
+          {videoEmbedUrl ? (
+            <div className="overflow-hidden rounded-[14px]" style={{ backgroundColor: tokens.card }}>
+              <iframe
+                src={videoEmbedUrl}
+                title={`Video do imovel ${title}`}
+                className="aspect-video w-full border-0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                allowFullScreen
+                loading="lazy"
+              />
+            </div>
+          ) : null}
+
+          {mapSrc ? (
+            <div className="overflow-hidden rounded-[14px]" style={{ backgroundColor: tokens.card }}>
+              <div className="px-6 py-5">
+                <h2 className="text-xl font-normal" style={{ color: tokens.foreground }}>
+                  Localizacao
+                </h2>
+                <p className="mt-2 flex items-center gap-2 text-sm opacity-68" style={{ color: tokens.foreground }}>
+                  <MapPin className="h-4 w-4" />
+                  {location}
+                </p>
+              </div>
+              <iframe
+                src={mapSrc}
+                title={`Mapa aproximado de ${location}`}
+                className="h-72 w-full border-0 grayscale-[0.1]"
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+              />
+            </div>
+          ) : null}
+
+          {proximities.length > 0 ? (
+            <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card }}>
+              <h2 className="text-xl font-normal" style={{ color: tokens.foreground }}>
+                Proximidades
+              </h2>
+              <TagList items={proximities} primaryColor={tokens.primary} />
+            </div>
+          ) : null}
         </div>
 
         <aside className="h-fit rounded-[14px] p-6 lg:sticky lg:top-28" style={{ backgroundColor: tokens.card }}>
           <p className="text-sm font-medium opacity-70" style={{ color: tokens.foreground }}>
             Valor
           </p>
-          <p className="mt-1 text-3xl font-normal" style={{ color: tokens.primary }}>
+          <p className="mt-1 text-3xl font-light" style={{ color: tokens.primary }}>
             {formatPrice(getPropertyPrice(property))}
           </p>
+          {valueItems.length > 0 ? (
+            <dl className="mt-5 space-y-3 border-t pt-4" style={{ borderColor: `${tokens.foreground}18`, color: tokens.foreground }}>
+              {valueItems.map((item) => (
+                <div key={item.label} className="flex items-center justify-between gap-4 text-sm">
+                  <dt className="opacity-62">{item.label}</dt>
+                  <dd className="font-normal">{item.value}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
           <div className="mt-6">
             <PublicContactForm
+              defaultMessage={contactMessage}
               organizationId={site.organization_id}
               primaryColor={tokens.primary}
+              privacyHref={privacyHref}
               propertyCode={getPropertyCode(property)}
               propertyId={property.id}
+              siteTitle={getSiteTitle(site)}
             />
           </div>
         </aside>
       </section>
+
+      {relatedProperties.length > 0 ? (
+        <PropertySection
+          basePath={basePath}
+          eyebrow="Relacionados"
+          properties={relatedProperties}
+          site={site}
+          title="Voce tambem pode gostar"
+        />
+      ) : null}
+
+      {relatedSearches.length > 0 ? (
+        <section className="mx-auto w-full max-w-7xl px-4 pb-16 text-center sm:px-6 lg:px-8">
+          <h2 className="text-2xl font-normal" style={{ color: tokens.foreground }}>
+            Buscas relacionadas
+          </h2>
+          <div className="mt-6 flex flex-wrap justify-center gap-3">
+            {relatedSearches.map((item) => (
+              <Link
+                key={item.label}
+                href={item.href}
+                className="rounded-full border px-4 py-2 text-sm font-light transition hover:brightness-105"
+                style={{ borderColor: `${tokens.foreground}42`, color: tokens.foreground }}
+              >
+                {item.label}
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </article>
   );
+}
+
+function TagList({ items, primaryColor }: Readonly<{ items: string[]; primaryColor: string }>) {
+  return (
+    <div className="mt-4 flex flex-wrap gap-2">
+      {items.map((item, index) => (
+        <span
+          key={`${item}-${index}`}
+          className="rounded-[8px] px-3 py-1.5 text-xs font-light"
+          style={{
+            backgroundColor: index % 3 === 0 ? primaryColor : "color-mix(in srgb, var(--site-fg) 8%, transparent)",
+            color: index % 3 === 0 ? "#fff" : "var(--site-fg)",
+          }}
+        >
+          {item}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function buildPropertyStats(property: PublicProperty) {
+  const stats: Array<{ icon: React.ReactNode; label: string; value: React.ReactNode }> = [];
+  const addNumber = (value: number | null | undefined, label: string, icon: React.ReactNode) => {
+    if (!value || value <= 0) return;
+    stats.push({ icon, label, value: formatMetricNumber(value) });
+  };
+  const addArea = (value: number | null | undefined, label: string, icon: React.ReactNode) => {
+    if (!value || value <= 0) return;
+    stats.push({
+      icon,
+      label,
+      value: (
+        <>
+          {formatMetricNumber(value)}
+          <span className="ml-0.5 align-super text-[0.58em] leading-none">m²</span>
+        </>
+      ),
+    });
+  };
+
+  addNumber(property.quartos, "Quartos", <BedDouble className="h-5 w-5" />);
+  addNumber(property.suites, "Suites", <KeyRound className="h-5 w-5" />);
+  addNumber(property.banheiros, "Banheiros", <Bath className="h-5 w-5" />);
+  addNumber(property.vagas, "Vagas", <Car className="h-5 w-5" />);
+  addArea(property.area_construida, "Area util", <Maximize2 className="h-5 w-5" />);
+  if (property.area_total && property.area_total !== property.area_construida) {
+    addArea(property.area_total, "Area total", <SquareStack className="h-5 w-5" />);
+  }
+  addNumber(property.andar, "Andar", <Building2 className="h-5 w-5" />);
+
+  return stats;
+}
+
+function buildPropertyExtraDetails(property: PublicProperty) {
+  const items = normalizeStringList(property.detalhes_extras);
+
+  if (property.condominio_nome) items.push(`Condominio: ${property.condominio_nome}`);
+  if (property.mobiliado) items.push("Mobiliado");
+  if (property.aceita_financiamento) items.push("Aceita financiamento");
+  if (property.usou_fgts) items.push("Aceita FGTS");
+  if (property.aceita_permuta) items.push("Aceita permuta");
+  if (property.exclusividade) items.push("Exclusivo");
+  if (property.andar) items.push(`${property.andar} andar`);
+
+  return Array.from(new Set(items.filter(Boolean)));
+}
+
+function buildPropertyValueItems(property: PublicProperty) {
+  const items = [
+    { label: "Condominio", value: property.valor_condominio },
+    { label: "IPTU", value: property.iptu },
+    { label: "ITR", value: property.valor_itr },
+    { label: "Seguro incendio", value: property.seguro_incendio },
+    { label: "Taxa de servico", value: property.taxa_de_servico },
+    { label: "Venda avaliada", value: property.valor_venda_avaliado },
+    { label: "Locacao avaliada", value: property.valor_locacao_avaliado },
+  ];
+
+  return items
+    .filter((item) => typeof item.value === "number" && item.value > 0)
+    .map((item) => ({ label: item.label, value: formatPrice(item.value || null) }));
+}
+
+function formatMetricNumber(value: number) {
+  return new Intl.NumberFormat("pt-BR", {
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function buildRelatedSearches(property: PublicProperty, basePath: string) {
+  const type = property.tipo_imovel || "Imovel";
+  const city = property.cidade || "";
+  const neighborhood = property.bairro || "";
+  const rooms = property.quartos ? `${property.quartos} quartos` : "";
+  const purpose = getRelatedPurposeLabel(property);
+  const labels = [
+    [type, rooms, purpose, neighborhood, city].filter(Boolean).join(" - "),
+    [type, purpose, city].filter(Boolean).join(" - "),
+    neighborhood ? [type, purpose, neighborhood].filter(Boolean).join(" - ") : "",
+    property.condominio_nome ? [type, property.condominio_nome, city].filter(Boolean).join(" - ") : "",
+  ];
+
+  return Array.from(new Set(labels.map((item) => item.trim()).filter(Boolean))).slice(0, 4).map((label) => ({
+    label,
+    href: buildSiteHref(basePath, `/imoveis?${new URLSearchParams({
+      search: label,
+      tipo: property.tipo_imovel || "",
+      finalidade: property.finalidade || "",
+    }).toString()}`),
+  }));
+}
+
+function getRelatedPurposeLabel(property: PublicProperty) {
+  const purpose = normalizePurposeValue(property.finalidade || "");
+  if (purpose === "locacao") return "para alugar";
+  if (purpose === "temporada") return "para temporada";
+  if (purpose === "venda_locacao") return "a venda ou locacao";
+  return "a venda";
+}
+
+function normalizeStringList(value?: string[] | null) {
+  return Array.isArray(value)
+    ? value.map((item) => item.trim()).filter(Boolean)
+    : [];
+}
+
+function getYouTubeEmbedUrl(value: string) {
+  const url = value.trim();
+  if (!url) return "";
+
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, "");
+    let videoId = "";
+    if (host === "youtu.be") videoId = parsed.pathname.replace("/", "");
+    if (host.endsWith("youtube.com")) {
+      if (parsed.pathname.startsWith("/embed/")) videoId = parsed.pathname.split("/")[2] || "";
+      if (!videoId) videoId = parsed.searchParams.get("v") || "";
+      if (!videoId && parsed.pathname.startsWith("/shorts/")) videoId = parsed.pathname.split("/")[2] || "";
+    }
+    return videoId ? `https://www.youtube.com/embed/${videoId}` : url;
+  } catch {
+    return "";
+  }
 }
 
 export function PublicAboutScreen({
@@ -540,6 +830,7 @@ export function PublicAboutScreen({
 }
 
 export function PublicContactScreen({
+  basePath,
   site,
 }: Readonly<{
   basePath: string;
@@ -547,6 +838,7 @@ export function PublicContactScreen({
 }>) {
   const tokens = getThemeTokens(site);
   const banner = site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE;
+  const privacyHref = buildSiteHref(basePath, "/politica-de-privacidade");
 
   return (
     <>
@@ -565,6 +857,7 @@ export function PublicContactScreen({
               className="text-[var(--site-fg)]"
               organizationId={site.organization_id}
               primaryColor={tokens.primary}
+              privacyHref={privacyHref}
               siteTitle={getSiteTitle(site)}
               triggerLabel={site.whatsapp}
               variant="contact-line"
@@ -575,10 +868,77 @@ export function PublicContactScreen({
         </div>
 
         <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
-          <PublicContactForm organizationId={site.organization_id} primaryColor={tokens.primary} />
+          <PublicContactForm organizationId={site.organization_id} primaryColor={tokens.primary} privacyHref={privacyHref} siteTitle={getSiteTitle(site)} />
         </div>
       </section>
     </>
+  );
+}
+
+export function PublicPrivacyPolicyScreen({
+  site,
+}: Readonly<{
+  site: PublicSiteConfig;
+}>) {
+  const tokens = getThemeTokens(site);
+  const banner = site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE;
+  const siteTitle = getSiteTitle(site);
+  const contact = [site.email, site.phone || site.whatsapp].filter(Boolean).join(" | ");
+  const address = [site.address, site.city, site.state].filter(Boolean).join(", ");
+
+  return (
+    <>
+      <PageHero backgroundImage={banner} eyebrow="Privacidade" title="Politica de privacidade" />
+      <section className="mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 lg:px-8">
+        <div className="rounded-[14px] p-6 leading-7 sm:p-8" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
+          <p className="text-sm opacity-70">
+            Esta politica explica como a {siteTitle} trata os dados enviados pelos formularios deste site.
+          </p>
+
+          <div className="mt-8 space-y-7">
+            <PolicyBlock title="Dados coletados">
+              Podemos coletar nome, telefone, e-mail, mensagem enviada, imovel de interesse, melhor horario para contato e dados tecnicos de navegacao usados para atendimento e seguranca.
+            </PolicyBlock>
+            <PolicyBlock title="Finalidade do uso">
+              Usamos essas informacoes para responder solicitacoes, registrar leads no CRM, melhorar o atendimento, acompanhar interesses em imoveis e cumprir obrigacoes legais.
+            </PolicyBlock>
+            <PolicyBlock title="Compartilhamento">
+              Os dados podem ser acessados pela equipe autorizada da imobiliaria e por fornecedores essenciais de tecnologia, sempre com finalidade operacional e protecao adequada.
+            </PolicyBlock>
+            <PolicyBlock title="Armazenamento e seguranca">
+              Mantemos os dados pelo tempo necessario para atendimento, relacionamento comercial e cumprimento legal. Aplicamos controles de acesso e medidas tecnicas para proteger as informacoes.
+            </PolicyBlock>
+            <PolicyBlock title="Seus direitos">
+              Voce pode solicitar acesso, correcao, atualizacao ou exclusao dos seus dados pessoais pelos canais de contato da imobiliaria.
+            </PolicyBlock>
+            <PolicyBlock title="Contato">
+              {contact || address ? (
+                <>
+                  Para falar sobre privacidade, entre em contato com {siteTitle}
+                  {contact ? ` pelo canal ${contact}` : ""}
+                  {address ? ` ou no endereco ${address}` : ""}.
+                </>
+              ) : (
+                <>Entre em contato com a imobiliaria pelos canais informados neste site.</>
+              )}
+            </PolicyBlock>
+          </div>
+
+          <p className="mt-8 text-xs opacity-55">
+            Ultima atualizacao: julho de 2026.
+          </p>
+        </div>
+      </section>
+    </>
+  );
+}
+
+function PolicyBlock({ children, title }: Readonly<{ children: React.ReactNode; title: string }>) {
+  return (
+    <section>
+      <h2 className="text-lg font-normal">{title}</h2>
+      <div className="mt-2 text-sm leading-7 opacity-72">{children}</div>
+    </section>
   );
 }
 
@@ -589,29 +949,47 @@ export function PublicFavoritesScreen({
   basePath: string;
   site: PublicSiteConfig;
 }>) {
-  const tokens = getThemeTokens(site);
-
   return (
     <>
       <PageHero backgroundImage={site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE} eyebrow="Favoritos" title="Seus imoveis salvos" />
-      <section className="mx-auto w-full max-w-4xl px-4 py-14 text-center sm:px-6 lg:px-8">
-        <div className="rounded-lg border p-8" style={{ backgroundColor: tokens.card, borderColor: `${tokens.foreground}18` }}>
-          <h2 className="text-2xl font-semibold" style={{ color: tokens.foreground }}>
-            Favoritos ficam salvos neste navegador
-          </h2>
-          <p className="mx-auto mt-3 max-w-2xl leading-7 opacity-75" style={{ color: tokens.foreground }}>
-            Abra os imoveis e toque no coracao para salvar. Esta primeira versao preserva seus favoritos localmente e evita qualquer dependencia direta com o banco no site publico.
-          </p>
-          <Link
-            href={buildSiteHref(basePath, "/imoveis")}
-            className="mt-6 inline-flex h-11 items-center justify-center rounded-lg px-5 text-sm font-semibold text-white"
-            style={{ backgroundColor: tokens.primary }}
-          >
-            Ver imoveis
-          </Link>
-        </div>
+      <section className="mx-auto w-full max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
+        <PublicFavoritesClient basePath={basePath} site={site} />
       </section>
     </>
+  );
+}
+
+export function PublicNotFoundScreen({
+  basePath,
+  site,
+}: Readonly<{
+  basePath: string;
+  site: PublicSiteConfig;
+}>) {
+  const tokens = getThemeTokens(site);
+  const backgroundImage = site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE;
+
+  return (
+    <section className="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-32 text-center text-white sm:px-6">
+      <img src={backgroundImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
+      <div className="absolute inset-0 bg-black/68" />
+      <div className="relative z-10 mx-auto max-w-2xl">
+        <p className="text-sm font-light uppercase tracking-[0.24em] text-white/72">Ops, algo deu errado</p>
+        <h1 className="mt-5 text-[88px] font-extralight leading-none tracking-normal text-white sm:text-[128px]">
+          404
+        </h1>
+        <p className="mx-auto mt-5 max-w-lg text-base font-light leading-7 text-white/76 sm:text-lg">
+          Nao encontramos essa pagina. O imovel pode ter sido atualizado, removido ou o link pode estar incompleto.
+        </p>
+        <Link
+          href={buildSiteHref(basePath, "/")}
+          className="mt-8 inline-flex h-11 items-center justify-center rounded-[10px] px-6 text-sm font-light text-white transition hover:brightness-110"
+          style={{ backgroundColor: tokens.primary }}
+        >
+          Voltar a pagina principal
+        </Link>
+      </div>
+    </section>
   );
 }
 
@@ -629,8 +1007,9 @@ function PropertySection({
   title: string;
 }>) {
   const tokens = getThemeTokens(site);
+  const orderedProperties = sortFeaturedFirst(properties);
 
-  if (properties.length === 0) return null;
+  if (orderedProperties.length === 0) return null;
 
   return (
     <section className="mx-auto w-full max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
@@ -648,7 +1027,7 @@ function PropertySection({
         </Link>
       </div>
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-        {properties.slice(0, 6).map((property) => (
+        {orderedProperties.slice(0, 6).map((property) => (
           <PublicPropertyCard key={property.id} basePath={basePath} property={property} site={site} />
         ))}
       </div>
@@ -660,16 +1039,11 @@ function HomeCategoryShowcase({
   basePath,
   heroImage,
   properties,
-  site,
 }: Readonly<{
   basePath: string;
   heroImage: string;
   properties: PublicProperty[];
-  site: PublicSiteConfig;
 }>) {
-  const tokens = getThemeTokens(site);
-  const siteTitle = getSiteTitle(site);
-
   return (
     <section className="mx-auto w-full max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
       <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
@@ -695,26 +1069,18 @@ function HomeCategoryShowcase({
           );
         })}
       </div>
-
-      <div className="mx-auto mt-12 max-w-3xl text-center">
-        <h2 className="text-3xl font-light" style={{ color: tokens.foreground }}>
-          Nao encontrou o que procura?
-        </h2>
-        <p className="mx-auto mt-3 max-w-2xl leading-7 opacity-70" style={{ color: tokens.foreground }}>
-          Entre em contato conosco e nossa equipe especializada vai ajudar voce a encontrar o imovel ideal.
-        </p>
-        <div className="mt-7">
-          <PublicContactLeadDialog
-            organizationId={site.organization_id}
-            primaryColor={tokens.primary}
-            siteTitle={siteTitle}
-            triggerLabel="Fale conosco"
-            variant="button"
-          />
-        </div>
-      </div>
     </section>
   );
+}
+
+function sortFeaturedFirst(properties: PublicProperty[]) {
+  return properties
+    .map((property, index) => ({ property, index }))
+    .sort((left, right) => {
+      const featuredDiff = Number(Boolean(right.property.destaque)) - Number(Boolean(left.property.destaque));
+      return featuredDiff || left.index - right.index;
+    })
+    .map(({ property }) => property);
 }
 
 function findCategoryImage(properties: PublicProperty[], terms: string[]) {
@@ -969,21 +1335,29 @@ function FeatureStat({
   icon,
   label,
   site,
-  suffix = "",
   value,
 }: Readonly<{
   icon: React.ReactNode;
   label: string;
   site: PublicSiteConfig;
-  suffix?: string;
-  value?: number | null;
+  value: React.ReactNode;
 }>) {
   const tokens = getThemeTokens(site);
 
   return (
-    <div className="rounded-[14px] p-4" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
-      <div style={{ color: tokens.primary }}>{icon}</div>
-      <p className="mt-3 text-2xl font-normal">{value ? `${value}${suffix}` : "-"}</p>
+    <div
+      className="rounded-[10px] p-4"
+      style={{
+        backgroundColor: "color-mix(in srgb, var(--site-fg) 5%, transparent)",
+        color: tokens.foreground,
+      }}
+    >
+      <div className="flex items-center gap-2" style={{ color: tokens.primary }}>
+        {icon}
+        <p className="text-2xl font-normal leading-none" style={{ color: tokens.foreground }}>
+          {value}
+        </p>
+      </div>
       <p className="text-sm opacity-65">{label}</p>
     </div>
   );

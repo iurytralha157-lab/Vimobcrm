@@ -845,13 +845,12 @@ func (repo Repository) validateUser(ctx context.Context, querier queryRower, org
 		select exists (
 			select 1
 			from public.users u
-			left join public.organization_members om
+			join public.organization_members om
 			  on om.user_id = u.id
 			 and om.organization_id = $1::uuid
-			 and om.is_active = true
 			where u.id = $2::uuid
-			  and u.is_active = true
-			  and (u.organization_id = $1::uuid or om.id is not null)
+			  and coalesce(u.is_active, false) = true
+			  and coalesce(om.is_active, false) = true
 		)
 	`, organizationID, userID).Scan(&exists)
 	if err != nil {

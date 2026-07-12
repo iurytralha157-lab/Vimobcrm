@@ -7,14 +7,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { useOrganizationSite, useCreateOrganizationSite, useUpdateOrganizationSite, type OrganizationSite } from "@/hooks/use-organization-site";
 import { useAuth } from "@/contexts/AuthContext";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
-import { Globe, Palette, Phone, Share2, Search, ExternalLink, Copy, Check, Loader2, Maximize2, Droplets, Menu, Info } from "lucide-react";
+import { Globe, Palette, Phone, Share2, Search, ExternalLink, Loader2, Menu, Info, Save } from "lucide-react";
 import { AnimatedIcon } from "@/components/shared/icons/AnimatedIcon";
 import GLOBE_JSON from "@/components/shared/icons/globe-icon.json";
 import { MenuTab } from "@/components/features/site/MenuTab";
@@ -101,18 +101,18 @@ const siteSections = [
   {
     value: 'general',
     label: 'Geral',
-    description: 'Status, domínio e dados básicos',
+    description: 'Status, logo e domínio',
     icon: Globe,
   },
   {
     value: 'appearance',
     label: 'Aparência',
-    description: 'Logo, tema, cores e imagens',
+    description: 'Tema, cores e imagens',
     icon: Palette,
   },
   {
     value: 'menu',
-    label: 'Menu e busca',
+    label: 'Menu',
     description: 'Links do site e filtros públicos',
     icon: Menu,
   },
@@ -231,12 +231,11 @@ export default function SiteSettings() {
 
   const [isSaving, setIsSaving] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [copiedWorker, setCopiedWorker] = useState(false);
   const siteActiveTab = normalizeSiteTab(searchParams.get('tab'));
   const setSiteActiveTab = (value: string) => {
     router.replace(value === 'general' ? '/settings/site' : `/settings/site?tab=${value}`);
   };
-  const selectedSection = siteSections.find(section => section.value === siteActiveTab) || siteSections[0];
+  const previewUrl = getPublishedSiteUrl() || (activeOrganizationId ? `/site/preview?org=${activeOrganizationId}` : '/site/preview');
 
   useEffect(() => {
     if (!site) return;
@@ -359,7 +358,7 @@ export default function SiteSettings() {
   };
 
 
-  const getPublishedSiteUrl = () => {
+  function getPublishedSiteUrl() {
     if (formData.custom_domain && site?.domain_verified) {
       return `https://${formData.custom_domain}`;
     }
@@ -367,7 +366,7 @@ export default function SiteSettings() {
       return `https://vimob.vettercompany.com.br/sites/${formData.subdomain}`;
     }
     return null;
-  };
+  }
 
   const copyPublishedLink = () => {
     const url = getPublishedSiteUrl();
@@ -477,13 +476,6 @@ export default {
 };`;
   };
 
-  const copyWorkerCode = () => {
-    navigator.clipboard.writeText(getWorkerCode());
-    setCopiedWorker(true);
-    setTimeout(() => setCopiedWorker(false), 2000);
-    toast.success('Código do Worker copiado!');
-  };
-
   const copyDnsInstructions = () => {
     const instructions = `Configuracao de dominio proprio via Cloudflare Worker para ${formData.custom_domain}:
 
@@ -556,32 +548,10 @@ ${getWorkerCode()}`;
         )}
 
         {site && (
-          <Tabs data-tour="site-settings" value={siteActiveTab} onValueChange={setSiteActiveTab} className="space-y-6">
-            <div className="grid gap-6 xl:grid-cols-[300px_minmax(0,1fr)]">
-              <aside data-tour="site-settings-menu" className="app-card h-fit overflow-hidden xl:sticky xl:top-24">
-                <div className="space-y-3 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Site público</p>
-                      <h2 className="mt-1 text-lg font-semibold">
-                        {formData.site_title || 'Site imobiliário'}
-                      </h2>
-                    </div>
-                    <div className={cn(
-                      "rounded-full px-2.5 py-1 text-xs font-medium",
-                      formData.is_active
-                        ? "bg-emerald-500/15 text-emerald-500"
-                        : "bg-muted text-muted-foreground"
-                    )}>
-                      {formData.is_active ? 'Ativo' : 'Inativo'}
-                    </div>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Organize as informações públicas da imobiliária e publique seu catálogo de imóveis.
-                  </p>
-                </div>
-
-                <div className="grid gap-2 p-2 sm:grid-cols-2 xl:grid-cols-1">
+          <Tabs data-tour="site-settings" value={siteActiveTab} onValueChange={setSiteActiveTab} className="flex min-h-0 flex-col gap-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <nav data-tour="site-settings-menu" className="app-card app-scrollbar flex w-full min-w-0 flex-nowrap gap-1.5 overflow-x-auto overflow-y-hidden p-1.5 lg:w-fit lg:max-w-[calc(100%-288px)]">
+                <div className="flex flex-nowrap gap-1.5">
                   {siteSections.map((section) => {
                     const Icon = section.icon;
                     const isActive = siteActiveTab === section.value;
@@ -590,25 +560,22 @@ ${getWorkerCode()}`;
                       <button
                         key={section.value}
                         type="button"
+                        title={`${section.label} - ${section.description}`}
                         onClick={() => setSiteActiveTab(section.value)}
                         className={cn(
-                          "flex min-h-[68px] items-center gap-3 rounded-[6px] px-3 py-3 text-left transition-colors",
+                          "relative flex h-11 w-11 shrink-0 items-center justify-center rounded-[6px] transition-colors",
                           isActive
-                            ? "bg-[#FF4529] text-white"
-                            : "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
+                            ? "bg-primary text-primary-foreground"
+                            : "text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground"
                         )}
                       >
                         <span className={cn(
-                          "flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px]",
+                          "flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px]",
                           isActive ? "bg-white/15" : "bg-[var(--app-surface-soft)]"
                         )}>
-                          {section.value === 'general' ? (
-                            <AnimatedIcon icon={GLOBE_JSON} size={20} trigger="hover" />
-                          ) : (
-                            <Icon className="h-4 w-4" />
-                          )}
+                          <Icon className="h-4 w-4" />
                         </span>
-                        <span className="min-w-0">
+                        <span className="sr-only">
                           <span className="block text-sm font-medium">{section.label}</span>
                           <span className={cn(
                             "mt-0.5 line-clamp-2 block text-xs leading-snug",
@@ -622,1028 +589,815 @@ ${getWorkerCode()}`;
                   })}
                 </div>
 
-                <div className="space-y-2 p-4 pt-2">
-                  <a
-                    href={getPublishedSiteUrl() || `/site/preview?org=${profile?.organization_id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block"
+              </nav>
+
+              <div className="flex shrink-0 items-center gap-2">
+                <a href={previewUrl} target="_blank" rel="noopener noreferrer">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-11 min-w-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-4 text-foreground hover:bg-[var(--app-surface-hover)]"
                   >
-                    <Button variant="outline" size="sm" className="w-full justify-center">
-                      <ExternalLink className="w-4 h-4 mr-2" />
-                      Preview
-                    </Button>
-                  </a>
-                  {getPublishedSiteUrl() && site?.is_active && (
-                    <div className="grid grid-cols-2 gap-2">
-                      <Button variant="outline" size="sm" onClick={copyPublishedLink}>
-                        <Copy className="w-4 h-4 mr-2" />
-                        Copiar
-                      </Button>
-                      <a href={getPublishedSiteUrl()!} target="_blank" rel="noopener noreferrer">
-                        <Button size="sm" className="w-full">
-                          <ExternalLink className="w-4 h-4 mr-2" />
-                          Visitar
-                        </Button>
-                      </a>
-                    </div>
-                  )}
-                </div>
-              </aside>
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Preview
+                  </Button>
+                </a>
+                {isAdmin && (
+                  <Button
+                    data-tour="site-save-button"
+                    type="button"
+                    onClick={handleSave}
+                    disabled={isSaving}
+                    className="h-11 min-w-0 rounded-[6px] px-4"
+                  >
+                    {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                    Salvar alterações
+                  </Button>
+                )}
+              </div>
+            </div>
 
-              <div className="min-w-0 space-y-6">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.22em] text-[#FF4529]">{selectedSection.label}</p>
-                    <h2 className="text-2xl font-semibold">{selectedSection.description}</h2>
-                  </div>
-                  {isAdmin && (
-                    <Button data-tour="site-save-button" onClick={handleSave} disabled={isSaving}>
-                      {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                      Salvar alterações
-                    </Button>
-                  )}
-                </div>
-
-            <TabsContent data-tour="site-general-settings" value="general" className="mt-0 space-y-6">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-              <Card className="app-card h-full">
-                <CardHeader>
-                  <CardTitle>Status do Site</CardTitle>
-                  <CardDescription>Ative ou desative seu site público</CardDescription>
-                </CardHeader>
-                <CardContent className="px-4 md:px-6 pb-5">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label>Site Ativo</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Quando ativo, seu site estará acessível publicamente
-                      </p>
-                    </div>
-                    <Switch
-                      checked={formData.is_active}
-                      onCheckedChange={(checked) => setFormData({ ...formData, is_active: checked })}
-                      disabled={!isAdmin}
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-
+            <div className="min-w-0 space-y-6">
+            <TabsContent data-tour="site-general-settings" value="general" className="mt-0">
               <Card className="app-card">
                 <CardHeader>
-                  <CardTitle>Domínio</CardTitle>
-                  <CardDescription>Configure o endereço do seu site</CardDescription>
+                  <CardTitle className="text-lg">Configuração geral</CardTitle>
                 </CardHeader>
-                <CardContent className="px-4 md:px-6 pb-5 space-y-6">
-                  {/* Link do Site Publicado */}
-                  {formData.subdomain && site?.is_active && (
-                    <Card className="app-card-soft border-emerald-500/20 bg-emerald-500/10">
-                      <CardContent className="p-4">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <h4 className="font-medium text-green-800 dark:text-green-200 flex items-center gap-2">
-                              <Check className="w-4 h-4" />
-                              Site Publicado
-                            </h4>
-                            <p className="text-sm text-green-700 dark:text-green-300 mt-1">
-                              Seu site está online e acessível
-                            </p>
+                <CardContent className="space-y-4 px-4 pb-5 md:px-6">
+                  <div className="app-card-soft border-0 p-4">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-medium">Site ativo</h3>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={cn(
+                          "rounded-[6px] px-2.5 py-1 text-xs font-medium",
+                          formData.is_active ? "bg-emerald-600 text-white" : "bg-muted text-muted-foreground"
+                        )}>
+                          {formData.is_active ? 'Publicado' : 'Inativo'}
+                        </span>
+                        <Switch
+                          checked={formData.is_active}
+                          onCheckedChange={(checked) => setFormData({ ...formData, is_active: checked })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
+                    </div>
+
+                    {formData.subdomain && site?.is_active && (
+                      <div className="mt-4 rounded-[6px] bg-emerald-500/10 p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <h4 className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Site publicado</h4>
                             <a
                               href={getPublishedSiteUrl()!}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-sm text-green-600 dark:text-green-400 hover:underline font-mono mt-2 block"
+                              className="mt-1 block truncate font-mono text-sm text-emerald-700 underline-offset-4 hover:underline dark:text-emerald-300"
                             >
                               {getPublishedSiteUrl()}
                             </a>
                           </div>
                           <Button variant="outline" size="sm" onClick={copyPublishedLink} className="shrink-0">
-                            <Copy className="w-4 h-4 mr-2" />
                             Copiar
                           </Button>
                         </div>
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  <div className="space-y-2">
-                    <Label>Slug do Site</Label>
-                    <p className="text-sm text-muted-foreground mb-2">
-                      Identificador único do seu site (usado na URL)
-                    </p>
-                    <div className="flex gap-2">
-                      <Input
-                        placeholder="sua-imobiliaria"
-                        value={formData.subdomain}
-                        onChange={(e) => setFormData({ ...formData, subdomain: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })}
-                        disabled={!isAdmin}
-                      />
-                    </div>
-                    {formData.subdomain && (
-                      <p className="text-sm text-muted-foreground mt-1">
-                        URL: <span className="font-mono">
-                          {formData.custom_domain && site?.domain_verified
-                            ? `https://${formData.custom_domain}`
-                            : `https://vimob.vettercompany.com.br/sites/${formData.subdomain}`}
-                        </span>
-                      </p>
+                      </div>
                     )}
                   </div>
 
-                  <div className="border-t border-white/[0.055] pt-6 space-y-4">
-                    <div className="space-y-2">
-                      <Label>Domínio Próprio</Label>
-                      <Input
-                        placeholder="www.suaimobiliaria.com.br"
-                        value={formData.custom_domain}
-                        onChange={(e) => setFormData({ ...formData, custom_domain: e.target.value.toLowerCase() })}
+                  <div className="app-card-soft border-0 p-4">
+                    <h3 className="mb-4 text-sm font-medium">Logo do site</h3>
+                    <div className="grid items-start gap-4 md:grid-cols-[minmax(0,1.35fr)_minmax(220px,0.65fr)]">
+                      <ImageUpload
+                        label="Logo"
+                        description="PNG ou JPG recomendado"
+                        value={site?.logo_url}
+                        onChange={async (url) => {
+                          await updateSite.mutateAsync({ logo_url: url || null });
+                        }}
+                        bucket="site-images"
+                        path="sites"
+                        assetType="logo"
                         disabled={!isAdmin}
+                        aspectRatio="banner"
+                        className="min-w-0"
                       />
-                      <DnsVerificationStatus
-                        domain={formData.custom_domain}
-                        isVerified={site?.domain_verified || false}
-                        verifiedAt={site?.domain_verified_at}
+
+                      <ImageUpload
+                        label="Favicon"
+                        description="Ícone do navegador"
+                        value={site?.favicon_url}
+                        onChange={async (url) => {
+                          await updateSite.mutateAsync({ favicon_url: url || null });
+                        }}
+                        bucket="site-images"
+                        path="sites"
+                        assetType="favicon"
+                        disabled={!isAdmin}
+                        aspectRatio="square"
+                        className="min-w-0 md:max-w-[260px]"
                       />
                     </div>
+                  </div>
 
-                    {formData.custom_domain && !site?.domain_verified && (
-                      <Card className="app-card-soft">
-                        <CardContent className="p-4 space-y-4">
-                          <div className="flex items-start justify-between">
-                            <h4 className="font-medium">Publicar com Cloudflare Worker</h4>
-                            <Button variant="outline" size="sm" onClick={copyDnsInstructions}>
-                              {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                            </Button>
-                          </div>
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    <div className="app-card-soft border-0 p-4">
+                      <h3 className="mb-4 text-sm font-medium">Informações básicas</h3>
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label>Título do site</Label>
+                          <Input
+                            placeholder="Nome da sua imobiliária"
+                            value={formData.site_title}
+                            onChange={(e) => setFormData({ ...formData, site_title: e.target.value })}
+                            disabled={!isAdmin}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Descrição</Label>
+                          <Textarea
+                            placeholder="Uma breve descrição da sua imobiliária..."
+                            value={formData.site_description}
+                            onChange={(e) => setFormData({ ...formData, site_description: e.target.value })}
+                            rows={4}
+                            disabled={!isAdmin}
+                          />
+                        </div>
+                      </div>
+                    </div>
 
-                          <div className="space-y-3 text-sm">
-                            <div className="flex gap-3">
-                              <span className="bg-primary text-primary-foreground rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shrink-0">1</span>
-                              <p>Crie uma conta gratuita em <a href="https://cloudflare.com" target="_blank" rel="noopener noreferrer" className="text-primary underline">cloudflare.com</a></p>
-                            </div>
-                            <div className="flex gap-3">
-                              <span className="bg-primary text-primary-foreground rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shrink-0">2</span>
-                              <p>Adicione seu domínio (<strong>{formData.custom_domain}</strong>) e altere os nameservers no seu registrador para os fornecidos pelo Cloudflare</p>
-                            </div>
-                            <div className="flex gap-3">
-                              <span className="bg-primary text-primary-foreground rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shrink-0">3</span>
-                              <p>No painel do Cloudflare, vá em <strong>Workers and Routes</strong> → <strong>Create Worker</strong></p>
-                            </div>
-                            <div className="flex gap-3">
-                              <span className="bg-primary text-primary-foreground rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shrink-0">4</span>
-                              <div className="flex-1">
-                                <p className="mb-2">Cole o código abaixo no editor do Worker. Ele entrega o site novo pelo domínio do cliente e mantém cache de segurança.</p>
-                                <div className="relative">
-                                  <pre className="bg-background p-3 rounded text-xs overflow-auto max-h-80 text-left whitespace-pre">{getWorkerCode()}</pre>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={copyWorkerCode}
-                                    className="absolute top-2 right-2"
-                                  >
-                                    {copiedWorker ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                  </Button>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="flex gap-3">
-                              <span className="bg-primary text-primary-foreground rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shrink-0">5</span>
-                              <div className="flex-1 space-y-2">
-                                <p>Configure a Rota para o seu domínio acessar o Worker:</p>
-                                <ul className="list-disc pl-5 space-y-1">
-                                  <li>No menu do site, vá em <strong>Workers Routes</strong> → <strong>Add Route</strong></li>
-                                  <li>Em Route, coloque exato: <code className="bg-background px-1 py-0.5 rounded text-xs">{`${formData.custom_domain}/*`}</code></li>
-                                  <li>Em Worker, selecione o worker criado no passo 3.</li>
-                                  <li>Se quiser com www, crie outra rota: <code className="bg-background px-1 py-0.5 rounded text-xs">{`www.${formData.custom_domain}/*`}</code></li>
-                                </ul>
-                                <div className="mt-2 rounded bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400">
-                                  <strong>Importante:</strong> teste pelo domínio real configurado na rota. O link `.workers.dev` não representa o domínio do cliente e pode não carregar o site correto.
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="bg-background rounded p-3 text-xs text-muted-foreground space-y-1">
-                            <p>✅ SSL automático e gratuito pelo Cloudflare</p>
-                            <p>✅ Plano gratuito: 100.000 requests/dia</p>
-                            <p>✅ Propagação de DNS pode levar até 72h</p>
-                            <p>
-                              🔗 Verifique em{' '}
-                              <a href="https://dnschecker.org" target="_blank" rel="noopener noreferrer" className="text-primary underline">
-                                dnschecker.org
-                              </a>
+                    <div className="app-card-soft border-0 p-4">
+                      <h3 className="mb-4 text-sm font-medium">Endereço público</h3>
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label>Slug do site</Label>
+                          <Input
+                            placeholder="sua-imobiliaria"
+                            value={formData.subdomain}
+                            onChange={(e) => setFormData({ ...formData, subdomain: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })}
+                            disabled={!isAdmin}
+                          />
+                          {formData.subdomain && (
+                            <p className="truncate text-xs text-muted-foreground">
+                              URL: <span className="font-mono">
+                                {formData.custom_domain && site?.domain_verified
+                                  ? `https://${formData.custom_domain}`
+                                  : `https://vimob.vettercompany.com.br/sites/${formData.subdomain}`}
+                              </span>
                             </p>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-              </div>
+                          )}
+                        </div>
 
-              <Card className="app-card">
-                <CardHeader>
-                  <CardTitle>Informações Básicas</CardTitle>
-                </CardHeader>
-                <CardContent className="px-4 md:px-6 pb-5 space-y-4">
-                  <div className="space-y-2">
-                    <Label>Título do Site</Label>
-                    <Input
-                      placeholder="Nome da sua imobiliária"
-                      value={formData.site_title}
-                      onChange={(e) => setFormData({ ...formData, site_title: e.target.value })}
-                      disabled={!isAdmin}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Descrição</Label>
-                    <Textarea
-                      placeholder="Uma breve descrição da sua imobiliária..."
-                      value={formData.site_description}
-                      onChange={(e) => setFormData({ ...formData, site_description: e.target.value })}
-                      rows={3}
-                      disabled={!isAdmin}
-                    />
+                        <div className="space-y-2">
+                          <Label>Domínio próprio</Label>
+                          <Input
+                            placeholder="www.suaimobiliaria.com.br"
+                            value={formData.custom_domain}
+                            onChange={(e) => setFormData({ ...formData, custom_domain: e.target.value.toLowerCase() })}
+                            disabled={!isAdmin}
+                          />
+                          <DnsVerificationStatus
+                            domain={formData.custom_domain}
+                            isVerified={site?.domain_verified || false}
+                            verifiedAt={site?.domain_verified_at}
+                          />
+                        </div>
+
+                        {formData.custom_domain && !site?.domain_verified && (
+                          <div className="rounded-[6px] border border-border/50 bg-[var(--app-surface)] p-4">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                              <h4 className="text-sm font-medium">Publicar com Cloudflare Worker</h4>
+                              <Button variant="outline" size="sm" onClick={copyDnsInstructions}>
+                                {copied ? 'Copiado' : 'Copiar instruções'}
+                              </Button>
+                            </div>
+                            <div className="mt-4 space-y-3 text-sm">
+                              {[
+                                'Crie uma conta gratuita em cloudflare.com.',
+                                `Adicione o domínio ${formData.custom_domain} e altere os nameservers no registrador.`,
+                                'No Cloudflare, acesse Workers and Routes e crie um Worker.',
+                                'Cole o código gerado pelo sistema no editor do Worker.',
+                                `Configure a rota ${formData.custom_domain}/* apontando para o Worker.`,
+                              ].map((step, index) => (
+                                <div key={step} className="flex gap-3">
+                                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
+                                    {index + 1}
+                                  </span>
+                                  <p>{step}</p>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="mt-4 rounded-[6px] bg-background p-3 text-xs text-muted-foreground">
+                              SSL é automático pelo Cloudflare. A propagação de DNS pode levar até 72h.
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
             </TabsContent>
 
-            <TabsContent value="appearance" className="space-y-6">
+            <TabsContent value="appearance" className="mt-0">
               <Card className="app-card">
                 <CardHeader>
-                  <CardTitle>Logo e Favicon</CardTitle>
+                  <CardTitle className="text-lg">Aparência</CardTitle>
                 </CardHeader>
-                <CardContent className="px-4 md:px-6 pb-5 space-y-6">
-                  <div className="grid sm:grid-cols-2 gap-6">
-                    <ImageUpload
-                      label="Logo"
-                      description="PNG ou JPG recomendado"
-                      value={site?.logo_url}
-                      onChange={async (url) => {
-                        if (url) {
-                          await updateSite.mutateAsync({ logo_url: url });
-                        } else {
-                          await updateSite.mutateAsync({ logo_url: null });
-                        }
-                      }}
-                      bucket="site-images"
-                      path="sites"
-                      assetType="logo"
-                      disabled={!isAdmin}
-                      aspectRatio="banner"
-                    />
-
-                    <ImageUpload
-                      label="Favicon"
-                      description="Ícone do navegador (ICO ou PNG)"
-                      value={site?.favicon_url}
-                      onChange={async (url) => {
-                        if (url) {
-                          await updateSite.mutateAsync({ favicon_url: url });
-                        } else {
-                          await updateSite.mutateAsync({ favicon_url: null });
-                        }
-                      }}
-                      bucket="site-images"
-                      path="sites"
-                      assetType="favicon"
-                      disabled={!isAdmin}
-                      aspectRatio="square"
-                      className="max-w-[180px]"
-                    />
-                  </div>
-
-                </CardContent>
-              </Card>
-
-              {/* Logo Size Controls */}
-              <Card className="app-card">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Maximize2 className="h-5 w-5" />
-                    Tamanho da Logo no Site
-                  </CardTitle>
-                  <CardDescription>
-                    Ajuste as dimensões da logo exibida no site público (em pixels)
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="px-4 md:px-6 pb-5">
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {/* Left: Sliders */}
-                    <div className="space-y-4">
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <Label>Largura Máxima</Label>
-                          <span className="text-sm font-medium text-muted-foreground">{site?.logo_width || 160}px</span>
-                        </div>
-                        <Slider
-                          value={[site?.logo_width || 160]}
-                          onValueChange={(value) => updateSite.mutate({ logo_width: value[0] })}
-                          min={60}
-                           max={800}
-                           step={10}
-                          className="w-full"
-                          disabled={!isAdmin}
-                        />
-                      </div>
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <Label>Altura Máxima</Label>
-                          <span className="text-sm font-medium text-muted-foreground">{site?.logo_height || 50}px</span>
-                        </div>
-                        <Slider
-                          value={[site?.logo_height || 50]}
-                          onValueChange={(value) => updateSite.mutate({ logo_height: value[0] })}
-                          min={20}
-                           max={200}
-                           step={5}
-                          className="w-full"
-                          disabled={!isAdmin}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Right: Preview */}
-                    {site?.logo_url && (
-                      <div className="p-4 bg-white/[0.045] rounded-lg flex flex-col">
-                        <Label className="text-xs text-muted-foreground mb-2 block">Pré-visualização</Label>
-                        <div className="flex items-center justify-center h-[96px] bg-black/20 rounded border border-white/[0.055] overflow-hidden">
-                          <Image
-                            src={site.logo_url}
-                            alt="Preview"
-                            width={Math.min(site.logo_width || 160, 180)}
-                            height={Math.min(site.logo_height || 50, 64)}
-                            className="object-contain"
-                            unoptimized
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="app-card">
-                <CardHeader>
-                  <CardTitle>Tema e Cores</CardTitle>
-                  <CardDescription>Personalize o tema e as cores do seu site</CardDescription>
-                </CardHeader>
-                <CardContent className="px-4 md:px-6 pb-5 space-y-6">
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {/* Left: Settings */}
-                    <div className="space-y-6">
-                      {/* Theme Selector */}
-                      <div className="space-y-3">
-                        <Label>Tema do Site</Label>
-                        <div className="flex gap-3">
-                          <Button
-                            type="button"
-                            variant={formData.site_theme === 'dark' ? 'default' : 'outline'}
-                            onClick={() => {
-                              setFormData({
-                                ...formData,
-                                site_theme: 'dark',
-                                background_color: '#0D0D0D',
-                                text_color: '#FFFFFF',
-                              });
-                            }}
-                            disabled={!isAdmin}
-                            className="flex-1"
-                          >
-                            🌙 Escuro
-                          </Button>
-                          <Button
-                            type="button"
-                            variant={formData.site_theme === 'light' ? 'default' : 'outline'}
-                            onClick={() => {
-                              setFormData({
-                                ...formData,
-                                site_theme: 'light',
-                                background_color: '#FFFFFF',
-                                text_color: '#1A1A1A',
-                              });
-                            }}
-                            disabled={!isAdmin}
-                            className="flex-1"
-                          >
-                            ☀️ Claro
-                          </Button>
-                        </div>
-                      </div>
-
-                      {/* Background & Text Colors */}
-                      <div className="grid sm:grid-cols-2 gap-6">
-                        <div className="space-y-2">
-                          <Label>Cor de Fundo</Label>
-                          <div className="flex gap-2">
-                            <input
-                              type="color"
-                              value={formData.background_color}
-                              onChange={(e) => setFormData({ ...formData, background_color: e.target.value })}
-                              className="w-12 h-10 rounded border cursor-pointer"
-                              disabled={!isAdmin}
-                            />
-                            <Input
-                              value={formData.background_color}
-                              onChange={(e) => setFormData({ ...formData, background_color: e.target.value })}
-                              className="flex-1"
-                              disabled={!isAdmin}
-                            />
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Cor da Fonte</Label>
-                          <div className="flex gap-2">
-                            <input
-                              type="color"
-                              value={formData.text_color}
-                              onChange={(e) => setFormData({ ...formData, text_color: e.target.value })}
-                              className="w-12 h-10 rounded border cursor-pointer"
-                              disabled={!isAdmin}
-                            />
-                            <Input
-                              value={formData.text_color}
-                              onChange={(e) => setFormData({ ...formData, text_color: e.target.value })}
-                              className="flex-1"
-                              disabled={!isAdmin}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Cor dos Cards</Label>
-                        <div className="flex gap-2">
-                          <input
-                            type="color"
-                            value={formData.card_color}
-                            onChange={(e) => setFormData({ ...formData, card_color: e.target.value })}
-                            className="w-12 h-10 rounded border cursor-pointer"
-                            disabled={!isAdmin}
-                          />
-                          <Input
-                            value={formData.card_color}
-                            onChange={(e) => setFormData({ ...formData, card_color: e.target.value })}
-                            className="flex-1"
-                            disabled={!isAdmin}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Brand Colors */}
-                      <div className="grid sm:grid-cols-3 gap-4">
-                        <div className="space-y-2">
-                          <Label>Cor Principal</Label>
-                          <div className="flex gap-2">
-                            <input
-                              type="color"
-                              value={formData.primary_color}
-                              onChange={(e) => setFormData({ ...formData, primary_color: e.target.value })}
-                              className="w-12 h-10 rounded border cursor-pointer"
-                              disabled={!isAdmin}
-                            />
-                            <Input
-                              value={formData.primary_color}
-                              onChange={(e) => setFormData({ ...formData, primary_color: e.target.value })}
-                              className="flex-1"
-                              disabled={!isAdmin}
-                            />
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Cor Secundária</Label>
-                          <div className="flex gap-2">
-                            <input
-                              type="color"
-                              value={formData.secondary_color}
-                              onChange={(e) => setFormData({ ...formData, secondary_color: e.target.value })}
-                              className="w-12 h-10 rounded border cursor-pointer"
-                              disabled={!isAdmin}
-                            />
-                            <Input
-                              value={formData.secondary_color}
-                              onChange={(e) => setFormData({ ...formData, secondary_color: e.target.value })}
-                              className="flex-1"
-                              disabled={!isAdmin}
-                            />
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Cor de Destaque</Label>
-                          <div className="flex gap-2">
-                            <input
-                              type="color"
-                              value={formData.accent_color}
-                              onChange={(e) => setFormData({ ...formData, accent_color: e.target.value })}
-                              className="w-12 h-10 rounded border cursor-pointer"
-                              disabled={!isAdmin}
-                            />
-                            <Input
-                              value={formData.accent_color}
-                              onChange={(e) => setFormData({ ...formData, accent_color: e.target.value })}
-                              className="flex-1"
-                              disabled={!isAdmin}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Right: Preview */}
-                    <div className="p-4 bg-white/[0.045] rounded-lg flex flex-col">
-                      <p className="text-sm text-muted-foreground mb-3">Pré-visualização:</p>
-                      <div
-                        className="p-6 rounded-lg flex-1"
-                        style={{ backgroundColor: formData.background_color, color: formData.text_color }}
-                      >
-                        <p className="text-lg font-semibold mb-2">Texto do site</p>
-                        <p className="text-sm opacity-70 mb-4">Subtítulo ou descrição do conteúdo</p>
-                        <div
-                          className="p-4 rounded-xl mb-4"
-                          style={{ backgroundColor: formData.card_color }}
-                        >
-                          <p className="text-sm font-semibold" style={{ color: '#1A1A1A' }}>Exemplo de Card</p>
-                          <p className="text-xs mt-1" style={{ color: '#6B7280' }}>Conteúdo dentro do card</p>
-                        </div>
-                        <div className="flex gap-3 flex-wrap">
-                          <div
-                            className="px-4 py-2 rounded-full text-white text-sm font-medium"
-                            style={{ backgroundColor: formData.primary_color }}
-                          >
-                            Botão Principal
-                          </div>
-                          <div
-                            className="px-4 py-2 rounded-full text-white text-sm font-medium"
-                            style={{ backgroundColor: formData.secondary_color }}
-                          >
-                            Secundário
-                          </div>
-                          <div
-                            className="px-4 py-2 rounded-full text-white text-sm font-medium"
-                            style={{ backgroundColor: formData.accent_color }}
-                          >
-                            Destaque
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="app-card">
-                <CardHeader>
-                  <CardTitle>Hero (Banner Principal)</CardTitle>
-                  <CardDescription>Configure a imagem e textos da página inicial</CardDescription>
-                </CardHeader>
-                <CardContent className="px-4 md:px-6 pb-5 space-y-4">
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <ImageUpload
-                      label="Imagem do Hero (Tela Inicial)"
-                      description="PNG, JPG ou WEBP até 10MB"
-                      value={site?.hero_image_url}
-                      onChange={async (url) => {
-                        await updateSite.mutateAsync({ hero_image_url: url });
-                      }}
-                      bucket="site-images"
-                      path="sites"
-                      assetType="hero"
-                      maxSizeInMB={10}
-                      aspectRatio="video"
-                      disabled={!isAdmin}
-                    />
-
-                    <ImageUpload
-                      label="Banner das Páginas Internas"
-                      description="Exibido no topo das páginas de listagem e contato"
-                      value={site?.page_banner_url}
-                      onChange={async (url) => {
-                        await updateSite.mutateAsync({ page_banner_url: url });
-                      }}
-                      bucket="site-images"
-                      path="sites"
-                      assetType="banner"
-                      maxSizeInMB={10}
-                      aspectRatio="banner"
-                      disabled={!isAdmin}
-                    />
-                  </div>
-
-
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Título do Hero</Label>
-                      <Input
-                        placeholder="Transformando seus sonhos em realidade!"
-                        value={formData.hero_title}
-                        onChange={(e) => setFormData({ ...formData, hero_title: e.target.value })}
-                        disabled={!isAdmin}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Subtítulo do Hero</Label>
-                      <Input
-                        placeholder="Encontre o imóvel perfeito para você"
-                        value={formData.hero_subtitle}
-                        onChange={(e) => setFormData({ ...formData, hero_subtitle: e.target.value })}
-                        disabled={!isAdmin}
-                      />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="app-card">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Droplets className="h-5 w-5" />
-                    Marca d'Água
-                  </CardTitle>
-                  <CardDescription>
-                    Adicione uma marca d'água sutil nas fotos dos imóveis para proteger seu conteúdo
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="px-4 md:px-6 pb-5 space-y-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label>Ativar marca d'água</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Quando ativo, a logo será exibida sobre as fotos dos imóveis
-                      </p>
-                    </div>
-                    <Switch
-                      checked={site?.watermark_enabled || false}
-                      onCheckedChange={(checked) => updateSite.mutate({ watermark_enabled: checked })}
-                      disabled={!isAdmin}
-                    />
-                  </div>
-
-                  {site?.watermark_enabled && (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      {/* Left: Settings */}
-                      <div className="space-y-6">
-                        <div className="grid sm:grid-cols-2 gap-6">
+                <CardContent className="space-y-4 px-4 pb-5 md:px-6">
+                  <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+                    <div className="app-card-soft border-0 p-4">
+                      <h3 className="mb-4 text-sm font-medium">Logo no site</h3>
+                      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+                        <div className="space-y-4">
                           <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                              <Label>Opacidade</Label>
-                              <span className="text-sm font-medium text-muted-foreground">{site?.watermark_opacity || 20}%</span>
+                            <div className="flex items-center justify-between gap-3">
+                              <Label>Largura máxima</Label>
+                              <span className="text-sm font-medium text-muted-foreground">{site?.logo_width || 160}px</span>
                             </div>
                             <Slider
-                              value={[site?.watermark_opacity || 20]}
-                              onValueChange={(value) => updateSite.mutate({ watermark_opacity: value[0] })}
-                              min={5}
-                              max={50}
-                              step={5}
-                              className="w-full"
-                              disabled={!isAdmin}
-                            />
-                            <p className="text-xs text-muted-foreground">
-                              Valores menores = mais sutil. Recomendado: 15-25%
-                            </p>
-                          </div>
-                          <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                              <Label>Tamanho (largura)</Label>
-                              <span className="text-sm font-medium text-muted-foreground">{site?.watermark_size || 80}px</span>
-                            </div>
-                            <Slider
-                              value={[site?.watermark_size || 80]}
-                              onValueChange={(value) => updateSite.mutate({ watermark_size: value[0] })}
-                              min={40}
-                              max={200}
+                              value={[site?.logo_width || 160]}
+                              onValueChange={(value) => updateSite.mutate({ logo_width: value[0] })}
+                              min={60}
+                              max={800}
                               step={10}
                               className="w-full"
                               disabled={!isAdmin}
                             />
-                            <p className="text-xs text-muted-foreground">
-                              Ajuste o tamanho da logo na exibição
-                            </p>
+                          </div>
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <Label>Altura máxima</Label>
+                              <span className="text-sm font-medium text-muted-foreground">{site?.logo_height || 50}px</span>
+                            </div>
+                            <Slider
+                              value={[site?.logo_height || 50]}
+                              onValueChange={(value) => updateSite.mutate({ logo_height: value[0] })}
+                              min={20}
+                              max={200}
+                              step={5}
+                              className="w-full"
+                              disabled={!isAdmin}
+                            />
                           </div>
                         </div>
 
-                        <div className="space-y-3">
-                          <Label>Posição da marca d'água</Label>
-                          <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-                            {[
-                              { value: 'top-left', label: '↖ Sup. Esq.' },
-                              { value: 'top-right', label: '↗ Sup. Dir.' },
-                              { value: 'center', label: '⊕ Centro' },
-                              { value: 'bottom-left', label: '↙ Inf. Esq.' },
-                              { value: 'bottom-right', label: '↘ Inf. Dir.' },
-                            ].map(({ value, label }) => (
+                        <div className="flex min-h-[112px] items-center justify-center rounded-[6px] bg-background p-4">
+                          {site?.logo_url ? (
+                            <Image
+                              src={site.logo_url}
+                              alt="Preview da logo"
+                              width={Math.min(site.logo_width || 160, 190)}
+                              height={Math.min(site.logo_height || 50, 72)}
+                              className="object-contain"
+                              unoptimized
+                            />
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Sem logo</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="app-card-soft border-0 p-4">
+                      <h3 className="mb-4 text-sm font-medium">Tema e cores</h3>
+                      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <Label>Tema do site</Label>
+                            <div className="grid grid-cols-2 gap-2">
                               <Button
-                                key={value}
-                                variant={(site?.watermark_position || 'bottom-right') === value ? 'default' : 'outline'}
-                                size="sm"
-                                onClick={() => updateSite.mutate({ watermark_position: value })}
+                                type="button"
+                                variant={formData.site_theme === 'dark' ? 'default' : 'outline'}
+                                onClick={() => {
+                                  setFormData({
+                                    ...formData,
+                                    site_theme: 'dark',
+                                    background_color: '#0D0D0D',
+                                    text_color: '#FFFFFF',
+                                  });
+                                }}
                                 disabled={!isAdmin}
-                                className="text-xs"
+                                className="rounded-[6px]"
                               >
-                                {label}
+                                Escuro
                               </Button>
+                              <Button
+                                type="button"
+                                variant={formData.site_theme === 'light' ? 'default' : 'outline'}
+                                onClick={() => {
+                                  setFormData({
+                                    ...formData,
+                                    site_theme: 'light',
+                                    background_color: '#FFFFFF',
+                                    text_color: '#1A1A1A',
+                                  });
+                                }}
+                                disabled={!isAdmin}
+                                className="rounded-[6px]"
+                              >
+                                Claro
+                              </Button>
+                            </div>
+                          </div>
+
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            {[
+                              { label: 'Fundo', value: formData.background_color, key: 'background_color' },
+                              { label: 'Fonte', value: formData.text_color, key: 'text_color' },
+                              { label: 'Cards', value: formData.card_color, key: 'card_color' },
+                              { label: 'Principal', value: formData.primary_color, key: 'primary_color' },
+                              { label: 'Secundária', value: formData.secondary_color, key: 'secondary_color' },
+                              { label: 'Destaque', value: formData.accent_color, key: 'accent_color' },
+                            ].map((color) => (
+                              <div key={color.key} className="space-y-2">
+                                <Label>{color.label}</Label>
+                                <div className="flex gap-2">
+                                  <input
+                                    type="color"
+                                    value={color.value}
+                                    onChange={(e) => setFormData({ ...formData, [color.key]: e.target.value })}
+                                    className="h-10 w-12 cursor-pointer rounded-[6px] border"
+                                    disabled={!isAdmin}
+                                  />
+                                  <Input
+                                    value={color.value}
+                                    onChange={(e) => setFormData({ ...formData, [color.key]: e.target.value })}
+                                    className="min-w-0 flex-1"
+                                    disabled={!isAdmin}
+                                  />
+                                </div>
+                              </div>
                             ))}
                           </div>
                         </div>
 
+                        <div
+                          className="flex min-h-[220px] flex-col rounded-[6px] p-4"
+                          style={{ backgroundColor: formData.background_color, color: formData.text_color }}
+                        >
+                          <p className="text-base font-semibold">Texto do site</p>
+                          <p className="mt-1 text-sm opacity-70">Subtítulo do conteúdo</p>
+                          <div className="mt-4 rounded-[6px] p-3" style={{ backgroundColor: formData.card_color }}>
+                            <p className="text-sm font-semibold" style={{ color: '#1A1A1A' }}>Card do imóvel</p>
+                            <p className="mt-1 text-xs" style={{ color: '#6B7280' }}>Resumo visual</p>
+                          </div>
+                          <div className="mt-auto flex flex-wrap gap-2 pt-4">
+                            <span className="rounded-[6px] px-3 py-1.5 text-xs font-medium text-white" style={{ backgroundColor: formData.primary_color }}>Principal</span>
+                            <span className="rounded-[6px] px-3 py-1.5 text-xs font-medium text-white" style={{ backgroundColor: formData.secondary_color }}>Secundária</span>
+                            <span className="rounded-[6px] px-3 py-1.5 text-xs font-medium text-white" style={{ backgroundColor: formData.accent_color }}>Destaque</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="app-card-soft border-0 p-4">
+                    <h3 className="mb-4 text-sm font-medium">Hero e banners</h3>
+                    <div className="space-y-4">
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label>Título do hero</Label>
+                          <Input
+                            placeholder="Transformando seus sonhos em realidade!"
+                            value={formData.hero_title}
+                            onChange={(e) => setFormData({ ...formData, hero_title: e.target.value })}
+                            disabled={!isAdmin}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Subtítulo do hero</Label>
+                          <Input
+                            placeholder="Encontre o imóvel perfeito para você"
+                            value={formData.hero_subtitle}
+                            onChange={(e) => setFormData({ ...formData, hero_subtitle: e.target.value })}
+                            disabled={!isAdmin}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid items-start gap-4 lg:grid-cols-2">
                         <ImageUpload
-                          label="Logo da marca d'água"
-                          description="Deixe em branco para usar a logo principal do site"
-                          value={site?.watermark_logo_url}
+                          label="Imagem do hero"
+                          description="Prévia preenchida como fundo da tela inicial"
+                          value={site?.hero_image_url}
                           onChange={async (url) => {
-                            await updateSite.mutateAsync({ watermark_logo_url: url });
+                            await updateSite.mutateAsync({ hero_image_url: url });
                           }}
                           bucket="site-images"
                           path="sites"
-                          assetType="watermark"
+                          assetType="hero"
+                          maxSizeInMB={10}
+                          aspectRatio="video"
+                          previewFit="cover"
                           disabled={!isAdmin}
                         />
 
+                        <ImageUpload
+                          label="Banner das páginas internas"
+                          description="Prévia preenchida como faixa larga do site"
+                          value={site?.page_banner_url}
+                          onChange={async (url) => {
+                            await updateSite.mutateAsync({ page_banner_url: url });
+                          }}
+                          bucket="site-images"
+                          path="sites"
+                          assetType="banner"
+                          maxSizeInMB={10}
+                          aspectRatio="banner"
+                          previewFit="cover"
+                          disabled={!isAdmin}
+                        />
                       </div>
+                    </div>
+                  </div>
 
-                      {/* Right: Preview */}
-                      {(site?.watermark_logo_url || site?.logo_url) && (
-                        <div className="p-4 bg-white/[0.045] rounded-lg flex flex-col">
-                          <Label className="text-xs text-muted-foreground mb-2 block">Pré-visualização (como aparece no site)</Label>
-                          <div className="relative flex-1 min-h-[200px] bg-gradient-to-br from-gray-300 to-gray-400 rounded overflow-hidden">
-                            <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
-                              Foto do Imóvel
+                  <div className="app-card-soft border-0 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <h3 className="text-sm font-medium">Marca d'água</h3>
+                      <div className="flex items-center gap-3">
+                        <span className={cn(
+                          "rounded-[6px] px-2.5 py-1 text-xs font-medium",
+                          site?.watermark_enabled ? "bg-emerald-600 text-white" : "bg-muted text-muted-foreground"
+                        )}>
+                          {site?.watermark_enabled ? 'Ativa' : 'Inativa'}
+                        </span>
+                        <Switch
+                          checked={site?.watermark_enabled || false}
+                          onCheckedChange={(checked) => updateSite.mutate({ watermark_enabled: checked })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
+                    </div>
+
+                    {site?.watermark_enabled && (
+                      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(260px,0.65fr)]">
+                        <div className="space-y-4">
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <Label>Opacidade</Label>
+                                <span className="text-sm font-medium text-muted-foreground">{site?.watermark_opacity || 20}%</span>
+                              </div>
+                              <Slider
+                                value={[site?.watermark_opacity || 20]}
+                                onValueChange={(value) => updateSite.mutate({ watermark_opacity: value[0] })}
+                                min={5}
+                                max={50}
+                                step={5}
+                                className="w-full"
+                                disabled={!isAdmin}
+                              />
                             </div>
-                            <div
-                              className={`absolute pointer-events-none ${
-                                (site?.watermark_position || 'bottom-right') === 'top-left' ? 'top-3 left-3' :
-                                (site?.watermark_position || 'bottom-right') === 'top-right' ? 'top-3 right-3' :
-                                (site?.watermark_position || 'bottom-right') === 'bottom-left' ? 'bottom-3 left-3' :
-                                (site?.watermark_position || 'bottom-right') === 'center' ? 'top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2' :
-                                'bottom-3 right-3'
-                              }`}
-                              style={{ opacity: (site?.watermark_opacity || 20) / 100 }}
-                            >
-                              <Image
-                                src={site?.watermark_logo_url || site?.logo_url || ''}
-                                alt="Watermark preview"
-                                width={Math.max(40, Math.min((site?.watermark_size || 80) * 1, 120))}
-                                height={Math.max(24, Math.min((site?.watermark_size || 80) * 0.4, 60))}
-                                className="object-contain"
-                                unoptimized
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <Label>Tamanho</Label>
+                                <span className="text-sm font-medium text-muted-foreground">{site?.watermark_size || 80}px</span>
+                              </div>
+                              <Slider
+                                value={[site?.watermark_size || 80]}
+                                onValueChange={(value) => updateSite.mutate({ watermark_size: value[0] })}
+                                min={40}
+                                max={200}
+                                step={10}
+                                className="w-full"
+                                disabled={!isAdmin}
                               />
                             </div>
                           </div>
-                          <p className="text-xs text-muted-foreground mt-2">
-                            💡 No download, a marca d'água será aplicada em padrão repetido para proteção
-                          </p>
+
+                          <div className="space-y-2">
+                            <Label>Posição</Label>
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                              {[
+                                { value: 'top-left', label: 'Sup. esq.' },
+                                { value: 'top-right', label: 'Sup. dir.' },
+                                { value: 'center', label: 'Centro' },
+                                { value: 'bottom-left', label: 'Inf. esq.' },
+                                { value: 'bottom-right', label: 'Inf. dir.' },
+                              ].map(({ value, label }) => (
+                                <Button
+                                  key={value}
+                                  type="button"
+                                  variant={(site?.watermark_position || 'bottom-right') === value ? 'default' : 'outline'}
+                                  size="sm"
+                                  onClick={() => updateSite.mutate({ watermark_position: value })}
+                                  disabled={!isAdmin}
+                                  className="rounded-[6px] text-xs"
+                                >
+                                  {label}
+                                </Button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <ImageUpload
+                            label="Logo da marca d'água"
+                            description="Deixe em branco para usar a logo principal do site"
+                            value={site?.watermark_logo_url}
+                            onChange={async (url) => {
+                              await updateSite.mutateAsync({ watermark_logo_url: url });
+                            }}
+                            bucket="site-images"
+                            path="sites"
+                            assetType="watermark"
+                            aspectRatio="banner"
+                            disabled={!isAdmin}
+                          />
                         </div>
-                      )}
-                    </div>
-                  )}
+
+                        <div className="flex flex-col rounded-[6px] bg-background p-4">
+                          <Label className="mb-2 block text-xs text-muted-foreground">Pré-visualização</Label>
+                          <div className="relative min-h-[220px] overflow-hidden rounded-[6px] bg-gradient-to-br from-gray-300 to-gray-400">
+                            <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500">
+                              Foto do imóvel
+                            </div>
+                            {(site?.watermark_logo_url || site?.logo_url) && (
+                              <div
+                                className={`absolute pointer-events-none ${
+                                  (site?.watermark_position || 'bottom-right') === 'top-left' ? 'top-3 left-3' :
+                                  (site?.watermark_position || 'bottom-right') === 'top-right' ? 'top-3 right-3' :
+                                  (site?.watermark_position || 'bottom-right') === 'bottom-left' ? 'bottom-3 left-3' :
+                                  (site?.watermark_position || 'bottom-right') === 'center' ? 'top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2' :
+                                  'bottom-3 right-3'
+                                }`}
+                                style={{ opacity: (site?.watermark_opacity || 20) / 100 }}
+                              >
+                                <Image
+                                  src={site?.watermark_logo_url || site?.logo_url || ''}
+                                  alt="Preview da marca d'água"
+                                  width={Math.max(40, Math.min((site?.watermark_size || 80) * 1, 120))}
+                                  height={Math.max(24, Math.min((site?.watermark_size || 80) * 0.4, 60))}
+                                  className="object-contain"
+                                  unoptimized
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
 
-            <TabsContent value="contact" className="space-y-6">
+            <TabsContent value="contact" className="mt-0">
               <Card className="app-card">
                 <CardHeader>
-                  <CardTitle>Informações de Contato</CardTitle>
-                  <CardDescription>Esses dados aparecerão no site e nos formulários</CardDescription>
+                  <CardTitle className="text-lg">Contato</CardTitle>
                 </CardHeader>
-                <CardContent className="px-4 md:px-6 pb-5 space-y-4">
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>WhatsApp</Label>
-                      <Input
-                        placeholder="(11) 99999-9999"
-                        value={formData.whatsapp}
-                        onChange={(e) => setFormData({ ...formData, whatsapp: e.target.value })}
-                        disabled={!isAdmin}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Telefone</Label>
-                      <Input
-                        placeholder="(11) 3333-3333"
-                        value={formData.phone}
-                        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                        disabled={!isAdmin}
-                      />
+                <CardContent className="space-y-4 px-4 pb-5 md:px-6">
+                  <div className="app-card-soft border-0 p-4">
+                    <h3 className="mb-4 text-sm font-medium">Canais de atendimento</h3>
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <div className="space-y-2">
+                        <Label>WhatsApp</Label>
+                        <Input
+                          placeholder="(11) 99999-9999"
+                          value={formData.whatsapp}
+                          onChange={(e) => setFormData({ ...formData, whatsapp: e.target.value })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Telefone</Label>
+                        <Input
+                          placeholder="(11) 3333-3333"
+                          value={formData.phone}
+                          onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>E-mail</Label>
+                        <Input
+                          type="email"
+                          placeholder="contato@suaimobiliaria.com.br"
+                          value={formData.email}
+                          onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label>E-mail</Label>
-                    <Input
-                      type="email"
-                      placeholder="contato@suaimobiliaria.com.br"
-                      value={formData.email}
-                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      disabled={!isAdmin}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Endereço</Label>
-                    <Input
-                      placeholder="Rua, número, complemento"
-                      value={formData.address}
-                      onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                      disabled={!isAdmin}
-                    />
-                  </div>
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Cidade</Label>
-                      <Input
-                        placeholder="São Paulo"
-                        value={formData.city}
-                        onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                        disabled={!isAdmin}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Estado</Label>
-                      <Input
-                        placeholder="SP"
-                        value={formData.state}
-                        onChange={(e) => setFormData({ ...formData, state: e.target.value })}
-                        disabled={!isAdmin}
-                      />
+
+                  <div className="app-card-soft border-0 p-4">
+                    <h3 className="mb-4 text-sm font-medium">Endereço</h3>
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px_120px]">
+                      <div className="space-y-2">
+                        <Label>Endereço</Label>
+                        <Input
+                          placeholder="Rua, número, complemento"
+                          value={formData.address}
+                          onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Cidade</Label>
+                        <Input
+                          placeholder="São Paulo"
+                          value={formData.city}
+                          onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Estado</Label>
+                        <Input
+                          placeholder="SP"
+                          value={formData.state}
+                          onChange={(e) => setFormData({ ...formData, state: e.target.value })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
                     </div>
                   </div>
                 </CardContent>
               </Card>
             </TabsContent>
 
-            <TabsContent value="social" className="space-y-6">
+            <TabsContent value="social" className="mt-0">
               <Card className="app-card">
                 <CardHeader>
-                  <CardTitle>Redes Sociais</CardTitle>
-                  <CardDescription>Links para suas redes sociais</CardDescription>
+                  <CardTitle className="text-lg">Social</CardTitle>
                 </CardHeader>
-                <CardContent className="px-4 md:px-6 pb-5 space-y-4">
-                  <div className="space-y-2">
-                    <Label>Instagram</Label>
-                    <Input
-                      placeholder="https://instagram.com/suaimobiliaria"
-                      value={formData.instagram}
-                      onChange={(e) => setFormData({ ...formData, instagram: e.target.value })}
-                      disabled={!isAdmin}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Facebook</Label>
-                    <Input
-                      placeholder="https://facebook.com/suaimobiliaria"
-                      value={formData.facebook}
-                      onChange={(e) => setFormData({ ...formData, facebook: e.target.value })}
-                      disabled={!isAdmin}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>YouTube</Label>
-                    <Input
-                      placeholder="https://youtube.com/@suaimobiliaria"
-                      value={formData.youtube}
-                      onChange={(e) => setFormData({ ...formData, youtube: e.target.value })}
-                      disabled={!isAdmin}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>LinkedIn</Label>
-                    <Input
-                      placeholder="https://linkedin.com/company/suaimobiliaria"
-                      value={formData.linkedin}
-                      onChange={(e) => setFormData({ ...formData, linkedin: e.target.value })}
-                      disabled={!isAdmin}
-                    />
+                <CardContent className="space-y-4 px-4 pb-5 md:px-6">
+                  <div className="app-card-soft border-0 p-4">
+                    <h3 className="mb-4 text-sm font-medium">Redes sociais</h3>
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>Instagram</Label>
+                        <Input
+                          placeholder="https://instagram.com/suaimobiliaria"
+                          value={formData.instagram}
+                          onChange={(e) => setFormData({ ...formData, instagram: e.target.value })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Facebook</Label>
+                        <Input
+                          placeholder="https://facebook.com/suaimobiliaria"
+                          value={formData.facebook}
+                          onChange={(e) => setFormData({ ...formData, facebook: e.target.value })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>YouTube</Label>
+                        <Input
+                          placeholder="https://youtube.com/@suaimobiliaria"
+                          value={formData.youtube}
+                          onChange={(e) => setFormData({ ...formData, youtube: e.target.value })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>LinkedIn</Label>
+                        <Input
+                          placeholder="https://linkedin.com/company/suaimobiliaria"
+                          value={formData.linkedin}
+                          onChange={(e) => setFormData({ ...formData, linkedin: e.target.value })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
             </TabsContent>
 
-            <TabsContent value="seo" className="space-y-6">
+            <TabsContent value="seo" className="mt-0">
               <Card className="app-card">
                 <CardHeader>
-                  <CardTitle>SEO e Metatags</CardTitle>
-                  <CardDescription>Otimize seu site para mecanismos de busca</CardDescription>
+                  <CardTitle className="text-lg">SEO</CardTitle>
                 </CardHeader>
-                <CardContent className="px-4 md:px-6 pb-5 space-y-4">
-                  <div className="space-y-2">
-                    <Label>Título SEO</Label>
-                    <Input
-                      placeholder="Sua Imobiliária - Os Melhores Imóveis da Cidade"
-                      value={formData.seo_title}
-                      onChange={(e) => setFormData({ ...formData, seo_title: e.target.value })}
-                      disabled={!isAdmin}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Máximo recomendado: 60 caracteres ({formData.seo_title.length}/60)
-                    </p>
+                <CardContent className="space-y-4 px-4 pb-5 md:px-6">
+                  <div className="app-card-soft border-0 p-4">
+                    <h3 className="mb-4 text-sm font-medium">Metatags</h3>
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                      <div className="space-y-2">
+                        <Label>Título SEO</Label>
+                        <Input
+                          placeholder="Sua Imobiliária - Os Melhores Imóveis da Cidade"
+                          value={formData.seo_title}
+                          onChange={(e) => setFormData({ ...formData, seo_title: e.target.value })}
+                          disabled={!isAdmin}
+                        />
+                        <p className="text-xs text-muted-foreground">{formData.seo_title.length}/60</p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Palavras-chave</Label>
+                        <Input
+                          placeholder="imóveis, casas, apartamentos, aluguel, venda"
+                          value={formData.seo_keywords}
+                          onChange={(e) => setFormData({ ...formData, seo_keywords: e.target.value })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
+                      <div className="space-y-2 lg:col-span-2">
+                        <Label>Descrição SEO</Label>
+                        <Textarea
+                          placeholder="Encontre o imóvel dos seus sonhos. Casas, apartamentos e terrenos..."
+                          value={formData.seo_description}
+                          onChange={(e) => setFormData({ ...formData, seo_description: e.target.value })}
+                          rows={3}
+                          disabled={!isAdmin}
+                        />
+                        <p className="text-xs text-muted-foreground">{formData.seo_description.length}/160</p>
+                      </div>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Descrição SEO</Label>
-                    <Textarea
-                      placeholder="Encontre o imóvel dos seus sonhos. Casas, apartamentos e terrenos..."
-                      value={formData.seo_description}
-                      onChange={(e) => setFormData({ ...formData, seo_description: e.target.value })}
-                      rows={3}
-                      disabled={!isAdmin}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Máximo recomendado: 160 caracteres ({formData.seo_description.length}/160)
-                    </p>
+
+                  <div className="app-card-soft border-0 p-4">
+                    <h3 className="mb-4 text-sm font-medium">Rastreamento</h3>
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>Google Analytics ID</Label>
+                        <Input
+                          placeholder="G-XXXXXXXXXX"
+                          value={formData.google_analytics_id}
+                          onChange={(e) => setFormData({ ...formData, google_analytics_id: e.target.value })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Google Tag Manager (GTM) ID</Label>
+                        <Input
+                          placeholder="GTM-XXXXXXXX"
+                          value={formData.gtm_id}
+                          onChange={(e) => setFormData({ ...formData, gtm_id: e.target.value })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Meta Pixel ID</Label>
+                        <Input
+                          placeholder="123456789012345"
+                          value={formData.meta_pixel_id}
+                          onChange={(e) => setFormData({ ...formData, meta_pixel_id: e.target.value })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Google Ads ID</Label>
+                        <Input
+                          placeholder="AW-XXXXXXXXX"
+                          value={formData.google_ads_id}
+                          onChange={(e) => setFormData({ ...formData, google_ads_id: e.target.value })}
+                          disabled={!isAdmin}
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Palavras-chave</Label>
-                    <Input
-                      placeholder="imóveis, casas, apartamentos, aluguel, venda"
-                      value={formData.seo_keywords}
-                      onChange={(e) => setFormData({ ...formData, seo_keywords: e.target.value })}
-                      disabled={!isAdmin}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Google Analytics ID</Label>
-                    <Input
-                      placeholder="G-XXXXXXXXXX"
-                      value={formData.google_analytics_id}
-                      onChange={(e) => setFormData({ ...formData, google_analytics_id: e.target.value })}
-                      disabled={!isAdmin}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Google Tag Manager (GTM) ID</Label>
-                    <Input
-                      placeholder="GTM-XXXXXXXX"
-                      value={formData.gtm_id}
-                      onChange={(e) => setFormData({ ...formData, gtm_id: e.target.value })}
-                      disabled={!isAdmin}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Ex: GTM-TTH333RS
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Meta Pixel ID</Label>
-                    <Input
-                      placeholder="123456789012345"
-                      value={formData.meta_pixel_id}
-                      onChange={(e) => setFormData({ ...formData, meta_pixel_id: e.target.value })}
-                      disabled={!isAdmin}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Google Ads ID</Label>
-                    <Input
-                      placeholder="AW-XXXXXXXXX"
-                      value={formData.google_ads_id}
-                      onChange={(e) => setFormData({ ...formData, google_ads_id: e.target.value })}
-                      disabled={!isAdmin}
-                    />
+
+                  <div className="app-card-soft border-0 p-4">
+                    <h3 className="mb-4 text-sm font-medium">Scripts personalizados</h3>
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>Scripts no &lt;head&gt;</Label>
+                        <Textarea
+                          placeholder="Cole aqui scripts que devem ir no <head> do site (ex: GTM, pixels, etc.)"
+                          value={formData.head_scripts}
+                          onChange={(e) => setFormData({ ...formData, head_scripts: e.target.value })}
+                          rows={6}
+                          disabled={!isAdmin}
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Scripts no &lt;body&gt;</Label>
+                        <Textarea
+                          placeholder="Cole aqui scripts que devem ir no <body> do site (ex: noscript do GTM, chatbots, etc.)"
+                          value={formData.body_scripts}
+                          onChange={(e) => setFormData({ ...formData, body_scripts: e.target.value })}
+                          rows={6}
+                          disabled={!isAdmin}
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
+            </TabsContent>
 
+            <TabsContent value="menu" className="mt-0">
               <Card className="app-card">
                 <CardHeader>
-                  <CardTitle>Scripts Personalizados</CardTitle>
-                  <CardDescription>Cole aqui scripts de rastreamento, chatbots, etc. que serão injetados no site</CardDescription>
+                  <CardTitle className="text-lg">Menu</CardTitle>
                 </CardHeader>
-                <CardContent className="px-4 md:px-6 pb-5 space-y-4">
-                  <div className="space-y-2">
-                    <Label>Scripts no &lt;head&gt;</Label>
-                    <Textarea
-                      placeholder="Cole aqui scripts que devem ir no <head> do site (ex: GTM, pixels, etc.)"
-                      value={formData.head_scripts}
-                      onChange={(e) => setFormData({ ...formData, head_scripts: e.target.value })}
-                      rows={6}
-                      disabled={!isAdmin}
-                      className="font-mono text-xs"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Scripts JavaScript, tags de rastreamento, etc. que serão inseridos no &lt;head&gt;
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Scripts no &lt;body&gt;</Label>
-                    <Textarea
-                      placeholder="Cole aqui scripts que devem ir no <body> do site (ex: noscript do GTM, chatbots, etc.)"
-                      value={formData.body_scripts}
-                      onChange={(e) => setFormData({ ...formData, body_scripts: e.target.value })}
-                      rows={6}
-                      disabled={!isAdmin}
-                      className="font-mono text-xs"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Tags &lt;noscript&gt;, chatbots, widgets, etc. que serão inseridos no &lt;body&gt;
-                    </p>
-                  </div>
+                <CardContent className="space-y-4 px-4 pb-5 md:px-6">
+                  <MenuTab />
+                  <SearchFiltersTab />
                 </CardContent>
               </Card>
             </TabsContent>
 
-            <TabsContent value="menu" className="space-y-6">
-              <MenuTab />
-              <SearchFiltersTab />
-            </TabsContent>
-
-            <TabsContent value="about" className="space-y-6">
+            <TabsContent value="about" className="mt-0">
               <AboutTab
                 formData={formData}
                 setFormData={setFormData}
@@ -1656,7 +1410,6 @@ ${getWorkerCode()}`;
 
             </TabsContent>
 
-              </div>
             </div>
           </Tabs>
         )}

@@ -60,7 +60,7 @@ type APIRoundRobinRule = {
 type APIRoundRobinMember = {
   id: string
   roundRobinId: string
-  userId: string
+  userId?: string | null
   teamId?: string
   position: number
   weight: number
@@ -343,7 +343,7 @@ function toLegacyMember(member: APIRoundRobinMember): LegacyRoundRobinMember {
     position: member.position,
     round_robin_id: member.roundRobinId,
     team_id: member.teamId || null,
-    user_id: member.userId,
+    user_id: member.userId || null,
     weight: member.weight,
     is_active: member.isActive,
     user: member.user

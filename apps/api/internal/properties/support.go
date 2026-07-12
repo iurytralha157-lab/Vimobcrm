@@ -48,15 +48,12 @@ func (repo Repository) GetPropertyCaptor(ctx context.Context, tenantContext tena
 			u.whatsapp,
 			u.avatar_url
 		from public.users u
-		left join public.organization_members om
+		join public.organization_members om
 		  on om.user_id = u.id
 		 and om.organization_id = $1::uuid
-		 and om.is_active = true
 		where u.id = $2::uuid
-		  and (
-		    u.organization_id = $1::uuid
-		    or om.id is not null
-		  )
+		  and coalesce(u.is_active, false) = true
+		  and coalesce(om.is_active, false) = true
 		limit 1
 	`, tenantContext.OrganizationID, userID).Scan(&captor.ID, &name, &email, &whatsapp, &avatarURL)
 	if errors.Is(err, pgx.ErrNoRows) {

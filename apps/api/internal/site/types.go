@@ -135,14 +135,17 @@ type AssetUpload struct {
 }
 
 type PublicContactRequest struct {
-	OrganizationID string  `json:"organization_id"`
-	Name           string  `json:"name"`
-	Email          *string `json:"email"`
-	Phone          string  `json:"phone"`
-	Message        *string `json:"message"`
-	PropertyID     *string `json:"property_id"`
-	PropertyCode   *string `json:"property_code"`
-	SessionID      *string `json:"session_id"`
+	OrganizationID  string  `json:"organization_id"`
+	Name            string  `json:"name"`
+	Email           *string `json:"email"`
+	Phone           string  `json:"phone"`
+	Message         *string `json:"message"`
+	BestTime        *string `json:"best_time"`
+	PrivacyAccepted bool    `json:"privacy_accepted"`
+	PrivacyURL      *string `json:"privacy_url"`
+	PropertyID      *string `json:"property_id"`
+	PropertyCode    *string `json:"property_code"`
+	SessionID       *string `json:"session_id"`
 }
 
 type PublicTrackingRequest struct {

@@ -747,15 +747,12 @@ func ensureUsersBelongToOrganization(ctx context.Context, tx pgx.Tx, organizatio
 	if err := tx.QueryRow(ctx, `
 		select count(distinct u.id)
 		from public.users u
-		left join public.organization_members om
+		join public.organization_members om
 		  on om.user_id = u.id
 		 and om.organization_id = $1::uuid
 		where u.id in (`+strings.Join(placeholders, ", ")+`)
-		  and coalesce(u.is_active, true) = true
-		  and (
-			(om.id is not null and coalesce(om.is_active, false) = true)
-			or (u.organization_id = $1::uuid and coalesce(om.is_active, true) = true)
-		  )
+		  and coalesce(u.is_active, false) = true
+		  and coalesce(om.is_active, false) = true
 	`, args...).Scan(&validCount); err != nil {
 		return err
 	}
@@ -779,6 +776,7 @@ func syncRoundRobinWithTeam(ctx context.Context, tx pgx.Tx, organizationID strin
 		 and rr.organization_id = rrm.organization_id
 		where rr.organization_id = $1::uuid
 		  and rrm.team_id = $2::uuid
+		  and rrm.user_id is not null
 	`, organizationID, teamID)
 	if err != nil {
 		return err

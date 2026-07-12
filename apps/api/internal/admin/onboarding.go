@@ -168,12 +168,12 @@ func (repo Repository) PublicOnboardingSignup(ctx context.Context, request Onboa
 			whatsapp,
 			cpf
 		)
-		values ($1::uuid, $2::uuid, $3, $4, 'admin', true, $5, $6)
+		values ($1::uuid, $2::uuid, $3, $4, 'user', true, $5, $6)
 		on conflict (id) do update set
 			organization_id = excluded.organization_id,
 			name = excluded.name,
 			email = excluded.email,
-			role = 'admin',
+			role = case when public.users.role = 'super_admin' then public.users.role else 'user' end,
 			is_active = true,
 			whatsapp = excluded.whatsapp,
 			cpf = excluded.cpf,

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import type { HTMLAttributes } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -8,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { DragDropContext, Droppable, Draggable, DropResult } from "@hello-pangea/dnd";
-import { Plus, GripVertical, Pencil, Trash2, Search } from "lucide-react";
+import { Plus, GripVertical, Pencil, Trash2 } from "lucide-react";
 import {
   useSiteSearchFilters,
   useCreateSearchFilter,
@@ -118,23 +117,14 @@ export function SearchFiltersTab() {
   };
 
   return (
-    <Card className="app-card">
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Search className="w-5 h-5" />
-              Filtros da Barra de Pesquisa
-            </CardTitle>
-            <CardDescription>Configure quais filtros aparecem na barra de pesquisa da home page</CardDescription>
-          </div>
-          <Button onClick={openAdd} size="sm" disabled={availableToAdd.length === 0}>
+    <div className="app-card-soft border-0 p-4">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-medium">Filtros da barra de pesquisa</h3>
+        <Button onClick={openAdd} size="sm" disabled={availableToAdd.length === 0}>
             <Plus className="w-4 h-4 mr-2" />
-            Adicionar Filtro
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
+          Adicionar filtro
+        </Button>
+      </div>
         {isLoading ? (
           <p className="text-sm text-muted-foreground">Carregando...</p>
         ) : items.length === 0 ? (
@@ -158,7 +148,7 @@ export function SearchFiltersTab() {
                           <div
                             ref={provided.innerRef}
                             {...(provided.draggableProps as HTMLAttributes<HTMLDivElement>)}
-                            className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                            className={`flex items-center gap-3 rounded-[6px] p-3 transition-colors ${
                               snapshot.isDragging ? "bg-accent shadow-lg" : "bg-background hover:bg-accent/50"
                             } ${!item.is_active ? "opacity-50" : ""}`}
                           >
@@ -195,7 +185,6 @@ export function SearchFiltersTab() {
             </Droppable>
           </DragDropContext>
         )}
-      </CardContent>
 
       {/* Add/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -239,6 +228,6 @@ export function SearchFiltersTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </div>
   );
 }

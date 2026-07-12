@@ -1,5 +1,5 @@
 import {
-  getCheckoutRecord,
+  getAuthorizedCheckoutRecord,
   handleOptions,
   jsonResponse,
 } from "../_shared/asaas.ts";
@@ -16,7 +16,7 @@ Deno.serve(async (request) => {
     const url = new URL(request.url);
     const token = url.searchParams.get("token");
     const organizationId = url.searchParams.get("organization_id");
-    const record = await getCheckoutRecord({ token, organizationId });
+    const record = await getAuthorizedCheckoutRecord(request, { token, organizationId });
 
     if (!record) {
       return jsonResponse({ error: "Checkout nao encontrado." }, 404);

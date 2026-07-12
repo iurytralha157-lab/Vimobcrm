@@ -224,6 +224,76 @@ export async function getCheckoutRecord(params: {
   } as CheckoutRecord;
 }
 
+export async function getAuthorizedCheckoutRecord(
+  request: Request,
+  params: { token?: string | null; organizationId?: string | null },
+) {
+  if (params.organizationId) {
+    const authorized = await canManageOrganizationBilling(request, params.organizationId);
+    if (!authorized) return null;
+    return getCheckoutRecord({ organizationId: params.organizationId });
+  }
+
+  if (params.token) {
+    return getCheckoutRecord({ token: params.token });
+  }
+
+  return null;
+}
+
+export async function canAccessOrganizationPayment(
+  request: Request,
+  organizationId: string,
+  checkoutToken?: string | null,
+) {
+  if (checkoutToken) {
+    const supabase = getSupabaseAdmin();
+    const { data } = await supabase
+      .from("organizations")
+      .select("id")
+      .eq("id", organizationId)
+      .eq("checkout_token", checkoutToken)
+      .maybeSingle();
+
+    if (data) return true;
+  }
+
+  return canManageOrganizationBilling(request, organizationId);
+}
+
+async function canManageOrganizationBilling(request: Request, organizationId: string) {
+  const authorization = request.headers.get("authorization") || "";
+  const accessToken = authorization.replace(/^Bearer\s+/i, "").trim();
+  if (!accessToken || !organizationId) return false;
+
+  const supabase = getSupabaseAdmin();
+  const { data: authData, error: authError } = await supabase.auth.getUser(accessToken);
+  const userId = authData.user?.id;
+  if (authError || !userId) return false;
+
+  const { data: superAdmin } = await supabase
+    .from("users")
+    .select("id")
+    .eq("id", userId)
+    .eq("role", "super_admin")
+    .eq("is_active", true)
+    .maybeSingle();
+  if (superAdmin) return true;
+
+  const { data: membership } = await supabase
+    .from("organization_members")
+    .select("organization:organizations!inner(id,is_active),user:users!inner(id,is_active)")
+    .eq("organization_id", organizationId)
+    .eq("user_id", userId)
+    .eq("is_active", true)
+    .in("role", ["owner", "admin"])
+    .eq("organization.is_active", true)
+    .eq("user.is_active", true)
+    .maybeSingle();
+
+  return Boolean(membership);
+}
+
 export async function ensureAsaasCustomer(input: {
   organization: CheckoutOrganization;
   holderEmail: string;

@@ -261,8 +261,32 @@ for each row execute function private.set_cadence_task_organization_id();
 
 -- Settings/roles canonical columns expected by the backend.
 alter table if exists public.available_permissions
+  add column if not exists name text,
   add column if not exists label text,
+  add column if not exists category text,
   add column if not exists domain text;
+
+update public.available_permissions
+set name = coalesce(nullif(name, ''), label, key),
+    category = coalesce(nullif(category, ''), domain, 'general')
+where name is null
+   or name = ''
+   or category is null
+   or category = '';
+
+alter table if exists public.organization_role_permissions
+  add column if not exists permission_key text,
+  add column if not exists organization_role_id uuid;
+
+update public.organization_role_permissions rp
+set permission_key = coalesce(rp.permission_key, permission.key),
+    organization_role_id = coalesce(rp.organization_role_id, rp.role_id)
+from public.available_permissions permission
+where permission.id = rp.permission_id
+  and (
+    rp.permission_key is null
+    or rp.organization_role_id is null
+  );
 
 insert into public.available_permissions (key, name, label, category, domain)
 select distinct
@@ -321,8 +345,13 @@ create unique index if not exists organization_role_permissions_canonical_unique
 alter table if exists public.user_organization_roles
   add column if not exists organization_id uuid,
   add column if not exists role_id uuid,
+  add column if not exists organization_role_id uuid,
   add column if not exists is_active boolean not null default true,
   add column if not exists updated_at timestamptz not null default now();
+
+update public.user_organization_roles
+set organization_role_id = role_id
+where organization_role_id is null;
 
 update public.user_organization_roles
 set role_id = coalesce(role_id, organization_role_id)
@@ -361,6 +390,14 @@ create table if not exists public.error_events (
   occurred_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
+
+alter table public.error_events
+  add column if not exists session_id text,
+  add column if not exists component_stack text,
+  add column if not exists app_version text,
+  add column if not exists release_channel text,
+  add column if not exists tags text[] not null default '{}'::text[],
+  add column if not exists occurred_at timestamptz not null default now();
 
 create index if not exists idx_error_events_org_time
   on public.error_events(organization_id, occurred_at desc);

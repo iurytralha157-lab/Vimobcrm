@@ -5,6 +5,7 @@
 import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Images, X } from "lucide-react";
 
+import { cn } from "@/lib/utils";
 import { DEFAULT_HERO_IMAGE } from "./public-site-utils";
 
 type PublicPropertyCarouselProps = Readonly<{
@@ -13,12 +14,15 @@ type PublicPropertyCarouselProps = Readonly<{
   title: string;
 }>;
 
+type GalleryDirection = "next" | "previous";
+
 export function PublicPropertyCarousel({ backgroundColor, images, title }: PublicPropertyCarouselProps) {
   const gallery = useMemo(() => {
     const uniqueImages = Array.from(new Set(images.filter(Boolean)));
     return uniqueImages.length > 0 ? uniqueImages : [DEFAULT_HERO_IMAGE];
   }, [images]);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [slideDirection, setSlideDirection] = useState<GalleryDirection>("next");
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
   const hasMultipleImages = gallery.length > 1;
   const visibleGallery = useMemo(() => {
@@ -26,24 +30,38 @@ export function PublicPropertyCarousel({ backgroundColor, images, title }: Publi
   }, [activeIndex, gallery]);
 
   function goToPrevious() {
+    setSlideDirection("previous");
     setActiveIndex((current) => (current === 0 ? gallery.length - 1 : current - 1));
   }
 
   function goToNext() {
+    setSlideDirection("next");
     setActiveIndex((current) => (current + 1) % gallery.length);
+  }
+
+  function selectImage(index: number) {
+    if (index === activeIndex) return;
+    setSlideDirection(index > activeIndex ? "next" : "previous");
+    setActiveIndex(index);
   }
 
   return (
     <section className="relative overflow-hidden text-white" style={{ backgroundColor }}>
       <div className="relative h-[430px] w-full overflow-hidden sm:h-[520px] lg:h-[560px]">
-        <div className="flex h-full gap-1">
+        <div
+          key={activeIndex}
+          className={cn(
+            "public-site-gallery-strip flex h-full gap-1 will-change-transform",
+            slideDirection === "previous" && "public-site-gallery-strip--previous",
+          )}
+        >
           {visibleGallery.map((image, offset) => {
             const realIndex = (activeIndex + offset) % gallery.length;
             return (
               <button
                 key={`${image}-${realIndex}-${offset}`}
                 type="button"
-                onClick={() => setActiveIndex(realIndex)}
+                onClick={() => selectImage(realIndex)}
                 className="h-full shrink-0 basis-[clamp(270px,27vw,430px)] cursor-pointer overflow-hidden"
                 style={{ backgroundColor }}
                 aria-label={`Abrir foto ${realIndex + 1}`}
@@ -51,7 +69,9 @@ export function PublicPropertyCarousel({ backgroundColor, images, title }: Publi
                 <img
                   src={image}
                   alt={offset === 0 ? title : ""}
-                  className="h-full w-full object-cover"
+                  className="public-site-carousel-img h-full w-full object-cover opacity-95 transition-[opacity,transform] duration-500 ease-out hover:scale-[1.015] hover:opacity-100"
+                  decoding="async"
+                  fetchPriority={offset === 0 ? "high" : "auto"}
                   loading={offset <= 2 ? "eager" : "lazy"}
                 />
               </button>
@@ -65,7 +85,7 @@ export function PublicPropertyCarousel({ backgroundColor, images, title }: Publi
             <button
               type="button"
               onClick={goToPrevious}
-              className="absolute left-5 top-1/2 inline-flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-white/92 text-zinc-900 shadow-lg transition hover:bg-white"
+              className="absolute left-5 top-1/2 inline-flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-white/92 text-zinc-900 transition hover:bg-white"
               aria-label="Foto anterior"
             >
               <ChevronLeft className="h-5 w-5" />
@@ -73,7 +93,7 @@ export function PublicPropertyCarousel({ backgroundColor, images, title }: Publi
             <button
               type="button"
               onClick={goToNext}
-              className="absolute right-5 top-1/2 inline-flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-white/92 text-zinc-900 shadow-lg transition hover:bg-white"
+              className="absolute right-5 top-1/2 inline-flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-white/92 text-zinc-900 transition hover:bg-white"
               aria-label="Proxima foto"
             >
               <ChevronRight className="h-5 w-5" />
@@ -90,7 +110,7 @@ export function PublicPropertyCarousel({ backgroundColor, images, title }: Publi
           <button
             type="button"
             onClick={() => setIsGalleryOpen(true)}
-            className="absolute bottom-5 right-5 inline-flex h-10 items-center gap-2 rounded-full bg-white/94 px-4 text-sm font-semibold text-zinc-900 shadow-lg transition hover:bg-white"
+            className="absolute bottom-5 right-5 inline-flex h-10 items-center gap-2 rounded-full bg-white/94 px-4 text-sm font-semibold text-zinc-900 transition hover:bg-white"
           >
             <Images className="h-4 w-4" />
             Ver todas
@@ -121,7 +141,7 @@ export function PublicPropertyCarousel({ backgroundColor, images, title }: Publi
                 key={`${image}-gallery-${index}`}
                 type="button"
                 onClick={() => {
-                  setActiveIndex(index);
+                  selectImage(index);
                   setIsGalleryOpen(false);
                 }}
                 className="group relative h-72 overflow-hidden rounded-[14px] bg-zinc-900 text-left sm:h-80"

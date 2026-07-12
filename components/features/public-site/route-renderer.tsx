@@ -10,6 +10,7 @@ import {
   getPublicSearchFilters,
   resolvePublicSite,
   resolvePublicSiteFromRequest,
+  type PublicProperty,
   type PublicSiteConfig,
 } from "@/lib/api/public-site-server";
 import { PublicSiteUnavailable } from "@/components/public/PublicSiteUnavailable";
@@ -19,6 +20,8 @@ import {
   PublicContactScreen,
   PublicFavoritesScreen,
   PublicHomeScreen,
+  PublicNotFoundScreen,
+  PublicPrivacyPolicyScreen,
   PublicPropertiesScreen,
   PublicPropertyDetailScreen,
 } from "./PublicSiteScreens";
@@ -38,7 +41,9 @@ export type PublicSiteRoute =
   | { kind: "property"; propertyCode: string }
   | { kind: "about" }
   | { kind: "contact" }
-  | { kind: "favorites" };
+  | { kind: "privacy" }
+  | { kind: "favorites" }
+  | { kind: "not-found" };
 
 export async function renderPublicSiteRoute({
   basePath = "",
@@ -90,17 +95,26 @@ export async function renderPublicSiteRoute({
 
   if (route.kind === "property") {
     const property = await getPublicProperty(site.organization_id, route.propertyCode);
-    if (!property) notFound();
+    if (!property) {
+      return (
+        <PublicSiteShell basePath={basePath} menuItems={menuItems} pageTitle={`404 - ${getSiteTitle(site)}`} site={site}>
+          <PublicNotFoundScreen basePath={basePath} site={site} />
+        </PublicSiteShell>
+      );
+    }
+    const relatedProperties = await getRelatedPublicProperties(site.organization_id, property);
 
     return (
       <PublicSiteShell
         basePath={basePath}
         menuItems={menuItems}
         pageTitle={`${getPropertyTitle(property)} - ${getSiteTitle(site)}`}
+        propertyCode={getPropertyCode(property)}
         propertyId={property.id}
+        propertyTitle={getPropertyTitle(property)}
         site={site}
       >
-        <PublicPropertyDetailScreen basePath={basePath} property={property} site={site} />
+        <PublicPropertyDetailScreen basePath={basePath} property={property} relatedProperties={relatedProperties} site={site} />
       </PublicSiteShell>
     );
   }
@@ -117,6 +131,22 @@ export async function renderPublicSiteRoute({
     return (
       <PublicSiteShell basePath={basePath} menuItems={menuItems} pageTitle={`Contato - ${getSiteTitle(site)}`} site={site}>
         <PublicContactScreen basePath={basePath} site={site} />
+      </PublicSiteShell>
+    );
+  }
+
+  if (route.kind === "privacy") {
+    return (
+      <PublicSiteShell basePath={basePath} menuItems={menuItems} pageTitle={`Politica de privacidade - ${getSiteTitle(site)}`} site={site}>
+        <PublicPrivacyPolicyScreen site={site} />
+      </PublicSiteShell>
+    );
+  }
+
+  if (route.kind === "not-found") {
+    return (
+      <PublicSiteShell basePath={basePath} menuItems={menuItems} pageTitle={`404 - ${getSiteTitle(site)}`} site={site}>
+        <PublicNotFoundScreen basePath={basePath} site={site} />
       </PublicSiteShell>
     );
   }
@@ -161,10 +191,20 @@ export async function generatePublicSiteMetadata({
     title = `Contato - ${siteTitle}`;
     shareTitle = title;
     canonicalPath = buildSiteHref(basePath, "/contato");
+  } else if (route.kind === "privacy") {
+    title = `Politica de privacidade - ${siteTitle}`;
+    shareTitle = title;
+    description = `Politica de privacidade da ${siteTitle}.`;
+    canonicalPath = buildSiteHref(basePath, "/politica-de-privacidade");
   } else if (route.kind === "favorites") {
     title = `Favoritos - ${siteTitle}`;
     shareTitle = title;
     canonicalPath = buildSiteHref(basePath, "/favoritos");
+  } else if (route.kind === "not-found") {
+    title = `404 - ${siteTitle}`;
+    shareTitle = title;
+    description = "Nao encontramos essa pagina.";
+    canonicalPath = buildSiteHref(basePath, "/");
   } else if (route.kind === "property") {
     const property = await getPublicProperty(site.organization_id, route.propertyCode);
     if (property) {
@@ -216,9 +256,12 @@ export function parsePublicSitePath(path?: string[]): PublicSiteRoute {
   if (segment === "imoveis") return { kind: "properties", query: {} };
   if (segment === "sobre") return { kind: "about" };
   if (segment === "contato") return { kind: "contact" };
+  if (segment === "politica-de-privacidade" || segment === "privacidade" || segment === "privacy-policy") {
+    return { kind: "privacy" };
+  }
   if (segment === "favoritos") return { kind: "favorites" };
 
-  notFound();
+  return { kind: "not-found" };
 }
 
 function normalizePropertiesQuery(query: Record<string, string | string[] | undefined>) {
@@ -230,11 +273,18 @@ function normalizePropertiesQuery(query: Record<string, string | string[] | unde
     finalidade: normalizePurposeQuery(stringQuery(query.finalidade)),
     cidade: stringQuery(query.cidade),
     bairro: stringQuery(query.bairro),
+    condominio: stringQuery(query.condominio),
     quartos: stringQuery(query.quartos),
     suites: stringQuery(query.suites),
     banheiros: stringQuery(query.banheiros),
     vagas: stringQuery(query.vagas),
     mobilia: stringQuery(query.mobilia),
+    area_util_min: stringQuery(query.area_util_min),
+    area_util_max: stringQuery(query.area_util_max),
+    area_total_min: stringQuery(query.area_total_min),
+    area_total_max: stringQuery(query.area_total_max),
+    aceita_financiamento: stringQuery(query.aceita_financiamento),
+    aceita_permuta: stringQuery(query.aceita_permuta),
     min_price: stringQuery(query.min_price) || stringQuery(query.minPrice),
     max_price: stringQuery(query.max_price) || stringQuery(query.maxPrice),
   };
@@ -261,8 +311,10 @@ function buildRouteCanonicalPath(route: PublicSiteRoute) {
   if (route.kind === "home") return "/";
   if (route.kind === "about") return "/sobre";
   if (route.kind === "contact") return "/contato";
+  if (route.kind === "privacy") return "/politica-de-privacidade";
   if (route.kind === "favorites") return "/favoritos";
   if (route.kind === "property") return `/imoveis/${route.propertyCode}`;
+  if (route.kind === "not-found") return "/";
   return "/imoveis";
 }
 
@@ -273,6 +325,37 @@ function buildPropertyShareDescription(property: Awaited<ReturnType<typeof getPu
   const parts = [location, price && price !== "Consulte" ? price : "", cleanMetadataText(property.descricao || "").slice(0, 120)]
     .filter(Boolean);
   return cleanMetadataText(parts.join(" | ")).slice(0, 180);
+}
+
+async function getRelatedPublicProperties(organizationId: string, property: PublicProperty) {
+  const price = getPropertyPrice(property);
+  const queries: Array<Record<string, string | number | undefined>> = [
+    {
+      tipo: property.tipo_imovel || undefined,
+      finalidade: property.finalidade || undefined,
+      min_price: price ? Math.max(0, Math.round(price * 0.75)) : undefined,
+      max_price: price ? Math.round(price * 1.25) : undefined,
+      limit: 8,
+    },
+    {
+      tipo: property.tipo_imovel || undefined,
+      cidade: property.cidade || undefined,
+      limit: 8,
+    },
+  ];
+
+  const related = new Map<string, PublicProperty>();
+  for (const query of queries) {
+    if (related.size >= 3) break;
+    const data = await getPublicProperties(organizationId, query);
+    data.properties
+      .filter((item) => item.id !== property.id)
+      .forEach((item) => {
+        if (!related.has(item.id)) related.set(item.id, item);
+      });
+  }
+
+  return Array.from(related.values()).slice(0, 3);
 }
 
 async function getRequestOrigin() {

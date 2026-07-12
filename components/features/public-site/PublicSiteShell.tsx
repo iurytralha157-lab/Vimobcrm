@@ -8,20 +8,25 @@ import type { PublicSiteConfig, SiteMenuItem } from "@/lib/api/public-site-serve
 import { buildSiteHref, defaultMenuItems, getSiteDescription, getSiteTitle, getThemeTokens } from "./public-site-utils";
 import { PublicSiteTracker } from "./PublicSiteTracker";
 import { PublicContactLeadDialog } from "./PublicContactLeadDialog";
+import { PublicCookieConsent } from "./PublicCookieConsent";
 
 export function PublicSiteShell({
   basePath,
   children,
   menuItems,
   pageTitle,
+  propertyCode,
   propertyId,
+  propertyTitle,
   site,
 }: Readonly<{
   basePath: string;
   children: ReactNode;
   menuItems: SiteMenuItem[];
   pageTitle: string;
+  propertyCode?: string;
   propertyId?: string;
+  propertyTitle?: string;
   site: PublicSiteConfig;
 }>) {
   const tokens = getThemeTokens(site);
@@ -29,6 +34,7 @@ export function PublicSiteShell({
   const desktopNavItems = buildDesktopNavItems(navItems);
   const title = getSiteTitle(site);
   const isPlenusSite = /plenus/i.test(`${site.organization_name || ""} ${site.custom_domain || ""} ${site.subdomain || ""}`);
+  const whatsAppDefaultMessage = buildWhatsAppDefaultMessage(propertyTitle, propertyCode);
   const style = {
     "--site-bg": tokens.background,
     "--site-fg": tokens.foreground,
@@ -43,7 +49,7 @@ export function PublicSiteShell({
       <PublicSiteTracker organizationId={site.organization_id} pageTitle={pageTitle} propertyId={propertyId} />
 
       <header className="fixed inset-x-0 top-3 z-50 px-3 text-white sm:top-4 sm:px-4">
-        <div className="mx-auto flex min-h-[72px] w-full max-w-7xl items-center justify-between gap-5 rounded-[14px] bg-[#30332f]/78 px-5 shadow-[0_18px_42px_rgba(0,0,0,0.18)] backdrop-blur-xl sm:px-8 lg:min-h-[86px] lg:px-12">
+        <div className="mx-auto flex min-h-[72px] w-full max-w-7xl items-center justify-between gap-5 rounded-[14px] bg-[#30332f]/78 px-5 backdrop-blur-xl sm:px-8 lg:min-h-[86px] lg:px-12">
           <Link href={buildSiteHref(basePath, "/")} className="flex min-w-0 items-center gap-3">
             {site.logo_url ? (
               <img
@@ -56,7 +62,7 @@ export function PublicSiteShell({
                 style={{ width: site.logo_width || undefined }}
               />
             ) : (
-              <span className="truncate text-lg font-semibold tracking-wide">{title}</span>
+              <span className="truncate text-lg font-light tracking-wide">{title}</span>
             )}
           </Link>
 
@@ -64,7 +70,7 @@ export function PublicSiteShell({
             {desktopNavItems.map((item) => {
               const href = buildSiteHref(basePath, item.href);
               const isExternal = item.link_type === "external" || /^https?:\/\//i.test(item.href);
-              const className = "text-sm font-medium uppercase text-white/76 transition hover:text-white";
+              const className = "text-sm font-light uppercase text-white/76 transition hover:text-white";
 
               return isExternal ? (
                 <a
@@ -94,7 +100,7 @@ export function PublicSiteShell({
             </Link>
             <Link
               href={buildSiteHref(basePath, "/contato")}
-              className="inline-flex h-11 items-center justify-center rounded-[10px] px-7 text-sm font-medium uppercase text-white transition hover:brightness-110"
+              className="inline-flex h-11 items-center justify-center rounded-[10px] px-7 text-sm font-light uppercase text-white transition hover:brightness-110"
               style={{ backgroundColor: tokens.primary }}
             >
               Contato
@@ -102,28 +108,28 @@ export function PublicSiteShell({
           </div>
 
           <details className="relative lg:hidden">
-            <summary className="flex h-10 w-10 cursor-pointer list-none items-center justify-center rounded-full bg-white/10">
-              <Menu className="h-5 w-5" />
+            <summary className="flex h-10 w-11 cursor-pointer list-none items-center justify-center rounded-[10px] bg-white/10">
+              <Menu className="h-5 w-5" strokeWidth={1.7} />
             </summary>
-            <div className="absolute right-0 top-12 w-64 rounded-[14px] bg-[#30332f]/98 p-2 shadow-2xl">
+            <div className="absolute right-0 top-12 w-64 rounded-[14px] bg-[#30332f]/98 p-2">
               {navItems.map((item) => (
                 <Link
                   key={item.id || item.href}
                   href={buildSiteHref(basePath, item.href)}
-                  className="block rounded-md px-3 py-3 text-sm font-medium text-white/80 hover:bg-white/10"
+                  className="block rounded-md px-3 py-3 text-sm font-extralight text-white/80 hover:bg-white/10"
                 >
                   {item.label}
                 </Link>
               ))}
               <Link
                 href={buildSiteHref(basePath, "/favoritos")}
-                className="block rounded-md px-3 py-3 text-sm font-medium text-white/80 hover:bg-white/10"
+                className="block rounded-md px-3 py-3 text-sm font-extralight text-white/80 hover:bg-white/10"
               >
                 Favoritos
               </Link>
               <Link
                 href={buildSiteHref(basePath, "/contato")}
-                className="mt-1 flex items-center gap-2 rounded-md px-3 py-3 text-sm font-semibold text-white"
+                className="mt-1 flex items-center gap-2 rounded-md px-3 py-3 text-sm font-extralight text-white"
                 style={{ backgroundColor: tokens.primary }}
               >
                 <MessageCircle className="h-4 w-4" />
@@ -138,8 +144,12 @@ export function PublicSiteShell({
 
       {site.whatsapp ? (
         <PublicContactLeadDialog
+          defaultMessage={whatsAppDefaultMessage}
           organizationId={site.organization_id}
           primaryColor={tokens.primary}
+          privacyHref={buildSiteHref(basePath, "/politica-de-privacidade")}
+          propertyCode={propertyCode}
+          propertyId={propertyId}
           siteTitle={title}
           triggerLabel="Abrir formulario de WhatsApp"
           variant="floating"
@@ -167,6 +177,11 @@ export function PublicSiteShell({
                   </Link>
                 </li>
               ))}
+              <li>
+                <Link href={buildSiteHref(basePath, "/politica-de-privacidade")} className="hover:text-white">
+                  Politica de Privacidade
+                </Link>
+              </li>
             </ul>
           </section>
 
@@ -184,8 +199,12 @@ export function PublicSiteShell({
               {site.whatsapp ? (
                 <li>
                   <PublicContactLeadDialog
+                    defaultMessage={whatsAppDefaultMessage}
                     organizationId={site.organization_id}
                     primaryColor={tokens.primary}
+                    privacyHref={buildSiteHref(basePath, "/politica-de-privacidade")}
+                    propertyCode={propertyCode}
+                    propertyId={propertyId}
                     siteTitle={title}
                     triggerLabel="WhatsApp"
                     variant="footer-line"
@@ -224,8 +243,23 @@ export function PublicSiteShell({
           © {new Date().getFullYear()} {site.organization_name || title}. Todos os direitos reservados.
         </div>
       </footer>
+
+      <PublicCookieConsent
+        primaryColor={tokens.primary}
+        privacyHref={buildSiteHref(basePath, "/politica-de-privacidade")}
+        siteTitle={title}
+      />
     </div>
   );
+}
+
+function buildWhatsAppDefaultMessage(propertyTitle?: string, propertyCode?: string) {
+  const title = propertyTitle?.trim();
+  const code = propertyCode?.trim();
+  if (!title) {
+    return "Ola, vim pelo site e gostaria de receber mais informacoes.";
+  }
+  return `Ola, vim pelo site e tenho interesse no imovel ${title}${code ? ` (ref. ${code})` : ""}. Gostaria de receber mais informacoes.`;
 }
 
 function buildDesktopNavItems(items: SiteMenuItem[]) {

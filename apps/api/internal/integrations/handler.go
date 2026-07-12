@@ -341,12 +341,8 @@ func readJSONBodyWithOrganization(r *http.Request, organizationID string) ([]byt
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, err
 	}
-	if _, ok := payload["organization_id"]; !ok {
-		payload["organization_id"] = organizationID
-	}
-	if _, ok := payload["organizationId"]; !ok {
-		payload["organizationId"] = organizationID
-	}
+	payload["organization_id"] = organizationID
+	payload["organizationId"] = organizationID
 	return json.Marshal(payload)
 }
 

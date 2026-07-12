@@ -4,6 +4,7 @@
 alter table if exists public.pipelines
   add column if not exists is_active boolean default true,
   add column if not exists position integer default 0,
+  add column if not exists default_round_robin_id uuid,
   add column if not exists updated_at timestamptz default now();
 
 with ranked as (
@@ -55,6 +56,12 @@ alter table if exists public.round_robins
   add column if not exists pipeline_id uuid,
   add column if not exists current_position integer default 0,
   add column if not exists rules jsonb default '{}'::jsonb,
+  add column if not exists target_pipeline_id uuid,
+  add column if not exists last_assigned_index integer,
+  add column if not exists strategy text,
+  add column if not exists target_stage_id uuid,
+  add column if not exists settings jsonb default '{}'::jsonb,
+  add column if not exists reentry_behavior text,
   add column if not exists updated_at timestamptz default now();
 
 update public.round_robins rr
@@ -91,6 +98,9 @@ alter table if exists public.round_robin_rules
   add column if not exists organization_id uuid,
   add column if not exists name text,
   add column if not exists conditions jsonb default '{}'::jsonb,
+  add column if not exists match_type text,
+  add column if not exists match_value text,
+  add column if not exists match jsonb default '{}'::jsonb,
   add column if not exists created_at timestamptz default now(),
   add column if not exists updated_at timestamptz default now();
 

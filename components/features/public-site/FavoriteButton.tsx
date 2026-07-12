@@ -66,7 +66,7 @@ export function FavoriteButton({
         writeFavorites(organizationId, next);
       }}
       className={cn(
-        "inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/92 text-slate-700 shadow-sm transition hover:scale-105 hover:bg-white",
+        "inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/92 text-slate-700 transition hover:scale-105 hover:bg-white",
         className,
       )}
     >

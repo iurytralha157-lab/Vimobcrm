@@ -322,7 +322,10 @@ export async function submitContactForm(data: {
   name: string;
   email?: string;
   phone: string;
-  message?: string;
+  message: string;
+  best_time?: string;
+  privacy_accepted: boolean;
+  privacy_url?: string;
   property_id?: string;
   property_code?: string;
   session_id?: string | null;

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import type { HTMLAttributes } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -154,21 +153,15 @@ export function MenuTab() {
   ];
 
   return (
-    <div className="space-y-6">
-      <Card className="app-card">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Itens do Menu</CardTitle>
-              <CardDescription>Configure os links que aparecem no menu do site público</CardDescription>
-            </div>
-            <Button onClick={openAdd} size="sm">
-              <Plus className="w-4 h-4 mr-2" />
-              Adicionar Item
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
+    <>
+      <div className="app-card-soft border-0 p-4">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium">Itens do menu</h3>
+          <Button onClick={openAdd} size="sm">
+            <Plus className="w-4 h-4 mr-2" />
+            Adicionar item
+          </Button>
+        </div>
           {isLoading ? (
             <p className="text-sm text-muted-foreground">Carregando...</p>
           ) : items.length === 0 ? (
@@ -190,7 +183,7 @@ export function MenuTab() {
                           <div
                             ref={provided.innerRef}
                             {...(provided.draggableProps as HTMLAttributes<HTMLDivElement>)}
-                            className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                            className={`flex items-center gap-3 rounded-[6px] p-3 transition-colors ${
                               snapshot.isDragging ? "bg-accent shadow-lg" : "bg-background hover:bg-accent/50"
                             } ${!item.is_active ? "opacity-50" : ""}`}
                           >
@@ -229,8 +222,7 @@ export function MenuTab() {
               </Droppable>
             </DragDropContext>
           )}
-        </CardContent>
-      </Card>
+      </div>
 
       {/* Add/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -328,6 +320,6 @@ export function MenuTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }

@@ -28,11 +28,15 @@ declare
   target_trigger_name text;
 begin
   for target_table in
-    select distinct table_name
-    from information_schema.columns
-    where table_schema = 'public'
-      and column_name = 'organization_id'
-      and table_name not in (
+    select distinct c.table_name
+    from information_schema.columns c
+    join information_schema.tables t
+      on t.table_schema = c.table_schema
+     and t.table_name = c.table_name
+     and t.table_type = 'BASE TABLE'
+    where c.table_schema = 'public'
+      and c.column_name = 'organization_id'
+      and c.table_name not in (
         -- users.organization_id is a profile/default-context field, not a tenant-owned row.
         'users'
       )

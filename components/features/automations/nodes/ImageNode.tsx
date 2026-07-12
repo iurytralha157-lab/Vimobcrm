@@ -9,7 +9,7 @@ export const ImageNode = memo(({ data, selected }: NodeProps) => {
 
   return (
     <div className={`automation-node px-4 py-3 rounded-xl min-w-[220px] max-w-[280px] ${
-      selected ? 'ring-2 ring-blue-400/60' : ''
+      selected ? 'automation-node-selected' : ''
     }`} style={{ '--node-accent': '#3b82f6' } as React.CSSProperties}>
       <Handle type="target" position={Position.Left} className="!bg-blue-400 !w-3 !h-3 !border-2 !border-blue-500/50" />
       <div className="flex items-start gap-3">
@@ -24,7 +24,7 @@ export const ImageNode = memo(({ data, selected }: NodeProps) => {
         </div>
       </div>
       {url && (
-        <div className="mt-2 rounded-lg overflow-hidden border border-blue-500/20">
+        <div className="mt-2 rounded-lg overflow-hidden bg-white/10">
           <NextImage
             src={url}
             alt={caption || 'Preview'}

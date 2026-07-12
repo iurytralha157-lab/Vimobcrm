@@ -202,7 +202,7 @@ where not exists (
   where existing.session_id = recipient.session_id
     and existing.remote_jid = recipient.canonical_jid
 )
-on conflict (session_id, remote_jid) do nothing;
+on conflict (organization_id, session_id, remote_jid) do nothing;
 
 create temp table tmp_whatsapp_outbound_targets on commit drop as
 select
@@ -393,24 +393,14 @@ with latest_message as (
   from public.whatsapp_messages message
   where message.conversation_id in (select conversation_id from tmp_whatsapp_affected_conversations)
   order by message.conversation_id, coalesce(message.sent_at, message.created_at) desc, message.created_at desc
-), last_received as (
-  select
-    message.conversation_id,
-    max(coalesce(message.received_at, message.sent_at, message.created_at)) as last_received_at
-  from public.whatsapp_messages message
-  where message.conversation_id in (select conversation_id from tmp_whatsapp_affected_conversations)
-    and message.from_me = false
-  group by message.conversation_id
 )
 update public.whatsapp_conversations conversation
 set
   last_message = latest.preview,
   last_message_preview = latest.preview,
   last_message_at = latest.message_at,
-  last_message_received_at = received.last_received_at,
   updated_at = now()
 from latest_message latest
-left join last_received received on received.conversation_id = latest.conversation_id
 where conversation.id = latest.conversation_id
   and conversation.deleted_at is null;
 

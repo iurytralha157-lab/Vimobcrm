@@ -84,22 +84,41 @@ export interface PublicProperty {
   titulo: string | null;
   descricao: string | null;
   tipo_imovel: string | null;
+  finalidade?: string | null;
   valor_venda: number | null;
   valor_aluguel: number | null;
+  valor_condominio?: number | null;
+  iptu?: number | null;
+  taxa_de_servico?: number | null;
+  valor_itr?: number | null;
+  seguro_incendio?: number | null;
+  valor_venda_avaliado?: number | null;
+  valor_locacao_avaliado?: number | null;
   quartos: number | null;
   suites: number | null;
   banheiros: number | null;
   vagas: number | null;
   area_total: number | null;
   area_construida: number | null;
+  andar?: number | null;
   endereco: string | null;
   public_address_visibility?: string | null;
   bairro: string | null;
   cidade: string | null;
   estado: string | null;
+  condominio_nome?: string | null;
   cep: string | null;
   imagem_principal: string | null;
   fotos: string[] | null;
+  image_urls?: string[] | null;
+  detalhes_extras?: string[] | null;
+  proximidades?: string[] | null;
+  video_imovel?: string | null;
+  tour_virtual?: string | null;
+  aceita_financiamento?: boolean | null;
+  aceita_permuta?: boolean | null;
+  usou_fgts?: boolean | null;
+  exclusividade?: boolean | null;
   destaque: boolean | null;
   status: string | null;
   mobiliado?: boolean | null;
@@ -142,6 +161,7 @@ export interface PublicPropertiesData {
   types: string[];
   cities: string[];
   neighborhoods: string[];
+  condominiums: string[];
   purposes: string[];
 }
 
@@ -235,7 +255,7 @@ export async function getPublicProperties(
   organizationId: string,
   query: PublicSiteQuery,
 ): Promise<PublicPropertiesData> {
-  return safePublicData<PublicPropertiesData>(
+  const data = await safePublicData<PublicPropertiesData>(
     organizationId,
     "properties",
     query,
@@ -248,9 +268,19 @@ export async function getPublicProperties(
       types: [],
       cities: [],
       neighborhoods: [],
+      condominiums: [],
       purposes: [],
     },
   );
+
+  return {
+    ...data,
+    types: Array.isArray(data.types) ? data.types : [],
+    cities: Array.isArray(data.cities) ? data.cities : [],
+    neighborhoods: Array.isArray(data.neighborhoods) ? data.neighborhoods : [],
+    condominiums: Array.isArray(data.condominiums) ? data.condominiums : [],
+    purposes: Array.isArray(data.purposes) ? data.purposes : [],
+  };
 }
 
 export async function getPublicProperty(organizationId: string, propertyCode: string) {

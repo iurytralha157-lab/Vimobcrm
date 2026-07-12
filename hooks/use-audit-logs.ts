@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import type { Json } from '@/integrations/supabase/types';
+import { auditAPI } from '@/lib/api/audit';
 
 export interface AuditLog {
   id: string;
@@ -30,37 +30,7 @@ export interface AuditLogFilters {
 export function useAuditLogs(filters?: AuditLogFilters, page = 1, limit = 20) {
   return useQuery({
     queryKey: ['audit-logs', filters, page, limit],
-    queryFn: async () => {
-      let query = supabase
-        .from('audit_logs')
-        .select('*, user:users(id, name, email), organization:organizations(id, name)', { count: 'exact' })
-        .order('created_at', { ascending: false })
-        .range((page - 1) * limit, page * limit - 1);
-
-      if (filters?.organizationId) {
-        query = query.eq('organization_id', filters.organizationId);
-      }
-      if (filters?.userId) {
-        query = query.eq('user_id', filters.userId);
-      }
-      if (filters?.action) {
-        query = query.eq('action', filters.action);
-      }
-      if (filters?.entityType) {
-        query = query.eq('entity_type', filters.entityType);
-      }
-      if (filters?.startDate) {
-        query = query.gte('created_at', filters.startDate);
-      }
-      if (filters?.endDate) {
-        query = query.lte('created_at', filters.endDate);
-      }
-
-      const { data, error, count } = await query;
-
-      if (error) throw error;
-      return { data: data as AuditLog[], count: count || 0, totalPages: Math.ceil((count || 0) / limit) };
-    },
+    queryFn: () => auditAPI.list({ filters, page, limit }),
   });
 }
 
@@ -86,18 +56,15 @@ export function useCreateAuditLog() {
         return;
       }
       
-      const { error } = await supabase.from('audit_logs').insert([{
-        user_id: user.id,
-        organization_id: log.organization_id,
+      await auditAPI.create({
         action: log.action,
         entity_type: log.entity_type,
         entity_id: log.entity_id,
-        old_data: (log.old_data || null) as Json,
-        new_data: (log.new_data || null) as Json,
+        old_data: log.old_data,
+        new_data: log.new_data,
+        organization_id: log.organization_id,
         user_agent: navigator.userAgent,
-      }]);
-
-      if (error) throw error;
+      }, log.organization_id);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['audit-logs'] });
@@ -125,16 +92,15 @@ export async function logAuditAction(
       return;
     }
     
-    await supabase.from('audit_logs').insert([{
-      user_id: user.id,
-      organization_id: organizationId,
+    await auditAPI.create({
       action,
       entity_type: entityType,
       entity_id: entityId,
-      old_data: (oldData || null) as Json,
-      new_data: (newData || null) as Json,
+      old_data: oldData,
+      new_data: newData,
+      organization_id: organizationId,
       user_agent: navigator.userAgent,
-    }]);
+    }, organizationId);
   } catch (error) {
     // Silent fail for audit logs to prevent breaking the user experience
     // especially during login or critical actions

@@ -7,10 +7,11 @@ export const paymentsAPI = {
     })
   },
 
-  paymentStatus<T>(paymentId: string) {
+  paymentStatus<T>(paymentId: string, checkoutToken: string) {
     return vimobPublicAPIRequest<T>('/v1/public/payments/status', {
       query: {
         payment_id: paymentId,
+        checkout_token: checkoutToken,
       },
     })
   },

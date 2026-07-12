@@ -111,7 +111,12 @@ export const publicSiteContactSchema = z.object({
   name: z.string().trim().min(2, 'Informe seu nome').max(120, 'Nome muito longo'),
   email: z.string().trim().email('E-mail invalido').optional().or(z.literal('')),
   phone: z.string().trim().min(8, 'Informe um telefone valido').max(30, 'Telefone muito longo'),
-  message: z.string().trim().max(1000, 'Mensagem muito longa').optional().or(z.literal('')),
+  message: z.string().trim().min(2, 'Informe uma mensagem').max(1000, 'Mensagem muito longa'),
+  best_time: z.string().trim().max(80, 'Horario muito longo').optional().or(z.literal('')),
+  privacy_accepted: z.literal(true, {
+    errorMap: () => ({ message: 'Aceite a politica de privacidade para continuar' }),
+  }),
+  privacy_url: z.string().trim().max(300).optional().or(z.literal('')),
   property_id: z.string().uuid().optional(),
   property_code: z.string().trim().max(80).optional(),
   session_id: z.string().trim().optional().nullable(),

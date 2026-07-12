@@ -831,12 +831,12 @@ func (repo Repository) CreateOrganization(ctx context.Context, tenantContext ten
 
 	if _, err := tx.Exec(ctx, `
 		insert into public.users (id, organization_id, name, email, role, whatsapp, cpf, is_active)
-		values ($1::uuid, $2::uuid, $3, $4, 'admin', $5, $6, true)
+		values ($1::uuid, $2::uuid, $3, $4, 'user', $5, $6, true)
 		on conflict (id) do update set
 			organization_id = excluded.organization_id,
 			name = excluded.name,
 			email = excluded.email,
-			role = 'admin',
+			role = case when public.users.role = 'super_admin' then public.users.role else 'user' end,
 			is_active = true,
 			updated_at = now()
 	`, authUserID, orgID, adminName, adminEmail, cleanString(request.Whatsapp), cleanString(request.CPF)); err != nil {

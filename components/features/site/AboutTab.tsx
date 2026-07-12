@@ -1,4 +1,4 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -87,19 +87,17 @@ export function AboutTab<TFormData extends AboutFormFields>({ formData, setFormD
   };
 
   return (
-    <div className="space-y-6">
-      {/* Conteúdo Principal */}
-      <Card className="app-card">
-        <CardHeader>
-          <CardTitle>Conteúdo Principal</CardTitle>
-          <CardDescription>Título, subtítulo, texto e imagem da página Sobre</CardDescription>
-        </CardHeader>
-        <CardContent className="px-4 md:px-6 pb-5 space-y-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Left: Text fields */}
+    <Card className="app-card">
+      <CardHeader>
+        <CardTitle className="text-lg">Sobre</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4 px-4 pb-5 md:px-6">
+        <div className="app-card-soft border-0 p-4">
+          <h3 className="mb-4 text-sm font-medium">Conteúdo principal</h3>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label>Título da Página</Label>
+                <Label>Título da página</Label>
                 <Input
                   placeholder="Sobre a Nossa Imobiliária"
                   value={formData.about_title}
@@ -115,10 +113,9 @@ export function AboutTab<TFormData extends AboutFormFields>({ formData, setFormD
                   onChange={(e) => setFormData({ ...formData, about_subtitle: e.target.value })}
                   disabled={!isAdmin}
                 />
-                <p className="text-xs text-muted-foreground">Aparece acima do texto descritivo</p>
               </div>
               <div className="space-y-2">
-                <Label>Texto Descritivo</Label>
+                <Label>Texto descritivo</Label>
                 <Textarea
                   placeholder="Conte a história da sua imobiliária..."
                   value={formData.about_text}
@@ -129,7 +126,6 @@ export function AboutTab<TFormData extends AboutFormFields>({ formData, setFormD
               </div>
             </div>
 
-            {/* Right: Image */}
             <ImageUpload
               label="Imagem"
               description="PNG, JPG ou WEBP até 5MB"
@@ -141,117 +137,91 @@ export function AboutTab<TFormData extends AboutFormFields>({ formData, setFormD
               aspectRatio="video"
               disabled={!isAdmin}
             />
-
-
           </div>
 
-          <div className="flex items-center justify-between pt-2 border-t border-white/[0.055]">
-            <div className="space-y-0.5">
-              <Label>Exibir seção Sobre na Home</Label>
-              <p className="text-sm text-muted-foreground">
-                Mostra o conteúdo da página Sobre também na página inicial
-              </p>
-            </div>
+          <div className="mt-4 flex items-center justify-between gap-3 rounded-[6px] bg-background p-3">
+            <Label>Exibir seção Sobre na Home</Label>
             <Switch
               checked={formData.show_about_on_home}
               onCheckedChange={(checked) => setFormData({ ...formData, show_about_on_home: checked })}
               disabled={!isAdmin}
             />
           </div>
-        </CardContent>
-      </Card>
+        </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Estatísticas */}
-        <Card className="app-card">
-          <CardHeader>
-            <CardTitle>Estatísticas</CardTitle>
-            <CardDescription>Números em destaque exibidos no topo da página Sobre</CardDescription>
-          </CardHeader>
-          <CardContent className="px-4 md:px-6 pb-5 space-y-4">
-            {formData.about_stats.map((stat: AboutStat, index: number) => (
-              <div key={index} className="flex items-center gap-3">
-                <div className="flex-1 grid grid-cols-2 gap-3">
-                  <Input
-                    placeholder="500+"
-                    value={stat.value}
-                    onChange={(e) => updateStat(index, 'value', e.target.value)}
-                    disabled={!isAdmin}
-                  />
-                  <Input
-                    placeholder="Imóveis Vendidos"
-                    value={stat.label}
-                    onChange={(e) => updateStat(index, 'label', e.target.value)}
-                    disabled={!isAdmin}
-                  />
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="app-card-soft border-0 p-4">
+            <h3 className="mb-4 text-sm font-medium">Estatísticas</h3>
+            <div className="space-y-3">
+              {formData.about_stats.map((stat: AboutStat, index: number) => (
+                <div key={index} className="flex items-center gap-3 rounded-[6px] bg-background p-3">
+                  <div className="grid flex-1 grid-cols-2 gap-3">
+                    <Input
+                      placeholder="500+"
+                      value={stat.value}
+                      onChange={(e) => updateStat(index, 'value', e.target.value)}
+                      disabled={!isAdmin}
+                    />
+                    <Input
+                      placeholder="Imóveis Vendidos"
+                      value={stat.label}
+                      onChange={(e) => updateStat(index, 'label', e.target.value)}
+                      disabled={!isAdmin}
+                    />
+                  </div>
+                  {isAdmin && formData.about_stats.length > 1 && (
+                    <Button variant="ghost" size="icon" onClick={() => removeStat(index)} className="shrink-0 text-destructive hover:text-destructive">
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  )}
                 </div>
-                {isAdmin && formData.about_stats.length > 1 && (
-                  <Button variant="ghost" size="icon" onClick={() => removeStat(index)} className="text-destructive hover:text-destructive shrink-0">
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                )}
-              </div>
-            ))}
-            {isAdmin && formData.about_stats.length < 6 && (
-              <Button variant="outline" size="sm" onClick={addStat} className="w-full">
-                <Plus className="w-4 h-4 mr-2" />
-                Adicionar Estatística
-              </Button>
-            )}
-          </CardContent>
-        </Card>
+              ))}
+              {isAdmin && formData.about_stats.length < 6 && (
+                <Button variant="outline" size="sm" onClick={addStat} className="w-full">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Adicionar estatística
+                </Button>
+              )}
+            </div>
+          </div>
 
-        {/* Checkmarks */}
-        <Card className="app-card">
-          <CardHeader>
-            <CardTitle>Destaques</CardTitle>
-            <CardDescription>Itens com check exibidos abaixo do texto descritivo</CardDescription>
-          </CardHeader>
-          <CardContent className="px-4 md:px-6 pb-5 space-y-4">
-            {formData.about_checkmarks.map((item: string, index: number) => (
-              <div key={index} className="flex items-center gap-3">
-                <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0" style={{ borderColor: 'hsl(var(--primary))' }}>
-                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: 'hsl(var(--primary))' }} />
+          <div className="app-card-soft border-0 p-4">
+            <h3 className="mb-4 text-sm font-medium">Destaques</h3>
+            <div className="space-y-3">
+              {formData.about_checkmarks.map((item: string, index: number) => (
+                <div key={index} className="flex items-center gap-3 rounded-[6px] bg-background p-3">
+                  <Input
+                    value={item}
+                    onChange={(e) => updateCheckmark(index, e.target.value)}
+                    disabled={!isAdmin}
+                    className="flex-1"
+                  />
+                  {isAdmin && formData.about_checkmarks.length > 1 && (
+                    <Button variant="ghost" size="icon" onClick={() => removeCheckmark(index)} className="shrink-0 text-destructive hover:text-destructive">
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  )}
                 </div>
-                <Input
-                  value={item}
-                  onChange={(e) => updateCheckmark(index, e.target.value)}
-                  disabled={!isAdmin}
-                  className="flex-1"
-                />
-                {isAdmin && formData.about_checkmarks.length > 1 && (
-                  <Button variant="ghost" size="icon" onClick={() => removeCheckmark(index)} className="text-destructive hover:text-destructive shrink-0">
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                )}
-              </div>
-            ))}
-            {isAdmin && formData.about_checkmarks.length < 6 && (
-              <Button variant="outline" size="sm" onClick={addCheckmark} className="w-full">
-                <Plus className="w-4 h-4 mr-2" />
-                Adicionar Destaque
-              </Button>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+              ))}
+              {isAdmin && formData.about_checkmarks.length < 6 && (
+                <Button variant="outline" size="sm" onClick={addCheckmark} className="w-full">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Adicionar destaque
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
 
-
-
-      {/* Cards de Diferenciais */}
-      <Card className="app-card">
-        <CardHeader>
-          <CardTitle>Diferenciais</CardTitle>
-          <CardDescription>Cards com ícones exibidos na seção &quot;Por que escolher&quot;</CardDescription>
-        </CardHeader>
-        <CardContent className="px-4 md:px-6 pb-5 space-y-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="app-card-soft border-0 p-4">
+          <h3 className="mb-4 text-sm font-medium">Diferenciais</h3>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {formData.about_features.map((feature: AboutFeature, index: number) => (
-              <div key={index} className="border rounded-lg p-4 space-y-3">
+              <div key={index} className="space-y-3 rounded-[6px] bg-background p-4">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium text-muted-foreground">Diferencial {index + 1}</span>
                   {isAdmin && formData.about_features.length > 1 && (
-                    <Button variant="ghost" size="icon" onClick={() => removeFeature(index)} className="text-destructive hover:text-destructive h-8 w-8">
+                    <Button variant="ghost" size="icon" onClick={() => removeFeature(index)} className="h-8 w-8 text-destructive hover:text-destructive">
                       <Trash2 className="w-4 h-4" />
                     </Button>
                   )}
@@ -273,13 +243,13 @@ export function AboutTab<TFormData extends AboutFormFields>({ formData, setFormD
             ))}
           </div>
           {isAdmin && formData.about_features.length < 6 && (
-            <Button variant="outline" size="sm" onClick={addFeature} className="w-full">
+            <Button variant="outline" size="sm" onClick={addFeature} className="mt-4 w-full">
               <Plus className="w-4 h-4 mr-2" />
-              Adicionar Diferencial
+              Adicionar diferencial
             </Button>
           )}
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

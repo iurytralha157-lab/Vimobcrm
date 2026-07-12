@@ -199,8 +199,12 @@ func (repo Repository) SetParticipant(ctx context.Context, tenantContext tenant.
 		)
 		select $1::uuid, u.id, $3
 		from public.users u
-		where u.organization_id = $1::uuid
-		  and u.id = $2::uuid
+		join public.organization_members om
+		  on om.user_id = u.id
+		 and om.organization_id = $1::uuid
+		where u.id = $2::uuid
+		  and coalesce(u.is_active, false) = true
+		  and coalesce(om.is_active, false) = true
 		on conflict (organization_id, user_id)
 		do update set
 			participates = excluded.participates,
@@ -558,7 +562,7 @@ func (repo Repository) ranking(ctx context.Context, tenantContext tenant.Context
 		joinParticipants = `
 		left join public.gamification_participants gp
 		  on gp.user_id = u.id
-		 and gp.organization_id = u.organization_id`
+		 and gp.organization_id = om.organization_id`
 		participationFilter = "and coalesce(gp.participates, true) = true"
 	}
 	activityJoin := ""
@@ -576,7 +580,7 @@ func (repo Repository) ranking(ctx context.Context, tenantContext tenant.Context
 			group by organization_id, user_id
 		) gal
 		  on gal.user_id = u.id
-		 and gal.organization_id = u.organization_id`
+		 and gal.organization_id = om.organization_id`
 		activityPointsExpr = "gal.total_points"
 		activityLastExpr = "gal.last_activity_at"
 	}
@@ -601,13 +605,16 @@ func (repo Repository) ranking(ctx context.Context, tenantContext tenant.Context
 			`+activityPointsExpr+`,
 			`+activityLastExpr+`
 		from public.users u
+		join public.organization_members om
+		  on om.user_id = u.id
+		 and om.organization_id = $1::uuid
 		left join public.user_gamification_stats ugs
 		  on ugs.user_id = u.id
-		 and ugs.organization_id = u.organization_id
+		 and ugs.organization_id = om.organization_id
 		`+joinParticipants+`
 		`+activityJoin+`
-		where u.organization_id = $1::uuid
-		  and coalesce(u.is_active, true) = true
+		where coalesce(u.is_active, false) = true
+		  and coalesce(om.is_active, false) = true
 		  `+participationFilter+`
 	`, tenantContext.OrganizationID)
 	if err != nil {
@@ -1004,7 +1011,7 @@ func (repo Repository) participants(ctx context.Context, tenantContext tenant.Co
 	if hasParticipants {
 		join = `
 		left join public.gamification_participants gp
-		  on gp.organization_id = u.organization_id
+		  on gp.organization_id = om.organization_id
 		 and gp.user_id = u.id`
 		participatesExpr = "coalesce(gp.participates, true)"
 	}
@@ -1014,17 +1021,20 @@ func (repo Repository) participants(ctx context.Context, tenantContext tenant.Co
 			u.id::text,
 			coalesce(nullif(u.name, ''), u.email, 'Usuario'),
 			coalesce(u.email, ''),
-			coalesce(u.role, ''),
-			coalesce(u.is_active, true),
+			coalesce(om.role, 'user'),
+			(coalesce(u.is_active, false) and coalesce(om.is_active, false)),
 			`+participatesExpr+`,
 			coalesce(ugs.total_points, u.points, 0)
 		from public.users u
+		join public.organization_members om
+		  on om.user_id = u.id
+		 and om.organization_id = $1::uuid
 		left join public.user_gamification_stats ugs
-		  on ugs.organization_id = u.organization_id
+		  on ugs.organization_id = om.organization_id
 		 and ugs.user_id = u.id
 		`+join+`
-		where u.organization_id = $1::uuid
-		  and coalesce(u.is_active, true) = true
+		where coalesce(u.is_active, false) = true
+		  and coalesce(om.is_active, false) = true
 		order by coalesce(nullif(u.name, ''), u.email, 'Usuario')
 	`, tenantContext.OrganizationID)
 	if err != nil {

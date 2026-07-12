@@ -842,6 +842,7 @@ func (repo Repository) listMembers(ctx context.Context, organizationID string, r
 			rrm.id::text,
 			rrm.round_robin_id::text,
 			rrm.user_id::text,
+			rrm.team_id::text,
 			coalesce(rrm.position, 0),
 			rrm.weight,
 			coalesce(rrm.is_active, true),
@@ -858,7 +859,10 @@ func (repo Repository) listMembers(ctx context.Context, organizationID string, r
 			from public.round_robin_logs rrl
 			where rrl.organization_id = rrm.organization_id
 			  and rrl.round_robin_id = rrm.round_robin_id
-			  and rrl.assigned_user_id = rrm.user_id
+			  and (
+			    (rrm.user_id is not null and rrl.assigned_user_id = rrm.user_id)
+			    or (rrm.user_id is null and rrl.metadata->>'member_id' = rrm.id::text)
+			  )
 		) logs on true
 		where `+where+`
 		order by rrm.round_robin_id, coalesce(rrm.position, 0) asc, rrm.created_at asc
@@ -908,6 +912,7 @@ func (repo Repository) getMember(ctx context.Context, organizationID string, mem
 			rrm.id::text,
 			rrm.round_robin_id::text,
 			rrm.user_id::text,
+			rrm.team_id::text,
 			coalesce(rrm.position, 0),
 			rrm.weight,
 			coalesce(rrm.is_active, true),
@@ -924,7 +929,10 @@ func (repo Repository) getMember(ctx context.Context, organizationID string, mem
 			from public.round_robin_logs rrl
 			where rrl.organization_id = rrm.organization_id
 			  and rrl.round_robin_id = rrm.round_robin_id
-			  and rrl.assigned_user_id = rrm.user_id
+			  and (
+			    (rrm.user_id is not null and rrl.assigned_user_id = rrm.user_id)
+			    or (rrm.user_id is null and rrl.metadata->>'member_id' = rrm.id::text)
+			  )
 		) logs on true
 		where rrm.organization_id = $1::uuid
 		  and rrm.id = $2::uuid
@@ -1142,108 +1150,92 @@ func (repo Repository) insertMembers(ctx context.Context, tx pgx.Tx, organizatio
 	seen := map[string]struct{}{}
 
 	for _, member := range members {
-		userIDs, err := repo.resolveMemberUserIDs(ctx, tx, organizationID, member)
+		memberKey, userID, teamID, err := repo.resolveMemberEntry(ctx, tx, organizationID, member)
 		if err != nil {
 			return nil, err
 		}
-		for _, userID := range userIDs {
-			if _, exists := seen[userID]; exists {
-				continue
-			}
-			seen[userID] = struct{}{}
-
-			var nextPosition int
-			if err := tx.QueryRow(ctx, `
-				select coalesce(max(position), -1) + 1
-				from public.round_robin_members
-				where organization_id = $1::uuid
-				  and round_robin_id = $2::uuid
-			`, organizationID, roundRobinID).Scan(&nextPosition); err != nil {
-				return nil, err
-			}
-
-			var insertedID string
-			err = tx.QueryRow(ctx, `
-				insert into public.round_robin_members (
-					organization_id,
-					round_robin_id,
-					team_id,
-					user_id,
-					weight,
-					position,
-					is_active
-				)
-				values (
-					$1::uuid,
-					$2::uuid,
-					$3::uuid,
-					$4::uuid,
-					$5,
-					$6,
-					true
-				)
-				returning id::text
-			`, organizationID, roundRobinID, nullable(member.TeamID), userID, member.Weight, nextPosition).Scan(&insertedID)
-			if err != nil {
-				return nil, err
-			}
-			insertedIDs = append(insertedIDs, insertedID)
+		if _, exists := seen[memberKey]; exists {
+			continue
 		}
+		seen[memberKey] = struct{}{}
+
+		var nextPosition int
+		if err := tx.QueryRow(ctx, `
+			select coalesce(max(position), -1) + 1
+			from public.round_robin_members
+			where organization_id = $1::uuid
+			  and round_robin_id = $2::uuid
+		`, organizationID, roundRobinID).Scan(&nextPosition); err != nil {
+			return nil, err
+		}
+
+		var insertedID string
+		err = tx.QueryRow(ctx, `
+			insert into public.round_robin_members (
+				organization_id,
+				round_robin_id,
+				team_id,
+				user_id,
+				weight,
+				position,
+				is_active
+			)
+			values (
+				$1::uuid,
+				$2::uuid,
+				$3::uuid,
+				$4::uuid,
+				$5,
+				$6,
+				true
+			)
+			returning id::text
+		`, organizationID, roundRobinID, nullable(teamID), nullable(userID), member.Weight, nextPosition).Scan(&insertedID)
+		if err != nil {
+			return nil, err
+		}
+		insertedIDs = append(insertedIDs, insertedID)
 	}
 
 	return insertedIDs, nil
 }
 
-func (repo Repository) resolveMemberUserIDs(ctx context.Context, tx pgx.Tx, organizationID string, member memberInput) ([]string, error) {
+func (repo Repository) resolveMemberEntry(ctx context.Context, tx pgx.Tx, organizationID string, member memberInput) (string, *string, *string, error) {
 	if member.UserID != nil {
 		if err := repo.validateUser(ctx, tx, organizationID, *member.UserID); err != nil {
-			return nil, err
+			return "", nil, nil, err
 		}
-		return []string{*member.UserID}, nil
+		return "user:" + *member.UserID, member.UserID, nil, nil
 	}
 
 	if member.TeamID == nil {
-		return nil, ErrInvalidReference
+		return "", nil, nil, ErrInvalidReference
 	}
 
-	rows, err := tx.Query(ctx, `
-		select tm.user_id::text
-		from public.team_members tm
-		join public.users u
-		  on u.id = tm.user_id
-		 and coalesce(u.is_active, true) = true
-		left join public.organization_members om
-		  on om.organization_id = tm.organization_id
-		 and om.user_id = tm.user_id
-		where tm.organization_id = $1::uuid
-		  and tm.team_id = $2::uuid
-		  and coalesce(tm.is_active, true) = true
-		  and (
-			(om.id is not null and coalesce(om.is_active, false) = true)
-			or (u.organization_id = $1::uuid and coalesce(om.is_active, true) = true)
-		  )
-		order by tm.created_at asc
-	`, organizationID, *member.TeamID)
+	if err := repo.validateTeam(ctx, tx, organizationID, *member.TeamID); err != nil {
+		return "", nil, nil, err
+	}
+	return "team:" + *member.TeamID, nil, member.TeamID, nil
+}
+
+func (repo Repository) validateTeam(ctx context.Context, q queryer, organizationID string, teamID string) error {
+	var exists bool
+	err := q.QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.teams
+			where organization_id = $1::uuid
+			  and id = $2::uuid
+			  and coalesce(is_active, true) = true
+		)
+	`, organizationID, teamID).Scan(&exists)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	defer rows.Close()
-
-	userIDs := []string{}
-	for rows.Next() {
-		var userID string
-		if err := rows.Scan(&userID); err != nil {
-			return nil, err
-		}
-		userIDs = append(userIDs, userID)
+	if !exists {
+		return ErrInvalidReference
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(userIDs) == 0 {
-		return nil, ErrInvalidReference
-	}
-	return userIDs, nil
+	return nil
 }
 
 func (repo Repository) validateUser(ctx context.Context, q queryer, organizationID string, userID string) error {
@@ -1252,15 +1244,12 @@ func (repo Repository) validateUser(ctx context.Context, q queryer, organization
 		select exists (
 			select 1
 			from public.users u
-			left join public.organization_members om
+			join public.organization_members om
 			  on om.user_id = u.id
 			 and om.organization_id = $1::uuid
 			where u.id = $2::uuid
-			  and coalesce(u.is_active, true) = true
-			  and (
-				(om.id is not null and coalesce(om.is_active, false) = true)
-				or (u.organization_id = $1::uuid and coalesce(om.is_active, true) = true)
-			  )
+			  and coalesce(u.is_active, false) = true
+			  and coalesce(om.is_active, false) = true
 		)
 	`, organizationID, userID).Scan(&exists)
 	if err != nil {
@@ -1418,11 +1407,12 @@ func scanRule(row scanner) (Rule, error) {
 func scanMember(row scanner) (Member, error) {
 	var member Member
 	var weight pgtype.Int4
-	var userID, userName, userEmail, avatarURL pgtype.Text
+	var memberUserID, teamID, userID, userName, userEmail, avatarURL pgtype.Text
 	if err := row.Scan(
 		&member.ID,
 		&member.RoundRobinID,
-		&member.UserID,
+		&memberUserID,
+		&teamID,
 		&member.Position,
 		&weight,
 		&member.IsActive,
@@ -1435,6 +1425,8 @@ func scanMember(row scanner) (Member, error) {
 		return Member{}, err
 	}
 
+	member.UserID = textValue(memberUserID)
+	member.TeamID = textValue(teamID)
 	if weight.Valid {
 		member.Weight = int(weight.Int32)
 	}

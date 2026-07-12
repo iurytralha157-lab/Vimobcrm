@@ -31,14 +31,15 @@ export function PublicPropertyCard({
   const price = getPropertyPrice(property);
   const location = getPropertyLocation(property);
   const image = property.imagem_principal || property.fotos?.[0] || "/placeholder.svg";
+  const purpose = getPropertyPurpose(property);
+  const type = property.tipo_imovel?.trim();
 
   return (
     <Link
       href={buildSiteHref(basePath, `/imoveis/${code}`)}
-      className="group flex h-full flex-col overflow-hidden rounded-lg border transition hover:-translate-y-1 hover:shadow-xl"
+      className="group flex h-full flex-col overflow-hidden rounded-lg transition hover:-translate-y-1"
       style={{
         backgroundColor: tokens.card,
-        borderColor: `${tokens.foreground}18`,
       }}
     >
       <div className="relative aspect-[4/3] overflow-hidden bg-slate-200">
@@ -50,10 +51,10 @@ export function PublicPropertyCard({
           decoding="async"
         />
         <span
-          className="absolute left-3 top-3 rounded-md px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white"
+          className="absolute left-3 top-3 rounded-md px-3 py-1 text-xs font-light uppercase tracking-wide text-white"
           style={{ backgroundColor: tokens.primary }}
         >
-          {getPropertyPurpose(property)}
+          {purpose}
         </span>
         <FavoriteButton
           organizationId={site.organization_id}
@@ -63,9 +64,22 @@ export function PublicPropertyCard({
       </div>
 
       <div className="flex flex-1 flex-col p-4">
-        <p className="text-xs font-semibold uppercase tracking-wide opacity-60" style={{ color: tokens.foreground }}>
-          Ref: {code}
-        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className="inline-flex h-6 items-center rounded-md px-2.5 text-[11px] font-light uppercase tracking-wide text-white"
+            style={{ backgroundColor: tokens.primary }}
+          >
+            {code}
+          </span>
+          {type ? (
+            <span
+              className="inline-flex h-6 items-center rounded-md px-2.5 text-[11px] font-light uppercase tracking-wide text-white"
+              style={{ backgroundColor: tokens.primary }}
+            >
+              {type}
+            </span>
+          ) : null}
+        </div>
         <h3 className="mt-2 min-h-12 text-base font-semibold leading-snug" style={{ color: tokens.foreground }}>
           {title}
         </h3>
@@ -105,10 +119,10 @@ export function PublicPropertyCard({
         </div>
 
         <div className="mt-auto pt-5">
-          <p className="text-xl font-bold" style={{ color: tokens.primary }}>
+          <p className="text-xl font-light" style={{ color: tokens.primary }}>
             {formatPrice(price)}
             {property.valor_aluguel && !property.valor_venda ? (
-              <span className="ml-1 text-sm font-medium opacity-70">/mes</span>
+              <span className="ml-1 text-sm font-normal opacity-70">/mes</span>
             ) : null}
           </p>
         </div>

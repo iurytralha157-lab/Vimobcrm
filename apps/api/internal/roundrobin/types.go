@@ -76,7 +76,7 @@ type Rule struct {
 type Member struct {
 	ID           string       `json:"id"`
 	RoundRobinID string       `json:"roundRobinId"`
-	UserID       string       `json:"userId"`
+	UserID       string       `json:"userId,omitempty"`
 	TeamID       string       `json:"teamId,omitempty"`
 	Position     int          `json:"position"`
 	Weight       int          `json:"weight"`
