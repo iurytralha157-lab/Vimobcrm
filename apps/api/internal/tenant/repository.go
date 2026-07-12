@@ -200,9 +200,8 @@ func (repo Repository) storeCachedContext(key string, tenantContext Context) {
 
 func cloneContext(source Context) Context {
 	clone := source
-	if source.Permissions != nil {
-		clone.Permissions = append([]string(nil), source.Permissions...)
-	}
+	// The API contract requires an array even when the role has no explicit permissions.
+	clone.Permissions = append([]string{}, source.Permissions...)
 	if source.LedTeamIDs != nil {
 		clone.LedTeamIDs = append([]string(nil), source.LedTeamIDs...)
 	}

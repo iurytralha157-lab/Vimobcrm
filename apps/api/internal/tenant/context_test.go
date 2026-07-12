@@ -1,6 +1,10 @@
 package tenant
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestContextHasPermission(t *testing.T) {
 	tests := []struct {
@@ -41,6 +45,27 @@ func TestContextHasPermission(t *testing.T) {
 				t.Fatalf("HasPermission() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCloneContextPreservesEmptyPermissionsArray(t *testing.T) {
+	for _, permissions := range [][]string{nil, {}} {
+		cloned := cloneContext(Context{Permissions: permissions})
+
+		if cloned.Permissions == nil {
+			t.Fatal("expected empty permissions to remain a non-nil array")
+		}
+		if len(cloned.Permissions) != 0 {
+			t.Fatalf("expected no permissions, got %v", cloned.Permissions)
+		}
+
+		payload, err := json.Marshal(cloned)
+		if err != nil {
+			t.Fatalf("marshal cloned context: %v", err)
+		}
+		if !strings.Contains(string(payload), `"permissions":[]`) {
+			t.Fatalf("expected permissions array in JSON, got %s", payload)
+		}
 	}
 }
 
