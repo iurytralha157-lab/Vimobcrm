@@ -38,6 +38,7 @@ export async function proxy(request: NextRequest) {
     '/agenda',
     '/properties',
     '/automations',
+    '/attention',
     '/settings',
     '/notifications',
     '/help',

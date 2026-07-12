@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTeams } from '@/hooks/use-teams';
 import { useAllTeamPipelines } from '@/hooks/use-team-pipelines';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
+import { isTenantContextForOrganization } from '@/lib/access/tenant-navigation';
 
 type TeamPipelineAccess = {
   team_id: string;
@@ -10,11 +11,12 @@ type TeamPipelineAccess = {
 };
 
 export function useUserAccessScope() {
-  const { profile, organization, isSuperAdmin, userOrganizations } = useAuth();
+  const { profile, organization, tenantContext, isSuperAdmin, userOrganizations } = useAuth();
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
   const profileId = profile?.id;
   const profileRole = profile?.role;
   const activeOrganizationId = organization?.id || profile?.organization_id;
+  const hasCurrentTenantContext = isTenantContextForOrganization(activeOrganizationId, tenantContext);
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
   const isAdminProfile =
     isSuperAdmin ||
@@ -55,7 +57,9 @@ export function useUserAccessScope() {
 
     return {
       isAdmin,
-      isTeamLeader: ledTeams.length > 0,
+      isTeamLeader: hasCurrentTenantContext && tenantContext
+        ? (tenantContext.isTeamLeader ?? ledTeams.length > 0)
+        : ledTeams.length > 0,
       ledTeams,
       ledTeamIds,
       ledUserIds,
@@ -64,5 +68,5 @@ export function useUserAccessScope() {
       canTransferAnyLead: isAdmin || hasPermission('lead_transfer') || hasPermission('lead_edit_all'),
       isLoading: permissionsLoading || (shouldLoadTeams && teamsLoading) || (shouldLoadTeamPipelines && teamPipelinesLoading),
     };
-  }, [hasPermission, isAdminProfile, permissionsLoading, profileId, shouldLoadTeamPipelines, shouldLoadTeams, teamPipelineRows, teamPipelinesLoading, teams, teamsLoading]);
+  }, [hasCurrentTenantContext, hasPermission, isAdminProfile, permissionsLoading, profileId, shouldLoadTeamPipelines, shouldLoadTeams, teamPipelineRows, teamPipelinesLoading, teams, teamsLoading, tenantContext]);
 }

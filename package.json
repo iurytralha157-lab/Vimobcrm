@@ -11,7 +11,7 @@
     "api:fmt": "gofmt -w apps/api packages/auth packages/db",
     "api:test": "go test ./apps/api/... ./packages/auth/... ./packages/db/...",
     "load:api": "node scripts/load/api-read-smoke.mjs",
-    "validation:test": "tsc -p tsconfig.validation-tests.json && node --test .validation-tests/lib/validation/leads.test.js .validation-tests/lib/validation/pipelines.test.js .validation-tests/lib/validation/users.test.js .validation-tests/lib/validation/whatsapp.test.js .validation-tests/lib/validation/domains.test.js .validation-tests/lib/validation/attention.test.js"
+    "validation:test": "tsc -p tsconfig.validation-tests.json && node --test .validation-tests/lib/validation/leads.test.js .validation-tests/lib/validation/pipelines.test.js .validation-tests/lib/validation/users.test.js .validation-tests/lib/validation/whatsapp.test.js .validation-tests/lib/validation/domains.test.js .validation-tests/lib/validation/attention.test.js .validation-tests/lib/access/navigation.test.js .validation-tests/lib/access/tenant-navigation.test.js"
   },
   "dependencies": {
     "@capacitor/core": "^8.4.0",

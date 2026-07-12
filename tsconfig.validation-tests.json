@@ -17,6 +17,10 @@
     "lib/validation/pipelines.ts",
     "lib/validation/users.ts",
     "lib/validation/whatsapp.ts",
-    "lib/validation/*.test.ts"
+    "lib/validation/*.test.ts",
+    "lib/access/navigation.ts",
+    "lib/access/navigation.test.ts",
+    "lib/access/tenant-navigation.ts",
+    "lib/access/tenant-navigation.test.ts"
   ]
 }

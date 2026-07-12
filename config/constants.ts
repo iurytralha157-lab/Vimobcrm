@@ -4,6 +4,7 @@ export const FEATURES = {
   ENABLE_PWA: true,
   ENABLE_NOTIFICATIONS: true,
   ENABLE_INTEGRATIONS: true,
+  ENABLE_ATTENTION_CENTER: false,
 } as const
 
 // Routes

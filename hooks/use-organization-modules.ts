@@ -1,8 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { DEFAULT_ENABLED_MODULE_KEYS, type SystemModuleKey } from '@/config/constants';
 import { settingsAPI, type OrganizationModule } from '@/lib/api/settings';
+import {
+  getTenantEnabledModules,
+  hasDefaultModule,
+  isTenantContextForOrganization,
+} from '@/lib/access/tenant-navigation';
 
 export type ModuleName = SystemModuleKey;
 
@@ -10,22 +14,15 @@ export type ModuleName = SystemModuleKey;
 export const DEFAULT_ENABLED_MODULES: ModuleName[] = [...DEFAULT_ENABLED_MODULE_KEYS];
 
 export function useOrganizationModules() {
-  const { organization, profile, loading: authLoading } = useAuth();
+  const { organization, profile, tenantContext, loading: authLoading } = useAuth();
   const orgId = organization?.id || profile?.organization_id;
-  const [readyOrgId, setReadyOrgId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!orgId || authLoading) return undefined;
-
-    const timeout = setTimeout(() => setReadyOrgId(orgId), 1200);
-    return () => clearTimeout(timeout);
-  }, [authLoading, orgId]);
-  const ready = !!orgId && readyOrgId === orgId;
+  const hasCurrentTenantContext = isTenantContextForOrganization(orgId, tenantContext);
 
   const {
     data: modules = [],
     error,
     isLoading: modulesLoading,
+    isSuccess: modulesLoaded,
     refetch,
   } = useQuery({
     queryKey: ['organization-modules', orgId],
@@ -33,15 +30,13 @@ export function useOrganizationModules() {
       if (!orgId) return [];
       return settingsAPI.listModules(orgId);
     },
-    enabled: ready && !!orgId,
-    placeholderData: (previousModules) => previousModules ?? [],
+    enabled: !authLoading && !!orgId,
     staleTime: 1000 * 60 * 5,
     gcTime: 1000 * 60 * 15,
     refetchOnWindowFocus: false,
   });
 
-  // Consider loading if auth is still loading OR if we have an org but modules aren't loaded yet
-  const isLoading = authLoading || (!!orgId && (!ready || modulesLoading));
+  const isLoading = authLoading || (!!orgId && !hasCurrentTenantContext && modulesLoading);
 
   // Check if a specific module is enabled
   const hasModule = (moduleName: ModuleName): boolean => {
@@ -50,11 +45,17 @@ export function useOrganizationModules() {
     // if (isSuperAdmin && orgId) return true;
 
 
-    // If still loading, only return true for default enabled modules to prevent flash
-    if (isLoading) return DEFAULT_ENABLED_MODULES.includes(moduleName);
-
     // If no organization, no modules available
     if (!orgId) return false;
+
+    // The authenticated tenant context already contains the effective module list.
+    // Use it until the detailed settings query is available.
+    if (!modulesLoaded && hasCurrentTenantContext && tenantContext) {
+      return getTenantEnabledModules(tenantContext).includes(moduleName);
+    }
+
+    // Keep conservative defaults only when the context could not be resolved yet.
+    if (!modulesLoaded) return hasDefaultModule(moduleName);
 
     // Find the module in the list
     const moduleRecord = modules.find(m => m.module_name === moduleName);
@@ -71,6 +72,10 @@ export function useOrganizationModules() {
   // Get list of all enabled modules
   const enabledModules = (): ModuleName[] => {
     if (!orgId) return [];
+
+    if (!modulesLoaded && hasCurrentTenantContext && tenantContext) {
+      return getTenantEnabledModules(tenantContext);
+    }
 
     // Start with default list
     let list = [...DEFAULT_ENABLED_MODULES];

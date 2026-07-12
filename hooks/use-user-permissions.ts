@@ -1,6 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { meAPI } from '@/lib/api/me';
+import {
+  getTenantPermissions,
+  isTenantContextForOrganization,
+} from '@/lib/access/tenant-navigation';
 
 interface UserPermissions {
   permissions: string[];
@@ -14,10 +18,15 @@ interface UserPermissions {
  * Admins and super admins always have all permissions.
  */
 export function useUserPermissions(): UserPermissions {
-  const { profile, organization, isSuperAdmin } = useAuth();
+  const { profile, organization, tenantContext, isSuperAdmin } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
+  const hasCurrentTenantContext = isTenantContextForOrganization(organizationId, tenantContext);
+  const initialPermissions = hasCurrentTenantContext && tenantContext
+    ? getTenantPermissions(tenantContext)
+    : undefined;
 
-  const { data: permissions = [], isLoading } = useQuery({
-    queryKey: ['user-permissions', profile?.id, organization?.id],
+  const { data: permissions = [], isLoading: permissionsLoading } = useQuery({
+    queryKey: ['user-permissions', profile?.id, organizationId],
     queryFn: async () => {
       if (!profile?.id) return [];
 
@@ -27,7 +36,7 @@ export function useUserPermissions(): UserPermissions {
       }
 
       try {
-        const response = await meAPI.getMe(organization?.id || profile.organization_id);
+        const response = await meAPI.getMe(organizationId);
         const context = response.context;
         if (context.isSuperAdmin || context.memberRole === 'owner' || context.memberRole === 'admin') {
           return ['*'];
@@ -38,8 +47,10 @@ export function useUserPermissions(): UserPermissions {
       }
     },
     enabled: !!profile?.id,
+    initialData: initialPermissions,
     staleTime: 1000 * 60 * 5, // 5 minutes
   });
+  const isLoading = permissionsLoading && !hasCurrentTenantContext;
 
   const hasPermission = (key: string): boolean => {
     // Super admin always has permission

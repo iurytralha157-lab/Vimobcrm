@@ -10,6 +10,10 @@ export type TenantContext = {
   memberRole?: string
   permissions: string[]
   enabledModules: string[]
+  isTeamLeader: boolean
+  ledTeamIds?: string[]
+  ledUserIds?: string[]
+  ledPipelineIds?: string[]
   isSuperAdmin: boolean
 }
 

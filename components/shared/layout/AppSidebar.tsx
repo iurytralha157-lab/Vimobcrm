@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { useOrganizationModules, type ModuleName } from '@/hooks/use-organization-modules';
+import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useUserAccessScope } from '@/hooks/use-user-access-scope';
 import { useSidebar } from '@/contexts/SidebarContext';
@@ -25,6 +25,10 @@ import { isBillingBlockedStatus } from '@/lib/billing-access';
 import { canUseFinancialModule } from '@/lib/financial-access';
 import { Button } from '@/components/ui/button';
 import { canManageOrganization } from '@/lib/access/organization';
+import {
+  filterNavigationItems,
+  type NavigationAccessItem,
+} from '@/lib/access/navigation';
 
 const DEFAULT_BRAND_LOGO_DARK = "/images/logo-white.png";
 const DEFAULT_BRAND_LOGO_LIGHT = "/images/logo-black.png";
@@ -37,15 +41,9 @@ const SIDEBAR_NAV_RESET =
 const SIDEBAR_NAV_TEXT = "font-sans text-sm font-extralight leading-none tracking-wide";
 const SIDEBAR_NAV_CHILD_TEXT = "font-sans text-sm font-extralight leading-none tracking-wide";
 
-interface NavItem {
+interface NavItem extends NavigationAccessItem {
   icon: React.ElementType;
   labelKey: string;
-  path: string;
-  module?: ModuleName;
-  permission?: string;
-  anyPermissions?: string[];
-  adminOnly?: boolean;
-  superAdminOnly?: boolean;
   children?: NavItem[];
 }
 
@@ -79,7 +77,8 @@ const allNavItems: NavItem[] = [
     icon: BellRing,
     labelKey: 'attentionCenter',
     path: '/attention',
-    module: 'crm'
+    module: 'crm',
+    feature: 'ENABLE_ATTENTION_CENTER'
   }, {
     icon: MessageSquare, // Substituído o WhatsAppIcon pelo padrão
     labelKey: 'conversations',
@@ -315,75 +314,27 @@ export const AppSidebar = React.memo(function AppSidebar() {
       }];
     }
 
-    const canAccessAsTeamLeader = (path?: string) =>
-      isTeamLeader &&
-      (
-        path === '/crm/management' ||
-        path === '/crm/management?tab=teams' ||
-        path === '/crm/management?tab=distribution'
-      );
-
-    const filterItems = (items: NavItem[]): NavItem[] => {
-      return items.filter(item => {
-        if (item.superAdminOnly && !isSuperAdmin) return false;
-        if (item.module === 'financial' && !canAccessFinancialModule) return false;
-        if (item.module && !hasModule(item.module)) return false;
-        if (item.adminOnly && !canAccessAdminItems) return false;
-        if (item.permission && !hasPermission(item.permission)) return false;
-        if (item.anyPermissions && !item.anyPermissions.some(permission => hasPermission(permission))) {
-          if (!canAccessAsTeamLeader(item.path)) return false;
-        }
-        return true;
-      }).map(item => {
-        if (item.children) {
-          const filteredChildren = filterItems(item.children);
-          return {
-            ...item,
-            children: filteredChildren.length > 0 ? filteredChildren : undefined
-          };
-        }
-        return item;
-      });
-    };
-
-    return filterItems(allNavItems);
+    return filterNavigationItems(allNavItems, {
+      canAccessAdminItems,
+      canAccessFinancialModule,
+      hasModule,
+      hasPermission,
+      isSuperAdmin,
+      isTeamLeader,
+    });
   }, [canAccessFinancialModule, hasModule, hasPermission, canAccessAdminItems, isBillingBlocked, isTeamLeader, isSuperAdmin]);
 
   const computedBottomItems = useMemo(() => {
     if (isBillingBlocked) return [];
 
-    const canAccessAsTeamLeader = (path?: string) =>
-      isTeamLeader &&
-      (
-        path === '/crm/management' ||
-        path === '/crm/management?tab=teams' ||
-        path === '/crm/management?tab=distribution'
-      );
-
-    const filterItems = (items: NavItem[]): NavItem[] => {
-      return items.filter(item => {
-        if (item.superAdminOnly && !isSuperAdmin) return false;
-        if (item.module === 'financial' && !canAccessFinancialModule) return false;
-        if (item.module && !hasModule(item.module)) return false;
-        if (item.adminOnly && !canAccessAdminItems) return false;
-        if (item.permission && !hasPermission(item.permission)) return false;
-        if (item.anyPermissions && !item.anyPermissions.some(permission => hasPermission(permission))) {
-          if (!canAccessAsTeamLeader(item.path)) return false;
-        }
-        return true;
-      }).map(item => {
-        if (item.children) {
-          const filteredChildren = filterItems(item.children);
-          return {
-            ...item,
-            children: filteredChildren.length > 0 ? filteredChildren : undefined
-          };
-        }
-        return item;
-      });
-    };
-
-    return filterItems(bottomItems);
+    return filterNavigationItems(bottomItems, {
+      canAccessAdminItems,
+      canAccessFinancialModule,
+      hasModule,
+      hasPermission,
+      isSuperAdmin,
+      isTeamLeader,
+    });
   }, [canAccessAdminItems, canAccessFinancialModule, hasModule, hasPermission, isBillingBlocked, isSuperAdmin, isTeamLeader]);
 
   const getLabel = (labelKey: string): string => {

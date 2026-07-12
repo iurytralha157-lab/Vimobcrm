@@ -8,7 +8,7 @@ import { logAuditAction } from '@/hooks/use-audit-logs';
 import { performanceTracker } from '@/lib/performance';
 import { performFullCacheClear } from '@/lib/cache-utils';
 import { ROUTES, getPublicAppUrl } from '@/config/constants';
-import { meAPI } from '@/lib/api/me';
+import { meAPI, type TenantContext } from '@/lib/api/me';
 
 const isAuthDebugEnabled =
   process.env.NODE_ENV !== 'production' ||
@@ -111,6 +111,7 @@ interface AuthContextType {
   session: Session | null;
   profile: UserProfile | null;
   organization: Organization | null;
+  tenantContext: TenantContext | null;
   loading: boolean;
   isSuperAdmin: boolean;
   impersonating: ImpersonateSession | null;
@@ -138,6 +139,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [organization, setOrganization] = useState<Organization | null>(null);
+  const [tenantContext, setTenantContext] = useState<TenantContext | null>(null);
   const [loading, setLoading] = useState(true);
   const [authInitialized, setAuthInitialized] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
@@ -221,6 +223,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         setProfile(profileData);
         setOrganization(response.organization as Organization | null);
+        setTenantContext(response.context);
 
         if (response.context.organizationId) {
           localStorage.setItem(
@@ -457,6 +460,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setProfile(null);
       setOrganization(null);
+      setTenantContext(null);
       setIsSuperAdmin(false);
       setImpersonating(null);
       localStorage.removeItem('impersonating');
@@ -728,6 +732,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       session,
       profile,
       organization,
+      tenantContext,
       loading,
       isSuperAdmin,
       impersonating,
