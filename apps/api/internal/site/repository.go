@@ -682,8 +682,22 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 		propertyID = normalizedPropertyID
 	}
 
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lead intake runs from an AFTER INSERT trigger. The API uses a direct
+	// Postgres connection, so there is no PostgREST JWT claim unless we set the
+	// trusted server role for this transaction explicitly.
+	if _, err := tx.Exec(ctx, `select set_config('request.jwt.claim.role', 'service_role', true)`); err != nil {
+		return nil, err
+	}
+
 	var leadID string
-	err := repo.db.Pool().QueryRow(ctx, `
+	var reentry bool
+	err = tx.QueryRow(ctx, `
 		insert into public.leads (
 			organization_id,
 			property_id,
@@ -691,13 +705,11 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 			name,
 			email,
 			phone,
-			whatsapp,
 			property_code,
 			message,
 			initial_message,
 			source,
 			source_detail,
-			source_session_id,
 			visitor_session_id,
 			status,
 			deal_status,
@@ -711,13 +723,11 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 			$3,
 			$4,
 			$5,
-			$5,
 			$6,
 			$7,
 			$7,
 			'site',
 			'public_site',
-			$8,
 			$8,
 			'new',
 			'open',
@@ -729,15 +739,57 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 				'privacy_url', $11
 			)
 		)
-		returning id::text
-	`, organizationID, propertyID, name, optionalText(request.Email), phone, optionalText(request.PropertyCode), message, optionalText(request.SessionID), optionalText(request.BestTime), request.PrivacyAccepted, optionalText(request.PrivacyURL)).Scan(&leadID)
+		on conflict (organization_id, normalize_phone(phone))
+		where phone is not null
+		  and btrim(phone) <> ''
+		  and normalize_phone(phone) is not null
+		  and normalize_phone(phone) <> ''
+		do update set
+			property_id = coalesce(excluded.property_id, leads.property_id),
+			interest_property_id = coalesce(excluded.interest_property_id, leads.interest_property_id),
+			name = excluded.name,
+			email = coalesce(nullif(excluded.email, ''), leads.email),
+			phone = excluded.phone,
+			property_code = coalesce(nullif(excluded.property_code, ''), leads.property_code),
+			message = excluded.message,
+			initial_message = excluded.initial_message,
+			source = excluded.source,
+			source_detail = excluded.source_detail,
+			visitor_session_id = coalesce(nullif(excluded.visitor_session_id, ''), leads.visitor_session_id),
+			status = 'new',
+			deal_status = 'open',
+			won_at = null,
+			lost_at = null,
+			lost_reason = null,
+			last_entry_at = now(),
+			reentry_count = coalesce(leads.reentry_count, 0) + 1,
+			updated_at = now(),
+			metadata = coalesce(leads.metadata, '{}'::jsonb)
+				|| excluded.metadata
+				|| jsonb_build_object('reentry', true)
+		returning id::text, (xmax <> 0)
+	`, organizationID, propertyID, name, optionalText(request.Email), phone, optionalText(request.PropertyCode), message, optionalText(request.SessionID), optionalText(request.BestTime), request.PrivacyAccepted, optionalText(request.PrivacyURL)).Scan(&leadID, &reentry)
 	if err != nil {
+		return nil, err
+	}
+
+	// INSERT already invokes the intake trigger. An existing unassigned lead
+	// needs an explicit retry so a new site entry can join the active queue.
+	if reentry {
+		var distributionResult []byte
+		if err := tx.QueryRow(ctx, `select public.handle_lead_intake($1::uuid)`, leadID).Scan(&distributionResult); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 
 	return map[string]any{
 		"success": true,
 		"lead_id": leadID,
+		"reentry": reentry,
 	}, nil
 }
 
