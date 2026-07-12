@@ -48,6 +48,7 @@ import {
   Megaphone,
   Plug,
   Bot,
+  BellRing,
 } from 'lucide-react';
 
 const DEFAULT_BRAND_LOGO_DARK = "/images/logo-white.png";
@@ -85,6 +86,7 @@ const allNavItems: NavItem[] = [
     ],
   },
   { icon: Kanban, labelKey: 'pipelines', path: '/crm/pipelines', module: 'crm' },
+  { icon: BellRing, labelKey: 'attentionCenter', path: '/attention', module: 'crm' },
   { icon: MessageSquare, labelKey: 'conversations', path: '/crm/conversas', module: 'whatsapp' },
   { icon: Users, labelKey: 'contacts', path: '/crm/contacts', module: 'crm' },
   {

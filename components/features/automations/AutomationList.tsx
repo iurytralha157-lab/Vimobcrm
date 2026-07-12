@@ -29,9 +29,9 @@ import {
   Automation,
   TriggerType,
   TRIGGER_TYPE_LABELS,
-  useAutomationExecutions,
+  useAutomationExecutionSummaries,
   useAutomations,
-  useCancelExecution,
+  useCancelAutomationExecutions,
   useDeleteAutomation,
   useDuplicateAutomation,
   useToggleAutomation,
@@ -40,6 +40,7 @@ import { usePipelines, useStages } from '@/hooks/use-stages';
 import { useTags } from '@/hooks/use-tags';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { format } from 'date-fns';
+import { VimobAPIError } from '@/lib/api/vimob-client';
 
 interface AutomationListProps {
   onEdit: (automationId: string) => void;
@@ -97,30 +98,24 @@ export function AutomationList({
   allowEditing = true,
 }: AutomationListProps) {
   const isMobile = useIsMobile();
-  const { data: automations, isLoading } = useAutomations();
-  const { data: executions } = useAutomationExecutions();
+  const { data: automations, isLoading, error, refetch } = useAutomations();
+  const { data: executionSummaries, error: summariesError, refetch: refetchSummaries } = useAutomationExecutionSummaries();
   const deleteAutomation = useDeleteAutomation();
   const toggleAutomation = useToggleAutomation();
   const duplicateAutomation = useDuplicateAutomation();
-  const cancelExecution = useCancelExecution();
+  const cancelExecutions = useCancelAutomationExecutions();
   const canOpenEditor = canManage && allowEditing && !isMobile;
   const showCreateAction = canCreate && canOpenEditor && onCreate;
 
   const getExecutionStats = (automationId: string) => {
-    const automationExecutions = executions?.filter((execution) => execution.automation_id === automationId) || [];
+    const summary = executionSummaries?.find((item) => item.automationId === automationId);
     return {
-      running: automationExecutions.filter((execution) => execution.status === 'running' || execution.status === 'waiting').length,
-      completed: automationExecutions.filter((execution) => execution.status === 'completed').length,
-      failed: automationExecutions.filter((execution) => execution.status === 'failed').length,
+      running: (summary?.queued ?? 0) + (summary?.running ?? 0) + (summary?.waiting ?? 0),
+      completed: summary?.completed ?? 0,
+      failed: summary?.failed ?? 0,
+      total: summary?.total ?? 0,
     };
   };
-
-  const getActiveExecutions = (automationId: string) =>
-    executions?.filter(
-      (execution) =>
-        execution.automation_id === automationId &&
-        (execution.status === 'running' || execution.status === 'waiting'),
-    ) || [];
 
   const handleDuplicate = (automation: Automation, event: MouseEvent) => {
     event.stopPropagation();
@@ -131,9 +126,10 @@ export function AutomationList({
   const handleStop = (automationId: string, event: MouseEvent) => {
     event.stopPropagation();
     if (!canManage) return;
-    getActiveExecutions(automationId).forEach((execution) => {
-      cancelExecution.mutate(execution.id);
-    });
+    const stats = getExecutionStats(automationId);
+    if (stats.running === 0) return;
+    if (!window.confirm(`Interromper todas as ${stats.running} execução(ões) ativa(s) desta automação? Um envio já em andamento ainda pode ser concluído.`)) return;
+    cancelExecutions.mutate(automationId);
   };
 
   const handleOpenCard = (automationId: string) => {
@@ -142,7 +138,7 @@ export function AutomationList({
       return;
     }
 
-    if (!isMobile) onViewHistory?.(automationId);
+    onViewHistory?.(automationId);
   };
 
   if (isLoading) {
@@ -153,20 +149,44 @@ export function AutomationList({
     );
   }
 
+  if (error) {
+    const moduleUnavailable = error instanceof VimobAPIError
+      && error.status === 403
+      && error.code === 'module_unavailable';
+    return (
+      <div className="flex min-h-[360px] flex-col items-center justify-center rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface)] px-6 text-center" role="alert">
+        <AlertCircle className="mb-3 h-9 w-9 text-destructive" aria-hidden="true" />
+        <h3 className="text-base font-semibold">
+          {moduleUnavailable ? 'Módulo de automações indisponível' : 'Não foi possível carregar as automações'}
+        </h3>
+        <p className="mt-2 max-w-md text-sm text-muted-foreground">
+          {moduleUnavailable
+            ? 'A organização selecionada não possui acesso a este módulo.'
+            : error instanceof Error ? error.message : 'Tente novamente em alguns instantes.'}
+        </p>
+        {!moduleUnavailable && (
+          <Button type="button" variant="outline" className="mt-4" onClick={() => void refetch()}>
+            Tentar novamente
+          </Button>
+        )}
+      </div>
+    );
+  }
+
   if (!automations || automations.length === 0) {
     return (
       <div className="flex min-h-[420px] flex-col items-center justify-center rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface)] px-6 py-16 text-center">
         <div className="mb-4 rounded-[8px] bg-primary/15 p-4">
           <Zap className="h-10 w-10 text-primary" />
         </div>
-        <h3 className="mb-2 text-base font-semibold">Nenhuma automacao criada</h3>
+        <h3 className="mb-2 text-base font-semibold">Nenhuma automação criada</h3>
         <p className="max-w-sm text-sm text-muted-foreground">
           Crie um fluxo de follow-up para testar mensagens, esperas, condicoes e acoes automaticas.
         </p>
         {showCreateAction && (
           <Button className="mt-5 gap-2" onClick={onCreate}>
             <Plus className="h-4 w-4" />
-            Nova automacao
+            Nova automação
           </Button>
         )}
       </div>
@@ -174,12 +194,18 @@ export function AutomationList({
   }
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+    <div className="space-y-3">
+      {summariesError && (
+        <div className="flex flex-col gap-2 rounded-[8px] border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between" role="alert">
+          <span>As automações foram carregadas, mas as métricas de execução estão indisponíveis.</span>
+          <Button type="button" variant="outline" size="sm" onClick={() => void refetchSummaries()}>Tentar novamente</Button>
+        </div>
+      )}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
       {automations.map((automation) => {
         const stats = getExecutionStats(automation.id);
-        const hasStats = stats.running > 0 || stats.completed > 0 || stats.failed > 0;
-        const activeExecutions = getActiveExecutions(automation.id);
-        const isClickable = canOpenEditor || (!isMobile && !!onViewHistory);
+        const hasStats = stats.total > 0;
+        const isClickable = canOpenEditor || !!onViewHistory;
 
         return (
           <div
@@ -189,11 +215,16 @@ export function AutomationList({
             } ${
               !automation.is_active ? 'opacity-50' : ''
             }`}
-            onClick={() => handleOpenCard(automation.id)}
           >
 
             <div className="relative z-10 flex w-full flex-col justify-between p-4">
-              <div className="flex items-start justify-between gap-3">
+              <button
+                type="button"
+                className="flex w-full items-start justify-between gap-3 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default"
+                onClick={() => handleOpenCard(automation.id)}
+                disabled={!isClickable}
+                aria-label={isClickable ? `${canOpenEditor ? 'Editar' : 'Ver histórico de'} ${automation.name}` : undefined}
+              >
                 <div className="min-w-0">
                   <Badge
                     className={`mb-3 border-0 px-2 py-0.5 text-[10px] font-medium ${
@@ -214,20 +245,20 @@ export function AutomationList({
                 <div className="rounded-[8px] bg-primary/12 p-2.5 text-primary">
                   <Zap className="h-5 w-5" />
                 </div>
-              </div>
+              </button>
 
               <div className="space-y-3">
                 {hasStats && (
                   <div className="grid grid-cols-3 gap-2 text-[11px]">
-                    <span className="flex items-center gap-1 text-muted-foreground">
+                    <span className="flex items-center gap-1 text-muted-foreground" aria-label={`${stats.completed} concluidas`}>
                       <CheckCircle2 className="h-3 w-3 text-green-500" />
                       {stats.completed}
                     </span>
-                    <span className="flex items-center gap-1 text-primary">
+                    <span className="flex items-center gap-1 text-primary" aria-label={`${stats.running} em andamento`}>
                       <AlertCircle className="h-3 w-3" />
                       {stats.running}
                     </span>
-                    <span className="flex items-center gap-1 text-red-500">
+                    <span className="flex items-center gap-1 text-red-500" aria-label={`${stats.failed} com erro`}>
                       <XCircle className="h-3 w-3" />
                       {stats.failed}
                     </span>
@@ -246,20 +277,22 @@ export function AutomationList({
                         className="scale-75 data-[state=checked]:bg-green-500"
                   onClick={(event) => event.stopPropagation()}
                   title={automation.is_active ? 'Desativar' : 'Ativar'}
+                  aria-label={`${automation.is_active ? 'Desativar' : 'Ativar'} automação ${automation.name}`}
                 />
-                      {activeExecutions.length > 0 && (
+                      {stats.running > 0 && (
                         <Button
                           variant="ghost"
                           size="icon"
                           className="h-7 w-7 text-muted-foreground hover:bg-primary/10 hover:text-primary"
                           onClick={(event) => handleStop(automation.id, event)}
-                          disabled={cancelExecution.isPending}
+                          disabled={cancelExecutions.isPending}
                           title="Interromper"
+                          aria-label={`Interromper execucoes de ${automation.name}`}
                         >
                           <Square className="h-3.5 w-3.5" />
                         </Button>
                       )}
-                      {!isMobile && onViewHistory && (
+                      {onViewHistory && (
                         <Button
                           variant="ghost"
                           size="icon"
@@ -268,7 +301,8 @@ export function AutomationList({
                             event.stopPropagation();
                             onViewHistory(automation.id);
                           }}
-                          title="Historico"
+                          title="Histórico"
+                          aria-label={`Ver histórico de ${automation.name}`}
                         >
                           <History className="h-3.5 w-3.5" />
                         </Button>
@@ -281,20 +315,26 @@ export function AutomationList({
                             className="h-7 w-7 text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground"
                   onClick={(event) => handleDuplicate(automation, event)}
                   title="Duplicar"
+                  aria-label={`Duplicar automação ${automation.name}`}
                 >
                             <Copy className="h-3.5 w-3.5" />
                 </Button>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:bg-red-500/10 hover:text-red-500">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:bg-red-500/10 hover:text-red-500"
+                                aria-label={`Excluir automação ${automation.name}`}
+                              >
                                 <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </AlertDialogTrigger>
                   <AlertDialogContent>
                     <AlertDialogHeader>
-                      <AlertDialogTitle>Excluir automacao?</AlertDialogTitle>
+                      <AlertDialogTitle>Excluir automação?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        Esta acao nao pode ser desfeita. A automacao &quot;{automation.name}&quot; sera excluida permanentemente.
+                        Esta ação não pode ser desfeita. A automação &quot;{automation.name}&quot; será excluída permanentemente.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -318,6 +358,7 @@ export function AutomationList({
           </div>
         );
       })}
+      </div>
     </div>
   );
 }

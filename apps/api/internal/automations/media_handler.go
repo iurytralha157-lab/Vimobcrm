@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
@@ -19,13 +20,18 @@ func (handler Handler) ListMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := handler.repo.ListMedia(r.Context(), tenantContext, getAutomationMediaType(r))
+	limit, offset, err := getAutomationMediaPage(r)
+	if err != nil {
+		writeAutomationError(w, r, err)
+		return
+	}
+	page, err := handler.repo.ListMedia(r.Context(), tenantContext, getAutomationMediaType(r), limit, offset)
 	if err != nil {
 		writeAutomationError(w, r, err)
 		return
 	}
 
-	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]AutomationMediaFile]{Data: items})
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[AutomationMediaPage]{Data: page})
 }
 
 func (handler Handler) UploadMedia(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +126,26 @@ func getAutomationMediaType(r *http.Request) string {
 	}
 
 	return strings.TrimSpace(r.URL.Query().Get("mediaType"))
+}
+
+func getAutomationMediaPage(r *http.Request) (int, int, error) {
+	limit := 50
+	offset := 0
+	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 100 {
+			return 0, 0, ErrInvalidInput
+		}
+		limit = parsed
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("offset")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 0 || parsed > 10000 {
+			return 0, 0, ErrInvalidInput
+		}
+		offset = parsed
+	}
+	return limit, offset, nil
 }
 
 func normalizeUploadContentType(mediaType string, detected string, declared string) (string, error) {

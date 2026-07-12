@@ -6,7 +6,6 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Switch } from '@/components/ui/switch';
-import { PhoneInput } from '@/components/ui/phone-input';
 import {
   Sheet,
   SheetContent,
@@ -39,13 +38,13 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useDeleteUser, useDeleteUserImpact, useOrganizationUsers, useUpdateUser } from '@/hooks/use-users';
+import { useCreateInvitation } from '@/hooks/use-invitations';
 import { 
   useOrganizationRoles, 
   useUserOrganizationRoles, 
   useAssignUserRole,
   OrganizationRole
 } from '@/hooks/use-organization-roles';
-import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import { RolesTab } from './RolesTab';
@@ -68,6 +67,7 @@ export function TeamTab() {
   const updateUser = useUpdateUser();
   const deleteUser = useDeleteUser();
   const assignUserRole = useAssignUserRole();
+  const createInvitation = useCreateInvitation();
 
   const [userDialogOpen, setUserDialogOpen] = useState(false);
   const [deleteUserDialogOpen, setDeleteUserDialogOpen] = useState(false);
@@ -75,13 +75,9 @@ export function TeamTab() {
   const [deletingUser, setDeletingUser] = useState(false);
   const [transferLeadsToUserId, setTransferLeadsToUserId] = useState<string>('');
   const [transferPropertiesToUserId, setTransferPropertiesToUserId] = useState<string>('');
-  const [creatingUser, setCreatingUser] = useState(false);
 
-  // Form state for new user
-  const [newUserName, setNewUserName] = useState('');
+  // Invitation state for new user
   const [newUserEmail, setNewUserEmail] = useState('');
-  const [newUserPhone, setNewUserPhone] = useState('');
-  const [newUserEndereco, setNewUserEndereco] = useState('');
   const [newUserRole, setNewUserRole] = useState<'admin' | 'user'>('user');
 
   const activeOrganizationId = organization?.id || profile?.organization_id;
@@ -162,65 +158,24 @@ export function TeamTab() {
   };
 
   const handleCreateUser = async () => {
-    if (!newUserName.trim() || !newUserEmail.trim()) {
-      toast.error('Preencha nome e email');
+    if (!newUserEmail.trim()) {
+      toast.error('Informe o e-mail do convite');
       return;
     }
-    if (!newUserPhone.trim()) {
-      toast.error('Informe o WhatsApp para envio das credenciais de acesso');
-      return;
-    }
-    setCreatingUser(true);
     try {
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError || !session?.access_token) {
-        toast.error('Sua sessão expirou. Por favor, faça login novamente.');
-        window.location.assign('/login');
-        return;
-      }
-      const { data: result, error } = await supabase.functions.invoke('create-user', {
-        body: {
-          name: newUserName.trim(),
-          email: newUserEmail.trim(),
-          phone: newUserPhone.trim() || undefined,
-          whatsapp: newUserPhone.trim() || undefined,
-          endereco: newUserEndereco.trim() || undefined,
-          role: newUserRole
-        }
+      await createInvitation.mutateAsync({
+        email: newUserEmail.trim(),
+        role: newUserRole,
       });
-      if (error) throw new Error(error.message || 'Erro ao criar usuário');
-
-      if (result.wasMultiOrg || result.wasOrphan) {
-        toast.success(result.message || 'Usuário vinculado à organização! Acesso com senha existente.');
-      } else if (result.whatsappSent) {
-        toast.success('Usuário criado! Credenciais de acesso enviadas via WhatsApp.');
-      } else {
-        toast.success(
-          `Usuário criado! Senha gerada: ${result.generatedPassword}. WhatsApp não enviado; copie a senha agora.`,
-          { duration: 15000 }
-        );
-      }
-      queryClient.invalidateQueries({ queryKey: ['organization-users'] });
       setUserDialogOpen(false);
       resetNewUserForm();
     } catch (error: unknown) {
-      const errorMessage = getErrorMessage(error, 'Erro ao criar usuário');
-      if (errorMessage.includes('SESSION_EXPIRED') || errorMessage.includes('Unauthorized')) {
-        toast.error('Sua sessão expirou. Por favor, faça login novamente.');
-        window.location.assign('/login');
-      } else {
-        toast.error(errorMessage);
-      }
-    } finally {
-      setCreatingUser(false);
+      console.error('[TeamTab] invitation failed', error);
     }
   };
 
   const resetNewUserForm = () => {
-    setNewUserName('');
     setNewUserEmail('');
-    setNewUserPhone('');
-    setNewUserEndereco('');
     setNewUserRole('user');
   };
 
@@ -249,20 +204,12 @@ export function TeamTab() {
                     {t.settings.users.newUser}
                   </Button>
                 </SheetTrigger>
-                <SheetContent side="right" className="w-[90%] sm:w-[650px] sm:max-w-[650px] p-6 flex flex-col overflow-y-auto">
+                <SheetContent data-tour="team-invite-dialog" side="right" className="w-[90%] sm:w-[650px] sm:max-w-[650px] p-6 flex flex-col overflow-y-auto">
                   <SheetHeader>
-                    <SheetTitle>{t.settings.users.createUser}</SheetTitle>
+                  <SheetTitle>Convidar usuário</SheetTitle>
                   </SheetHeader>
                   <div className="space-y-4 mt-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>{t.common.name}</Label>
-                        <Input 
-                          placeholder={t.common.name} 
-                          value={newUserName} 
-                          onChange={e => setNewUserName(e.target.value)} 
-                        />
-                      </div>
                       <div className="space-y-2">
                         <Label>{t.common.email}</Label>
                         <Input 
@@ -271,12 +218,6 @@ export function TeamTab() {
                           value={newUserEmail} 
                           onChange={e => setNewUserEmail(e.target.value)} 
                         />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>WhatsApp <span className="text-destructive">*</span></Label>
-                        <PhoneInput value={newUserPhone} onChange={setNewUserPhone} />
                       </div>
                       <div className="space-y-2">
                         <Label>{t.settings.users.role}</Label>
@@ -291,27 +232,19 @@ export function TeamTab() {
                         </Select>
                       </div>
                     </div>
-                    <div className="space-y-2">
-                      <Label>{t.common.address}</Label>
-                      <Input
-                        placeholder="Endereço completo"
-                        value={newUserEndereco}
-                        onChange={e => setNewUserEndereco(e.target.value)}
-                      />
-                    </div>
                     <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
                       <p className="text-xs text-foreground">
-                        Uma <strong>senha aleatória segura</strong> será gerada automaticamente e enviada
-                        ao novo usuário via <strong>WhatsApp</strong>, junto com o link de acesso e o login.
+                        A pessoa receberá um <strong>convite por e-mail</strong> para criar o próprio acesso.
+                        Nenhuma senha pronta será gerada ou compartilhada.
                       </p>
                     </div>
                     <div className="flex justify-end gap-2 pt-4">
-                      <Button variant="outline" onClick={() => setUserDialogOpen(false)} disabled={creatingUser}>
+                      <Button variant="outline" onClick={() => setUserDialogOpen(false)} disabled={createInvitation.isPending}>
                         {t.common.cancel}
                       </Button>
-                      <Button onClick={handleCreateUser} disabled={creatingUser || !newUserName.trim() || !newUserEmail.trim()}>
-                        {creatingUser && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                        {t.settings.users.createUser}
+                      <Button onClick={handleCreateUser} disabled={createInvitation.isPending || !newUserEmail.trim()}>
+                        {createInvitation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                        Enviar convite
                       </Button>
                     </div>
                   </div>
@@ -325,7 +258,7 @@ export function TeamTab() {
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
             ) : (
-              <div className="space-y-3">
+              <div data-tour="team-users-list" className="space-y-3">
                 {users.filter(user => user.role !== 'super_admin').map(user => (
                   <div 
                     key={user.id} 
@@ -370,7 +303,7 @@ export function TeamTab() {
                             onValueChange={v => handleUpdateUserRole(user.id, v as 'admin' | 'user')} 
                             disabled={user.id === profile?.id}
                           >
-                            <SelectTrigger className="w-24 h-8 text-xs">
+                            <SelectTrigger data-tour="team-user-role" className="w-24 h-8 text-xs">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -386,7 +319,7 @@ export function TeamTab() {
                               onValueChange={v => handleAssignRole(user.id, v === 'none' ? null : v)} 
                               disabled={user.id === profile?.id}
                             >
-                              <SelectTrigger className="w-28 h-8 text-xs">
+                              <SelectTrigger data-tour="team-user-custom-role" className="w-28 h-8 text-xs">
                                 <SelectValue placeholder="Função..." />
                               </SelectTrigger>
                               <SelectContent>
@@ -406,12 +339,14 @@ export function TeamTab() {
                             </Select>
                           )}
                           
-                          <Switch 
+                          <Switch
+                            data-tour="team-user-active"
                             checked={user.is_active || false} 
                             onCheckedChange={() => handleToggleUserActive(user.id, user.is_active || false)} 
                             disabled={user.id === profile?.id} 
                           />
-                          <Button 
+                          <Button
+                            data-tour="team-user-delete"
                             variant="ghost" 
                             size="icon" 
                             className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10" 

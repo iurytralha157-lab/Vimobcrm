@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   apiPipelineListResponseSchema,
+  pipelineBoardResponseSchema,
   pipelineCreateInputSchema,
   stagesReorderInputSchema,
 } from './pipelines'
@@ -45,4 +46,21 @@ test('valida resposta de pipelines sem remover extensoes', () => {
 
   assert.equal(result.success, true)
   if (result.success) assert.equal(result.data.data[0].futureField, 'preservado')
+})
+
+test('valida os relogios separados no board da pipeline', () => {
+  const result = pipelineBoardResponseSchema.safeParse({
+    data: [{
+      id: ID,
+      leads: [{
+        id: ID,
+        board_order_at: '2026-07-12T15:30:00Z',
+        stage_entered_at: '2026-07-12T14:00:00Z',
+      }],
+      total_lead_count: 1,
+      has_more: false,
+    }],
+  })
+
+  assert.equal(result.success, true)
 })

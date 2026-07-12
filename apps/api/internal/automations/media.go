@@ -17,20 +17,27 @@ import (
 
 const automationMediaBucket = "automation-media"
 
-func (repo Repository) ListMedia(ctx context.Context, tenantContext tenant.Context, mediaType string) ([]AutomationMediaFile, error) {
-	if !tenantContext.HasPermission("automations_view") {
-		return nil, tenant.ErrOrganizationAccessDenied
+func (repo Repository) ListMedia(ctx context.Context, tenantContext tenant.Context, mediaType string, limit int, offset int) (AutomationMediaPage, error) {
+	if !canViewAutomations(tenantContext) {
+		return AutomationMediaPage{}, tenant.ErrOrganizationAccessDenied
 	}
 
 	normalizedType, ok := normalizeAutomationMediaType(mediaType)
 	if !ok {
-		return nil, ErrInvalidInput
+		return AutomationMediaPage{}, ErrInvalidInput
+	}
+	if limit < 1 || limit > 100 || offset < 0 || offset > 10000 {
+		return AutomationMediaPage{}, ErrInvalidInput
 	}
 
 	prefix := automationMediaFolder(tenantContext.OrganizationID, normalizedType)
-	objects, err := repo.storage.list(ctx, automationMediaBucket, prefix, 100)
+	objects, err := repo.storage.list(ctx, automationMediaBucket, prefix, limit+1, offset)
 	if err != nil {
-		return nil, err
+		return AutomationMediaPage{}, err
+	}
+	hasMore := len(objects) > limit
+	if hasMore {
+		objects = objects[:limit]
 	}
 
 	files := make([]AutomationMediaFile, 0, len(objects))
@@ -40,10 +47,19 @@ func (repo Repository) ListMedia(ctx context.Context, tenantContext tenant.Conte
 			continue
 		}
 		objectPath := prefix + "/" + name
-		files = append(files, automationMediaFileFromObject(repo.storage, object, objectPath))
+		signedURL, err := repo.storage.signedURL(ctx, automationMediaBucket, objectPath, 15*time.Minute)
+		if err != nil {
+			return AutomationMediaPage{}, err
+		}
+		files = append(files, automationMediaFileFromObject(object, objectPath, signedURL))
 	}
 
-	return files, nil
+	var nextOffset *int
+	if hasMore {
+		next := offset + limit
+		nextOffset = &next
+	}
+	return AutomationMediaPage{Files: files, NextOffset: nextOffset}, nil
 }
 
 func (repo Repository) UploadMedia(ctx context.Context, tenantContext tenant.Context, input AutomationMediaUploadInput, body io.Reader) (AutomationMediaUpload, error) {
@@ -85,12 +101,18 @@ func (repo Repository) UploadMedia(ctx context.Context, tenantContext tenant.Con
 		"mimetype": contentType,
 	}
 
+	signedURL, err := repo.storage.signedURL(ctx, automationMediaBucket, objectPath, 15*time.Minute)
+	if err != nil {
+		_ = repo.storage.remove(ctx, automationMediaBucket, objectPath)
+		return AutomationMediaUpload{}, err
+	}
+
 	return AutomationMediaUpload{
 		AutomationMediaFile: AutomationMediaFile{
 			Name:        fileName,
 			Path:        objectPath,
 			Bucket:      automationMediaBucket,
-			PublicURL:   repo.storage.publicURL(automationMediaBucket, objectPath),
+			PublicURL:   signedURL,
 			ContentType: &contentType,
 			Size:        &size,
 			Metadata:    metadata,
@@ -114,10 +136,50 @@ func (repo Repository) DeleteMedia(ctx context.Context, tenantContext tenant.Con
 	}
 
 	objectPath := automationMediaFolder(tenantContext.OrganizationID, normalizedType) + "/" + safeName
-	return repo.storage.remove(ctx, automationMediaBucket, objectPath)
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		select pg_catalog.pg_advisory_xact_lock(
+			pg_catalog.hashtextextended('automation-media:' || $1, 0)
+		)
+	`, objectPath); err != nil {
+		return err
+	}
+	var inUse bool
+	if err := tx.QueryRow(ctx, `
+		select exists (
+			select 1 from (
+				select fv.graph
+				from public.automations a
+				join public.automation_flow_versions fv on fv.id = a.active_flow_version_id
+				where a.organization_id = $1::uuid
+				  and a.deleted_at is null
+				union all
+				select fv.graph
+				from public.automation_executions execution
+				join public.automation_flow_versions fv on fv.id = execution.flow_version_id
+				where execution.organization_id = $1::uuid
+				  and execution.status in ('queued', 'running', 'waiting')
+			) referenced_graph
+			cross join lateral jsonb_array_elements(coalesce(referenced_graph.graph->'nodes', '[]'::jsonb)) node
+			where node->'config'->>'media_path' = $2
+		)
+	`, tenantContext.OrganizationID, objectPath).Scan(&inUse); err != nil {
+		return err
+	}
+	if inUse {
+		return ErrAutomationMediaInUse
+	}
+	if err := repo.storage.remove(ctx, automationMediaBucket, objectPath); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
-func automationMediaFileFromObject(storage storageClient, object storageObject, objectPath string) AutomationMediaFile {
+func automationMediaFileFromObject(object storageObject, objectPath string, signedURL string) AutomationMediaFile {
 	metadata := object.Metadata
 	if metadata == nil {
 		metadata = map[string]any{}
@@ -127,7 +189,7 @@ func automationMediaFileFromObject(storage storageClient, object storageObject, 
 		Name:        object.Name,
 		Path:        objectPath,
 		Bucket:      automationMediaBucket,
-		PublicURL:   storage.publicURL(automationMediaBucket, objectPath),
+		PublicURL:   signedURL,
 		ContentType: metadataStringPtr(metadata, "mimetype"),
 		Size:        metadataInt64Ptr(metadata, "size"),
 		Metadata:    metadata,

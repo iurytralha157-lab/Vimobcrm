@@ -29,12 +29,19 @@ type TourPlan = {
   items: TourItem[];
 };
 
-type TourAction = {
-  type: "click";
-  selector: string | string[];
-  waitFor?: string | string[];
-  closeOpenLayer?: boolean;
-};
+type TourAction =
+  | {
+      type: "click";
+      selector: string | string[];
+      waitFor?: string | string[];
+      closeOpenLayer?: boolean;
+    }
+  | {
+      type: "hash";
+      hash: string;
+      waitFor?: string | string[];
+      closeOpenLayer?: boolean;
+    };
 
 type TourTooltipStyle = CSSProperties & {
   "--tour-arrow-position"?: "top" | "bottom";
@@ -51,12 +58,14 @@ const VALID_STEP_IDS: SetupStepId[] = [
   "profile",
   "whatsapp",
   "team",
+  "teams",
   "distribution",
   "integrations_meta",
-  "integrations_google",
   "properties",
   "automations",
   "gamification",
+  "financial",
+  "ai",
   "site",
 ];
 
@@ -66,24 +75,9 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
     path: "/dashboard",
     items: [
       {
-        selector: '[data-tour="dashboard-date-filter"]',
-        title: "Periodo do dashboard",
-        body: "Aqui voce escolhe o periodo da leitura. O dashboard inteiro muda com esse filtro, entao ele e o primeiro ponto para conferir antes dos numeros.",
-      },
-      {
-        selector: '[data-tour="dashboard-advanced-filters"]',
-        title: "Filtros detalhados",
-        body: "Este botao abre filtros de equipe, responsavel, origem, campanha, anuncio, etiqueta e status para analisar um recorte especifico.",
-      },
-      {
-        selector: '[data-tour="dashboard-filters-panel"]',
-        title: "Painel de filtros",
-        body: "Dentro deste painel ficam os filtros finos. Use quando quiser comparar campanhas, responsaveis ou uma parte especifica da operacao.",
-        action: {
-          type: "click",
-          selector: '[data-tour="dashboard-advanced-filters"]',
-          waitFor: '[data-tour="dashboard-filters-panel"]',
-        },
+        selector: '[data-tour="dashboard-filters"]',
+        title: "Periodo e filtros",
+        body: "Escolha o período e use equipe, responsável, origem, campanha, anúncio, etiqueta e status para analisar um recorte específico. O indicador de imóveis segue apenas o acesso e o filtro de usuário/equipe.",
       },
       {
         selector: '[data-tour="dashboard-kpi-leads"]',
@@ -94,7 +88,7 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
       {
         selector: '[data-tour="dashboard-kpi-open"]',
         title: "Em aberto",
-        body: "Mostra os leads que ainda estao em atendimento e precisam de acompanhamento.",
+        body: "Mostra os leads que ainda estão em atendimento e precisam de acompanhamento.",
       },
       {
         selector: '[data-tour="dashboard-kpi-lost"]',
@@ -116,6 +110,7 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
         selector: '[data-tour="dashboard-kpi-won"]',
         title: "Ganhos",
         body: "Mostra negocios ganhos e ajuda a acompanhar conversao e resultado comercial.",
+        closeOpenLayer: true,
       },
       {
         selector: '[data-tour="dashboard-won-dialog"]',
@@ -147,7 +142,7 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
       {
         selector: '[data-tour="dashboard-kpi-properties"]',
         title: "Imoveis",
-        body: "Mostra quantos imoveis estao cadastrados para a operacao.",
+        body: "Administradores veem todos os imoveis da organizacao. Usuarios comuns veem os imoveis do proprio acesso. Quando um usuario e selecionado nos filtros, este numero considera os imoveis em que ele esta definido como responsavel e nao muda com o periodo do dashboard.",
       },
       {
         selector: '[data-tour="dashboard-evolution"]',
@@ -157,12 +152,12 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
       {
         selector: '[data-tour="dashboard-funnel"]',
         title: "Funil de vendas",
-        body: "Mostra como os leads estao distribuidos pelas etapas do funil.",
+        body: "Mostra como os leads estão distribuídos pelas etapas do funil.",
       },
       {
         selector: '[data-tour="dashboard-sources"]',
         title: "Origem dos leads",
-        body: "Mostra de onde os leads vieram para ajudar a entender quais canais estao funcionando melhor.",
+        body: "Mostra de onde os leads vieram para ajudar a entender quais canais estão funcionando melhor.",
       },
     ],
   },
@@ -173,17 +168,47 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
       {
         selector: '[data-tour="contacts-new"]',
         title: "Criar primeiro lead",
-        body: "Comece criando um lead manual para testar pipeline, card, historico, agenda e atendimento antes de depender das integracoes.",
+        body: "Clique aqui para abrir o cadastro manual. Ele é o caminho mais rápido para conhecer o fluxo antes da entrada automática por integrações.",
       },
       {
-        selector: '[data-tour="contacts-filters"]',
-        title: "Encontrar o lead depois",
-        body: "Depois de cadastrar, use busca e filtros para encontrar esse lead rapidamente na base.",
+        selector: '[data-tour="pipeline-new-lead"]',
+        title: "Cadastro em três etapas",
+        body: "O formulário atual separa contato, perfil e gestão. Assim os dados essenciais ficam claros antes de escolher responsável e destino.",
+        action: {
+          type: "click",
+          selector: '[data-tour="contacts-new"]',
+          waitFor: '[data-tour="pipeline-new-lead"]',
+        },
       },
       {
-        selector: '[data-tour="contacts-list"]',
-        title: "Lead na base",
-        body: "Quando salvo, ele aparece na lista de contatos e tambem pode ser aberto pela pipeline.",
+        selector: '[data-tour="lead-form-basic"]',
+        title: "Dados básicos",
+        body: "Comece por nome, telefone ou e-mail, origem e observações. Nome e pelo menos um meio de contato identificam o lead corretamente.",
+      },
+      {
+        selector: '[data-tour="lead-form-profile"]',
+        title: "Perfil e interesse",
+        body: "Nesta aba você pode registrar profissão, renda, faixa de interesse e o imóvel relacionado ao atendimento.",
+        action: {
+          type: "click",
+          selector: '[data-tour="lead-form-tab-profile"]',
+          waitFor: '[data-tour="lead-form-profile"]',
+        },
+      },
+      {
+        selector: '[data-tour="lead-form-management"]',
+        title: "Gestão do lead",
+        body: "Finalize escolhendo responsável, status, pipeline, etapa e tags. É aqui que o lead ganha um destino comercial claro.",
+        action: {
+          type: "click",
+          selector: '[data-tour="lead-form-tab-management"]',
+          waitFor: '[data-tour="lead-form-management"]',
+        },
+      },
+      {
+        selector: '[data-tour="lead-form-submit"]',
+        title: "Salvar o lead",
+        body: "Depois de preencher os campos obrigatórios, crie o lead. Ele aparecerá em Contatos e na etapa selecionada da Pipeline.",
       },
     ],
   },
@@ -257,6 +282,26 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
         },
       },
       {
+        selector: '[data-tour="property-commissions-section"]',
+        title: "Comissoes e condicoes",
+        body: "Defina a comissao do captador, percentuais e condicoes comerciais. Estes dados apoiam o fechamento e o financeiro quando o modulo estiver ativo.",
+        action: {
+          type: "click",
+          selector: '[data-tour="property-tab-commissions"]',
+          waitFor: '[data-tour="property-commissions-section"]',
+        },
+      },
+      {
+        selector: '[data-tour="property-confidential-section"]',
+        title: "Dados confidenciais",
+        body: "Guarde documentacao e observacoes internas que nao devem aparecer no site publico. Revise as permissoes antes de preencher dados sensiveis.",
+        action: {
+          type: "click",
+          selector: '[data-tour="property-tab-confidential"]',
+          waitFor: '[data-tour="property-confidential-section"]',
+        },
+      },
+      {
         selector: '[data-tour="property-save-button"]',
         title: "Salvar imovel",
         body: "Depois de preencher os campos obrigatorios, salve para deixar o imovel disponivel na carteira.",
@@ -273,14 +318,9 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
         body: "Aqui voce troca entre pipelines quando a organizacao tiver mais de um funil.",
       },
       {
-        selector: '[data-tour="pipeline-date-filter"]',
-        title: "Periodo da pipeline",
-        body: "Use o periodo para enxergar os leads que entraram ou se movimentaram no recorte correto.",
-      },
-      {
-        selector: '[data-tour="pipeline-advanced-filters"]',
+        selector: '[data-tour="pipeline-filters"]',
         title: "Filtros da pipeline",
-        body: "Use filtros para enxergar apenas os leads de uma equipe, responsavel, origem, campanha, tag ou status.",
+        body: "Use periodo, busca, equipe, responsavel, origem, campanha, anuncio, tag e status para enxergar o recorte correto da pipeline.",
       },
       {
         selector: '[data-tour="pipeline-column"]',
@@ -289,7 +329,7 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
       },
       {
         selector: '[data-tour="pipeline-column-settings"]',
-        title: "Configuracao da coluna",
+        title: "Configuração da coluna",
         body: "Aqui administradores ajustam nome, cor, cadencias e automacoes da etapa. Use com cuidado para nao alterar o fluxo da equipe por engano.",
       },
       {
@@ -452,16 +492,54 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
         selector: '[data-tour="conversations-hide-groups"]',
         title: "Ocultar grupos",
         body: "Este controle ajuda a manter o atendimento focado em conversas individuais.",
+        action: {
+          type: "click",
+          selector: '[data-tour="conversations-filters"]',
+          waitFor: '[data-tour="conversations-hide-groups"]',
+          closeOpenLayer: true,
+        },
       },
       {
         selector: '[data-tour="conversations-archived"]',
         title: "Arquivadas",
         body: "Use para incluir ou remover conversas arquivadas da lista.",
+        action: {
+          type: "click",
+          selector: '[data-tour="conversations-filters"]',
+          waitFor: '[data-tour="conversations-archived"]',
+          closeOpenLayer: true,
+        },
       },
       {
         selector: '[data-tour="conversations-list"]',
         title: "Lista de atendimentos",
         body: "Clique em uma conversa para abrir mensagens, vinculo com lead e continuidade do atendimento.",
+      },
+      {
+        selector: '[data-tour="conversations-chat"]',
+        title: "Abrir uma conversa",
+        body: "Ao selecionar um atendimento, o CRM abre cabecalho, mensagens e campo de envio sem misturar organizacao, conexao ou contato.",
+        action: {
+          type: "click",
+          selector: '[data-tour="conversations-item"] button',
+          waitFor: '[data-tour="conversations-messages"]',
+        },
+        missingTitle: "Abrir uma conversa",
+        missingBody: "Quando houver uma conversa visivel, o guia abre o primeiro atendimento automaticamente.",
+      },
+      {
+        selector: '[data-tour="conversations-messages"]',
+        title: "Historico de mensagens",
+        body: "Aqui aparecem textos, imagens, audios, videos, documentos, figurinhas e status de envio. O historico deve permanecer ligado ao contato correto.",
+        missingTitle: "Historico de mensagens",
+        missingBody: "Selecione uma conversa para visualizar este ponto.",
+      },
+      {
+        selector: '[data-tour="conversations-composer"]',
+        title: "Enviar mensagens",
+        body: "Use o campo inferior para texto e midias somente pela conexao liberada para o seu usuario.",
+        missingTitle: "Enviar mensagens",
+        missingBody: "O campo aparece quando uma conversa e uma conexão válida estão selecionadas.",
       },
     ],
   },
@@ -513,7 +591,7 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
       {
         selector: '[data-tour="agenda-event-all-day"]',
         title: "Dia inteiro",
-        body: "Ative quando o compromisso nao tiver horario especifico.",
+        body: "Ative quando o compromisso não tiver horário específico.",
       },
       {
         selector: '[data-tour="agenda-event-recurrence"]',
@@ -563,9 +641,38 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
         body: "A foto ajuda a equipe a identificar o responsavel por leads, mensagens e atividades.",
       },
       {
+        selector: '[data-tour="account-edit-profile"]',
+        title: "Editar dados pessoais",
+        body: "Abra a edicao para atualizar nome, CPF e WhatsApp. O telefone correto e importante para notificacoes e identificacao.",
+      },
+      {
+        selector: '[data-tour="account-preferences"]',
+        title: "Idioma e tema",
+        body: "Escolha o idioma e use tema claro, escuro ou o padrao do dispositivo. A preferencia acompanha o seu usuario.",
+      },
+      {
         selector: '[data-tour="account-password"]',
         title: "Senha",
         body: "Aqui fica a troca de senha para manter a conta segura.",
+      },
+      {
+        selector: '[data-tour="account-company"]',
+        title: "Dados da empresa",
+        body: "Esta área guarda logo, dados fiscais, endereço e contatos públicos da organização. Usuários comuns apenas consultam; administradores podem editar.",
+      },
+      {
+        selector: '[data-tour="account-company-edit"]',
+        title: "Editar empresa",
+        body: "Administradores usam este botao para liberar os campos da organizacao e salvar as alteracoes.",
+        missingTitle: "Editar empresa",
+        missingBody: "Este botao aparece somente para administradores da organizacao.",
+      },
+      {
+        selector: '[data-tour="account-financial-settings"]',
+        title: "Configuração financeira",
+        body: "A comissao padrao e usada como referencia nos calculos de comissao. O icone de informacao explica o efeito desse percentual.",
+        missingTitle: "Configuração financeira",
+        missingBody: "Este bloco aparece somente para administradores.",
       },
     ],
   },
@@ -613,13 +720,6 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
         missingBody: "Quando houver uma conexao criada, ela aparecera aqui com status conectado, desconectado ou aguardando leitura do QR Code.",
       },
       {
-        selector: '[data-tour="whatsapp-users-button"]',
-        title: "Usuarios com acesso",
-        body: "Aqui o administrador define quais usuarios podem usar aquela conexao. Isso evita que mensagens aparecam para pessoas erradas.",
-        missingTitle: "Usuarios com acesso",
-        missingBody: "Este ponto aparece em conexoes ja criadas.",
-      },
-      {
         selector: '[data-tour="whatsapp-verify-button"]',
         title: "Verificar conexao",
         body: "Use para confirmar se o backend ainda reconhece o WhatsApp como conectado e pronto para enviar ou receber mensagens.",
@@ -641,7 +741,6 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
           type: "click",
           selector: '[data-tour="whatsapp-qr-button"]',
           waitFor: '[data-tour="whatsapp-qr-dialog"]',
-          closeOpenLayer: true,
         },
         missingTitle: "QR Code",
         missingBody: "O QR Code aparece quando a conexao ainda nao esta conectada ou precisa ser reconectada.",
@@ -650,7 +749,6 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
         selector: ['[data-tour="whatsapp-disconnect-button"]', '[data-tour="whatsapp-delete-button"]'],
         title: "Desconectar ou apagar",
         body: "Desconectar tira o numero do ar. Apagar remove a conexao. Use com cuidado, principalmente quando existem conversas vinculadas ao atendimento.",
-        closeOpenLayer: true,
         missingTitle: "Desconectar ou apagar",
         missingBody: "Essas acoes aparecem quando uma conexao existe.",
       },
@@ -662,8 +760,87 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
     items: [
       {
         selector: '[data-tour="team-add-user"]',
-        title: "Adicionar usuario",
-        body: "Administradores usam este ponto para convidar pessoas e definir acesso da equipe.",
+        title: "Convidar usuario",
+        body: "Novos acessos entram por convite. Informe os dados e o perfil inicial; a pessoa conclui o cadastro pelo link recebido.",
+      },
+      {
+        selector: '[data-tour="team-invite-dialog"]',
+        title: "Dados do convite",
+        body: "Preencha nome, e-mail, telefone e perfil inicial. O sistema envia um convite; ele nao cria nem compartilha uma senha pronta.",
+        action: {
+          type: "click",
+          selector: '[data-tour="team-add-user"]',
+          waitFor: '[data-tour="team-invite-dialog"]',
+          closeOpenLayer: true,
+        },
+      },
+      {
+        selector: '[data-tour="team-users-list"]',
+        title: "Usuarios da organizacao",
+        body: "A lista mostra quem está ativo e quais perfis e funções estão aplicados. Use essa leitura antes de alterar um acesso.",
+        closeOpenLayer: true,
+      },
+      {
+        selector: '[data-tour="team-user-role"]',
+        title: "Usuario ou administrador",
+        body: "Administradores possuem acesso ampliado. Promova somente quem realmente precisa gerenciar a organizacao.",
+      },
+      {
+        selector: '[data-tour="team-user-custom-role"]',
+        title: "Funcao personalizada",
+        body: "Funcoes personalizadas refinam as permissoes de usuarios comuns sem transforma-los em administradores.",
+        missingTitle: "Funcoes personalizadas",
+        missingBody: "Este controle aparece quando a organizacao possui funcoes personalizadas cadastradas.",
+      },
+      {
+        selector: '[data-tour="team-user-active"]',
+        title: "Ativar ou desativar",
+        body: "Desativar bloqueia o acesso sem apagar o historico. E a opcao mais segura quando a pessoa sai temporariamente da operacao.",
+      },
+      {
+        selector: '[data-tour="team-user-delete"]',
+        title: "Excluir usuario",
+        body: "A exclusao e definitiva e exige revisar a transferencia de leads e imoveis. Prefira desativar quando houver duvida.",
+      },
+    ],
+  },
+  teams: {
+    route: "/crm/management?tab=teams",
+    path: "/crm/management",
+    items: [
+      {
+        selector: '[data-tour="management-teams"]',
+        title: "Gestão de equipes",
+        body: "Administradores veem todas as equipes. Lideres veem somente as equipes sob sua lideranca.",
+      },
+      {
+        selector: '[data-tour="management-team-new"]',
+        title: "Nova equipe",
+        body: "Crie uma equipe, escolha os membros e defina quem sera lider. Usuarios podem participar de mais de uma equipe.",
+      },
+      {
+        selector: '[data-tour="management-team-dialog"]',
+        title: "Membros e lideranca",
+        body: "Neste formulário você define nome, imagem, membros e líderes. Líderes ganham os acessos de gestão permitidos para a própria equipe.",
+        action: {
+          type: "click",
+          selector: '[data-tour="management-team-new"]',
+          waitFor: '[data-tour="management-team-dialog"]',
+          closeOpenLayer: true,
+        },
+      },
+      {
+        selector: '[data-tour="management-team-list"]',
+        title: "Lista de equipes",
+        body: "Cada linha mostra status, membros, lideres e criador. Administradores podem ativar, editar ou excluir; lideres nao podem desativar a equipe.",
+        closeOpenLayer: true,
+      },
+      {
+        selector: '[data-tour="management-team-member"]',
+        title: "Disponibilidade por equipe",
+        body: "Clique em um membro para configurar dias e horarios desta equipe. A mesma pessoa pode ter outra disponibilidade em outra equipe.",
+        missingTitle: "Disponibilidade por equipe",
+        missingBody: "Este ponto aparece quando existe pelo menos um membro em uma equipe visivel.",
       },
     ],
   },
@@ -674,7 +851,43 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
       {
         selector: '[data-tour="distribution-new-queue"]',
         title: "Nova fila",
-        body: "Crie filas para distribuir leads automaticamente entre usuarios ou equipes.",
+        body: "Crie filas para distribuir leads automaticamente entre usuarios ou equipes. Filas sem regra de entrada nao capturam leads.",
+      },
+      {
+        selector: '[data-tour="distribution-queue-editor"]',
+        title: "Formulario da fila",
+        body: "O cadastro reune destino, regras, participantes e redistribuicao. Revise cada bloco antes de ativar a fila.",
+        action: {
+          type: "click",
+          selector: '[data-tour="distribution-new-queue"]',
+          waitFor: '[data-tour="distribution-queue-editor"]',
+          closeOpenLayer: true,
+        },
+      },
+      {
+        selector: '[data-tour="distribution-queue-basic"]',
+        title: "Destino e estrategia",
+        body: "Informe nome, estrategia, pipeline e etapa inicial. Todo lead aceito por esta fila seguira para esse destino.",
+      },
+      {
+        selector: '[data-tour="distribution-queue-rules"]',
+        title: "Regras de entrada",
+        body: "Defina canal, formulario, webhook, origem, tag ou outra condicao. Uma regra ja usada em outra fila nao deve ser duplicada.",
+      },
+      {
+        selector: '[data-tour="distribution-queue-members"]',
+        title: "Participantes",
+        body: "Adicione usuarios individualmente ou equipes. Equipes permanecem dinamicas: novos membros ativos passam a participar conforme a disponibilidade configurada na propria equipe.",
+      },
+      {
+        selector: '[data-tour="distribution-queue-redistribution"]',
+        title: "Redistribuicao",
+        body: "Opcionalmente, mova leads sem acao humana depois do prazo. Essa regra vale apenas para leads que entrarem pela fila apos a ativacao.",
+      },
+      {
+        selector: '[data-tour="distribution-queue-save"]',
+        title: "Validar e salvar",
+        body: "O botao so libera quando destino, regra e participantes obrigatorios estiverem validos. Salvar nao deve alterar leads antigos.",
       },
     ],
   },
@@ -689,17 +902,6 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
       },
     ],
   },
-  integrations_google: {
-    route: "/settings?tab=integrations",
-    path: "/settings",
-    items: [
-      {
-        selector: '[data-tour="google-calendar-integration"]',
-        title: "Google Agenda",
-        body: "Conecte o Google Agenda para sincronizar compromissos com a rotina do CRM.",
-      },
-    ],
-  },
   properties: {
     route: "/properties",
     path: "/properties",
@@ -710,7 +912,7 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
         body: "Use este botao para cadastrar um novo imovel na carteira quando seu perfil tiver permissao.",
       },
       {
-        selector: '[data-tour="properties-filter-button"]',
+        selector: ['[data-tour="properties-filter-button"]', '[data-tour="properties-filters-panel"]'],
         title: "Filtros da carteira",
         body: "Abra filtros para buscar por tipo, modalidade, responsavel, cidade, bairro, quartos, valor e outras caracteristicas.",
       },
@@ -720,15 +922,54 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
         body: "Aqui voce refina a busca sem sair da carteira. E util quando a base tiver muitos imoveis.",
         action: {
           type: "click",
-          selector: '[data-tour="properties-filter-button"]',
+          selector: ['[data-tour="properties-filter-button"]', '[data-tour="properties-filters-panel"]'],
           waitFor: '[data-tour="properties-filters-panel"]',
         },
       },
       {
-        selector: '[data-tour="properties-stats"]',
-        title: "Indicadores da carteira",
-        body: "Os indicadores mostram total, destaque, vendidos, a venda e locacao para dar uma leitura rapida da carteira.",
-        closeOpenLayer: true,
+        selector: '[data-tour="properties-filter-search"]',
+        title: "Busca rapida",
+        body: "Pesquise por endereco, nome, bairro ou codigo do imovel. A busca textual pode ser combinada com os demais filtros.",
+      },
+      {
+        selector: '[data-tour="properties-filter-modality"]',
+        title: "Modalidade",
+        body: "Separe venda, locacao, venda e locacao, temporada ou lancamento.",
+      },
+      {
+        selector: '[data-tour="properties-filter-availability"]',
+        title: "Disponibilidade",
+        body: "Encontre imoveis disponiveis, reservados, vendidos, alugados, inativos ou privados.",
+      },
+      {
+        selector: '[data-tour="properties-filter-type"]',
+        title: "Tipo de imovel",
+        body: "Filtre apartamento, casa, terreno e os demais tipos cadastrados na organizacao.",
+      },
+      {
+        selector: '[data-tour="properties-filter-location"]',
+        title: "Cidade e bairro",
+        body: "As opcoes sao geradas a partir das localidades cadastradas e ajudam a reduzir a carteira por regiao.",
+      },
+      {
+        selector: '[data-tour="properties-filter-responsible"]',
+        title: "Responsavel",
+        body: "Mostra os imoveis em que a pessoa selecionada esta definida como responsavel pela captacao.",
+      },
+      {
+        selector: '[data-tour="properties-filter-value"]',
+        title: "Faixa de valor",
+        body: "Defina valores minimo e maximo para aproximar a carteira do orcamento do cliente.",
+      },
+      {
+        selector: '[data-tour="properties-filter-more-panel"]',
+        title: "Filtros avancados",
+        body: "Aqui ficam proprietario, condominio, mobília, quartos, suites, banheiros, vagas, areas, financiamento, permuta e demais criterios internos.",
+        action: {
+          type: "click",
+          selector: '[data-tour="properties-filter-more"]',
+          waitFor: '[data-tour="properties-filter-more-panel"]',
+        },
       },
       {
         selector: '[data-tour="properties-list"]',
@@ -765,22 +1006,114 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
       {
         selector: '[data-tour="gamification-arena"]',
         title: "Arena imobiliaria",
-        body: "A arena mostra podium, classificacao e ranking em tempo real quando os eventos de pontos estao conectados.",
+        body: "A arena mostra pódio, classificação e ranking em tempo real quando os eventos de pontos estão conectados.",
       },
       {
         selector: '[data-tour="gamification-dashboard"]',
         title: "Dashboard da Arena",
         body: "Mostra desempenho, atividades recentes e uma leitura rapida dos pontos do usuario ou equipe.",
+        action: {
+          type: "hash",
+          hash: "dashboard",
+          waitFor: '[data-tour="gamification-dashboard"]',
+        },
       },
       {
         selector: '[data-tour="gamification-history"]',
         title: "Historico de pontos",
         body: "Registra as acoes que geraram pontuacao para manter transparencia com a equipe.",
+        action: {
+          type: "hash",
+          hash: "history",
+          waitFor: '[data-tour="gamification-history"]',
+        },
       },
       {
         selector: '[data-tour="gamification-config"]',
-        title: "Configuracao da gamificacao",
+        title: "Configuração da gamificação",
         body: "Para administradores, aqui ficam regras, missoes, participantes, temporadas e aprovacoes manuais.",
+        action: {
+          type: "hash",
+          hash: "config",
+          waitFor: '[data-tour="gamification-config"]',
+        },
+      },
+    ],
+  },
+  financial: {
+    route: "/financeiro",
+    path: "/financeiro",
+    items: [
+      {
+        selector: '[data-tour="financial-overview"]',
+        title: "Visao financeira",
+        body: "Este painel consolida a operacao financeira da organizacao sem misturar os dados com a rotina comercial da Pipeline.",
+      },
+      {
+        selector: '[data-tour="financial-kpis"]',
+        title: "Indicadores principais",
+        body: "Confira VGV, ticket medio, receitas, despesas, vencimentos e comissoes antes de abrir os detalhes de cada area.",
+      },
+      {
+        selector: '[data-tour="financial-actions"]',
+        title: "Relatorios e DRE",
+        body: "Administradores autorizados podem exportar o resumo e seguir para a leitura executiva da DRE.",
+      },
+    ],
+  },
+  ai: {
+    route: "/settings?tab=ai",
+    path: "/settings",
+    items: [
+      {
+        selector: '[data-tour="ai-overview"]',
+        title: "Central de IA",
+        body: "Esta central reune a operacao da IA da organizacao. Ela so aparece para administradores com o modulo liberado.",
+      },
+      {
+        selector: '[data-tour="ai-metrics"]',
+        title: "Metricas da IA",
+        body: "Acompanhe leads recebidos, atendimentos, follow-ups e o limite de agentes contratado.",
+      },
+      {
+        selector: '[data-tour="ai-connections"]',
+        title: "Conexoes autorizadas",
+        body: "Selecione exatamente quais conexoes do WhatsApp a IA pode visualizar e atender.",
+        action: {
+          type: "click",
+          selector: '[data-tour="ai-tab-connections"]',
+          waitFor: '[data-tour="ai-connections"]',
+        },
+      },
+      {
+        selector: '[data-tour="ai-agents"]',
+        title: "Agentes",
+        body: "Crie ou revise o agente de triagem e os especialistas, respeitando o limite definido para a organizacao.",
+        action: {
+          type: "click",
+          selector: '[data-tour="ai-tab-agents"]',
+          waitFor: '[data-tour="ai-agents"]',
+        },
+      },
+      {
+        selector: '[data-tour="ai-routing"]',
+        title: "Regras de roteamento",
+        body: "Defina quando uma conversa vai para cada agente, por conexao, origem, pipeline ou conteudo da mensagem.",
+        action: {
+          type: "click",
+          selector: '[data-tour="ai-tab-routing"]',
+          waitFor: '[data-tour="ai-routing"]',
+        },
+      },
+      {
+        selector: '[data-tour="ai-test"]',
+        title: "Teste antes de ativar",
+        body: "Valide contexto e roteamento aqui antes de permitir respostas reais em uma conexao do WhatsApp.",
+        action: {
+          type: "click",
+          selector: '[data-tour="ai-tab-test"]',
+          waitFor: '[data-tour="ai-test"]',
+        },
       },
     ],
   },
@@ -798,14 +1131,80 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
         title: "Menu do site",
         body: "Use este menu para alternar entre identidade, conteudo, dominio, busca, publicacao e outras configuracoes do site.",
         missingTitle: "Menu do site",
-        missingBody: "Depois de criar a configuracao inicial do site, o menu aparece aqui.",
+        missingBody: "Depois de criar a configuração inicial do site, o menu aparece aqui.",
       },
       {
         selector: '[data-tour="site-general-settings"]',
         title: "Configuracoes gerais",
-        body: "Aqui ficam status do site, dominio e informacoes principais da presenca publica.",
+        body: "Aqui ficam publicacao, logo, favicon, titulo, descricao, endereco temporario e dominio proprio. Verifique o dominio antes de divulgar.",
         missingTitle: "Configuracoes gerais",
-        missingBody: "Esta area aparece depois de iniciar a configuracao do site.",
+        missingBody: "Esta área aparece depois de iniciar a configuração do site.",
+      },
+      {
+        selector: '[data-tour="site-appearance-settings"]',
+        title: "Aparencia e identidade",
+        body: "Configure logo, tema, cores, hero, banners e marca d'agua. Confira o contraste em desktop e mobile.",
+        action: {
+          type: "click",
+          selector: '[data-tour="site-tab-appearance"]',
+          waitFor: '[data-tour="site-appearance-settings"]',
+        },
+      },
+      {
+        selector: '[data-tour="site-menu-settings"]',
+        title: "Menu e filtros publicos",
+        body: "Organize os links do cabecalho e escolha quais filtros aparecem na busca publica de imoveis.",
+        action: {
+          type: "click",
+          selector: '[data-tour="site-tab-menu"]',
+          waitFor: '[data-tour="site-menu-settings"]',
+        },
+      },
+      {
+        selector: '[data-tour="site-about-settings"]',
+        title: "Pagina sobre",
+        body: "Conte a historia da imobiliaria, apresente diferenciais e escolha a imagem institucional.",
+        action: {
+          type: "click",
+          selector: '[data-tour="site-tab-about"]',
+          waitFor: '[data-tour="site-about-settings"]',
+        },
+      },
+      {
+        selector: '[data-tour="site-contact-settings"]',
+        title: "Contato e atendimento",
+        body: "Revise telefone, WhatsApp, e-mail e endereco usados nos formularios e botoes publicos.",
+        action: {
+          type: "click",
+          selector: '[data-tour="site-tab-contact"]',
+          waitFor: '[data-tour="site-contact-settings"]',
+        },
+      },
+      {
+        selector: '[data-tour="site-social-settings"]',
+        title: "Redes sociais",
+        body: "Cadastre os links oficiais que aparecem no rodape e em outros pontos publicos do site.",
+        action: {
+          type: "click",
+          selector: '[data-tour="site-tab-social"]',
+          waitFor: '[data-tour="site-social-settings"]',
+        },
+      },
+      {
+        selector: '[data-tour="site-seo-settings"]',
+        title: "SEO e rastreamento",
+        body: "Configure metatags, pixels e scripts somente com dados validados. Esses campos afetam compartilhamento, indexacao e analise do site.",
+        action: {
+          type: "click",
+          selector: '[data-tour="site-tab-seo"]',
+          waitFor: '[data-tour="site-seo-settings"]',
+        },
+      },
+      {
+        selector: '[data-tour="site-preview"]',
+        title: "Revisar o site",
+        body: "Abra a previa e teste home, busca, filtros, detalhes do imovel, favoritos, formularios, politica de privacidade e responsividade antes de publicar.",
+        closeOpenLayer: true,
       },
       {
         selector: '[data-tour="site-save-button"]',
@@ -826,14 +1225,164 @@ function normalizeStepId(value: unknown): SetupStepId | null {
 function findElementBySelector(selectorOrSelectors: string | string[]) {
   const selectors = Array.isArray(selectorOrSelectors) ? selectorOrSelectors : [selectorOrSelectors];
   for (const selector of selectors) {
-    const element = document.querySelector<HTMLElement>(selector);
-    if (element) return element;
+    const elements = document.querySelectorAll<HTMLElement>(selector);
+    for (const element of elements) {
+      const rect = element.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0 && element.getClientRects().length > 0) return element;
+    }
   }
   return null;
 }
 
+function activateTourElement(element: HTMLElement | null) {
+  if (!element) return;
+
+  const mouseOptions: MouseEventInit = {
+    bubbles: true,
+    cancelable: true,
+    view: window,
+  };
+  const pointerOptions: PointerEventInit = {
+    ...mouseOptions,
+    pointerId: 1,
+    pointerType: "mouse",
+    isPrimary: true,
+  };
+
+  element.focus({ preventScroll: true });
+  element.dispatchEvent(new PointerEvent("pointerdown", pointerOptions));
+  element.dispatchEvent(new MouseEvent("mousedown", mouseOptions));
+  element.dispatchEvent(new PointerEvent("pointerup", pointerOptions));
+  element.dispatchEvent(new MouseEvent("mouseup", mouseOptions));
+  element.click();
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
+}
+
+const GUIDE_ACCENT_REPLACEMENTS: Record<string, string> = {
+  acoes: "ações",
+  acao: "ação",
+  anuncio: "anúncio",
+  anuncios: "anúncios",
+  area: "área",
+  areas: "áreas",
+  ate: "até",
+  alteracoes: "alterações",
+  aparencia: "aparência",
+  avancados: "avançados",
+  automatica: "automática",
+  automatico: "automático",
+  automacoes: "automações",
+  basico: "básico",
+  basicos: "básicos",
+  botao: "botão",
+  botoes: "botões",
+  cadencia: "cadência",
+  cadencias: "cadências",
+  calendario: "calendário",
+  classificacao: "classificação",
+  codigo: "código",
+  comissao: "comissão",
+  comissoes: "comissões",
+  condicoes: "condições",
+  configuracao: "configuração",
+  configuracoes: "configurações",
+  conexao: "conexão",
+  conexoes: "conexões",
+  conversao: "conversão",
+  descricao: "descrição",
+  descricoes: "descrições",
+  documentacao: "documentação",
+  distribuicao: "distribuição",
+  evolucao: "evolução",
+  formulario: "formulário",
+  formularios: "formulários",
+  funcao: "função",
+  funcoes: "funções",
+  gestao: "gestão",
+  historico: "histórico",
+  historicos: "históricos",
+  horario: "horário",
+  imovel: "imóvel",
+  imoveis: "imóveis",
+  imobiliaria: "imobiliária",
+  informacao: "informação",
+  informacoes: "informações",
+  integracao: "integração",
+  integracoes: "integrações",
+  ja: "já",
+  ligacao: "ligação",
+  ligacoes: "ligações",
+  lideranca: "liderança",
+  lideres: "líderes",
+  localizacao: "localização",
+  midia: "mídia",
+  midias: "mídias",
+  metricas: "métricas",
+  modulo: "módulo",
+  modulos: "módulos",
+  nao: "não",
+  negocio: "negócio",
+  negocios: "negócios",
+  numero: "número",
+  numeros: "números",
+  notificacoes: "notificações",
+  obrigatorio: "obrigatório",
+  obrigatorios: "obrigatórios",
+  observacao: "observação",
+  observacoes: "observações",
+  operacao: "operação",
+  organizacao: "organização",
+  organizacoes: "organizações",
+  pagina: "página",
+  paginas: "páginas",
+  periodo: "período",
+  periodos: "períodos",
+  permissao: "permissão",
+  permissoes: "permissões",
+  possivel: "possível",
+  proximo: "próximo",
+  proximos: "próximos",
+  proprietario: "proprietário",
+  proprietarios: "proprietários",
+  publicacao: "publicação",
+  publico: "público",
+  publicos: "públicos",
+  rapida: "rápida",
+  rapido: "rápido",
+  relacao: "relação",
+  relatorio: "relatório",
+  relatorios: "relatórios",
+  repeticao: "repetição",
+  redistribuicao: "redistribuição",
+  responsavel: "responsável",
+  responsaveis: "responsáveis",
+  selecao: "seleção",
+  sera: "será",
+  serao: "serão",
+  estrategia: "estratégia",
+  tambem: "também",
+  tres: "três",
+  titulo: "título",
+  usuario: "usuário",
+  usuarios: "usuários",
+  vinculo: "vínculo",
+  visao: "visão",
+  visualizacao: "visualização",
+  voce: "você",
+  voces: "vocês",
+};
+
+function formatGuideText(value: string) {
+  return Object.entries(GUIDE_ACCENT_REPLACEMENTS).reduce((text, [plain, accented]) => {
+    return text.replace(new RegExp(`\\b${plain}\\b`, "gi"), (match) => {
+      return match[0] === match[0].toUpperCase()
+        ? accented[0].toUpperCase() + accented.slice(1)
+        : accented;
+    });
+  }, value);
 }
 
 function closeOpenLayer() {
@@ -852,7 +1401,7 @@ function closeOpenLayer() {
 }
 
 export function SetupGuideTour() {
-  const { user } = useAuth();
+  const { organization, profile, user } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -863,7 +1412,10 @@ export function SetupGuideTour() {
   const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
   const [isResolving, setIsResolving] = useState(false);
 
-  const storageKey = user?.id ? `${SETUP_GUIDE_ACTIVE_STEP_PREFIX}${user.id}` : null;
+  const organizationId = organization?.id || profile?.organization_id;
+  const storageKey = user?.id && organizationId
+    ? `${SETUP_GUIDE_ACTIVE_STEP_PREFIX}${user.id}:${organizationId}`
+    : null;
   const queryStepId = normalizeStepId(searchParams.get("setupGuide"));
   const plan = activeStepId ? TOUR_PLANS[activeStepId] : null;
   const routeMatches = !!plan && !!pathname && pathname.startsWith(plan.path);
@@ -884,6 +1436,7 @@ export function SetupGuideTour() {
 
   const finishTour = useCallback((complete = false) => {
     const completedStepId = activeStepId;
+    closeOpenLayer();
     if (storageKey) {
       try {
         window.localStorage.removeItem(storageKey);
@@ -907,6 +1460,15 @@ export function SetupGuideTour() {
 
   useEffect(() => {
     document.documentElement.dataset.setupGuideActiveStep = activeStepId || "";
+    if (activeStepId) {
+      document.body.dataset.setupGuideActive = "true";
+    } else {
+      delete document.body.dataset.setupGuideActive;
+    }
+
+    return () => {
+      delete document.body.dataset.setupGuideActive;
+    };
   }, [activeStepId]);
 
   useEffect(() => {
@@ -984,27 +1546,28 @@ export function SetupGuideTour() {
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let attempts = 0;
+    let actionAttempts = 0;
     let targetSelector: string | string[] = currentItem.selector;
 
     const resolveTarget = () => {
       if (cancelled) return;
       const element = findElementBySelector(targetSelector);
 
-      if (element || attempts >= 18) {
+      if (element || attempts >= 25) {
         setTargetElement(element);
         setTargetRect(element ? element.getBoundingClientRect() : null);
         setIsResolving(false);
         if (element) {
-          element.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+          element.scrollIntoView({ block: "center", inline: "center", behavior: "auto" });
           timeoutId = setTimeout(() => {
             if (!cancelled) setTargetRect(element.getBoundingClientRect());
-          }, 360);
+          }, 120);
         }
         return;
       }
 
       attempts += 1;
-      timeoutId = setTimeout(resolveTarget, 160);
+      timeoutId = setTimeout(resolveTarget, 100);
     };
 
     const runAction = () => {
@@ -1015,22 +1578,44 @@ export function SetupGuideTour() {
         return;
       }
 
-      if (currentItem.action.closeOpenLayer) closeOpenLayer();
+      const action = currentItem.action;
+      if (action.closeOpenLayer) closeOpenLayer();
 
-      timeoutId = setTimeout(() => {
+      if (action.type === "hash") {
+        const nextHash = `#${action.hash}`;
+        if (window.location.hash !== nextHash) {
+          window.location.hash = nextHash;
+        } else {
+          window.dispatchEvent(new HashChangeEvent("hashchange"));
+        }
+        if (action.waitFor) targetSelector = action.waitFor;
+        attempts = 0;
+        timeoutId = setTimeout(resolveTarget, 120);
+        return;
+      }
+
+      const resolveActionTrigger = () => {
         if (cancelled) return;
-        const trigger = findElementBySelector(currentItem.action!.selector);
-        trigger?.click();
+        const trigger = findElementBySelector(action.selector);
+        if (!trigger && actionAttempts < 30) {
+          actionAttempts += 1;
+          timeoutId = setTimeout(resolveActionTrigger, 100);
+          return;
+        }
 
-        if (currentItem.action?.waitFor) {
-          targetSelector = currentItem.action.waitFor;
+        activateTourElement(trigger);
+
+        if (action.waitFor) {
+          targetSelector = action.waitFor;
           attempts = 0;
           timeoutId = setTimeout(resolveTarget, 80);
           return;
         }
 
         resolveTarget();
-      }, 120);
+      };
+
+      timeoutId = setTimeout(resolveActionTrigger, 120);
     };
 
     queueMicrotask(() => {
@@ -1096,11 +1681,11 @@ export function SetupGuideTour() {
 
   if (!routeMatches) {
     return (
-      <div className="pointer-events-none fixed inset-0 z-[80] flex items-center justify-center bg-black/45 px-4">
+      <div className="pointer-events-none fixed inset-0 z-[1000] flex items-center justify-center bg-black/45 px-4">
         <div className="pointer-events-auto w-[min(360px,calc(100vw-32px))] rounded-[10px] bg-[var(--app-surface-solid)] p-4 text-[var(--app-text-primary)] shadow-2xl">
-          <p className="text-sm font-light">Abrindo a area do guia</p>
+          <p className="text-sm font-light">Abrindo a área do guia</p>
           <p className="mt-2 text-xs font-extralight leading-5 text-[var(--app-text-secondary)]">
-            Vou levar voce para a tela certa e apontar os pontos principais por la.
+            Vou levar você para a tela certa e apontar os pontos principais por lá.
           </p>
           <div className="mt-4 flex justify-end gap-2">
             <button
@@ -1123,20 +1708,29 @@ export function SetupGuideTour() {
     );
   }
 
-  if (isResolving) return null;
+  if (isResolving) {
+    return (
+      <div className="pointer-events-none fixed inset-0 z-[1000] flex items-center justify-center bg-black/35 px-4">
+        <div className="flex items-center gap-3 rounded-[8px] bg-[var(--app-surface-solid)] px-4 py-3 text-sm font-light text-[var(--app-text-primary)]">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#FF4529]/25 border-t-[#FF4529]" />
+          Preparando este ponto...
+        </div>
+      </div>
+    );
+  }
 
   const hasTarget = !!currentItem && !!targetRect;
   const title = hasTarget
     ? currentItem?.title
-    : currentItem?.missingTitle || currentItem?.title || "Nao encontrei esse ponto na tela";
+    : currentItem?.missingTitle || currentItem?.title || "Não encontrei esse ponto na tela";
   const body = hasTarget
     ? currentItem?.body
     : currentItem?.missingBody ||
       currentItem?.body ||
-      "Essa area pode estar indisponivel para o perfil atual ou ainda carregando. Voce pode fechar e abrir o guia novamente depois.";
+      "Essa área pode estar indisponível para o perfil atual ou ainda carregando. Você pode fechar e abrir o guia novamente depois.";
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-[80]">
+    <div className="pointer-events-none fixed inset-0 z-[1000]">
       {hasTarget ? (
         <div
           data-tour="setup-guide-highlight"
@@ -1171,13 +1765,13 @@ export function SetupGuideTour() {
         ) : null}
 
         <p className="text-[11px] font-extralight uppercase tracking-[0.16em] text-[#FF4529]">
-          Guia de configuracao
+          Guia de configuração
         </p>
         <h3 data-tour="setup-guide-tooltip-title" className="mt-2 text-base font-light leading-6">
-          {title}
+          {formatGuideText(title)}
         </h3>
         <p data-tour="setup-guide-tooltip-body" className="mt-2 text-sm font-extralight leading-6 text-[var(--app-text-secondary)]">
-          {body}
+          {formatGuideText(body)}
         </p>
 
         <div className="mt-4 flex items-center justify-between gap-3">
@@ -1211,7 +1805,7 @@ export function SetupGuideTour() {
                 setCurrentIndex((index) => index + 1);
               }}
             >
-              {currentIndex >= items.length - 1 ? "Concluir" : "Proximo"}
+              {currentIndex >= items.length - 1 ? "Concluir" : "Próximo"}
             </button>
           </div>
         </div>

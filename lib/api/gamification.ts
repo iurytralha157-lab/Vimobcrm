@@ -1,21 +1,28 @@
 import {
   apiGamificationAdminResponseSchema,
+  apiGamificationEventPageResponseSchema,
   apiGamificationManualEntryResponseSchema,
   apiGamificationMissionResponseSchema,
   apiGamificationOverviewResponseSchema,
+  apiGamificationRankingResponseSchema,
   apiGamificationParticipantResponseSchema,
   apiGamificationRuleResponseSchema,
   apiGamificationSeasonResponseSchema,
   gamificationDecisionInputSchema,
+  gamificationEventListQuerySchema,
   gamificationManualEntryInputSchema,
   gamificationMissionInputSchema,
   gamificationParticipantInputSchema,
   gamificationRuleInputSchema,
+  gamificationRankingQuerySchema,
   gamificationSeasonInputSchema,
   parseDomainInput,
   validateDomainResponse,
+  type GamificationActionType,
 } from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
+
+export type { GamificationActionType } from '@/lib/validation'
 
 type Envelope<T> = {
   data: T
@@ -48,11 +55,17 @@ export interface GamificationEvent {
   source: string | null
 }
 
+export interface GamificationEventPage {
+  events: GamificationEvent[]
+  total: number
+  nextCursor: string | null
+}
+
 export interface GamificationMission {
   id: string
   title: string
   description: string | null
-  actionType: string | null
+  actionType: GamificationActionType | null
   targetCount: number
   currentProgress: number
   bonusPoints: number
@@ -100,7 +113,7 @@ export interface GamificationOverview {
 
 export interface GamificationRule {
   id: string
-  actionType: string
+  actionType: GamificationActionType
   points: number
   isActive: boolean
   isTemp: boolean
@@ -130,13 +143,15 @@ export interface GamificationManualEntry {
   id: string
   userId: string
   userName: string
-  actionKey: string
+  actionKey: GamificationActionType
   quantity: number
   notes: string | null
   status: 'pending' | 'approved' | 'rejected'
   approvedBy: string | null
   approvedAt: string | null
   rejectionReason: string | null
+  awardedAt: string | null
+  awardStatus: 'pending' | 'processing' | 'completed' | 'skipped' | 'dead' | null
   createdAt: string | null
 }
 
@@ -159,13 +174,27 @@ export interface GamificationAdminSnapshot {
 export type GamificationMissionInput = {
   title: string
   description?: string | null
-  actionType?: string | null
+  actionType?: GamificationActionType | null
   targetCount: number
   bonusPoints: number
   period?: string | null
   targetScope: 'organization' | 'user'
   targetUserId?: string | null
   isActive?: boolean
+}
+
+export type GamificationRankingQuery = {
+  from?: string
+  to?: string
+  actionTypes?: GamificationActionType[]
+}
+
+export type GamificationEventListQuery = {
+  from?: string
+  to?: string
+  userId?: string
+  limit?: number
+  cursor?: string
 }
 
 export const gamificationAPI = {
@@ -177,6 +206,43 @@ export const gamificationAPI = {
     return response.data
   },
 
+  async getRanking(query: GamificationRankingQuery, organizationId?: string | null) {
+    const filters = parseDomainInput(gamificationRankingQuerySchema, {
+      ...query,
+      actionTypes: query.actionTypes ?? [],
+    }, 'gamification.ranking')
+    const search = new URLSearchParams()
+    if (filters.from) search.set('from', filters.from)
+    if (filters.to) search.set('to', filters.to)
+    for (const actionType of filters.actionTypes) search.append('actionType', actionType)
+    const suffix = search.size > 0 ? `?${search.toString()}` : ''
+    const response = await vimobAPIRequest<Envelope<GamificationRankingEntry[]>>(
+      `/v1/gamification/ranking${suffix}`,
+      { organizationId },
+    )
+    validateDomainResponse(apiGamificationRankingResponseSchema, response, 'gamification.ranking')
+    return response.data
+  },
+
+  async getEvents(query: GamificationEventListQuery, organizationId?: string | null) {
+    const filters = parseDomainInput(gamificationEventListQuerySchema, {
+      ...query,
+      limit: query.limit ?? 50,
+    }, 'gamification.events')
+    const search = new URLSearchParams()
+    if (filters.from) search.set('from', filters.from)
+    if (filters.to) search.set('to', filters.to)
+    if (filters.userId) search.set('userId', filters.userId)
+    if (filters.cursor) search.set('cursor', filters.cursor)
+    search.set('limit', String(filters.limit))
+    const response = await vimobAPIRequest<Envelope<GamificationEventPage>>(
+      `/v1/gamification/events?${search.toString()}`,
+      { organizationId },
+    )
+    validateDomainResponse(apiGamificationEventPageResponseSchema, response, 'gamification.events')
+    return response.data
+  },
+
   async getAdminSnapshot(organizationId?: string | null) {
     const response = await vimobAPIRequest<Envelope<GamificationAdminSnapshot>>('/v1/gamification/admin', {
       organizationId,
@@ -185,7 +251,7 @@ export const gamificationAPI = {
     return response.data
   },
 
-  async upsertRule(actionType: string, input: { points: number; isActive?: boolean }, organizationId?: string | null) {
+  async upsertRule(actionType: GamificationActionType, input: { points: number; isActive?: boolean }, organizationId?: string | null) {
     const body = parseDomainInput(gamificationRuleInputSchema, input, 'gamification.rules.upsert')
     const response = await vimobAPIRequest<Envelope<GamificationRule>>(
       `/v1/gamification/rules/${encodeURIComponent(actionType)}`,
@@ -245,7 +311,7 @@ export const gamificationAPI = {
     })
   },
 
-  async createManualEntry(input: { actionKey: string; quantity: number; notes: string }, organizationId?: string | null) {
+  async createManualEntry(input: { actionKey: GamificationActionType; quantity: number; notes: string }, organizationId?: string | null) {
     const body = parseDomainInput(gamificationManualEntryInputSchema, input, 'gamification.manual-entries.create')
     const response = await vimobAPIRequest<Envelope<GamificationManualEntry>>('/v1/gamification/manual-entries', {
       method: 'POST',

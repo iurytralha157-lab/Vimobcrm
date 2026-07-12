@@ -34,6 +34,7 @@ export const en = {
     dashboardSite: 'Site dashboard',
     dashboardCampaigns: 'Campaign dashboard',
     pipelines: 'Pipelines',
+    attentionCenter: 'Attention Center',
     contacts: 'Contacts',
     schedule: 'Schedule',
     conversations: 'Conversations',

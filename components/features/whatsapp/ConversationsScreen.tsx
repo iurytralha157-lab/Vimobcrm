@@ -39,6 +39,7 @@ import { whatsappAPI } from "@/lib/api/whatsapp";
 import { getWhatsAppMessageInputState } from "@/lib/whatsapp-message-input";
 import { groupLatestWhatsAppReactions } from "@/lib/whatsapp-reactions";
 import { useAuth } from "@/contexts/AuthContext";
+import { useHasPermission } from "@/hooks/use-organization-roles";
 
 const MAX_IMAGE_DIMENSION = 1600;
 const IMAGE_QUALITY = 0.82;
@@ -157,6 +158,7 @@ async function compressImageFile(file: File): Promise<File> {
 
 export default function Conversations() {
   const { user, profile } = useAuth();
+  const { data: canStartAutomations = false } = useHasPermission("automations_edit");
   const isMobile = useIsMobile();
   const router = useRouter();
   const currentUserId = profile?.id || user?.id || null;
@@ -683,7 +685,7 @@ export default function Conversations() {
                       <button type="button" onClick={() => fileInputRef.current?.click()} disabled={messageInputDisabled}>
                         <Paperclip className="w-5 h-5" />
                       </button>
-                      {selectedLeadId && (
+                      {selectedLeadId && canStartAutomations && (
                         <button type="button" onClick={() => setShowAutomationDialog(true)} title="Iniciar Automação">
                           <Zap className="w-5 h-5" />
                         </button>
@@ -714,6 +716,7 @@ export default function Conversations() {
                     <PopoverTrigger asChild>
                       <Button
                         type="button"
+                        data-tour="conversations-filters"
                         variant="ghost"
                         className={cn(
                           "h-8 shrink-0 gap-1.5 rounded-[7px] border-0 bg-[var(--app-surface-soft)] px-2 text-[11px] font-semibold uppercase tracking-normal text-foreground shadow-none hover:bg-[var(--app-surface-hover)]",
@@ -912,6 +915,7 @@ export default function Conversations() {
                 <PopoverTrigger asChild>
                   <Button
                     type="button"
+                    data-tour="conversations-filters"
                     variant="ghost"
                     className={cn(
                       "h-8 shrink-0 gap-1.5 rounded-[7px] border-0 bg-[var(--app-surface-soft)] px-2 text-[11px] font-semibold uppercase tracking-normal text-foreground shadow-none hover:bg-[var(--app-surface-hover)]",
@@ -1144,7 +1148,7 @@ export default function Conversations() {
         </aside>
 
         {/* Chat Area */}
-        <main className="app-card flex min-w-0 flex-1 flex-col overflow-hidden">
+        <main data-tour="conversations-chat" className="app-card flex min-w-0 flex-1 flex-col overflow-hidden">
           {selectedConversation ? <>
               {/* Header do chat */}
               <ConversationHeader
@@ -1179,7 +1183,7 @@ export default function Conversations() {
               />
 
               {/* Mensagens */}
-              <div className="flex-1 overflow-hidden min-h-0">
+              <div data-tour="conversations-messages" className="flex-1 overflow-hidden min-h-0">
                 <ScrollArea className="h-full" onScrollCapture={(e: React.UIEvent<HTMLDivElement>) => {
                   const target = e.currentTarget.querySelector<HTMLElement>('[data-radix-scroll-area-viewport]') || e.currentTarget;
                   if (target) {
@@ -1230,7 +1234,7 @@ export default function Conversations() {
               </div>
 
               {/* Input de mensagem */}
-              <footer className="shrink-0 bg-[var(--app-surface-soft)] px-3 pb-3 pt-2">
+              <footer data-tour="conversations-composer" className="shrink-0 bg-[var(--app-surface-soft)] px-3 pb-3 pt-2">
                 <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx" className="hidden" />
                 <MessageBox
                   value={messageText}
@@ -1247,7 +1251,7 @@ export default function Conversations() {
                       <button type="button" onClick={() => fileInputRef.current?.click()} disabled={messageInputDisabled}>
                         <Paperclip className="w-5 h-5" />
                       </button>
-                      {selectedLeadId && (
+                      {selectedLeadId && canStartAutomations && (
                         <button type="button" onClick={() => setShowAutomationDialog(true)} title="Iniciar Automação">
                           <Zap className="w-5 h-5" />
                         </button>
@@ -1378,7 +1382,7 @@ function ConversationItem({
     previewMessage,
   );
 
-  return <div className={cn("w-full text-left p-2 grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1.5 hover:bg-white/[0.045] transition-colors group overflow-hidden", isSelected && "bg-white/[0.07]")}>
+  return <div data-tour="conversations-item" className={cn("w-full text-left p-2 grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1.5 hover:bg-white/[0.045] transition-colors group overflow-hidden", isSelected && "bg-white/[0.07]")}>
       <button type="button" onClick={onClick} className="flex items-center gap-2.5 flex-1 min-w-0">
         <Avatar className="h-9 w-9 shrink-0 relative">
           <AvatarImage src={getConversationAvatarUrl(conversation)} />

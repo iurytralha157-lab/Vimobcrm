@@ -842,7 +842,7 @@ export function DistributionQueueEditor({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] w-[94vw] max-w-6xl overflow-hidden border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-2xl">
+      <DialogContent data-tour="distribution-queue-editor" className="max-h-[90vh] w-[94vw] max-w-6xl overflow-hidden border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-2xl">
         <DialogHeader className="bg-[var(--app-surface-soft)] px-6 py-5">
           <DialogTitle>
             {queue ? 'Editar Fila de Distribuicao' : 'Nova Fila de Distribuicao'}
@@ -852,7 +852,7 @@ export function DistributionQueueEditor({
         <div className="max-h-[calc(90vh-150px)] overflow-y-auto px-6 py-5">
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div className="space-y-4">
-              <Collapsible open={openSections.includes('basic')} onOpenChange={() => toggleSection('basic')}>
+              <Collapsible data-tour="distribution-queue-basic" open={openSections.includes('basic')} onOpenChange={() => toggleSection('basic')}>
                 <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
                   <div className="flex items-center gap-2">
                     <Settings2 className="h-4 w-4 text-primary" />
@@ -938,7 +938,7 @@ export function DistributionQueueEditor({
                 </CollapsibleContent>
               </Collapsible>
 
-              <Collapsible open={openSections.includes('rules')} onOpenChange={() => toggleSection('rules')}>
+              <Collapsible data-tour="distribution-queue-rules" open={openSections.includes('rules')} onOpenChange={() => toggleSection('rules')}>
                 <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
                   <div className="flex items-center gap-2">
                     <Filter className="h-4 w-4 text-primary" />
@@ -989,7 +989,7 @@ export function DistributionQueueEditor({
             </div>
 
             <div className="space-y-4">
-              <Collapsible open={openSections.includes('members')} onOpenChange={() => toggleSection('members')}>
+              <Collapsible data-tour="distribution-queue-members" open={openSections.includes('members')} onOpenChange={() => toggleSection('members')}>
                 <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
                   <div className="flex items-center gap-2">
                     <Users className="h-4 w-4 text-primary" />
@@ -1090,7 +1090,7 @@ export function DistributionQueueEditor({
                 </CollapsibleContent>
               </Collapsible>
 
-              <Collapsible open={openSections.includes('redistribution')} onOpenChange={() => toggleSection('redistribution')}>
+              <Collapsible data-tour="distribution-queue-redistribution" open={openSections.includes('redistribution')} onOpenChange={() => toggleSection('redistribution')}>
                 <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
                   <div className="flex items-center gap-2">
                     <AlertCircle className="h-4 w-4 text-primary" />
@@ -1186,7 +1186,7 @@ export function DistributionQueueEditor({
 
         <div className="flex justify-end gap-2 bg-[var(--app-surface-soft)] px-6 py-4">
           <Button variant="outline" className="rounded-xl" onClick={() => onOpenChange(false)}>Cancelar</Button>
-          <Button className="rounded-xl" onClick={handleSave} disabled={!canSave}>
+          <Button data-tour="distribution-queue-save" className="rounded-xl" onClick={handleSave} disabled={!canSave}>
             {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />} Salvar
           </Button>
         </div>

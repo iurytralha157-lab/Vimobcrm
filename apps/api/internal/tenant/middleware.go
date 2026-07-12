@@ -46,6 +46,24 @@ func RequireOrganization(next http.Handler) http.Handler {
 	})
 }
 
+func RequireModule(module string, next http.Handler) http.Handler {
+	module = strings.ToLower(strings.TrimSpace(module))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tenantContext, ok := FromContext(r.Context())
+		if !ok || tenantContext.OrganizationID == "" {
+			httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+			return
+		}
+
+		if !tenantContext.HasModule(module) {
+			httpserver.WriteError(w, r, http.StatusForbidden, "module_unavailable", "This module is not enabled for the organization.")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func RequireFinancialAccess(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tenantContext, ok := FromContext(r.Context())

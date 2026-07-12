@@ -1,5 +1,8 @@
 import {
   apiAutomationExecutionListResponseSchema,
+  apiAutomationExecutionStepListResponseSchema,
+  apiAutomationExecutionSummaryListResponseSchema,
+  apiAutomationRuntimeIssuesResponseSchema,
   apiAutomationListResponseSchema,
   apiAutomationMediaListResponseSchema,
   apiAutomationMediaResponseSchema,
@@ -10,6 +13,7 @@ import {
   apiAutomationWithNodesResponseSchema,
   apiStartAutomationResponseSchema,
   automationMediaTypeSchema,
+  automationRuntimeIssueKindSchema,
   createAutomationInputSchema,
   createAutomationTemplateInputSchema,
   parseDomainInput,
@@ -45,25 +49,20 @@ export type NodeType = "trigger" | "action" | "condition" | "delay";
 
 export type ActionType =
   | "send_whatsapp"
-  | "send_whatsapp_template"
-  | "send_email"
   | "send_image"
   | "send_audio"
   | "send_video"
-  | "collect_input"
   | "move_lead"
   | "add_tag"
   | "remove_tag"
-  | "create_task"
   | "assign_user"
   | "webhook"
-  | "redirect"
   | "set_variable";
 
 export interface FlowNode {
   id: string;
-  type: string;
-  action_type?: string | null;
+  type: NodeType;
+  action_type?: ActionType | null;
   position: { x: number; y: number };
   config: Record<string, unknown>;
 }
@@ -155,21 +154,91 @@ export interface AutomationExecution {
   } | null;
 }
 
+export interface AutomationExecutionStep {
+  id: string;
+  execution_id: string;
+  node_key: string;
+  node_type: NodeType;
+  action_type: ActionType | null;
+  status: string;
+  attempt: number;
+  started_at: string;
+  completed_at: string | null;
+  error_message: string | null;
+}
+
+export interface AutomationExecutionSummary {
+  automationId: string;
+  total: number;
+  queued: number;
+  running: number;
+  waiting: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  activeExecutionIds: string[];
+  activeIdsTruncated: boolean;
+  lastStartedAt: string | null;
+}
+
+export type AutomationRuntimeIssueKind =
+  | 'dead_letter'
+  | 'failed_event'
+  | 'circuit_decision'
+  | 'duplicate_decision'
+  | 'ambiguous_effect'
+  | 'circuit_open';
+
+export interface AutomationRuntimeIssue {
+  id: string;
+  kind: AutomationRuntimeIssueKind;
+  severity: 'info' | 'warning' | 'error';
+  status: string;
+  automationId: string | null;
+  automationName: string | null;
+  executionId: string | null;
+  leadId: string | null;
+  message: string | null;
+  details: unknown;
+  retryable: boolean;
+  occurredAt: string;
+}
+
+export interface AutomationRuntimeIssuesResult {
+  summary: {
+    deadLetters: number;
+    failedEvents: number;
+    openCircuits: number;
+    duplicateDecisions: number;
+    unknownEffects: number;
+    staleSendingEffects: number;
+  };
+  issues: AutomationRuntimeIssue[];
+}
+
 export type CreateAutomationInput = {
   name: string;
   description?: string | null;
   trigger_type: TriggerType;
   trigger_config?: Record<string, unknown>;
-  flow_definition?: FlowDefinition | null;
+  flow_definition?: FlowDefinition;
+  is_active?: boolean;
 };
 
-export type UpdateAutomationInput = Partial<Automation> & { id: string };
+export type UpdateAutomationInput = {
+  id: string;
+  name?: string;
+  description?: string | null;
+  is_active?: boolean;
+};
 
 export type StartAutomationResult = {
   executionId: string;
   automationId: string;
   automationName: string;
   executorStarted: boolean;
+  status: 'queued' | 'running' | 'waiting' | 'completed' | 'cancelled' | 'canceled';
+  dispatchPending: boolean;
 };
 
 export type AutomationMediaType = 'image' | 'audio' | 'video';
@@ -184,6 +253,11 @@ export type AutomationMediaFile = {
   metadata: Record<string, unknown>;
   createdAt: string | null;
   updatedAt: string | null;
+};
+
+export type AutomationMediaPage = {
+  files: AutomationMediaFile[];
+  nextOffset: number | null;
 };
 
 export const automationsAPI = {
@@ -244,10 +318,15 @@ export const automationsAPI = {
 
   async saveAutomationFlow(
     automationId: string,
-    flowDefinition: FlowDefinition,
+    input: {
+      flowDefinition: FlowDefinition;
+      name?: string;
+      description?: string | null;
+      isActive?: boolean;
+    },
     organizationId?: string | null,
   ) {
-    const body = parseDomainInput(saveAutomationFlowInputSchema, { flowDefinition }, 'automations.flow.save');
+    const body = parseDomainInput(saveAutomationFlowInputSchema, input, 'automations.flow.save');
     const response = await vimobAPIRequest<Envelope<{ nodes: AutomationNode[] }>>(
       `/v1/automations/${automationId}/flow`,
       {
@@ -324,6 +403,21 @@ export const automationsAPI = {
     return response.data;
   },
 
+  async listExecutionSummaries(organizationId?: string | null) {
+    const response = await vimobAPIRequest<Envelope<AutomationExecutionSummary[]>>('/v1/automation-executions/summary', {
+      organizationId,
+    });
+    validateDomainResponse(apiAutomationExecutionSummaryListResponseSchema, response, 'automations.executions.summary');
+    return response.data;
+  },
+
+  async cancelAutomationExecutions(automationId: string, organizationId?: string | null) {
+    return vimobAPIRequest<{ ok: boolean; cancelled: number }>(
+      `/v1/automations/${encodeURIComponent(automationId)}/executions/cancel`,
+      { method: 'POST', organizationId },
+    );
+  },
+
   async cancelExecution(executionId: string, organizationId?: string | null) {
     await vimobAPIRequest<{ ok: boolean }>(`/v1/automation-executions/${executionId}/cancel`, {
       method: 'POST',
@@ -331,11 +425,46 @@ export const automationsAPI = {
     });
   },
 
-  async listMedia(mediaType: AutomationMediaType, organizationId?: string | null) {
+  async listExecutionSteps(
+    executionId: string,
+    params: { limit?: number; offset?: number; organizationId?: string | null } = {},
+  ) {
+    const response = await vimobAPIRequest<Envelope<AutomationExecutionStep[]>>(
+      `/v1/automation-executions/${encodeURIComponent(executionId)}/steps`,
+      {
+        organizationId: params.organizationId,
+        query: { limit: params.limit, offset: params.offset },
+      },
+    );
+    validateDomainResponse(apiAutomationExecutionStepListResponseSchema, response, 'automations.executions.steps');
+    return response.data;
+  },
+
+  async listRuntimeIssues(params: { limit?: number; offset?: number; organizationId?: string | null } = {}) {
+    const response = await vimobAPIRequest<Envelope<AutomationRuntimeIssuesResult>>('/v1/automation-runtime/issues', {
+      organizationId: params.organizationId,
+      query: { limit: params.limit, offset: params.offset },
+    });
+    validateDomainResponse(apiAutomationRuntimeIssuesResponseSchema, response, 'automations.runtime.issues');
+    return response.data;
+  },
+
+  async retryRuntimeIssue(kind: AutomationRuntimeIssueKind, issueId: string, organizationId?: string | null) {
+    const safeKind = parseDomainInput(automationRuntimeIssueKindSchema, kind, 'automations.runtime.retry');
+    await vimobAPIRequest<{ ok: boolean }>(
+      `/v1/automation-runtime/issues/${encodeURIComponent(safeKind)}/${encodeURIComponent(issueId)}/retry`,
+      { method: 'POST', organizationId },
+    );
+  },
+
+  async listMedia(
+    mediaType: AutomationMediaType,
+    params: { limit?: number; offset?: number; organizationId?: string | null } = {},
+  ) {
     const validatedMediaType = parseDomainInput(automationMediaTypeSchema, mediaType, 'automations.media.list');
-    const response = await vimobAPIRequest<Envelope<AutomationMediaFile[]>>('/v1/automation-media', {
-      organizationId,
-      query: { mediaType: validatedMediaType },
+    const response = await vimobAPIRequest<Envelope<AutomationMediaPage>>('/v1/automation-media', {
+      organizationId: params.organizationId,
+      query: { mediaType: validatedMediaType, limit: params.limit, offset: params.offset },
     });
     validateDomainResponse(apiAutomationMediaListResponseSchema, response, 'automations.media.list');
     return response.data;

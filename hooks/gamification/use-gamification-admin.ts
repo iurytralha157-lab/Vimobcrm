@@ -5,7 +5,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import { useAuth } from '@/contexts/AuthContext';
-import { gamificationAPI, type GamificationMissionInput } from '@/lib/api/gamification';
+import { gamificationAPI, type GamificationActionType, type GamificationMissionInput } from '@/lib/api/gamification';
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error && error.message ? error.message : 'Tente novamente em alguns instantes.';
+}
+
+function showMutationError(action: string, error: unknown) {
+  toast.error(action, { description: getErrorMessage(error) });
+}
 
 export function useGamificationAdmin(enabled = true) {
   const { organization } = useAuth();
@@ -17,22 +25,40 @@ export function useGamificationAdmin(enabled = true) {
     queryFn: () => gamificationAPI.getAdminSnapshot(organizationId),
     enabled: enabled && !!organizationId,
     staleTime: 1000 * 60,
+    refetchInterval: (currentQuery) => {
+      const snapshot = currentQuery.state.data;
+      const visibleEntries = [
+        ...(snapshot?.myManualEntries ?? []),
+        ...(snapshot?.pendingManualEntries ?? []),
+      ];
+      const hasPendingAward = visibleEntries.some((entry) =>
+        entry.status === 'approved'
+        && (!entry.awardStatus || entry.awardStatus === 'pending' || entry.awardStatus === 'processing'));
+      if (hasPendingAward) return 5_000;
+
+      const hasPendingDecision = visibleEntries.some((entry) => entry.status === 'pending');
+      return hasPendingDecision ? 60_000 : false;
+    },
+    refetchIntervalInBackground: false,
   });
 
   const invalidate = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['gamification-admin', organizationId] }),
       queryClient.invalidateQueries({ queryKey: ['gamification-overview', organizationId] }),
+      queryClient.invalidateQueries({ queryKey: ['gamification-ranking', organizationId] }),
+      queryClient.invalidateQueries({ queryKey: ['gamification-events', organizationId] }),
     ]);
   };
 
   const upsertRule = useMutation({
-    mutationFn: (input: { actionType: string; points: number; isActive?: boolean }) =>
+    mutationFn: (input: { actionType: GamificationActionType; points: number; isActive?: boolean }) =>
       gamificationAPI.upsertRule(input.actionType, { points: input.points, isActive: input.isActive }, organizationId),
     onSuccess: async () => {
       await invalidate();
       toast.success('Regra atualizada.');
     },
+    onError: (error) => showMutationError('Não foi possível atualizar a regra.', error),
   });
 
   const setParticipant = useMutation({
@@ -42,14 +68,16 @@ export function useGamificationAdmin(enabled = true) {
       await invalidate();
       toast.success('Participacao atualizada.');
     },
+    onError: (error) => showMutationError('Não foi possível atualizar a participação.', error),
   });
 
   const createMission = useMutation({
     mutationFn: (input: GamificationMissionInput) => gamificationAPI.createMission(input, organizationId),
     onSuccess: async () => {
       await invalidate();
-      toast.success('Missao criada.');
+      toast.success('Missão criada.');
     },
+    onError: (error) => showMutationError('Não foi possível criar a missão.', error),
   });
 
   const updateMission = useMutation({
@@ -57,25 +85,28 @@ export function useGamificationAdmin(enabled = true) {
       gamificationAPI.updateMission(input.id, input.mission, organizationId),
     onSuccess: async () => {
       await invalidate();
-      toast.success('Missao atualizada.');
+      toast.success('Missão atualizada.');
     },
+    onError: (error) => showMutationError('Não foi possível atualizar a missão.', error),
   });
 
   const deleteMission = useMutation({
     mutationFn: (id: string) => gamificationAPI.deleteMission(id, organizationId),
     onSuccess: async () => {
       await invalidate();
-      toast.success('Missao removida.');
+      toast.success('Missão removida.');
     },
+    onError: (error) => showMutationError('Não foi possível remover a missão.', error),
   });
 
   const createManualEntry = useMutation({
-    mutationFn: (input: { actionKey: string; quantity: number; notes: string }) =>
+    mutationFn: (input: { actionKey: GamificationActionType; quantity: number; notes: string }) =>
       gamificationAPI.createManualEntry(input, organizationId),
     onSuccess: async () => {
       await invalidate();
       toast.success('Solicitacao enviada para aprovacao.');
     },
+    onError: (error) => showMutationError('Não foi possível enviar a solicitação.', error),
   });
 
   const decideManualEntry = useMutation({
@@ -85,6 +116,7 @@ export function useGamificationAdmin(enabled = true) {
       await invalidate();
       toast.success('Solicitacao atualizada.');
     },
+    onError: (error) => showMutationError('Não foi possível atualizar a solicitação.', error),
   });
 
   const resetSeason = useMutation({
@@ -93,6 +125,7 @@ export function useGamificationAdmin(enabled = true) {
       await invalidate();
       toast.success('Nova temporada iniciada.');
     },
+    onError: (error) => showMutationError('Não foi possível iniciar a temporada.', error),
   });
 
   return useMemo(

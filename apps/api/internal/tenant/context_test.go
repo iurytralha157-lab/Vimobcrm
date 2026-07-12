@@ -48,15 +48,32 @@ func TestContextHasPermission(t *testing.T) {
 	}
 }
 
-func TestCloneContextPreservesEmptyPermissionsArray(t *testing.T) {
+func TestContextHasModule(t *testing.T) {
+	tenantContext := Context{EnabledModules: []string{"CRM", " Gamification "}}
+
+	if !tenantContext.HasModule("gamification") {
+		t.Fatal("expected enabled module to be matched case insensitively")
+	}
+	if tenantContext.HasModule("automations") {
+		t.Fatal("disabled module must not be available")
+	}
+	if tenantContext.HasModule(" ") {
+		t.Fatal("empty module must not be available")
+	}
+}
+
+func TestCloneContextPreservesEmptyContractArrays(t *testing.T) {
 	for _, permissions := range [][]string{nil, {}} {
-		cloned := cloneContext(Context{Permissions: permissions})
+		cloned := cloneContext(Context{Permissions: permissions, EnabledModules: nil})
 
 		if cloned.Permissions == nil {
 			t.Fatal("expected empty permissions to remain a non-nil array")
 		}
 		if len(cloned.Permissions) != 0 {
 			t.Fatalf("expected no permissions, got %v", cloned.Permissions)
+		}
+		if cloned.EnabledModules == nil {
+			t.Fatal("expected empty enabled modules to remain a non-nil array")
 		}
 
 		payload, err := json.Marshal(cloned)
@@ -65,6 +82,9 @@ func TestCloneContextPreservesEmptyPermissionsArray(t *testing.T) {
 		}
 		if !strings.Contains(string(payload), `"permissions":[]`) {
 			t.Fatalf("expected permissions array in JSON, got %s", payload)
+		}
+		if !strings.Contains(string(payload), `"enabledModules":[]`) {
+			t.Fatalf("expected enabled modules array in JSON, got %s", payload)
 		}
 	}
 }

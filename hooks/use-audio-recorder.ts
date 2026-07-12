@@ -1,4 +1,4 @@
- import { useState, useRef, useCallback } from "react";
+ import { useState, useRef, useCallback, useEffect } from "react";
 
  interface AudioRecorderState {
    isRecording: boolean;
@@ -21,6 +21,8 @@
    const chunksRef = useRef<Blob[]>([]);
    const timerRef = useRef<number | null>(null);
    const startTimeRef = useRef<number>(0);
+   const discardOnStopRef = useRef(false);
+   const mountedRef = useRef(true);
 
    const startRecording = useCallback(async () => {
      try {
@@ -44,6 +46,7 @@
          audioBitsPerSecond: 128000,
        });
 
+       discardOnStopRef.current = false;
        mediaRecorderRef.current = mediaRecorder;
        chunksRef.current = [];
 
@@ -56,13 +59,21 @@
        mediaRecorder.onstop = async () => {
          // Stop all tracks
          stream.getTracks().forEach(track => track.stop());
+         mediaRecorderRef.current = null;
+
+         if (discardOnStopRef.current || chunksRef.current.length === 0) {
+           chunksRef.current = [];
+           return;
+         }
 
          // Create blob
          const blob = new Blob(chunksRef.current, { type: mimeType });
+         chunksRef.current = [];
 
          // Convert to base64
          const reader = new FileReader();
          reader.onloadend = () => {
+           if (!mountedRef.current || discardOnStopRef.current) return;
            const base64String = reader.result as string;
            // Remove data URL prefix (e.g., "data:audio/webm;base64,")
            const base64 = base64String.split(',')[1];
@@ -109,11 +120,13 @@
      }
 
      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+       discardOnStopRef.current = false;
        mediaRecorderRef.current.stop();
      }
    }, []);
 
    const cancelRecording = useCallback(() => {
+     discardOnStopRef.current = true;
      if (timerRef.current) {
        clearInterval(timerRef.current);
        timerRef.current = null;
@@ -136,6 +149,29 @@
        base64: null,
        mimeType: null,
      });
+   }, []);
+
+   useEffect(() => {
+     mountedRef.current = true;
+
+     return () => {
+       mountedRef.current = false;
+       discardOnStopRef.current = true;
+       if (timerRef.current) {
+         clearInterval(timerRef.current);
+         timerRef.current = null;
+       }
+
+       const recorder = mediaRecorderRef.current;
+       if (recorder) {
+         recorder.ondataavailable = null;
+         recorder.onstop = null;
+         recorder.stream?.getTracks().forEach((track) => track.stop());
+         if (recorder.state !== "inactive") recorder.stop();
+       }
+       mediaRecorderRef.current = null;
+       chunksRef.current = [];
+     };
    }, []);
 
    const clearRecording = useCallback(() => {

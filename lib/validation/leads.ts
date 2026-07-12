@@ -99,7 +99,7 @@ export const leadUpdateInputSchema = z.object({
 export const leadMoveStageInputSchema = z.object({
   stageId: uuidSchema,
   isOwnResource: z.boolean().nullish(),
-  stageEnteredAt: timestampSchema.nullish(),
+  boardOrderAt: timestampSchema.nullish(),
 }).strict()
 
 export const leadAssignInputSchema = z.object({
@@ -170,6 +170,7 @@ export const apiLeadSchema = z.object({
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
   stageEnteredAt: timestampSchema.optional(),
+  boardOrderAt: timestampSchema.optional(),
   lastContactAt: timestampSchema.optional(),
   nextFollowUpAt: timestampSchema.optional(),
   additionalFields: leadAdditionalFieldsSchema.optional(),

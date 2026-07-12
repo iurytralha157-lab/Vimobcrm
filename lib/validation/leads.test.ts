@@ -43,6 +43,21 @@ test('rejeita movimentacao para etapa invalida', () => {
   assert.equal(leadMoveStageInputSchema.safeParse({ stageId: 'etapa-invalida' }).success, false)
 })
 
+test('valida a ordem visual separada do relogio da etapa', () => {
+  assert.equal(leadMoveStageInputSchema.safeParse({
+    stageId: ID,
+    boardOrderAt: '2026-07-12T15:30:00Z',
+  }).success, true)
+  assert.equal(leadMoveStageInputSchema.safeParse({
+    stageId: ID,
+    boardOrderAt: '',
+  }).success, false)
+  assert.equal(leadMoveStageInputSchema.safeParse({
+    stageId: ID,
+    stageEnteredAt: '2026-07-12T15:30:00Z',
+  }).success, false)
+})
+
 test('valida o contrato da lista de leads', () => {
   const result = apiLeadListResponseSchema.safeParse({
     data: [{

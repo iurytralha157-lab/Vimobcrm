@@ -626,11 +626,11 @@ export default function Pipelines() {
     const isSameStage = newStageId === oldStageId;
     const newStage = stages.find(s => s.id === newStageId);
     const getLeadOrderDate = (lead: PipelineLead) => {
-      const rawDate = lead?.stage_entered_at || lead?.created_at;
+      const rawDate = lead?.board_order_at || lead?.stage_entered_at || lead?.created_at;
       const time = rawDate ? new Date(rawDate).getTime() : NaN;
       return Number.isFinite(time) ? time : Date.now();
     };
-    const getStageEnteredAtForIndex = (leads: PipelineLead[], targetIndex: number) => {
+    const getBoardOrderAtForIndex = (leads: PipelineLead[], targetIndex: number) => {
       if (targetIndex <= 0) return new Date().toISOString();
       const above = leads[targetIndex - 1];
       const below = leads[targetIndex];
@@ -688,12 +688,13 @@ export default function Pipelines() {
 
       const [movedLead] = newStages[sourceStageIndex].leads.splice(leadIndex, 1);
       const targetIndex = Math.min(destination.index, newStages[destStageIndex].leads.length);
-      const nextStageEnteredAt = getStageEnteredAtForIndex(newStages[destStageIndex].leads, targetIndex);
+      const nextBoardOrderAt = getBoardOrderAtForIndex(newStages[destStageIndex].leads, targetIndex);
 
       const updatedLead = {
         ...movedLead,
         stage_id: newStageId,
-        stage_entered_at: nextStageEnteredAt,
+        stage_entered_at: isSameStage ? movedLead.stage_entered_at : new Date().toISOString(),
+        board_order_at: nextBoardOrderAt,
         stage: newStages[destStageIndex],
       };
 
@@ -712,12 +713,12 @@ export default function Pipelines() {
       const currentStages = queryClient.getQueryData<StageWithLeads[]>(queryKey) || stages;
       const persistedStage = currentStages.find((stage) => stage.id === newStageId);
       const persistedLead = persistedStage?.leads?.find((lead) => lead.id === draggableId);
-      const persistedStageEnteredAt = persistedLead?.stage_entered_at || new Date().toISOString();
+      const persistedBoardOrderAt = persistedLead?.board_order_at || new Date().toISOString();
 
       const updateResult = await leadsAPI.moveLeadStage(draggableId, {
         stageId: newStageId,
         isOwnResource: options?.isOwnResource ?? null,
-        stageEnteredAt: persistedStageEnteredAt,
+        boardOrderAt: persistedBoardOrderAt,
       }, realtimeOrganizationId);
 
       if (updateResult.error) throw updateResult.error;

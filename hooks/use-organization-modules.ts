@@ -22,19 +22,16 @@ export function useOrganizationModules() {
   }, [authLoading, orgId]);
   const ready = !!orgId && readyOrgId === orgId;
 
-  const { data: modules = [], isLoading: modulesLoading } = useQuery({
+  const {
+    data: modules = [],
+    error,
+    isLoading: modulesLoading,
+    refetch,
+  } = useQuery({
     queryKey: ['organization-modules', orgId],
     queryFn: async () => {
       if (!orgId) return [];
-
-      try {
-        return await settingsAPI.listModules(orgId);
-      } catch (error) {
-        if (process.env.NODE_ENV === 'development') {
-          console.warn('Organization modules unavailable; using default modules.', error);
-        }
-        return [];
-      }
+      return settingsAPI.listModules(orgId);
     },
     enabled: ready && !!orgId,
     placeholderData: (previousModules) => previousModules ?? [],
@@ -44,7 +41,7 @@ export function useOrganizationModules() {
   });
 
   // Consider loading if auth is still loading OR if we have an org but modules aren't loaded yet
-  const isLoading = authLoading || (!!orgId && modulesLoading);
+  const isLoading = authLoading || (!!orgId && (!ready || modulesLoading));
 
   // Check if a specific module is enabled
   const hasModule = (moduleName: ModuleName): boolean => {
@@ -95,8 +92,10 @@ export function useOrganizationModules() {
 
   return {
     modules,
+    error,
     isLoading,
     hasModule,
     enabledModules,
+    refetch,
   };
 }

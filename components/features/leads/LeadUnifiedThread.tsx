@@ -20,7 +20,7 @@ import {
 } from '@/hooks/use-whatsapp-conversations';
 import { useStartConversation } from '@/hooks/use-start-conversation';
 import { useAuth } from '@/contexts/AuthContext';
-import { toast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { whatsappAPI } from '@/lib/api/whatsapp';
 import { getWhatsAppMessageInputState } from '@/lib/whatsapp-message-input';
 
@@ -34,6 +34,7 @@ type LeadUnifiedThreadProps = {
   leadPhone?: string | null;
   whatsappVerified?: boolean | null;
   leadCreatedAt?: string | null;
+  composerRequest?: { id: number; text?: string } | null;
 };
 
 type ThreadItem =
@@ -517,15 +518,15 @@ function getEventTone(event: UnifiedHistoryEvent) {
   const toStatus = String(event.metadata?.to_status || '').toLowerCase();
 
   if (event.type === 'lead_created' || text.includes('foi criado')) {
-    return 'bg-green-600 !text-white ring-1 ring-green-700';
+    return 'bg-green-600 !text-white';
   }
 
   if (event.type === 'first_response') {
-    return 'bg-amber-400 !text-amber-950 ring-1 ring-amber-500';
+    return 'bg-amber-400 !text-amber-950';
   }
 
   if (event.type === 'task_completed') {
-    return 'bg-[var(--app-surface-soft)] !text-[var(--app-text-secondary)] ring-1 ring-[var(--app-border)]';
+    return 'bg-[var(--app-surface-soft)] !text-[var(--app-text-secondary)]';
   }
 
   if (event.type === 'meta_form_answer') {
@@ -537,7 +538,7 @@ function getEventTone(event: UnifiedHistoryEvent) {
   }
 
   if (event.type === 'property_selected' || event.type === 'property_linked') {
-    return 'bg-[color-mix(in_srgb,#FF4529_14%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#FF4529_72%,var(--app-text-primary))] ring-1 ring-[#FF4529]/20';
+    return 'bg-[color-mix(in_srgb,#FF4529_14%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#FF4529_72%,var(--app-text-primary))]';
   }
 
   if (
@@ -548,36 +549,36 @@ function getEventTone(event: UnifiedHistoryEvent) {
     event.type === 'meeting_scheduled' ||
     event.type === 'meeting_held'
   ) {
-    return 'bg-[color-mix(in_srgb,#3b82f6_14%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#3b82f6_72%,var(--app-text-primary))] ring-1 ring-blue-500/20';
+    return 'bg-[color-mix(in_srgb,#3b82f6_14%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#3b82f6_72%,var(--app-text-primary))]';
   }
 
   if (event.type === 'proposal_sent') {
-    return 'bg-[color-mix(in_srgb,#f59e0b_16%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#f59e0b_72%,var(--app-text-primary))] ring-1 ring-[#f59e0b]/25';
+    return 'bg-[color-mix(in_srgb,#f59e0b_16%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#f59e0b_72%,var(--app-text-primary))]';
   }
 
   if (toStatus === 'lost' || text.includes('perdido') || text.includes('perda')) {
-    return 'bg-red-600 !text-white ring-1 ring-red-700';
+    return 'bg-red-600 !text-white';
   }
 
   if (toStatus === 'open' || text.includes('reaberto')) {
-    return 'bg-[color-mix(in_srgb,#f59e0b_16%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#f59e0b_72%,var(--app-text-primary))] ring-1 ring-[#f59e0b]/25';
+    return 'bg-[color-mix(in_srgb,#f59e0b_16%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#f59e0b_72%,var(--app-text-primary))]';
   }
 
   if (toStatus === 'won' || text.includes('ganho') || text.includes('venda conclu')) {
-    return 'bg-emerald-600 !text-white ring-1 ring-emerald-700';
+    return 'bg-emerald-600 !text-white';
   }
 
   const outcomeVariant = getOutcomeVariant(event);
-  if (outcomeVariant === 'success') return 'bg-emerald-600 !text-white ring-1 ring-emerald-700';
-  if (outcomeVariant === 'warning') return 'bg-amber-600 !text-white ring-1 ring-amber-700';
-  if (outcomeVariant === 'error') return 'bg-red-600 !text-white ring-1 ring-red-700';
+  if (outcomeVariant === 'success') return 'bg-emerald-600 !text-white';
+  if (outcomeVariant === 'warning') return 'bg-amber-600 !text-white';
+  if (outcomeVariant === 'error') return 'bg-red-600 !text-white';
 
   if (event.type === 'stage_changed' || event.type === 'stage_change') {
     return 'bg-[var(--app-surface-soft)] !text-[var(--app-text-secondary)]';
   }
 
   if (event.type.includes('tag')) {
-    return 'bg-primary/12 !text-primary ring-1 ring-primary/16';
+    return 'bg-primary/12 !text-primary';
   }
 
   return 'bg-[var(--app-surface-soft)] !text-[var(--app-text-secondary)]';
@@ -749,7 +750,7 @@ function FeedbackBubble({ event }: { event: UnifiedHistoryEvent }) {
 
   return (
     <div className="flex items-end justify-end gap-2 px-2">
-      <div className="max-w-[82%] rounded-[8px] bg-primary/12 px-3 py-2 text-[11px] leading-relaxed text-[var(--app-text-primary)] ring-1 ring-primary/14">
+      <div className="max-w-[82%] rounded-[8px] bg-primary/12 px-3 py-2 text-[11px] leading-relaxed text-[var(--app-text-primary)]">
         <div className="mb-1 flex items-center justify-between gap-3 text-[10px] font-medium text-[var(--app-text-tertiary)]">
           <span>Feedback</span>
           <span>{format(new Date(event.timestamp), 'HH:mm', { locale: ptBR })}</span>
@@ -766,10 +767,12 @@ function FeedbackBubble({ event }: { event: UnifiedHistoryEvent }) {
   );
 }
 
-export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerified, leadCreatedAt }: LeadUnifiedThreadProps) {
+export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerified, leadCreatedAt, composerRequest }: LeadUnifiedThreadProps) {
   const [text, setText] = useState('');
+  const [composerHighlighted, setComposerHighlighted] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const lastHandledComposerRequestRef = useRef<number | null>(null);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const { profile } = useAuth();
@@ -832,6 +835,45 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
       : !conversation && !whatsappMessageInputState.disabled
         ? 'Digite para iniciar a conversa com este lead'
         : whatsappMessageInputState.placeholder;
+
+  useEffect(() => {
+    if (!composerRequest || loadingSessions || lastHandledComposerRequestRef.current === composerRequest.id) return;
+    lastHandledComposerRequestRef.current = composerRequest.id;
+
+    if (!hasLeadPhone) {
+      toast.error('Lead sem telefone', {
+        description: 'Cadastre um telefone antes de iniciar uma conversa.',
+      });
+      return;
+    }
+
+    if (leadHasNoWhatsApp) {
+      toast.error('Telefone sem WhatsApp', {
+        description: 'Este número foi identificado como indisponível no WhatsApp.',
+      });
+      return;
+    }
+
+    if (whatsappMessageInputState.disabled) {
+      toast.error('WhatsApp não conectado', {
+        description: whatsappMessageInputState.placeholder,
+      });
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      if (composerRequest.text) setText(composerRequest.text);
+      setComposerHighlighted(true);
+      textareaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      textareaRef.current?.focus();
+    });
+    const timeout = window.setTimeout(() => setComposerHighlighted(false), 1600);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timeout);
+    };
+  }, [composerRequest, hasLeadPhone, leadHasNoWhatsApp, loadingSessions, whatsappMessageInputState.disabled, whatsappMessageInputState.placeholder]);
 
   const items = useMemo<ThreadItem[]>(() => {
     const visibleEvents = removeRedundantEvents(history.filter(shouldShowEvent));
@@ -929,10 +971,8 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
 
   const handleSendAudio = async (base64: string, mimetype: string) => {
     if (!canSendMessage || isSendingMessage) {
-      toast({
-        title: 'Audio nao enviado',
+      toast.error('Audio nao enviado', {
         description: inputPlaceholder,
-        variant: 'destructive',
       });
       return;
     }
@@ -955,10 +995,8 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
     if (!file) return;
 
     if (!canSendMessage || isSendingMessage) {
-      toast({
-        title: 'Arquivo nao enviado',
+      toast.error('Arquivo nao enviado', {
         description: inputPlaceholder,
-        variant: 'destructive',
       });
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
@@ -981,12 +1019,10 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
         sendSessionId: whatsappMessageInputState.sendSessionId,
       });
     } catch (error) {
-      toast({
-        title: 'Erro ao enviar arquivo',
+      toast.error('Erro ao enviar arquivo', {
         description: error instanceof Error && error.message.length < 160
           ? error.message
           : 'Nao foi possivel enviar o arquivo.',
-        variant: 'destructive',
       });
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -998,10 +1034,8 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
       await whatsappAPI.retryMediaDownload(messageId, profile?.organization_id);
       await refetchMessages();
     } catch {
-      toast({
-        title: 'Midia nao atualizada',
+      toast.error('Midia nao atualizada', {
         description: 'Nao foi possivel buscar a midia agora.',
-        variant: 'destructive',
       });
     }
   };
@@ -1079,40 +1113,42 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
             accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx"
             className="hidden"
           />
-          <MessageBox
-            value={text}
-            onChange={setText}
-            onSend={handleSend}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                handleSend();
+          <div className={cn('rounded-[8px] transition-shadow duration-300', composerHighlighted && 'ring-2 ring-primary/35 ring-offset-2 ring-offset-transparent')}>
+            <MessageBox
+              value={text}
+              onChange={setText}
+              onSend={handleSend}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  handleSend();
+                }
+              }}
+              placeholder={inputPlaceholder}
+              disabled={!canSendMessage || isSendingMessage}
+              isSending={isSendingMessage}
+              multiline
+              inputRef={textareaRef}
+              compact
+              showRightActionsWhenEmpty
+              leftActions={
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={!canSendMessage || isSendingMessage}
+                  title="Anexar midia"
+                >
+                  <Paperclip className="h-4 w-4" />
+                </button>
               }
-            }}
-            placeholder={inputPlaceholder}
-            disabled={!canSendMessage || isSendingMessage}
-            isSending={isSendingMessage}
-            multiline
-            inputRef={textareaRef}
-            compact
-            showRightActionsWhenEmpty
-            leftActions={
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={!canSendMessage || isSendingMessage}
-                title="Anexar midia"
-              >
-                <Paperclip className="h-4 w-4" />
-              </button>
-            }
-            rightActions={
-              <AudioRecorderButton
-                onSend={handleSendAudio}
-                disabled={!canSendMessage || isSendingMessage}
-              />
-            }
-          />
+              rightActions={
+                <AudioRecorderButton
+                  onSend={handleSendAudio}
+                  disabled={!canSendMessage || isSendingMessage}
+                />
+              }
+            />
+          </div>
         </div>
       </div>
     </section>

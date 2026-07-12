@@ -35,6 +35,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { whatsappAPI } from "@/lib/api/whatsapp";
 import { getWhatsAppMessageInputState } from "@/lib/whatsapp-message-input";
 import { groupLatestWhatsAppReactions } from "@/lib/whatsapp-reactions";
+import { useHasPermission } from "@/hooks/use-organization-roles";
 
 const MAX_IMAGE_DIMENSION = 1600;
 const IMAGE_QUALITY = 0.82;
@@ -217,6 +218,7 @@ export function FloatingChat() {
   const isMobile = useIsMobile();
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
   const { profile } = useAuth();
+  const { data: canStartAutomations = false } = useHasPermission("automations_edit");
   const [searchTerm, setSearchTerm] = useState("");
   const [messageText, setMessageText] = useState("");
   const [hideGroups, setHideGroups] = useState(() => {
@@ -1102,7 +1104,7 @@ export function FloatingChat() {
             <button type="button" onClick={() => fileInputRef.current?.click()} disabled={messageInputDisabled}>
               <Paperclip className="w-5 h-5" />
             </button>
-            {activeLeadId && (
+            {activeLeadId && canStartAutomations && (
               <button type="button" onClick={() => setShowAutomationDialog(true)} title="Iniciar Automação">
                 <Zap className="w-5 h-5" />
               </button>

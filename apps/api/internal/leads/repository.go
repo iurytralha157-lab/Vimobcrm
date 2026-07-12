@@ -338,7 +338,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		}
 	}
 
-	if err := repo.applyDestinationAssignments(ctx, tenantContext.OrganizationID, input, addUUIDAssignment, addRawAssignment); err != nil {
+	if err := repo.applyDestinationAssignments(ctx, tenantContext.OrganizationID, current, input, addUUIDAssignment, addRawAssignment); err != nil {
 		return Lead{}, err
 	}
 
@@ -485,51 +485,88 @@ func (repo Repository) dispatchDealStatusSideEffects(tenantContext tenant.Contex
 	}()
 }
 
-func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Context, leadID string, input moveStageInput) (Lead, error) {
+func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Context, leadID string, input moveStageInput) (moveStageResult, error) {
 	leadID, ok := normalizeUUID(leadID)
 	if !ok {
-		return Lead{}, ErrLeadNotFound
+		return moveStageResult{}, ErrLeadNotFound
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
-		return Lead{}, err
+		return moveStageResult{}, err
 	}
 	defer tx.Rollback(ctx)
 
 	current, err := repo.getLeadSnapshotForUpdate(ctx, tx, tenantContext.OrganizationID, leadID)
 	if err != nil {
-		return Lead{}, err
+		return moveStageResult{}, err
 	}
 
 	if !canMoveLead(tenantContext, current.AssignedUserID) {
-		return Lead{}, tenant.ErrOrganizationAccessDenied
+		return moveStageResult{}, tenant.ErrOrganizationAccessDenied
 	}
 
 	resolvedDestination, err := repo.resolveDestination(ctx, tenantContext.OrganizationID, nil, &input.StageID)
 	if err != nil {
-		return Lead{}, err
+		return moveStageResult{}, err
 	}
 	if resolvedDestination.PipelineID == nil || resolvedDestination.StageID == nil {
-		return Lead{}, ErrInvalidReference
+		return moveStageResult{}, ErrInvalidReference
+	}
+
+	stageChanged := current.StageID != *resolvedDestination.StageID
+	boardOrderAt := input.BoardOrderAt
+	if boardOrderAt == nil {
+		// Compatibility with clients deployed before boardOrderAt existed: their
+		// stageEnteredAt value represented card order, not the real stage clock.
+		boardOrderAt = input.StageEnteredAt
 	}
 
 	var updatedID string
-	if err := tx.QueryRow(ctx, `
-		update public.leads
-		set stage_id = $3::uuid,
-		    pipeline_id = $4::uuid,
-		    stage_entered_at = coalesce($5::timestamptz, now()),
-		    is_own_resource = coalesce($6::boolean, is_own_resource),
-		    updated_at = now()
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-		returning id::text
-	`, tenantContext.OrganizationID, leadID, *resolvedDestination.StageID, *resolvedDestination.PipelineID, nullableTime(input.StageEnteredAt), nullableBool(input.IsOwnResource)).Scan(&updatedID); err != nil {
+	var persistedStageEnteredAt *time.Time
+	var persistedBoardOrderAt time.Time
+	if stageChanged {
+		var stageEnteredAt time.Time
+		err = tx.QueryRow(ctx, `
+			update public.leads
+			set stage_id = $3::uuid,
+			    pipeline_id = $4::uuid,
+			    stage_entered_at = now(),
+			    board_order_at = coalesce($5::timestamptz, now()),
+			    is_own_resource = coalesce($6::boolean, is_own_resource),
+			    updated_at = now()
+			where organization_id = $1::uuid
+			  and id = $2::uuid
+			returning id::text, stage_entered_at, board_order_at
+		`, tenantContext.OrganizationID, leadID, *resolvedDestination.StageID, *resolvedDestination.PipelineID, nullableTime(boardOrderAt), nullableBool(input.IsOwnResource)).Scan(&updatedID, &stageEnteredAt, &persistedBoardOrderAt)
+		persistedStageEnteredAt = &stageEnteredAt
+	} else {
+		err = tx.QueryRow(ctx, `
+			update public.leads
+			set board_order_at = coalesce($3::timestamptz, board_order_at, stage_entered_at, created_at)
+			where organization_id = $1::uuid
+			  and id = $2::uuid
+			returning id::text, board_order_at
+		`, tenantContext.OrganizationID, leadID, nullableTime(boardOrderAt)).Scan(&updatedID, &persistedBoardOrderAt)
+	}
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Lead{}, ErrLeadNotFound
+			return moveStageResult{}, ErrLeadNotFound
 		}
-		return Lead{}, err
+		return moveStageResult{}, err
+	}
+
+	auditAction := "reorder_lead"
+	newData := map[string]any{
+		"stage_id":       *resolvedDestination.StageID,
+		"board_order_at": persistedBoardOrderAt,
+		"origin":         "vimob_api",
+	}
+	if stageChanged {
+		auditAction = "move_stage"
+		newData["pipeline_id"] = *resolvedDestination.PipelineID
+		newData["is_own_resource"] = nullableBool(input.IsOwnResource)
+		newData["stage_entered_at"] = persistedStageEnteredAt
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -545,26 +582,20 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 		values (
 			$1::uuid,
 			$2::uuid,
-			'move_stage',
+			$3::text,
 			'lead',
-			$3::uuid,
-			$4::jsonb,
-			$5::jsonb
+			$4::uuid,
+			$5::jsonb,
+			$6::jsonb
 		)
-	`, tenantContext.OrganizationID, tenantContext.UserID, updatedID, jsonb(map[string]any{
+	`, tenantContext.OrganizationID, tenantContext.UserID, auditAction, updatedID, jsonb(map[string]any{
 		"pipeline_id": nullableString(current.PipelineID),
 		"stage_id":    nullableString(current.StageID),
-	}), jsonb(map[string]any{
-		"pipeline_id":      *resolvedDestination.PipelineID,
-		"stage_id":         *resolvedDestination.StageID,
-		"is_own_resource":  nullableBool(input.IsOwnResource),
-		"stage_entered_at": nullableTime(input.StageEnteredAt),
-		"origin":           "vimob_api",
-	})); err != nil {
-		return Lead{}, err
+	}), jsonb(newData)); err != nil {
+		return moveStageResult{}, err
 	}
 
-	if current.StageID != *resolvedDestination.StageID {
+	if stageChanged {
 		if err := repo.insertActivity(ctx, tx, tenantContext.OrganizationID, updatedID, tenantContext.UserID, "stage_change", fmt.Sprintf(`Lead "%s" movido de etapa`, current.Name), map[string]any{
 			"from_stage_id": nullableString(current.StageID),
 			"to_stage_id":   *resolvedDestination.StageID,
@@ -573,20 +604,20 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 			"from_pipeline": nullableString(current.PipelineID),
 			"to_pipeline":   *resolvedDestination.PipelineID,
 		}); err != nil {
-			return Lead{}, err
+			return moveStageResult{}, err
 		}
 	}
 
 	updatedLead, err := repo.getLeadForMutation(ctx, tx, tenantContext.OrganizationID, updatedID)
 	if err != nil {
-		return Lead{}, err
+		return moveStageResult{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return Lead{}, err
+		return moveStageResult{}, err
 	}
 
-	return updatedLead, nil
+	return moveStageResult{Lead: updatedLead, StageChanged: stageChanged}, nil
 }
 
 func (repo Repository) Assign(ctx context.Context, tenantContext tenant.Context, leadID string, input assignInput) (Lead, error) {
@@ -971,7 +1002,8 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 				renda_familiar,
 				faixa_valor_imovel,
 				created_by,
-				stage_entered_at
+				stage_entered_at,
+				board_order_at
 			)
 			values (
 				$1::uuid,
@@ -1005,6 +1037,7 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 				$25,
 				$26,
 				$27::uuid,
+				case when $3::uuid is null then null else now() end,
 				case when $3::uuid is null then null else now() end
 			)
 			returning id::text, name, phone, source
@@ -1136,6 +1169,10 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 		    pipeline_id = coalesce($8::uuid, pipeline_id),
 		    stage_entered_at = case
 		      when $9::uuid is null or stage_id is not distinct from $9::uuid then stage_entered_at
+		      else now()
+		    end,
+		    board_order_at = case
+		      when $9::uuid is null or stage_id is not distinct from $9::uuid then coalesce(board_order_at, stage_entered_at, created_at)
 		      else now()
 		    end,
 		    stage_id = coalesce($9::uuid, stage_id),
@@ -1803,7 +1840,7 @@ func (repo Repository) canEditLead(ctx context.Context, tx pgx.Tx, tenantContext
 	return canEditTeamLead, nil
 }
 
-func (repo Repository) applyDestinationAssignments(ctx context.Context, organizationID string, input updateInput, addUUIDAssignment func(string, patchString), addRawAssignment func(string)) error {
+func (repo Repository) applyDestinationAssignments(ctx context.Context, organizationID string, current leadSnapshot, input updateInput, addUUIDAssignment func(string, patchString), addRawAssignment func(string)) error {
 	if !input.PipelineID.Set && !input.StageID.Set {
 		return nil
 	}
@@ -1811,7 +1848,10 @@ func (repo Repository) applyDestinationAssignments(ctx context.Context, organiza
 	if input.StageID.Set {
 		if input.StageID.Value == nil {
 			addUUIDAssignment("stage_id", input.StageID)
-			addRawAssignment("stage_entered_at = null")
+			if current.StageID != "" {
+				addRawAssignment("stage_entered_at = null")
+				addRawAssignment("board_order_at = null")
+			}
 			if input.PipelineID.Set {
 				addUUIDAssignment("pipeline_id", input.PipelineID)
 			}
@@ -1830,14 +1870,20 @@ func (repo Repository) applyDestinationAssignments(ctx context.Context, organiza
 
 		addUUIDAssignment("pipeline_id", patchString{Set: true, Value: resolvedDestination.PipelineID})
 		addUUIDAssignment("stage_id", patchString{Set: true, Value: resolvedDestination.StageID})
-		addRawAssignment("stage_entered_at = now()")
+		if resolvedDestination.StageID != nil && current.StageID != *resolvedDestination.StageID {
+			addRawAssignment("stage_entered_at = now()")
+			addRawAssignment("board_order_at = now()")
+		}
 		return nil
 	}
 
 	if input.PipelineID.Value == nil {
 		addUUIDAssignment("pipeline_id", input.PipelineID)
 		addUUIDAssignment("stage_id", patchString{Set: true})
-		addRawAssignment("stage_entered_at = null")
+		if current.StageID != "" {
+			addRawAssignment("stage_entered_at = null")
+			addRawAssignment("board_order_at = null")
+		}
 		return nil
 	}
 
@@ -1848,8 +1894,9 @@ func (repo Repository) applyDestinationAssignments(ctx context.Context, organiza
 
 	addUUIDAssignment("pipeline_id", patchString{Set: true, Value: resolvedDestination.PipelineID})
 	addUUIDAssignment("stage_id", patchString{Set: true, Value: resolvedDestination.StageID})
-	if resolvedDestination.StageID != nil {
+	if resolvedDestination.StageID != nil && current.StageID != *resolvedDestination.StageID {
 		addRawAssignment("stage_entered_at = now()")
+		addRawAssignment("board_order_at = now()")
 	}
 
 	return nil
@@ -2026,15 +2073,7 @@ func (repo Repository) insertDealStatusActivities(ctx context.Context, tx pgx.Tx
 		return err
 	}
 
-	if newStatus != "won" {
-		return nil
-	}
-
-	return repo.insertActivity(ctx, tx, tenantContext.OrganizationID, current.ID, tenantContext.UserID, "sale_closed", fmt.Sprintf(`Venda concluida para o lead "%s"`, current.Name), map[string]any{
-		"new_status":      "won",
-		"to_status":       "won",
-		"valor_interesse": nullableString(interestValue),
-	})
+	return nil
 }
 
 func (repo Repository) insertLeadUpdateActivities(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, input updateInput) error {
@@ -2710,6 +2749,7 @@ func leadSelectFields() string {
 		l.created_at,
 		l.updated_at,
 		l.stage_entered_at,
+		l.board_order_at,
 		l.last_contact_at,
 		l.next_follow_up_at,
 		s.id::text,
@@ -2763,7 +2803,7 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 	var lostReason pgtype.Text
 	var isOwnResource pgtype.Bool
 	var cargo, empresa, profissao, endereco, bairro, numero, cep, cidade, uf, rendaFamiliar, faixaValorImovel pgtype.Text
-	var stageEnteredAt, lastContactAt, nextFollowUpAt pgtype.Timestamptz
+	var stageEnteredAt, boardOrderAt, lastContactAt, nextFollowUpAt pgtype.Timestamptz
 	var stageIDValue, stageName, stageColor, stageKey pgtype.Text
 	var assigneeID, assigneeName, assigneeAvatarURL pgtype.Text
 
@@ -2802,6 +2842,7 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 		&lead.CreatedAt,
 		&lead.UpdatedAt,
 		&stageEnteredAt,
+		&boardOrderAt,
 		&lastContactAt,
 		&nextFollowUpAt,
 		&stageIDValue,
@@ -2835,6 +2876,7 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 	lead.LostReason = textValue(lostReason)
 	lead.IsOwnResource = boolPtr(isOwnResource)
 	lead.StageEnteredAt = timePtr(stageEnteredAt)
+	lead.BoardOrderAt = timePtr(boardOrderAt)
 	lead.LastContactAt = timePtr(lastContactAt)
 	lead.NextFollowUpAt = timePtr(nextFollowUpAt)
 	lead.AdditionalFields = additionalFields(cargo, empresa, profissao, endereco, bairro, numero, cep, cidade, uf, rendaFamiliar, faixaValorImovel)

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // Backend WhatsApp notifier for automations and notification dispatchers.
-// It chooses an organization-scoped Evolution Go session and records the outbound message.
+// Internal notifications use only the organization's flagged sender, then the official
+// global sender. Ordinary WhatsApp sends require an explicit organization session.
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -184,35 +185,133 @@ async function canUseOrganization(userId: string, organizationId: string) {
   return Boolean(data);
 }
 
-async function selectSession(organizationId: string, sessionId?: string | null) {
-  const normalizedSessionId = optionalUuid(sessionId);
-  if (normalizeText(sessionId).trim() && !normalizedSessionId) return null;
-  if (normalizedSessionId) {
-    const { data, error } = await supabase
-      .from("whatsapp_sessions")
-      .select("*")
-      .eq("id", normalizedSessionId)
+async function listOrganizationUsers(organizationId: string) {
+  const [{ data: primaryUsers, error: primaryError }, { data: memberships, error: membershipError }] = await Promise.all([
+    supabase
+      .from("users")
+      .select("id, organization_id, is_active, phone, whatsapp")
       .eq("organization_id", organizationId)
-      .eq("provider", "evolution_go")
-      .maybeSingle();
+      .eq("is_active", true),
+    supabase
+      .from("organization_members")
+      .select("user_id")
+      .eq("organization_id", organizationId)
+      .eq("is_active", true),
+  ]);
+  if (primaryError) throw primaryError;
+  if (membershipError) throw membershipError;
+
+  const memberIds = [...new Set((memberships || []).map((item) => optionalUuid(item.user_id)).filter(Boolean))] as string[];
+  let memberUsers: JsonRecord[] = [];
+  if (memberIds.length > 0) {
+    const { data, error } = await supabase
+      .from("users")
+      .select("id, organization_id, is_active, phone, whatsapp")
+      .in("id", memberIds)
+      .eq("is_active", true);
     if (error) throw error;
-    return data;
+    memberUsers = data || [];
   }
 
-  const { data, error } = await supabase
+  const users = new Map<string, JsonRecord>();
+  for (const user of [...(primaryUsers || []), ...memberUsers]) users.set(user.id, user);
+  return [...users.values()];
+}
+
+async function resolveOrganizationNotificationRecipient(
+  organizationId: string,
+  userId: string | null,
+  requestedJid: string,
+) {
+  const users = await listOrganizationUsers(organizationId);
+  const selected = userId
+    ? users.find((user) => user.id === userId)
+    : users.find((user) => [user.whatsapp, user.phone].some((phone) => phoneMatches(requestedJid, phone)));
+  if (!selected) return null;
+
+  const destination = normalizeJid(firstPresent(selected.whatsapp, selected.phone));
+  if (!destination) return null;
+  if (requestedJid && !phoneMatches(requestedJid, destination)) return null;
+  return { userId: selected.id as string, remoteJid: destination };
+}
+
+async function selectOrganizationNotificationSession(organizationId: string, sessionId?: string | null) {
+  const normalizedSessionId = optionalUuid(sessionId);
+  if (normalizeText(sessionId).trim() && !normalizedSessionId) return null;
+
+  let query = supabase
     .from("whatsapp_sessions")
     .select("*")
     .eq("organization_id", organizationId)
     .eq("provider", "evolution_go")
+    .eq("is_notification_session", true)
     .eq("status", "connected")
-    .eq("is_active", true)
-    .order("is_notification_session", { ascending: false })
+    .eq("is_active", true);
+  if (normalizedSessionId) query = query.eq("id", normalizedSessionId);
+
+  const { data, error } = await query
     .order("last_connected_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   if (error) throw error;
   return data;
+}
+
+async function findOrganizationNotificationFlag(organizationId: string) {
+  const { data, error } = await supabase
+    .from("whatsapp_sessions")
+    .select("id, status, is_active")
+    .eq("organization_id", organizationId)
+    .eq("provider", "evolution_go")
+    .eq("is_notification_session", true)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+async function selectExplicitOrganizationSession(organizationId: string, sessionId: string) {
+  const normalizedSessionId = optionalUuid(sessionId);
+  if (!normalizedSessionId) return null;
+  const { data, error } = await supabase
+    .from("whatsapp_sessions")
+    .select("*")
+    .eq("id", normalizedSessionId)
+    .eq("organization_id", organizationId)
+    .eq("provider", "evolution_go")
+    .eq("status", "connected")
+    .eq("is_active", true)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+async function selectGlobalNotificationSender() {
+  const { data, error } = await supabase
+    .from("system_settings")
+    .select("value")
+    .eq("key", "notifications")
+    .order("updated_at", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+
+  const config = data?.value?.notification_dispatch?.whatsapp;
+  if (!config || !truthyFlag(config.enabled)) return null;
+  const mode = normalizeText(config.mode).trim().toLowerCase();
+  if (!["evolution_go_instance", "instance", "direct_instance"].includes(mode)) return null;
+
+  const key = normalizeText(firstPresent(config.instance_id, config.instance_name)).trim();
+  const token = normalizeText(config.token).trim();
+  if (!key || (!token && !EVOLUTION_GO_API_KEY)) return null;
+
+  return {
+    instance_id: normalizeText(config.instance_id).trim() || null,
+    instance_name: normalizeText(config.instance_name).trim() || null,
+    advanced_settings: token ? { token } : {},
+  };
 }
 
 function instanceKey(session: JsonRecord) {
@@ -230,7 +329,8 @@ function sessionToken(session: JsonRecord) {
 }
 
 async function evolutionSendText(session: JsonRecord, numberOrJid: string, text: string) {
-  if (!EVOLUTION_GO_API_URL || !EVOLUTION_GO_API_KEY) {
+  const token = sessionToken(session);
+  if (!EVOLUTION_GO_API_URL || !token || !instanceKey(session)) {
     throw new Error("Evolution Go API configuration missing");
   }
 
@@ -238,7 +338,7 @@ async function evolutionSendText(session: JsonRecord, numberOrJid: string, text:
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      apikey: sessionToken(session),
+      apikey: token,
       instanceId: instanceKey(session),
     },
     body: JSON.stringify({ number: numberOrJid, text }),
@@ -376,24 +476,41 @@ Deno.serve(async (req) => {
     const text = normalizeText(firstPresent(body.text, body.message, body.content, notificationText(nestedNotification)));
     let remoteJid = normalizeJid(firstPresent(body.jid, body.remote_jid, body.remoteJid, body.phone, body.to, body.recipient, body.user?.whatsapp));
     const leadId = firstPresent(body.lead_id, body.leadId, nestedNotification?.lead_id, nestedNotification?.leadId);
+    const requestedUserId = optionalUuid(firstPresent(
+      body.user_id,
+      body.userId,
+      body.user?.id,
+      nestedNotification?.user_id,
+      nestedNotification?.userId,
+    ));
 
     if (!organizationId) return json({ ok: false, error: "organization_id is required" }, 400);
-    if (!remoteJid) return json({ ok: false, error: "phone or jid is required" }, 400);
+    if (!remoteJid && !requestedUserId) return json({ ok: false, error: "phone, jid, or user_id is required" }, 400);
     if (!text) return json({ ok: false, error: "message text is required" }, 400);
 
     if (!auth.serviceRole && !await canUseOrganization(auth.userId!, organizationId)) {
       return json({ ok: false, error: "Forbidden" }, 403);
     }
 
-    const session = await selectSession(organizationId, body.session_id || body.sessionId);
-    if (!session) return json({ ok: false, error: "No WhatsApp notification session available" }, 404);
-    if (session.status !== "connected") return json({ ok: false, error: "WhatsApp session is not connected" }, 409);
-
     const lead = await loadLead(organizationId, leadId);
-    const internalNotification = isInternalNotificationPayload(body, text, lead);
+    const requestedSessionId = normalizeText(firstPresent(body.session_id, body.sessionId)).trim();
+    const internalNotification = isInternalNotificationPayload(body, text, lead)
+      || Boolean(requestedUserId)
+      || !requestedSessionId;
+
     if (internalNotification) {
-      const userWhatsApp = normalizeJid(body.user && typeof body.user === "object" ? (body.user as JsonRecord).whatsapp : null);
-      if (userWhatsApp) remoteJid = userWhatsApp;
+      const recipient = await resolveOrganizationNotificationRecipient(
+        organizationId,
+        requestedUserId,
+        remoteJid,
+      );
+      if (!recipient) {
+        return json({
+          ok: false,
+          error: "Notification recipient is not an active member of this organization",
+        }, 403);
+      }
+      remoteJid = recipient.remoteJid;
     }
 
     if (internalNotification && lead) {
@@ -411,33 +528,122 @@ Deno.serve(async (req) => {
           internal_notification: true,
           notification_lead_id: lead?.id || optionalUuid(leadId) || null,
           notification_type: normalizeText(firstPresent(body.event_key, body.eventKey, nestedNotification?.event_key, nestedNotification?.eventKey, nestedNotification?.type)) || "notification",
-          notification_recipient_user_id: optionalUuid(firstPresent(body.user_id, body.userId, body.user?.id)) || null,
+          notification_recipient_user_id: requestedUserId,
         }
       : {};
 
     const destination = remoteJid.endsWith("@g.us") ? remoteJid : normalizeDigits(remoteJid);
-    const result = await evolutionSendText(session, destination, text);
-    const providerMessageId = result.ok ? extractSentMessageId(result.data) : null;
-    const conversation = await ensureConversation(session, remoteJid, lead, internalMetadata, internalNotification);
-    const message = await recordOutboundMessage(session, conversation, text, providerMessageId, internalMetadata, internalNotification);
 
-    if (!result.ok) {
-      await supabase
-        .from("whatsapp_messages")
-        .update({ status: "failed", error_message: result.rawText || "Evolution Go send failed" })
-        .eq("id", message.id);
+    if (!internalNotification) {
+      const session = await selectExplicitOrganizationSession(organizationId, requestedSessionId);
+      if (!session) {
+        return json({ ok: false, error: "The requested organization WhatsApp session is unavailable" }, 409);
+      }
+
+      const result = await evolutionSendText(session, destination, text);
+      const providerMessageId = result.ok ? extractSentMessageId(result.data) : null;
+      const conversation = await ensureConversation(session, remoteJid, lead, internalMetadata, false);
+      const message = await recordOutboundMessage(session, conversation, text, providerMessageId, internalMetadata, false);
+
+      if (!result.ok) {
+        await supabase
+          .from("whatsapp_messages")
+          .update({ status: "failed", error_message: result.rawText || "Evolution Go send failed" })
+          .eq("id", message.id);
+      }
+
+      return json({
+        ok: result.ok,
+        status: result.status,
+        data: result.data,
+        sender_scope: "explicit_organization_session",
+        session_id: session.id,
+        conversation_id: conversation.id,
+        message_id: message.id,
+        provider_message_id: providerMessageId,
+        error: result.ok ? undefined : result.rawText,
+      }, result.ok ? 200 : 502);
     }
 
-    return json({
-      ok: result.ok,
-      status: result.status,
-      data: result.data,
-      session_id: session.id,
-      conversation_id: conversation.id,
-      message_id: message.id,
-      provider_message_id: providerMessageId,
-      error: result.ok ? undefined : result.rawText,
-    }, result.ok ? 200 : 502);
+    const organizationFlag = await findOrganizationNotificationFlag(organizationId);
+    const organizationSession = await selectOrganizationNotificationSession(organizationId, requestedSessionId || null);
+    let fallbackReason = organizationFlag
+      ? "organization_notification_session_unavailable"
+      : "organization_notification_session_not_configured";
+
+    if (organizationSession) {
+      try {
+        const result = await evolutionSendText(organizationSession, destination, text);
+        const providerMessageId = result.ok ? extractSentMessageId(result.data) : null;
+        const conversation = await ensureConversation(organizationSession, remoteJid, lead, internalMetadata, true);
+        const message = await recordOutboundMessage(
+          organizationSession,
+          conversation,
+          text,
+          providerMessageId,
+          internalMetadata,
+          true,
+        );
+
+        if (result.ok) {
+          return json({
+            ok: true,
+            status: result.status,
+            data: result.data,
+            sender_scope: "organization_notification_session",
+            session_id: organizationSession.id,
+            conversation_id: conversation.id,
+            message_id: message.id,
+            provider_message_id: providerMessageId,
+            fallback_reason: null,
+          });
+        }
+
+        fallbackReason = "organization_notification_send_failed";
+        await supabase
+          .from("whatsapp_messages")
+          .update({ status: "failed", error_message: result.rawText || "Evolution Go send failed" })
+          .eq("id", message.id);
+      } catch (error) {
+        fallbackReason = "organization_notification_send_error";
+        console.error("Organization notification sender failed; using official global sender:", error);
+      }
+    }
+
+    const globalSender = await selectGlobalNotificationSender();
+    if (!globalSender) {
+      return json({
+        ok: false,
+        error: "Official global WhatsApp notification sender is unavailable",
+        sender_scope: "none",
+        session_id: null,
+        fallback_reason: fallbackReason,
+      }, 503);
+    }
+
+    try {
+      const result = await evolutionSendText(globalSender, destination, text);
+      const providerMessageId = result.ok ? extractSentMessageId(result.data) : null;
+      return json({
+        ok: result.ok,
+        status: result.status,
+        data: result.data,
+        sender_scope: "global_system",
+        session_id: null,
+        provider_message_id: providerMessageId,
+        fallback_reason: fallbackReason,
+        error: result.ok ? undefined : result.rawText,
+      }, result.ok ? 200 : 502);
+    } catch (error) {
+      console.error("Official global notification sender failed:", error);
+      return json({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        sender_scope: "global_system",
+        session_id: null,
+        fallback_reason: fallbackReason,
+      }, 502);
+    }
   } catch (error) {
     console.error("whatsapp-notifier error:", error);
     return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);

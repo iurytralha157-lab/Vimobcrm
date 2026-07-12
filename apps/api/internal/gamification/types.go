@@ -1,5 +1,7 @@
 package gamification
 
+import "time"
+
 type Envelope[T any] struct {
 	Data T `json:"data"`
 }
@@ -8,16 +10,25 @@ type RankingEntry struct {
 	UserID         string  `json:"userId"`
 	Name           string  `json:"name"`
 	AvatarURL      *string `json:"avatarUrl"`
-	Points         int     `json:"points"`
-	XP             int     `json:"xp"`
+	Points         int64   `json:"points"`
+	XP             int64   `json:"xp"`
 	Level          int     `json:"level"`
 	Rank           string  `json:"rank"`
 	StreakDays     int     `json:"streakDays"`
-	XPCurrentLevel int     `json:"xpCurrentLevel"`
-	XPNextLevel    int     `json:"xpNextLevel"`
+	XPCurrentLevel int64   `json:"xpCurrentLevel"`
+	XPNextLevel    int64   `json:"xpNextLevel"`
 	LastActivityAt *string `json:"lastActivityAt"`
 	Position       int     `json:"position"`
 	IsCurrentUser  bool    `json:"isCurrentUser"`
+}
+
+// RankingQuery is the server-side filter used by the Arena ranking. From and
+// To form a half-open interval [From, To); an empty ActionTypes slice includes
+// every canonical action in the active season.
+type RankingQuery struct {
+	From        *time.Time
+	To          *time.Time
+	ActionTypes []string
 }
 
 type Event struct {
@@ -25,10 +36,25 @@ type Event struct {
 	UserID    *string `json:"userId"`
 	UserName  string  `json:"userName"`
 	EventType string  `json:"eventType"`
-	Points    int     `json:"points"`
+	Points    int64   `json:"points"`
 	CreatedAt *string `json:"createdAt"`
 	Details   *string `json:"details"`
 	Source    *string `json:"source"`
+}
+
+type EventPage struct {
+	Events     []Event `json:"events"`
+	Total      int64   `json:"total"`
+	NextCursor *string `json:"nextCursor"`
+}
+
+type EventQuery struct {
+	From             *time.Time
+	To               *time.Time
+	UserID           string
+	Limit            int
+	CursorOccurredAt *time.Time
+	CursorID         string
 }
 
 type Mission struct {
@@ -36,9 +62,9 @@ type Mission struct {
 	Title           string  `json:"title"`
 	Description     *string `json:"description"`
 	ActionType      *string `json:"actionType"`
-	TargetCount     int     `json:"targetCount"`
-	CurrentProgress int     `json:"currentProgress"`
-	BonusPoints     int     `json:"bonusPoints"`
+	TargetCount     int64   `json:"targetCount"`
+	CurrentProgress int64   `json:"currentProgress"`
+	BonusPoints     int64   `json:"bonusPoints"`
 	Period          *string `json:"period"`
 	IsActive        bool    `json:"isActive"`
 	TargetScope     string  `json:"targetScope"`
@@ -49,12 +75,12 @@ type Mission struct {
 
 type PerformanceDay struct {
 	Name    string `json:"name"`
-	Points  int    `json:"points"`
+	Points  int64  `json:"points"`
 	Actions int    `json:"actions"`
 }
 
 type PerformanceMetrics struct {
-	Points           int     `json:"points"`
+	Points           int64   `json:"points"`
 	Growth           int     `json:"growth"`
 	AvgActionsPerDay float64 `json:"avgActionsPerDay"`
 	TotalActions     int     `json:"totalActions"`
@@ -79,7 +105,7 @@ type Overview struct {
 	History      []Event        `json:"history"`
 	Missions     []Mission      `json:"missions"`
 	Performance  Performance    `json:"performance"`
-	TotalPoints  int            `json:"totalPoints"`
+	TotalPoints  int64          `json:"totalPoints"`
 	ActiveUsers  int            `json:"activeUsers"`
 	TotalEvents  int            `json:"totalEvents"`
 	MyPosition   *int           `json:"myPosition"`
@@ -88,7 +114,7 @@ type Overview struct {
 type Rule struct {
 	ID         string `json:"id"`
 	ActionType string `json:"actionType"`
-	Points     int    `json:"points"`
+	Points     int64  `json:"points"`
 	IsActive   bool   `json:"isActive"`
 	IsTemp     bool   `json:"isTemp"`
 }
@@ -100,7 +126,7 @@ type Participant struct {
 	Role         string `json:"role"`
 	IsActive     bool   `json:"isActive"`
 	Participates bool   `json:"participates"`
-	Points       int    `json:"points"`
+	Points       int64  `json:"points"`
 }
 
 type Season struct {
@@ -124,6 +150,8 @@ type ManualEntry struct {
 	ApprovedBy      *string `json:"approvedBy"`
 	ApprovedAt      *string `json:"approvedAt"`
 	RejectionReason *string `json:"rejectionReason"`
+	AwardedAt       *string `json:"awardedAt"`
+	AwardStatus     *string `json:"awardStatus"`
 	CreatedAt       *string `json:"createdAt"`
 }
 
@@ -144,7 +172,7 @@ type AdminSnapshot struct {
 }
 
 type RuleRequest struct {
-	Points   int   `json:"points"`
+	Points   int64 `json:"points"`
 	IsActive *bool `json:"isActive"`
 }
 
@@ -156,8 +184,8 @@ type MissionRequest struct {
 	Title        string  `json:"title"`
 	Description  *string `json:"description"`
 	ActionType   *string `json:"actionType"`
-	TargetCount  int     `json:"targetCount"`
-	BonusPoints  int     `json:"bonusPoints"`
+	TargetCount  int64   `json:"targetCount"`
+	BonusPoints  int64   `json:"bonusPoints"`
 	Period       *string `json:"period"`
 	TargetScope  string  `json:"targetScope"`
 	TargetUserID *string `json:"targetUserId"`

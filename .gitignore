@@ -31,7 +31,9 @@ coverage.out
 .codex/
 .tmp/
 .CLAUDE_SYSTEM_PROMPT.md
+/reports/
 supabase/.temp/
+supabase/.branches/
 
 # debug
 npm-debug.log*

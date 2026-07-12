@@ -53,7 +53,6 @@ import { useScheduleEvents, ScheduleEvent, EventType } from '@/hooks/use-schedul
 import { useLeadMeta, type LeadMeta } from '@/hooks/use-lead-meta';
 import { useLeadAttachments, useUploadLeadAttachment, type LeadAttachment } from '@/hooks/use-lead-attachments';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { useFloatingChat } from '@/contexts/FloatingChatContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { LeadHistory } from '@/components/features/leads/LeadHistory';
 import { LeadTrackingSection } from '@/components/features/leads/LeadTrackingSection';
@@ -560,10 +559,6 @@ export function LeadDetailDialog({
   } = useLanguage();
   const isMobile = useIsMobile();
   const dateLocale = language === 'pt-BR' ? ptBR : enUS;
-  const {
-    openNewChat,
-    openNewChatWithMessage
-  } = useFloatingChat();
   const [tagPopoverOpen, setTagPopoverOpen] = useState(false);
   const [assigneePopoverOpen, setAssigneePopoverOpen] = useState(false);
   const [localLead, setLocalLead] = useState<LeadDetailLead | null>(leadProp);
@@ -573,6 +568,7 @@ export function LeadDetailDialog({
   const [editingScheduleEvent, setEditingScheduleEvent] = useState<ScheduleEvent | null>(null);
   const [scheduleDefaultType, setScheduleDefaultType] = useState<EventType>('call');
   const [activeTab, setActiveTab] = useState('activities');
+  const [composerRequest, setComposerRequest] = useState<{ id: number; text?: string } | null>(null);
   const [stagePopoverOpen, setStagePopoverOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<CadenceTaskTemplate | null>(null);
   const [roteiroDialogOpen, setRoteiroDialogOpen] = useState(false);
@@ -848,22 +844,14 @@ export function LeadDetailDialog({
       metadata: { phone: lead.phone, channel: 'phone' },
     });
 
-    recordFirstResponse({
-      leadId: lead.id,
-      organizationId: lead.organization_id || profile?.organization_id || organization?.id || '',
-      channel: 'phone',
-      actorUserId: profile?.id || null,
-      firstResponseAt: lead.first_response_at,
-    });
-
     window.open(`tel:${lead.phone.replace(/\D/g, '')}`, '_blank');
     setQuickActionOutcomeType('call');
     setQuickActionOutcomeOpen(true);
   };
 
   const handleQuickWhatsApp = () => {
-    if (!lead.phone) return;
-    openNewChat(lead.phone, lead.name, lead.id);
+    setActiveTab(isMobile ? 'history' : 'activities');
+    setComposerRequest((current) => ({ id: (current?.id || 0) + 1 }));
   };
 
   const handleQuickEmail = () => {
@@ -874,9 +862,9 @@ export function LeadDetailDialog({
     setQuickActionOutcomeOpen(true);
   };
 
-  const handleQuickActionOutcomeConfirm = (outcome: TaskOutcome, notes: string) => {
+  const handleQuickActionOutcomeConfirm = async (outcome: TaskOutcome, notes: string) => {
     // 1. Log in the 'activities' table for visual history
-    createActivityMutation.mutate({
+    await createActivityMutation.mutateAsync({
       lead_id: lead.id,
       type: quickActionOutcomeType === 'call' ? 'call' : 'email',
       content: quickActionOutcomeType === 'call' ? 'Tentativa de ligação' : 'Email enviado',
@@ -894,6 +882,14 @@ export function LeadDetailDialog({
         organization_id: lead.organization_id || profile?.organization_id || organization?.id || ''
       });
     }
+
+    await recordFirstResponse({
+      leadId: lead.id,
+      organizationId: lead.organization_id || profile?.organization_id || organization?.id || '',
+      channel: quickActionOutcomeType === 'call' ? 'phone' : 'email',
+      actorUserId: profile?.id || null,
+      firstResponseAt: lead.first_response_at,
+    });
 
     setQuickActionOutcomeOpen(false);
   };
@@ -936,8 +932,19 @@ export function LeadDetailDialog({
     createdAt: t?.leads?.origin?.createdAt || 'Criado em'
   };
 
-  // Find cadence template for this lead's stage
-  const stageTemplate = safeCadenceTemplates.find(t => t.stage_key === currentStage?.stage_key);
+  // Prefer the stage UUID because stage keys are shared across pipelines and older stage payloads may omit them.
+  const cadenceCandidates = safeCadenceTemplates
+    .filter((template) => template.is_active !== false)
+    .map((template) => {
+      const exactStage = Boolean(localLead.stage_id && template.stage_id === localLead.stage_id);
+      const samePipeline = Boolean(localLead.pipeline_id && template.pipeline_id === localLead.pipeline_id);
+      const sameStageKey = Boolean(currentStage?.stage_key && template.stage_key === currentStage.stage_key);
+      const score = exactStage ? 400 : samePipeline && sameStageKey ? 300 : sameStageKey ? 200 : 0;
+      return { template, score, taskCount: Array.isArray(template.tasks) ? template.tasks.length : 0 };
+    })
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => right.score - left.score || right.taskCount - left.taskCount);
+  const stageTemplate = cadenceCandidates[0]?.template;
   const templateTasks = Array.isArray(stageTemplate?.tasks) ? stageTemplate.tasks.filter(Boolean) : [];
   const cadenceStageLabel = formatCadenceStageLabel(stageTemplate?.name);
   const cadenceTitle = cadenceStageLabel ? `Cadencia / ${cadenceStageLabel}` : 'Cadencia';
@@ -1240,7 +1247,13 @@ export function LeadDetailDialog({
       outcome,
       outcomeNotes
     });
-    const firstContactChannel = task.type === 'call' ? 'phone' : task.type === 'message' ? 'whatsapp' : null;
+    const firstContactChannel = task.type === 'call'
+      ? 'phone'
+      : task.type === 'message'
+        ? 'whatsapp'
+        : task.type === 'email'
+          ? 'email'
+          : null;
     if (firstContactChannel) {
       await recordFirstResponse({
         leadId: lead.id,
@@ -1284,17 +1297,11 @@ export function LeadDetailDialog({
     }
 
     // Se for tarefa de mensagem com mensagem recomendada e tem telefone
-    if (taskType === 'message' && task.recommended_message && lead.phone) {
+    if (taskType === 'message' && task.recommended_message) {
       // Substituir variáveis na mensagem
       const message = task.recommended_message.replace(/{nome}/gi, lead.name || '').replace(/{empresa}/gi, lead.empresa || '').replace(/{email}/gi, lead.email || '');
-      recordFirstResponse({
-        leadId: lead.id,
-        organizationId: lead.organization_id || profile?.organization_id || organization?.id || '',
-        channel: 'whatsapp',
-        actorUserId: profile?.id || null,
-        firstResponseAt: lead.first_response_at,
-      });
-      openNewChatWithMessage(lead.phone, message, lead.id, lead.name);
+      setActiveTab(isMobile ? 'history' : 'activities');
+      setComposerRequest((current) => ({ id: (current?.id || 0) + 1, text: message }));
     }
 
     // Para call, message, email - abrir dialog de outcome
@@ -1308,16 +1315,10 @@ export function LeadDetailDialog({
   };
   const handleRoteiroAction = (action: 'complete' | 'message') => {
     if (!selectedTask) return;
-    if (action === 'message' && selectedTask.recommended_message && lead.phone) {
+    if (action === 'message' && selectedTask.recommended_message) {
       const message = selectedTask.recommended_message.replace(/{nome}/gi, lead.name || '').replace(/{empresa}/gi, lead.empresa || '').replace(/{email}/gi, lead.email || '');
-      recordFirstResponse({
-        leadId: lead.id,
-        organizationId: lead.organization_id || profile?.organization_id || organization?.id || '',
-        channel: 'whatsapp',
-        actorUserId: profile?.id || null,
-        firstResponseAt: lead.first_response_at,
-      });
-      openNewChatWithMessage(lead.phone, message, lead.id, lead.name);
+      setActiveTab(isMobile ? 'history' : 'activities');
+      setComposerRequest((current) => ({ id: (current?.id || 0) + 1, text: message }));
     }
 
     // Após roteiro, abrir dialog de outcome se for call/message/email
@@ -1691,17 +1692,15 @@ export function LeadDetailDialog({
         {/* Row 2 - Ações rápidas */}
         <div className="flex items-center gap-2 mb-3">
           {lead.phone && (
-            <>
-              <Button variant="outline" size="sm" onClick={handleQuickPhone} className="h-9 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
-                <Phone className="h-4 w-4 mr-1.5" />
-                Ligar
-              </Button>
-              <Button size="sm" onClick={handleQuickWhatsApp} className="h-9 flex-1 rounded-[6px]">
-                <MessageCircle className="h-4 w-4 mr-1.5" />
-                Chat
-              </Button>
-            </>
+            <Button variant="outline" size="sm" onClick={handleQuickPhone} className="h-9 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+              <Phone className="h-4 w-4 mr-1.5" />
+              Ligar
+            </Button>
           )}
+          <Button size="sm" onClick={handleQuickWhatsApp} className="h-9 flex-1 rounded-[6px]">
+            <MessageCircle className="h-4 w-4 mr-1.5" />
+            Chat
+          </Button>
           {lead.email && (
             <Button variant="outline" size="sm" onClick={handleQuickEmail} className="h-9 w-9 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-0">
               <Mail className="h-4 w-4" />
@@ -2646,12 +2645,10 @@ export function LeadDetailDialog({
                 <Phone className="h-3.5 w-3.5" />
               </Button>
             )}
-            {lead.phone && (
-              <Button size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
-                <MessageCircle className="mr-1 h-3.5 w-3.5" />
-                Chat
-              </Button>
-            )}
+            <Button size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
+              <MessageCircle className="mr-1 h-3.5 w-3.5" />
+              Chat
+            </Button>
             {lead.email && (
               <Button variant="outline" size="sm" onClick={handleQuickEmail} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
                 <Mail className="h-3.5 w-3.5" />
@@ -2867,6 +2864,7 @@ export function LeadDetailDialog({
                 leadPhone={lead.phone || null}
                 whatsappVerified={lead.whatsapp_verified ?? null}
                 leadCreatedAt={lead.created_at || null}
+                composerRequest={composerRequest}
               />
             </div>
           )}
@@ -3056,12 +3054,10 @@ export function LeadDetailDialog({
                       <Phone className="h-3.5 w-3.5" />
                     </Button>
                   )}
-                  {lead.phone && (
-                    <Button size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
-                      <MessageCircle className="mr-1 h-3.5 w-3.5" />
-                      Chat
-                    </Button>
-                  )}
+                  <Button size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
+                    <MessageCircle className="mr-1 h-3.5 w-3.5" />
+                    Chat
+                  </Button>
                   {lead.email && (
                     <Button variant="outline" size="sm" onClick={handleQuickEmail} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
                       <Mail className="h-3.5 w-3.5" />
@@ -3249,6 +3245,7 @@ export function LeadDetailDialog({
               leadPhone={lead.phone || null}
               whatsappVerified={lead.whatsapp_verified ?? null}
               leadCreatedAt={lead.created_at || null}
+              composerRequest={composerRequest}
             />
           </aside>
         </div>
@@ -3460,15 +3457,15 @@ export function LeadDetailDialog({
 
             {/* Quick Actions - Premium pills */}
             <div className="flex items-center gap-2 shrink-0">
-              {lead.phone && <>
+              {lead.phone &&
                   <Button variant="outline" size="sm" onClick={handleQuickPhone} className="h-9 w-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-0 transition-colors hover:bg-primary/10 hover:text-primary">
                     <Phone className="h-4 w-4" />
                   </Button>
-                  <Button size="sm" onClick={handleQuickWhatsApp} className="h-9 rounded-[6px] bg-primary px-4 text-white transition-opacity hover:bg-primary hover:opacity-90">
-                    <MessageCircle className="h-4 w-4 mr-1.5" />
-                    Chat
-                  </Button>
-                </>}
+              }
+              <Button size="sm" onClick={handleQuickWhatsApp} className="h-9 rounded-[6px] bg-primary px-4 text-white transition-opacity hover:bg-primary hover:opacity-90">
+                <MessageCircle className="h-4 w-4 mr-1.5" />
+                Chat
+              </Button>
               {lead.email && <Button variant="outline" size="sm" onClick={handleQuickEmail} className="h-9 w-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-0 transition-colors hover:bg-primary/10 hover:text-primary">
                   <Mail className="h-4 w-4" />
                 </Button>}

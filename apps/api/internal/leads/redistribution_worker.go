@@ -185,7 +185,7 @@ func (repo Repository) processDueRedistributions(ctx context.Context, tx pgx.Tx)
 
 		nextAttemptCount := job.AttemptCount + 1
 		finalStatus := "pending"
-		if nextAttemptCount >= job.MaxAttempts {
+		if job.MaxAttempts > 0 && nextAttemptCount >= job.MaxAttempts {
 			finalStatus = "max_attempts_reached"
 		}
 
@@ -335,46 +335,53 @@ func (repo Repository) redistributionStopReason(ctx context.Context, tx pgx.Tx, 
 
 	var hasHumanAction bool
 	err := tx.QueryRow(ctx, `
-		select exists (
-			select 1
-			from public.leads l
-			where l.organization_id = $1::uuid
-			  and l.id = $2::uuid
-			  and l.first_response_at is not null
-			  and l.first_response_at >= $3::timestamptz
-			  and coalesce(l.first_response_is_automation, false) = false
-		) or exists (
-			select 1
-			from public.activities a
-			where a.organization_id = $1::uuid
-			  and a.lead_id = $2::uuid
-			  and a.created_at >= $3::timestamptz
-			  and a.user_id is not null
-			  and a.type in (
-			    'stage_change',
-			    'call',
-			    'message',
-			    'task_completed',
-			    'lead_updated',
-			    'feedback',
-			    'tag_added',
-			    'tag_removed'
-			  )
-		) or exists (
-			select 1
-			from public.lead_timeline_events lte
-			where lte.organization_id = $1::uuid
-			  and lte.lead_id = $2::uuid
-			  and lte.created_at >= $3::timestamptz
-			  and coalesce(lte.actor_user_id, lte.user_id) is not null
-			  and lte.event_type in (
-			    'whatsapp_message_sent',
-			    'call_initiated',
-			    'stage_changed',
-			    'stage_change'
-			  )
-		)
-	`, job.OrganizationID, job.LeadID, job.EnrolledAt).Scan(&hasHumanAction)
+		select case when coalesce(l.attention_eligible, false) then
+			exists (
+				select 1
+				from public.lead_action_facts f
+				where f.organization_id = l.organization_id
+				  and f.lead_id = l.id
+				  and f.occurred_at >= $3::timestamptz
+				  and f.is_automated = false
+				  and (
+				    f.is_inbound = true
+				    or (
+				      f.qualifies_first_outreach = true
+				      and f.actor_user_id = $4::uuid
+				    )
+				  )
+			)
+		else
+			-- Compatibility for jobs enrolled before the canonical facts engine.
+			-- Legacy leads are intentionally outside the new cadence rules.
+			exists (
+				select 1
+				from public.leads legacy
+				where legacy.id = l.id
+				  and legacy.first_response_at is not null
+				  and legacy.first_response_at >= $3::timestamptz
+				  and coalesce(legacy.first_response_is_automation, false) = false
+			) or exists (
+				select 1
+				from public.activities a
+				where a.organization_id = l.organization_id
+				  and a.lead_id = l.id
+				  and a.created_at >= $3::timestamptz
+				  and a.user_id = $4::uuid
+				  and a.type in ('call', 'message', 'email', 'email_sent')
+			) or exists (
+				select 1
+				from public.lead_timeline_events lte
+				where lte.organization_id = l.organization_id
+				  and lte.lead_id = l.id
+				  and lte.created_at >= $3::timestamptz
+				  and coalesce(lte.actor_user_id, lte.user_id) = $4::uuid
+				  and lte.event_type in ('whatsapp_message_sent', 'first_response')
+			)
+		end
+		from public.leads l
+		where l.organization_id = $1::uuid and l.id = $2::uuid
+	`, job.OrganizationID, job.LeadID, job.EnrolledAt, job.CurrentAssignedUserID).Scan(&hasHumanAction)
 	if err != nil {
 		return "", err
 	}
@@ -545,6 +552,15 @@ func (repo Repository) insertAutoRedistributionLog(ctx context.Context, tx pgx.T
 		"timeout_minutes":  job.TimeoutMinutes,
 	}))
 	if err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		update public.leads
+		set redistribution_count = coalesce(redistribution_count, 0) + 1,
+		    updated_at = now()
+		where organization_id = $1::uuid and id = $2::uuid
+	`, job.OrganizationID, job.LeadID); err != nil {
 		return err
 	}
 

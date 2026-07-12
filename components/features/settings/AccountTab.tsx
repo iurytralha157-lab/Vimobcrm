@@ -463,6 +463,7 @@ export function AccountTab() {
                 <CardDescription className="mt-0.5 text-sm text-muted-foreground">Dados pessoais e informações de contato.</CardDescription>
               </div>
               <Button
+                data-tour="account-edit-profile"
                 variant={editingProfile ? "ghost" : "outline"}
                 size="sm"
                 className={editingProfile ? "h-8 gap-2" : "h-8 gap-2 bg-primary text-primary-foreground hover:bg-primary/90"}
@@ -541,7 +542,7 @@ export function AccountTab() {
             </div>
 
             {/* Preferences */}
-            <div className="flex flex-col gap-3 pt-4 border-t border-white/[0.045] sm:flex-row sm:items-center sm:justify-between">
+            <div data-tour="account-preferences" className="flex flex-col gap-3 pt-4 border-t border-white/[0.045] sm:flex-row sm:items-center sm:justify-between">
               <div className="flex w-full items-center gap-3 sm:w-auto">
                 <Label className="flex items-center gap-2 text-sm">
                   <Globe className="h-4 w-4" />
@@ -790,7 +791,7 @@ export function AccountTab() {
         </div>
 
         {/* RIGHT: Organization Card */}
-        <Card className="app-card h-fit">
+        <Card data-tour="account-company" className="app-card h-fit">
           <CardHeader className="px-4 md:px-5 pt-5 pb-2">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -799,6 +800,7 @@ export function AccountTab() {
               </div>
               {isAdmin && (
                 <Button
+                  data-tour="account-company-edit"
                   variant={editingOrg ? "ghost" : "outline"}
                   size="sm"
                   className={editingOrg ? "h-8 gap-2" : "h-8 gap-2 bg-primary text-primary-foreground hover:bg-primary/90"}
@@ -1040,7 +1042,7 @@ export function AccountTab() {
             </div>}
 
             {/* Financial Settings */}
-            {isAdmin && <div className="pt-4 border-t border-white/[0.045]">
+            {isAdmin && <div data-tour="account-financial-settings" className="pt-4 border-t border-white/[0.045]">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <h4 className="text-sm font-semibold leading-tight text-foreground flex items-center gap-2 min-w-0">
                   Configurações Financeiras

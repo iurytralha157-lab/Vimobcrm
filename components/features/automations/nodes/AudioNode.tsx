@@ -3,7 +3,8 @@ import { Handle, Position, NodeProps } from 'reactflow';
 import { Headphones, Play, Pause } from 'lucide-react';
 
 export const AudioNode = memo(({ data, selected }: NodeProps) => {
-  const url = data.audio_url || '';
+  const url = data.audio_preview_url || data.audio_url || '';
+  const isConfigured = Boolean(data.media_path || url);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -124,13 +125,15 @@ export const AudioNode = memo(({ data, selected }: NodeProps) => {
         <div className="flex-1 min-w-0">
           <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">Áudio</span>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {url ? 'Áudio configurado' : 'Clique para configurar...'}
+            {isConfigured ? 'Áudio configurado' : 'Clique para configurar...'}
           </p>
         </div>
         {url && (
           <button
+            type="button"
             onClick={togglePlay}
             className="w-7 h-7 rounded-full bg-amber-500 flex items-center justify-center shrink-0 hover:bg-amber-600 transition-colors"
+            aria-label={isPlaying ? 'Pausar prévia do áudio' : 'Reproduzir prévia do áudio'}
           >
             {isPlaying ? (
               <Pause className="h-3.5 w-3.5 text-white" />

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"math"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -32,9 +31,24 @@ type nullableInt struct {
 }
 
 type eventPoint struct {
-	EventType string
-	Points    int
-	CreatedAt time.Time
+	EventType    string
+	Points       int64
+	Actions      int
+	OccurredDate string
+}
+
+type eventPageRow struct {
+	Event      Event
+	OccurredAt time.Time
+}
+
+type missionStructure struct {
+	ActionType   string
+	TargetCount  int64
+	BonusPoints  int64
+	Period       string
+	TargetScope  string
+	TargetUserID string
 }
 
 type queryRower interface {
@@ -50,14 +64,13 @@ func (repo Repository) Overview(ctx context.Context, tenantContext tenant.Contex
 	if err != nil {
 		return Overview{}, err
 	}
-	events, totalEvents, err := repo.events(ctx, tenantContext, 12, false)
+	events, totalEvents, err := repo.events(ctx, tenantContext, 12)
 	if err != nil {
 		return Overview{}, err
 	}
-	history, _, err := repo.events(ctx, tenantContext, 2000, true)
-	if err != nil {
-		return Overview{}, err
-	}
+	// Kept for response compatibility. Full history is cursor-paginated by
+	// EventPage and must never be duplicated inside the overview payload.
+	history := []Event{}
 	missions, err := repo.missions(ctx, tenantContext, true)
 	if err != nil {
 		return Overview{}, err
@@ -67,7 +80,7 @@ func (repo Repository) Overview(ctx context.Context, tenantContext tenant.Contex
 		return Overview{}, err
 	}
 
-	totalPoints := 0
+	var totalPoints int64
 	var myPosition *int
 	for index := range ranking {
 		ranking[index].Position = index + 1
@@ -109,10 +122,14 @@ func (repo Repository) AdminSnapshot(ctx context.Context, tenantContext tenant.C
 	}
 
 	snapshot := AdminSnapshot{
-		Rules:           rules,
-		Missions:        missions,
-		MyManualEntries: myEntries,
-		CanManage:       canManage,
+		Rules:                rules,
+		Missions:             missions,
+		Participants:         []Participant{},
+		Seasons:              []Season{},
+		MyManualEntries:      myEntries,
+		PendingManualEntries: []ManualEntry{},
+		Users:                []UserOption{},
+		CanManage:            canManage,
 	}
 
 	if canManage {
@@ -124,7 +141,7 @@ func (repo Repository) AdminSnapshot(ctx context.Context, tenantContext tenant.C
 		if err != nil {
 			return AdminSnapshot{}, err
 		}
-		pending, err := repo.manualEntries(ctx, tenantContext, "", true)
+		adminQueue, err := repo.manualEntries(ctx, tenantContext, "", true)
 		if err != nil {
 			return AdminSnapshot{}, err
 		}
@@ -134,7 +151,7 @@ func (repo Repository) AdminSnapshot(ctx context.Context, tenantContext tenant.C
 		}
 		snapshot.Participants = participants
 		snapshot.Seasons = seasons
-		snapshot.PendingManualEntries = pending
+		snapshot.PendingManualEntries = adminQueue
 		snapshot.Users = users
 	}
 
@@ -146,7 +163,7 @@ func (repo Repository) UpsertRule(ctx context.Context, tenantContext tenant.Cont
 		return Rule{}, tenant.ErrOrganizationAccessDenied
 	}
 	actionType = normalizeActionType(actionType)
-	if actionType == "" || request.Points < 0 {
+	if actionType == "" || request.Points < 0 || request.Points > 100_000 {
 		return Rule{}, ErrInvalidInput
 	}
 	if ok, err := repo.tableExists(ctx, "gamification_rules"); err != nil {
@@ -182,7 +199,7 @@ func (repo Repository) SetParticipant(ctx context.Context, tenantContext tenant.
 		return Participant{}, tenant.ErrOrganizationAccessDenied
 	}
 	userID = strings.TrimSpace(userID)
-	if userID == "" {
+	if !isUUIDText(userID) {
 		return Participant{}, ErrInvalidInput
 	}
 	if ok, err := repo.tableExists(ctx, "gamification_participants"); err != nil {
@@ -238,32 +255,18 @@ func (repo Repository) CreateMission(ctx context.Context, tenantContext tenant.C
 		return Mission{}, err
 	}
 
-	hasExtended, err := repo.columnExists(ctx, "gamification_missions", "action_type")
-	if err != nil {
-		return Mission{}, err
+	if input.TargetUserID != nil {
+		isMember, memberErr := repo.isActiveOrganizationMember(ctx, tenantContext.OrganizationID, *input.TargetUserID)
+		if memberErr != nil {
+			return Mission{}, memberErr
+		}
+		if !isMember {
+			return Mission{}, ErrNotFound
+		}
 	}
 	isActive := true
 	if input.IsActive != nil {
 		isActive = *input.IsActive
-	}
-
-	if hasExtended {
-		return repo.scanMission(repo.db.Pool().QueryRow(ctx, `
-			insert into public.gamification_missions (
-				organization_id,
-				title,
-				description,
-				action_type,
-				target_count,
-				bonus_points,
-				period,
-				is_active,
-				target_scope,
-				target_user_id
-			)
-			values ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid)
-			returning `+missionSelectFields(true)+`
-		`, tenantContext.OrganizationID, input.Title, input.Description, input.ActionType, input.TargetCount, input.BonusPoints, input.Period, isActive, input.TargetScope, input.TargetUserID), true)
 	}
 
 	return repo.scanMission(repo.db.Pool().QueryRow(ctx, `
@@ -271,14 +274,17 @@ func (repo Repository) CreateMission(ctx context.Context, tenantContext tenant.C
 			organization_id,
 			title,
 			description,
+			action_type,
 			target_count,
 			bonus_points,
 			period,
-			is_active
+			is_active,
+			target_scope,
+			target_user_id
 		)
-		values ($1::uuid, $2, $3, $4, $5, $6, $7)
-		returning `+missionSelectFields(false)+`
-	`, tenantContext.OrganizationID, input.Title, input.Description, input.TargetCount, input.BonusPoints, input.Period, isActive), false)
+		values ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid)
+		returning `+missionSelectFields(true)+`
+	`, tenantContext.OrganizationID, input.Title, input.Description, input.ActionType, input.TargetCount, input.BonusPoints, input.Period, isActive, input.TargetScope, input.TargetUserID), true)
 }
 
 func (repo Repository) UpdateMission(ctx context.Context, tenantContext tenant.Context, missionID string, request MissionRequest) (Mission, error) {
@@ -286,62 +292,107 @@ func (repo Repository) UpdateMission(ctx context.Context, tenantContext tenant.C
 		return Mission{}, tenant.ErrOrganizationAccessDenied
 	}
 	missionID = strings.TrimSpace(missionID)
-	if missionID == "" {
+	if !isUUIDText(missionID) {
 		return Mission{}, ErrInvalidInput
 	}
 	input, err := normalizeMissionRequest(request)
 	if err != nil {
 		return Mission{}, err
 	}
-	hasExtended, err := repo.columnExists(ctx, "gamification_missions", "action_type")
-	if err != nil {
-		return Mission{}, err
+	if input.TargetUserID != nil {
+		isMember, memberErr := repo.isActiveOrganizationMember(ctx, tenantContext.OrganizationID, *input.TargetUserID)
+		if memberErr != nil {
+			return Mission{}, memberErr
+		}
+		if !isMember {
+			return Mission{}, ErrNotFound
+		}
 	}
 	isActive := true
 	if input.IsActive != nil {
 		isActive = *input.IsActive
 	}
 
-	if hasExtended {
-		mission, err := repo.scanMission(repo.db.Pool().QueryRow(ctx, `
-			update public.gamification_missions
-			set title = $3,
-			    description = $4,
-			    action_type = $5,
-			    target_count = $6,
-			    bonus_points = $7,
-			    period = $8,
-			    is_active = $9,
-			    target_scope = $10,
-			    target_user_id = $11::uuid,
-			    updated_at = now()
-			where organization_id = $1::uuid
-			  and id = $2::uuid
-			returning `+missionSelectFields(true)+`
-		`, tenantContext.OrganizationID, missionID, input.Title, input.Description, input.ActionType, input.TargetCount, input.BonusPoints, input.Period, isActive, input.TargetScope, input.TargetUserID), true)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Mission{}, ErrNotFound
-		}
-		return mission, err
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return Mission{}, err
 	}
+	defer tx.Rollback(ctx)
 
-	mission, err := repo.scanMission(repo.db.Pool().QueryRow(ctx, `
-		update public.gamification_missions
-		set title = $3,
-		    description = $4,
-		    target_count = $5,
-		    bonus_points = $6,
-		    period = $7,
-		    is_active = $8,
-		    updated_at = now()
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-		returning `+missionSelectFields(false)+`
-	`, tenantContext.OrganizationID, missionID, input.Title, input.Description, input.TargetCount, input.BonusPoints, input.Period, isActive), false)
+	var existing missionStructure
+	var hasProgress bool
+	err = tx.QueryRow(ctx, `
+		select
+			coalesce(action_type, ''),
+			target_count::bigint,
+			bonus_points::bigint,
+			coalesce(period, 'season'),
+			target_scope,
+			coalesce(target_user_id::text, ''),
+			exists (
+				select 1
+				from public.gamification_mission_progress progress
+				where progress.organization_id = mission.organization_id
+				  and progress.mission_id = mission.id
+			)
+		from public.gamification_missions mission
+		where mission.organization_id = $1::uuid
+		  and mission.id = $2::uuid
+		for update of mission
+	`, tenantContext.OrganizationID, missionID).Scan(
+		&existing.ActionType,
+		&existing.TargetCount,
+		&existing.BonusPoints,
+		&existing.Period,
+		&existing.TargetScope,
+		&existing.TargetUserID,
+		&hasProgress,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Mission{}, ErrNotFound
 	}
-	return mission, err
+	if err != nil {
+		return Mission{}, err
+	}
+
+	nextStructure := missionStructure{
+		ActionType:   pointerValue(input.ActionType),
+		TargetCount:  input.TargetCount,
+		BonusPoints:  input.BonusPoints,
+		Period:       pointerValue(input.Period),
+		TargetScope:  input.TargetScope,
+		TargetUserID: pointerValue(input.TargetUserID),
+	}
+	if hasProgress && missionStructureChanged(existing, nextStructure) {
+		return Mission{}, ErrInvalidInput
+	}
+
+	mission, err := repo.scanMission(tx.QueryRow(ctx, `
+		update public.gamification_missions
+		set title = $3,
+		    description = $4,
+		    action_type = $5,
+		    target_count = $6,
+		    bonus_points = $7,
+		    period = $8,
+		    is_active = $9,
+		    target_scope = $10,
+		    target_user_id = $11::uuid,
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		returning `+missionSelectFields(true)+`
+	`, tenantContext.OrganizationID, missionID, input.Title, input.Description, input.ActionType, input.TargetCount, input.BonusPoints, input.Period, isActive, input.TargetScope, input.TargetUserID), true)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Mission{}, ErrNotFound
+	}
+	if err != nil {
+		return Mission{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Mission{}, err
+	}
+	return mission, nil
 }
 
 func (repo Repository) DeleteMission(ctx context.Context, tenantContext tenant.Context, missionID string) error {
@@ -349,7 +400,7 @@ func (repo Repository) DeleteMission(ctx context.Context, tenantContext tenant.C
 		return tenant.ErrOrganizationAccessDenied
 	}
 	missionID = strings.TrimSpace(missionID)
-	if missionID == "" {
+	if !isUUIDText(missionID) {
 		return ErrInvalidInput
 	}
 	tag, err := repo.db.Pool().Exec(ctx, `
@@ -377,6 +428,9 @@ func (repo Repository) CreateManualEntry(ctx context.Context, tenantContext tena
 		return ManualEntry{}, ErrInvalidInput
 	}
 	notes := strings.TrimSpace(request.Notes)
+	if len(notes) > 2000 {
+		return ManualEntry{}, ErrInvalidInput
+	}
 
 	var entryID string
 	if err := repo.db.Pool().QueryRow(ctx, `
@@ -408,7 +462,7 @@ func (repo Repository) DecideManualEntry(ctx context.Context, tenantContext tena
 	}
 	entryID = strings.TrimSpace(entryID)
 	status := strings.TrimSpace(request.Status)
-	if entryID == "" || (status != "approved" && status != "rejected") {
+	if !isUUIDText(entryID) || len(strings.TrimSpace(request.Reason)) > 2000 || (status != "approved" && status != "rejected") {
 		return ManualEntry{}, ErrInvalidInput
 	}
 
@@ -416,17 +470,16 @@ func (repo Repository) DecideManualEntry(ctx context.Context, tenantContext tena
 	if err != nil {
 		return ManualEntry{}, err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback(ctx)
-		}
-	}()
+	defer tx.Rollback(ctx)
 
 	var existing ManualEntry
 	existing, err = scanManualEntry(tx.QueryRow(ctx, `
 		select `+manualEntrySelectFields()+`
 		from public.gamification_manual_entries gme
 		left join public.users u on u.id = gme.user_id
+		left join public.gamification_outbox goq
+		  on goq.organization_id = gme.organization_id
+		 and goq.id = gme.outbox_id
 		where gme.organization_id = $1::uuid
 		  and gme.id = $2::uuid
 		for update of gme
@@ -440,6 +493,32 @@ func (repo Repository) DecideManualEntry(ctx context.Context, tenantContext tena
 	if existing.Status != "pending" {
 		return ManualEntry{}, ErrInvalidInput
 	}
+	if err = validateManualEntryTransition(existing.Status, status, request.Reason); err != nil {
+		return ManualEntry{}, err
+	}
+
+	var outboxID *string
+	if status == "approved" {
+		var queuedID string
+		queuedID, err = repo.enqueueActionTx(
+			ctx,
+			tx,
+			tenantContext.OrganizationID,
+			existing.UserID,
+			existing.ActionKey,
+			existing.Quantity,
+			"manual_entry",
+			existing.ID,
+			map[string]any{"manual_entry_id": existing.ID},
+		)
+		if err != nil {
+			return ManualEntry{}, err
+		}
+		if queuedID == "" {
+			return ManualEntry{}, ErrNotReady
+		}
+		outboxID = &queuedID
+	}
 
 	_, err = tx.Exec(ctx, `
 		update public.gamification_manual_entries
@@ -447,18 +526,14 @@ func (repo Repository) DecideManualEntry(ctx context.Context, tenantContext tena
 		    approved_by = $4::uuid,
 		    approved_at = now(),
 		    rejection_reason = case when $3 = 'rejected' then nullif($5, '') else null end,
+		    outbox_id = $6::uuid,
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
-	`, tenantContext.OrganizationID, entryID, status, tenantContext.UserID, strings.TrimSpace(request.Reason))
+		  and status = 'pending'
+	`, tenantContext.OrganizationID, entryID, status, tenantContext.UserID, strings.TrimSpace(request.Reason), outboxID)
 	if err != nil {
 		return ManualEntry{}, err
-	}
-
-	if status == "approved" {
-		if err = repo.recordGamificationEvent(ctx, tx, tenantContext, existing.UserID, existing.ActionKey, existing.Quantity, "manual_entry", existing.ID); err != nil {
-			return ManualEntry{}, err
-		}
 	}
 
 	entry, err := repo.manualEntryByID(ctx, tx, tenantContext, entryID, false)
@@ -483,7 +558,8 @@ func (repo Repository) ResetSeason(ctx context.Context, tenantContext tenant.Con
 		return Season{}, ErrNotReady
 	}
 	name := strings.TrimSpace(request.Name)
-	if name == "" {
+	reason := strings.TrimSpace(request.Reason)
+	if len(name) < 2 || len(name) > 180 || len(reason) < 2 || len(reason) > 2000 {
 		return Season{}, ErrInvalidInput
 	}
 
@@ -491,11 +567,25 @@ func (repo Repository) ResetSeason(ctx context.Context, tenantContext tenant.Con
 	if err != nil {
 		return Season{}, err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback(ctx)
-		}
-	}()
+	defer tx.Rollback(ctx)
+
+	var moduleEnabled bool
+	err = tx.QueryRow(ctx, `
+		select is_enabled
+		from public.organization_modules
+		where organization_id = $1::uuid
+		  and module_name = 'gamification'
+		for update
+	`, tenantContext.OrganizationID).Scan(&moduleEnabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Season{}, ErrNotReady
+	}
+	if err != nil {
+		return Season{}, err
+	}
+	if !moduleEnabled {
+		return Season{}, ErrNotReady
+	}
 
 	if _, err = tx.Exec(ctx, `
 		update public.gamification_seasons
@@ -516,26 +606,8 @@ func (repo Repository) ResetSeason(ctx context.Context, tenantContext tenant.Con
 		)
 		values ($1::uuid, $2, nullif($3, ''), $4::uuid)
 		returning `+seasonSelectFields()+`
-	`, tenantContext.OrganizationID, name, strings.TrimSpace(request.Reason), tenantContext.UserID))
+	`, tenantContext.OrganizationID, name, reason, tenantContext.UserID))
 	if err != nil {
-		return Season{}, err
-	}
-
-	if _, err = tx.Exec(ctx, `
-		update public.user_gamification_stats
-		set total_points = 0,
-		    points = 0,
-		    xp = 0,
-		    xp_total = 0,
-		    xp_current_level = 0,
-		    xp_next_level = 1000,
-		    current_level = 1,
-		    current_rank = 'Bronze',
-		    rank_tier = 'Bronze',
-		    streak_days = 0,
-		    updated_at = now()
-		where organization_id = $1::uuid
-	`, tenantContext.OrganizationID); err != nil {
 		return Season{}, err
 	}
 
@@ -547,75 +619,41 @@ func (repo Repository) ResetSeason(ctx context.Context, tenantContext tenant.Con
 }
 
 func (repo Repository) ranking(ctx context.Context, tenantContext tenant.Context) ([]RankingEntry, error) {
-	hasParticipants, err := repo.tableExists(ctx, "gamification_participants")
-	if err != nil {
-		return nil, err
-	}
-	hasActivityLogs, err := repo.tableExists(ctx, "gamification_activity_logs")
-	if err != nil {
-		return nil, err
-	}
-
-	joinParticipants := ""
-	participationFilter := ""
-	if hasParticipants {
-		joinParticipants = `
-		left join public.gamification_participants gp
-		  on gp.user_id = u.id
-		 and gp.organization_id = om.organization_id`
-		participationFilter = "and coalesce(gp.participates, true) = true"
-	}
-	activityJoin := ""
-	activityPointsExpr := "0::int"
-	activityLastExpr := "null::text"
-	if hasActivityLogs {
-		activityJoin = `
-		left join (
-			select
-				organization_id,
-				user_id,
-				sum(coalesce(points_earned, 0))::int as total_points,
-				max(created_at)::text as last_activity_at
-			from public.gamification_activity_logs
-			group by organization_id, user_id
-		) gal
-		  on gal.user_id = u.id
-		 and gal.organization_id = om.organization_id`
-		activityPointsExpr = "gal.total_points"
-		activityLastExpr = "gal.last_activity_at"
-	}
-
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
 			u.id::text,
 			coalesce(nullif(u.name, ''), u.email, 'Usuario'),
 			u.avatar_url,
-			u.points,
-			u.xp,
-			ugs.current_level,
-			ugs.current_rank,
-			ugs.rank_tier,
-			ugs.streak_days,
-			ugs.total_points,
-			ugs.xp,
-			ugs.xp_current_level,
-			ugs.xp_next_level,
-			ugs.xp_total,
-			ugs.last_activity_at::text,
-			`+activityPointsExpr+`,
-			`+activityLastExpr+`
+			coalesce(ugs.total_points, 0),
+			coalesce(ugs.xp_total, 0),
+			coalesce(ugs.current_level, 1),
+			coalesce(nullif(ugs.current_rank, ''), nullif(ugs.rank_tier, ''), 'Bronze'),
+			case
+			  when (ugs.last_activity_at at time zone 'America/Sao_Paulo')::date
+			       >= (now() at time zone 'America/Sao_Paulo')::date - 1
+			    then coalesce(ugs.streak_days, 0)
+			  else 0
+			end,
+			coalesce(ugs.xp_current_level, 0),
+			coalesce(ugs.xp_next_level, 1000),
+			ugs.last_activity_at::text
 		from public.users u
 		join public.organization_members om
 		  on om.user_id = u.id
 		 and om.organization_id = $1::uuid
+		join public.gamification_seasons season
+		  on season.organization_id = om.organization_id
+		 and season.is_active = true
 		left join public.user_gamification_stats ugs
 		  on ugs.user_id = u.id
 		 and ugs.organization_id = om.organization_id
-		`+joinParticipants+`
-		`+activityJoin+`
+		 and ugs.season_id = season.id
+		left join public.gamification_participants gp
+		  on gp.user_id = u.id
+		 and gp.organization_id = om.organization_id
 		where coalesce(u.is_active, false) = true
 		  and coalesce(om.is_active, false) = true
-		  `+participationFilter+`
+		  and coalesce(gp.participates, true) = true
 	`, tenantContext.OrganizationID)
 	if err != nil {
 		return nil, err
@@ -625,48 +663,35 @@ func (repo Repository) ranking(ctx context.Context, tenantContext tenant.Context
 	ranking := []RankingEntry{}
 	for rows.Next() {
 		var entry RankingEntry
-		var avatarURL, currentRank, rankTier, lastActivityAt, logLastActivityAt pgtype.Text
-		var userPoints, userXP, level, streakDays, totalPoints, statXP, xpCurrent, xpNext, xpTotal, logPoints pgtype.Int4
+		var avatarURL, currentRank, lastActivityAt pgtype.Text
 		if err := rows.Scan(
 			&entry.UserID,
 			&entry.Name,
 			&avatarURL,
-			&userPoints,
-			&userXP,
-			&level,
+			&entry.Points,
+			&entry.XP,
+			&entry.Level,
 			&currentRank,
-			&rankTier,
-			&streakDays,
-			&totalPoints,
-			&statXP,
-			&xpCurrent,
-			&xpNext,
-			&xpTotal,
+			&entry.StreakDays,
+			&entry.XPCurrentLevel,
+			&entry.XPNextLevel,
 			&lastActivityAt,
-			&logPoints,
-			&logLastActivityAt,
 		); err != nil {
 			return nil, err
 		}
 
 		entry.AvatarURL = textPointer(avatarURL)
-		entry.Points = maxPositiveInt(totalPoints, logPoints, userPoints)
-		entry.XP = maxPositiveInt(xpTotal, statXP, userXP, logPoints)
-		entry.Level = firstInt(level)
 		if entry.Level <= 0 {
 			entry.Level = fallbackLevel(entry.XP)
 		}
-		entry.Rank = firstText(currentRank, rankTier, "Bronze")
-		entry.StreakDays = firstInt(streakDays)
-		entry.XPCurrentLevel = firstInt(xpCurrent)
+		entry.Rank = firstText(currentRank, "Bronze")
 		if entry.XPCurrentLevel == 0 {
 			entry.XPCurrentLevel = entry.XP % 1000
 		}
-		entry.XPNextLevel = firstInt(xpNext)
 		if entry.XPNextLevel <= 0 {
 			entry.XPNextLevel = 1000
 		}
-		entry.LastActivityAt = textPointer(firstTextValue(lastActivityAt, logLastActivityAt))
+		entry.LastActivityAt = textPointer(lastActivityAt)
 		ranking = append(ranking, entry)
 	}
 	if err := rows.Err(); err != nil {
@@ -677,87 +702,177 @@ func (repo Repository) ranking(ctx context.Context, tenantContext tenant.Context
 		if ranking[i].Points != ranking[j].Points {
 			return ranking[i].Points > ranking[j].Points
 		}
-		return ranking[i].XP > ranking[j].XP
+		if ranking[i].XP != ranking[j].XP {
+			return ranking[i].XP > ranking[j].XP
+		}
+		return ranking[i].UserID < ranking[j].UserID
 	})
 
 	return ranking, nil
 }
 
-func (repo Repository) events(ctx context.Context, tenantContext tenant.Context, limit int, includeAll bool) ([]Event, int, error) {
-	useActivityLogs, err := repo.useActivityLogs(ctx, tenantContext.OrganizationID)
-	if err != nil {
-		return nil, 0, err
+// FilteredRanking aggregates points in PostgreSQL. It never derives ranking
+// from the bounded history payload returned by Overview.
+func (repo Repository) FilteredRanking(ctx context.Context, tenantContext tenant.Context, query RankingQuery) ([]RankingEntry, error) {
+	if query.From != nil && query.To != nil && !query.From.Before(*query.To) {
+		return nil, ErrInvalidInput
+	}
+	actionTypes := make([]string, 0, len(query.ActionTypes))
+	seenActions := map[string]struct{}{}
+	for _, candidate := range query.ActionTypes {
+		actionType := normalizeActionType(candidate)
+		if actionType == "" {
+			return nil, ErrInvalidInput
+		}
+		if _, exists := seenActions[actionType]; exists {
+			continue
+		}
+		seenActions[actionType] = struct{}{}
+		actionTypes = append(actionTypes, actionType)
+	}
+	if len(actionTypes) > len(defaultRules()) {
+		return nil, ErrInvalidInput
 	}
 
-	totalEvents := 0
-	if useActivityLogs {
-		if err := repo.db.Pool().QueryRow(ctx, `
-			select count(*)::int
-			from public.gamification_activity_logs
+	rows, err := repo.db.Pool().Query(ctx, `
+		with active_season as (
+			select id, organization_id
+			from public.gamification_seasons
 			where organization_id = $1::uuid
-		`, tenantContext.OrganizationID).Scan(&totalEvents); err != nil {
-			return nil, 0, err
+			  and is_active = true
+			limit 1
+		), filtered_points as (
+			select event.user_id, sum(event.points_earned)::bigint as points
+			from public.gamification_events event
+			join active_season season
+			  on season.organization_id = event.organization_id
+			 and season.id = event.season_id
+			where event.organization_id = $1::uuid
+			  and event.user_id is not null
+			  and ($2::timestamptz is null or event.occurred_at >= $2::timestamptz)
+			  and ($3::timestamptz is null or event.occurred_at < $3::timestamptz)
+			  and (cardinality($4::text[]) = 0 or event.event_type = any($4::text[]))
+			group by event.user_id
+		)
+		select
+			u.id::text,
+			coalesce(nullif(u.name, ''), u.email, 'Usuario'),
+			u.avatar_url,
+			coalesce(filtered.points, 0),
+			coalesce(stats.xp_total, 0),
+			coalesce(stats.current_level, 1),
+			coalesce(nullif(stats.current_rank, ''), nullif(stats.rank_tier, ''), 'Bronze'),
+			case
+			  when (stats.last_activity_at at time zone 'America/Sao_Paulo')::date
+			       >= (now() at time zone 'America/Sao_Paulo')::date - 1
+			    then coalesce(stats.streak_days, 0)
+			  else 0
+			end,
+			coalesce(stats.xp_current_level, 0),
+			coalesce(stats.xp_next_level, 1000),
+			stats.last_activity_at::text
+		from public.users u
+		join public.organization_members membership
+		  on membership.user_id = u.id
+		 and membership.organization_id = $1::uuid
+		join active_season season on season.organization_id = membership.organization_id
+		left join public.user_gamification_stats stats
+		  on stats.organization_id = membership.organization_id
+		 and stats.season_id = season.id
+		 and stats.user_id = u.id
+		left join public.gamification_participants participant
+		  on participant.organization_id = membership.organization_id
+		 and participant.user_id = u.id
+		left join filtered_points filtered on filtered.user_id = u.id
+		where coalesce(u.is_active, false) = true
+		  and coalesce(membership.is_active, false) = true
+		  and coalesce(participant.participates, true) = true
+		order by coalesce(filtered.points, 0) desc, coalesce(stats.xp_total, 0) desc, u.id
+	`, tenantContext.OrganizationID, query.From, query.To, actionTypes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ranking := []RankingEntry{}
+	for rows.Next() {
+		var entry RankingEntry
+		var avatarURL, currentRank, lastActivityAt pgtype.Text
+		if err := rows.Scan(
+			&entry.UserID,
+			&entry.Name,
+			&avatarURL,
+			&entry.Points,
+			&entry.XP,
+			&entry.Level,
+			&currentRank,
+			&entry.StreakDays,
+			&entry.XPCurrentLevel,
+			&entry.XPNextLevel,
+			&lastActivityAt,
+		); err != nil {
+			return nil, err
 		}
-	} else if err := repo.db.Pool().QueryRow(ctx, `
+		entry.Position = len(ranking) + 1
+		entry.IsCurrentUser = entry.UserID == tenantContext.UserID
+		entry.AvatarURL = textPointer(avatarURL)
+		entry.Rank = firstText(currentRank, "Bronze")
+		entry.LastActivityAt = textPointer(lastActivityAt)
+		ranking = append(ranking, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ranking, nil
+}
+
+func (repo Repository) events(ctx context.Context, tenantContext tenant.Context, limit int) ([]Event, int, error) {
+	totalEvents := 0
+	if err := repo.db.Pool().QueryRow(ctx, `
 		select count(*)::int
-		from public.gamification_events
-		where organization_id = $1::uuid
+		from public.gamification_events event
+		join public.gamification_seasons season
+		  on season.organization_id = event.organization_id
+		 and season.id = event.season_id
+		 and season.is_active = true
+		where event.organization_id = $1::uuid
 	`, tenantContext.OrganizationID).Scan(&totalEvents); err != nil {
 		return nil, 0, err
 	}
 
-	userFilter := ""
-	if !includeAll {
-		userFilter = ""
-	}
 	if limit <= 0 {
 		limit = 12
 	}
+	if limit > 500 {
+		limit = 500
+	}
 
-	var rows pgx.Rows
-	if useActivityLogs {
-		rows, err = repo.db.Pool().Query(ctx, `
-			select
-				gal.id::text,
-				gal.user_id::text,
-				coalesce(nullif(u.name, ''), u.email, 'Usuario'),
-				gal.action_type,
-				coalesce(gal.points_earned, 0),
-				coalesce(gal.created_at, now())::text,
-				coalesce(
-					nullif(gal.metadata->>'details', ''),
-					nullif(gal.metadata->>'notes', ''),
-					nullif(gal.metadata->>'description', ''),
-					nullif(gal.metadata->>'lead_name', ''),
-					nullif(gal.metadata->>'title', '')
-				),
-				coalesce(nullif(gal.metadata->>'source_module', ''), 'gamification')
-			from public.gamification_activity_logs gal
-			left join public.users u on u.id = gal.user_id
-			where gal.organization_id = $1::uuid
-			`+userFilter+`
-			order by gal.created_at desc nulls last
-			limit $2
-		`, tenantContext.OrganizationID, limit)
-	} else {
-		rows, err = repo.db.Pool().Query(ctx, `
+	rows, err := repo.db.Pool().Query(ctx, `
 		select
-			ge.id::text,
-			ge.user_id::text,
+			event.id::text,
+			event.user_id::text,
 			coalesce(nullif(u.name, ''), u.email, 'Usuario'),
-			ge.event_type,
-			coalesce(ge.points_earned, 0),
-			ge.created_at::text,
-			coalesce(nullif(ge.metadata->>'details', ''), nullif(ge.metadata->>'notes', ''), nullif(ge.metadata->>'description', '')),
-			coalesce(nullif(ge.metadata->>'source_module', ''), nullif(ge.metadata->>'source', ''))
-		from public.gamification_events ge
-		left join public.users u on u.id = ge.user_id
-		where ge.organization_id = $1::uuid
-		`+userFilter+`
-		order by ge.created_at desc
+			event.event_type,
+			coalesce(event.points_earned, 0),
+			event.occurred_at::text,
+			coalesce(
+				nullif(event.metadata->>'details', ''),
+				nullif(event.metadata->>'notes', ''),
+				nullif(event.metadata->>'description', ''),
+				nullif(event.metadata->>'lead_name', ''),
+				nullif(event.metadata->>'title', '')
+			),
+			coalesce(nullif(event.source, ''), 'gamification')
+		from public.gamification_events event
+		join public.gamification_seasons season
+		  on season.organization_id = event.organization_id
+		 and season.id = event.season_id
+		 and season.is_active = true
+		left join public.users u on u.id = event.user_id
+		where event.organization_id = $1::uuid
+		order by event.occurred_at desc, event.id desc
 		limit $2
 	`, tenantContext.OrganizationID, limit)
-	}
 	if err != nil {
 		return nil, 0, err
 	}
@@ -777,25 +892,199 @@ func (repo Repository) events(ctx context.Context, tenantContext tenant.Context,
 	return events, totalEvents, nil
 }
 
-func (repo Repository) missions(ctx context.Context, tenantContext tenant.Context, activeOnly bool) ([]Mission, error) {
-	hasExtended, err := repo.columnExists(ctx, "gamification_missions", "action_type")
-	if err != nil {
-		return nil, err
+// EventPage returns a stable occurred_at/id cursor page. Non-managers are
+// always scoped to their own ledger rows, even when a different userId is
+// supplied by the client.
+func (repo Repository) EventPage(ctx context.Context, tenantContext tenant.Context, query EventQuery) (EventPage, error) {
+	if query.Limit == 0 {
+		query.Limit = 30
 	}
-	where := "organization_id = $1::uuid"
+	if query.Limit < 1 || query.Limit > 100 || (query.From != nil && query.To != nil && !query.From.Before(*query.To)) {
+		return EventPage{}, ErrInvalidInput
+	}
+	if (query.CursorOccurredAt == nil) != (strings.TrimSpace(query.CursorID) == "") {
+		return EventPage{}, ErrInvalidInput
+	}
+	if query.CursorID != "" && !isUUIDText(query.CursorID) {
+		return EventPage{}, ErrInvalidInput
+	}
+
+	requestedUserID := strings.TrimSpace(query.UserID)
+	if !canManageGamification(tenantContext) {
+		if requestedUserID != "" && requestedUserID != tenantContext.UserID {
+			return EventPage{}, tenant.ErrOrganizationAccessDenied
+		}
+		requestedUserID = tenantContext.UserID
+	} else if requestedUserID != "" {
+		isMember, err := repo.isActiveOrganizationMember(ctx, tenantContext.OrganizationID, requestedUserID)
+		if err != nil {
+			return EventPage{}, err
+		}
+		if !isMember {
+			return EventPage{}, ErrNotFound
+		}
+	}
+
+	var userFilter any
+	if requestedUserID != "" {
+		userFilter = requestedUserID
+	}
+	var total int64
+	if err := repo.db.Pool().QueryRow(ctx, `
+		select count(*)::bigint
+		from public.gamification_events event
+		join public.gamification_seasons season
+		  on season.organization_id = event.organization_id
+		 and season.id = event.season_id
+		where event.organization_id = $1::uuid
+		  and ($2::uuid is null or event.user_id = $2::uuid)
+		  and ($3::timestamptz is null or event.occurred_at >= $3::timestamptz)
+		  and ($4::timestamptz is null or event.occurred_at < $4::timestamptz)
+	`, tenantContext.OrganizationID, userFilter, query.From, query.To).Scan(&total); err != nil {
+		return EventPage{}, err
+	}
+
+	var cursorID any
+	if query.CursorOccurredAt != nil {
+		cursorID = query.CursorID
+	}
+	rows, err := repo.db.Pool().Query(ctx, `
+		select
+			event.id::text,
+			event.user_id::text,
+			coalesce(nullif(users.name, ''), users.email, 'Usuario'),
+			event.event_type,
+			coalesce(event.points_earned, 0),
+			event.occurred_at::text,
+			coalesce(
+				nullif(event.metadata->>'details', ''),
+				nullif(event.metadata->>'notes', ''),
+				nullif(event.metadata->>'description', ''),
+				nullif(event.metadata->>'lead_name', ''),
+				nullif(event.metadata->>'title', '')
+			),
+			coalesce(nullif(event.source, ''), 'gamification'),
+			event.occurred_at
+		from public.gamification_events event
+		join public.gamification_seasons season
+		  on season.organization_id = event.organization_id
+		 and season.id = event.season_id
+		left join public.users users on users.id = event.user_id
+		where event.organization_id = $1::uuid
+		  and ($2::uuid is null or event.user_id = $2::uuid)
+		  and ($3::timestamptz is null or event.occurred_at >= $3::timestamptz)
+		  and ($4::timestamptz is null or event.occurred_at < $4::timestamptz)
+		  and (
+		    $5::timestamptz is null
+		    or (event.occurred_at, event.id) < ($5::timestamptz, $6::uuid)
+		  )
+		order by event.occurred_at desc, event.id desc
+		limit $7
+	`, tenantContext.OrganizationID, userFilter, query.From, query.To, query.CursorOccurredAt, cursorID, query.Limit+1)
+	if err != nil {
+		return EventPage{}, err
+	}
+	defer rows.Close()
+
+	items := make([]eventPageRow, 0, query.Limit+1)
+	for rows.Next() {
+		var item eventPageRow
+		var userID, createdAt, details, source pgtype.Text
+		if err := rows.Scan(
+			&item.Event.ID,
+			&userID,
+			&item.Event.UserName,
+			&item.Event.EventType,
+			&item.Event.Points,
+			&createdAt,
+			&details,
+			&source,
+			&item.OccurredAt,
+		); err != nil {
+			return EventPage{}, err
+		}
+		item.Event.UserID = textPointer(userID)
+		if item.Event.UserID == nil {
+			item.Event.UserName = "Sistema"
+		}
+		item.Event.CreatedAt = textPointer(createdAt)
+		item.Event.Details = textPointer(details)
+		item.Event.Source = textPointer(source)
+		if normalized := normalizeActionType(item.Event.EventType); normalized != "" {
+			item.Event.EventType = normalized
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return EventPage{}, err
+	}
+
+	page := EventPage{Events: []Event{}, Total: total}
+	hasMore := len(items) > query.Limit
+	if hasMore {
+		items = items[:query.Limit]
+	}
+	for _, item := range items {
+		page.Events = append(page.Events, item.Event)
+	}
+	if hasMore && len(items) > 0 {
+		last := items[len(items)-1]
+		cursor, err := encodeEventCursor(last.OccurredAt, last.Event.ID)
+		if err != nil {
+			return EventPage{}, err
+		}
+		page.NextCursor = &cursor
+	}
+	return page, nil
+}
+
+func (repo Repository) missions(ctx context.Context, tenantContext tenant.Context, activeOnly bool) ([]Mission, error) {
+	where := "mission.organization_id = $1::uuid"
 	limit := ""
 	if activeOnly {
-		where += " and coalesce(is_active, true) = true"
+		where += " and mission.is_active = true and (mission.target_scope = 'organization' or mission.target_user_id = $2::uuid)"
 		limit = " limit 6"
 	}
 
 	rows, err := repo.db.Pool().Query(ctx, `
-		select `+missionSelectFields(hasExtended)+`
-		from public.gamification_missions
+		select
+			mission.id::text,
+			mission.title,
+			mission.description,
+			mission.action_type,
+			mission.target_count,
+			coalesce(progress.current_progress, 0),
+			mission.bonus_points,
+			mission.period,
+			mission.is_active,
+			mission.target_scope,
+			mission.target_user_id::text,
+			mission.created_at::text,
+			mission.updated_at::text
+		from public.gamification_missions mission
+		join public.gamification_seasons season
+		  on season.organization_id = mission.organization_id
+		 and season.is_active = true
+		left join lateral (
+			select mission_progress.current_progress
+			from public.gamification_mission_progress mission_progress
+			where mission_progress.organization_id = mission.organization_id
+			  and mission_progress.mission_id = mission.id
+			  and mission_progress.season_id = season.id
+			  and mission_progress.user_id = $2::uuid
+			  and mission_progress.period_key = case coalesce(mission.period, 'season')
+			    when 'daily' then to_char(now() at time zone 'America/Sao_Paulo', 'YYYY-MM-DD')
+			    when 'weekly' then to_char(now() at time zone 'America/Sao_Paulo', 'IYYY-"W"IW')
+			    when 'monthly' then to_char(now() at time zone 'America/Sao_Paulo', 'YYYY-MM')
+			    else 'season:' || season.id::text
+			  end
+			order by mission_progress.updated_at desc, mission_progress.id desc
+			limit 1
+		) progress on true
 		where `+where+`
-		order by updated_at desc
+		order by mission.updated_at desc, mission.id desc
 		`+limit+`
-	`, tenantContext.OrganizationID)
+	`, tenantContext.OrganizationID, tenantContext.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -803,7 +1092,7 @@ func (repo Repository) missions(ctx context.Context, tenantContext tenant.Contex
 
 	missions := []Mission{}
 	for rows.Next() {
-		mission, err := repo.scanMission(rows, hasExtended)
+		mission, err := repo.scanMission(rows, true)
 		if err != nil {
 			return nil, err
 		}
@@ -813,7 +1102,7 @@ func (repo Repository) missions(ctx context.Context, tenantContext tenant.Contex
 }
 
 func (repo Repository) performance(ctx context.Context, tenantContext tenant.Context) (Performance, error) {
-	now := time.Now()
+	now := time.Now().In(gamificationBusinessLocation)
 	startCurrentMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	startLastMonth := startCurrentMonth.AddDate(0, -1, 0)
 	weekday := int(now.Weekday())
@@ -823,27 +1112,27 @@ func (repo Repository) performance(ctx context.Context, tenantContext tenant.Con
 	startWeek := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -(weekday - 1))
 	endWeek := startWeek.AddDate(0, 0, 7)
 
-	useActivityLogs, err := repo.useActivityLogs(ctx, tenantContext.OrganizationID)
-	if err != nil {
-		return Performance{}, err
-	}
-
-	var rows pgx.Rows
-	if useActivityLogs {
-		rows, err = repo.db.Pool().Query(ctx, `
-			select action_type, coalesce(points_earned, 0), coalesce(created_at, now())
-			from public.gamification_activity_logs
-			where organization_id = $1::uuid
-			  and coalesce(created_at, now()) >= $2
-		`, tenantContext.OrganizationID, startLastMonth)
-	} else {
-		rows, err = repo.db.Pool().Query(ctx, `
-			select event_type, coalesce(points_earned, 0), coalesce(created_at, now())
-			from public.gamification_events
-			where organization_id = $1::uuid
-			  and coalesce(created_at, now()) >= $2
-		`, tenantContext.OrganizationID, startLastMonth)
-	}
+	rows, err := repo.db.Pool().Query(ctx, `
+		select
+			to_char((event.occurred_at at time zone 'America/Sao_Paulo')::date, 'YYYY-MM-DD'),
+			event.event_type,
+			sum(event.points_earned)::bigint,
+			count(*) filter (
+			  where event.event_type not in ('mission_bonus', 'migration_baseline')
+			)::int
+		from public.gamification_events event
+		join public.gamification_seasons season
+		  on season.organization_id = event.organization_id
+		 and season.id = event.season_id
+		 and season.is_active = true
+		where event.organization_id = $1::uuid
+		  and event.user_id = $2::uuid
+		  and event.occurred_at >= $3
+		group by
+			(event.occurred_at at time zone 'America/Sao_Paulo')::date,
+			event.event_type
+		order by (event.occurred_at at time zone 'America/Sao_Paulo')::date
+	`, tenantContext.OrganizationID, tenantContext.UserID, startLastMonth)
 	if err != nil {
 		return Performance{}, err
 	}
@@ -852,7 +1141,7 @@ func (repo Repository) performance(ctx context.Context, tenantContext tenant.Con
 	events := []eventPoint{}
 	for rows.Next() {
 		var item eventPoint
-		if err := rows.Scan(&item.EventType, &item.Points, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.OccurredDate, &item.EventType, &item.Points, &item.Actions); err != nil {
 			return Performance{}, err
 		}
 		events = append(events, item)
@@ -867,8 +1156,8 @@ func (repo Repository) performance(ctx context.Context, tenantContext tenant.Con
 		chartData[i] = PerformanceDay{Name: labels[i]}
 	}
 
-	thisMonthPoints := 0
-	lastMonthPoints := 0
+	var thisMonthPoints int64
+	var lastMonthPoints int64
 	thisMonthActions := 0
 	positiveEvents := 0
 	activeDays := map[string]bool{}
@@ -893,23 +1182,31 @@ func (repo Repository) performance(ctx context.Context, tenantContext tenant.Con
 	}
 
 	for _, event := range events {
-		if !event.CreatedAt.Before(startWeek) && event.CreatedAt.Before(endWeek) {
-			index := int(event.CreatedAt.Weekday()) - 1
+		eventTime, parseErr := time.ParseInLocation("2006-01-02", event.OccurredDate, gamificationBusinessLocation)
+		if parseErr != nil {
+			return Performance{}, parseErr
+		}
+		if !eventTime.Before(startWeek) && eventTime.Before(endWeek) {
+			index := int(eventTime.Weekday()) - 1
 			if index < 0 {
 				index = 6
 			}
 			chartData[index].Points += event.Points
-			chartData[index].Actions++
+			chartData[index].Actions += event.Actions
 		}
 
-		if !event.CreatedAt.Before(startCurrentMonth) {
+		if !eventTime.Before(startCurrentMonth) {
 			thisMonthPoints += event.Points
-			thisMonthActions++
-			activeDays[event.CreatedAt.Format("2006-01-02")] = true
-			if positiveTypes[event.EventType] {
-				positiveEvents++
+			thisMonthActions += event.Actions
+			if event.Actions > 0 {
+				activeDays[eventTime.Format("2006-01-02")] = true
 			}
-			distribution[distributionBucket(event.EventType)]++
+			if positiveTypes[event.EventType] {
+				positiveEvents += event.Actions
+			}
+			if event.Actions > 0 {
+				distribution[distributionBucket(event.EventType)] += event.Actions
+			}
 		} else {
 			lastMonthPoints += event.Points
 		}
@@ -1002,20 +1299,6 @@ func (repo Repository) rules(ctx context.Context, tenantContext tenant.Context) 
 }
 
 func (repo Repository) participants(ctx context.Context, tenantContext tenant.Context) ([]Participant, error) {
-	hasParticipants, err := repo.tableExists(ctx, "gamification_participants")
-	if err != nil {
-		return nil, err
-	}
-	join := ""
-	participatesExpr := "true"
-	if hasParticipants {
-		join = `
-		left join public.gamification_participants gp
-		  on gp.organization_id = om.organization_id
-		 and gp.user_id = u.id`
-		participatesExpr = "coalesce(gp.participates, true)"
-	}
-
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
 			u.id::text,
@@ -1023,16 +1306,22 @@ func (repo Repository) participants(ctx context.Context, tenantContext tenant.Co
 			coalesce(u.email, ''),
 			coalesce(om.role, 'user'),
 			(coalesce(u.is_active, false) and coalesce(om.is_active, false)),
-			`+participatesExpr+`,
-			coalesce(ugs.total_points, u.points, 0)
+			coalesce(gp.participates, true),
+			coalesce(ugs.total_points, 0)
 		from public.users u
 		join public.organization_members om
 		  on om.user_id = u.id
 		 and om.organization_id = $1::uuid
+		join public.gamification_seasons season
+		  on season.organization_id = om.organization_id
+		 and season.is_active = true
 		left join public.user_gamification_stats ugs
 		  on ugs.organization_id = om.organization_id
 		 and ugs.user_id = u.id
-		`+join+`
+		 and ugs.season_id = season.id
+		left join public.gamification_participants gp
+		  on gp.organization_id = om.organization_id
+		 and gp.user_id = u.id
 		where coalesce(u.is_active, false) = true
 		  and coalesce(om.is_active, false) = true
 		order by coalesce(nullif(u.name, ''), u.email, 'Usuario')
@@ -1090,7 +1379,7 @@ func (repo Repository) seasons(ctx context.Context, tenantContext tenant.Context
 	return seasons, rows.Err()
 }
 
-func (repo Repository) manualEntries(ctx context.Context, tenantContext tenant.Context, userID string, pendingOnly bool) ([]ManualEntry, error) {
+func (repo Repository) manualEntries(ctx context.Context, tenantContext tenant.Context, userID string, adminQueueOnly bool) ([]ManualEntry, error) {
 	if ok, err := repo.tableExists(ctx, "gamification_manual_entries"); err != nil {
 		return nil, err
 	} else if !ok {
@@ -1099,8 +1388,26 @@ func (repo Repository) manualEntries(ctx context.Context, tenantContext tenant.C
 
 	args := []any{tenantContext.OrganizationID}
 	where := "gme.organization_id = $1::uuid"
-	if pendingOnly {
-		where += " and gme.status = 'pending'"
+	orderAndLimit := "gme.created_at desc limit 20"
+	if adminQueueOnly {
+		where += ` and (
+			gme.status = 'pending'
+			or (
+				gme.status = 'approved'
+				and (
+					gme.awarded_at is null
+					or goq.status in ('pending', 'processing', 'skipped', 'dead')
+				)
+			)
+		)`
+		orderAndLimit = `
+			case
+				when gme.status = 'pending' then 0
+				when goq.status in ('dead', 'skipped') then 1
+				else 2
+			end,
+			gme.created_at desc
+			limit 100`
 	} else if strings.TrimSpace(userID) != "" {
 		args = append(args, userID)
 		where += " and gme.user_id = $2::uuid"
@@ -1110,9 +1417,11 @@ func (repo Repository) manualEntries(ctx context.Context, tenantContext tenant.C
 		select `+manualEntrySelectFields()+`
 		from public.gamification_manual_entries gme
 		left join public.users u on u.id = gme.user_id
+		left join public.gamification_outbox goq
+		  on goq.organization_id = gme.organization_id
+		 and goq.id = gme.outbox_id
 		where `+where+`
-		order by gme.created_at desc
-		limit 20
+		order by `+orderAndLimit+`
 	`, args...)
 	if err != nil {
 		return nil, err
@@ -1139,6 +1448,9 @@ func (repo Repository) manualEntryByID(ctx context.Context, query queryRower, te
 		select `+manualEntrySelectFields()+`
 		from public.gamification_manual_entries gme
 		left join public.users u on u.id = gme.user_id
+		left join public.gamification_outbox goq
+		  on goq.organization_id = gme.organization_id
+		 and goq.id = gme.outbox_id
 		where gme.organization_id = $1::uuid
 		  and gme.id = $2::uuid
 		`+lock+`
@@ -1151,11 +1463,14 @@ func (repo Repository) manualEntryByID(ctx context.Context, query queryRower, te
 
 func (repo Repository) users(ctx context.Context, tenantContext tenant.Context) ([]UserOption, error) {
 	rows, err := repo.db.Pool().Query(ctx, `
-		select id::text, coalesce(nullif(name, ''), email, 'Usuario')
-		from public.users
-		where organization_id = $1::uuid
-		  and coalesce(is_active, true) = true
-		order by coalesce(nullif(name, ''), email, 'Usuario')
+		select users.id::text, coalesce(nullif(users.name, ''), users.email, 'Usuario')
+		from public.users users
+		join public.organization_members membership
+		  on membership.user_id = users.id
+		 and membership.organization_id = $1::uuid
+		where users.is_active = true
+		  and membership.is_active = true
+		order by coalesce(nullif(users.name, ''), users.email, 'Usuario')
 	`, tenantContext.OrganizationID)
 	if err != nil {
 		return nil, err
@@ -1173,158 +1488,119 @@ func (repo Repository) users(ctx context.Context, tenantContext tenant.Context) 
 	return users, rows.Err()
 }
 
-// RecordAction is the public interface for other modules to award gamification points
-// for automated CRM actions like making a call or completing a task.
+// RecordAction remains as a compatibility hook for the current CRM modules.
+// Their canonical table triggers already enqueue the same domain events in the
+// business transaction, so a second database round-trip here would add latency
+// and could still lose the race after commit. New producers must use
+// EnqueueActionTx in their own transaction instead.
 func (repo Repository) RecordAction(ctx context.Context, tenantContext tenant.Context, actionType string, quantity int, referenceID string) error {
+	_ = ctx
 	actionType = normalizeActionType(actionType)
-	tx, err := repo.db.Pool().Begin(ctx)
-	if err != nil {
-		return err
+	if actionType == "" || quantity < 1 || quantity > 100 || strings.TrimSpace(referenceID) == "" || tenantContext.OrganizationID == "" || tenantContext.UserID == "" {
+		return ErrInvalidInput
 	}
-	defer tx.Rollback(ctx)
-
-	err = repo.recordGamificationEvent(ctx, tx, tenantContext, tenantContext.UserID, actionType, quantity, "system_action", referenceID)
-	if err != nil {
-		return err
-	}
-
-	return tx.Commit(ctx)
+	return nil
 }
 
-func (repo Repository) recordGamificationEvent(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, userID string, actionType string, quantity int, source string, referenceID string) error {
-	actionType = normalizeActionType(actionType)
-	points := repo.rulePoints(ctx, tx, tenantContext.OrganizationID, actionType)
-	total := points * quantity
-	if total <= 0 {
-		return nil
-	}
-
-	metadata := jsonb(map[string]any{
-		"count":         quantity,
-		"unit_points":   points,
-		"source_module": source,
-		"reference_id":  referenceID,
-	})
-	referenceUUID := uuidTextOrNil(referenceID)
-	idempotencyKey := gamificationIdempotencyKey(actionType, referenceID, quantity, userID)
-
-	if ok, err := repo.tableExists(ctx, "gamification_activity_logs"); err != nil {
-		return err
-	} else if ok {
-		_, err = tx.Exec(ctx, `
-			insert into public.gamification_activity_logs (
-				organization_id,
-				user_id,
-				action_type,
-				points_earned,
-				reference_id,
-				metadata,
-				idempotency_key,
-				quantity,
-				xp_awarded
-			)
-			values ($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::jsonb, $7, $8, $4)
-			on conflict (idempotency_key) do nothing
-		`, tenantContext.OrganizationID, userID, actionType, total, referenceUUID, metadata, idempotencyKey, quantity)
-		if err != nil {
-			return err
-		}
-	}
-
-	_, err := tx.Exec(ctx, `
-		insert into public.gamification_events (
-			organization_id,
-			user_id,
-			event_type,
-			points_earned,
-			metadata
-		)
-		values (
-			$1::uuid,
-			$2::uuid,
-			$3,
-			$4,
-			$5::jsonb
-		)
-	`, tenantContext.OrganizationID, userID, actionType, total, metadata)
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec(ctx, `
-		insert into public.user_gamification_stats (
-			organization_id,
-			user_id,
-			total_points,
-			points,
-			xp,
-			xp_total,
-			xp_current_level,
-			xp_next_level,
-			current_level,
-			last_activity_at
-		)
-		values (
-			$1::uuid,
-			$2::uuid,
-			$3,
-			$3,
-			$3,
-			$3,
-			$3 % 1000,
-			1000,
-			greatest(1, ($3 / 1000) + 1),
-			now()
-		)
-		on conflict (organization_id, user_id)
-		do update set
-			total_points = public.user_gamification_stats.total_points + excluded.total_points,
-			points = public.user_gamification_stats.points + excluded.points,
-			xp = public.user_gamification_stats.xp + excluded.xp,
-			xp_total = public.user_gamification_stats.xp_total + excluded.xp_total,
-			xp_current_level = (public.user_gamification_stats.xp_total + excluded.xp_total) % 1000,
-			xp_next_level = 1000,
-			current_level = greatest(1, ((public.user_gamification_stats.xp_total + excluded.xp_total) / 1000) + 1),
-			last_activity_at = now(),
-			updated_at = now()
-	`, tenantContext.OrganizationID, userID, total)
+// EnqueueActionTx lets domain repositories insert the outbox row in the same
+// transaction as their business mutation. Callers should prefer it over the
+// compatibility RecordAction method whenever they already own a pgx.Tx.
+func (repo Repository) EnqueueActionTx(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, actionType string, quantity int, referenceID string) error {
+	_, err := repo.enqueueActionTx(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		tenantContext.UserID,
+		actionType,
+		quantity,
+		"system_action",
+		referenceID,
+		nil,
+	)
 	return err
 }
 
-func (repo Repository) useActivityLogs(ctx context.Context, organizationID string) (bool, error) {
-	ok, err := repo.tableExists(ctx, "gamification_activity_logs")
-	if err != nil || !ok {
-		return false, err
-	}
-
-	count := 0
-	if err := repo.db.Pool().QueryRow(ctx, `
-		select count(*)::int
-		from public.gamification_activity_logs
-		where organization_id = $1::uuid
-	`, organizationID).Scan(&count); err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
-func (repo Repository) rulePoints(ctx context.Context, tx pgx.Tx, organizationID string, actionType string) int {
+func (repo Repository) enqueueActionTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	userID string,
+	actionType string,
+	quantity int,
+	source string,
+	referenceID string,
+	metadata map[string]any,
+) (string, error) {
 	actionType = normalizeActionType(actionType)
-	if ok, err := repo.tableExists(ctx, "gamification_rules"); err != nil || !ok {
-		return defaultRulePoints(actionType)
+	organizationID = strings.TrimSpace(organizationID)
+	userID = strings.TrimSpace(userID)
+	referenceID = strings.TrimSpace(referenceID)
+	source = strings.TrimSpace(source)
+	if actionType == "" || organizationID == "" || userID == "" || referenceID == "" || quantity < 1 || quantity > 100 {
+		return "", ErrInvalidInput
 	}
-	points := 0
+	if source == "" {
+		source = "system_action"
+	}
+
+	var seasonID string
 	err := tx.QueryRow(ctx, `
-		select points
-		from public.gamification_rules
-		where organization_id = $1::uuid
-		  and action_type = $2
-		  and is_active = true
-	`, organizationID, actionType).Scan(&points)
-	if err != nil || points <= 0 {
-		return defaultRulePoints(actionType)
+		select season.id::text
+		from public.organization_modules module_access
+		join public.gamification_seasons season
+		  on season.organization_id = module_access.organization_id
+		 and season.is_active = true
+		join public.organization_members membership
+		  on membership.organization_id = module_access.organization_id
+		 and membership.user_id = $2::uuid
+		 and membership.is_active = true
+		left join public.gamification_participants participant
+		  on participant.organization_id = membership.organization_id
+		 and participant.user_id = membership.user_id
+		where module_access.organization_id = $1::uuid
+		  and module_access.module_name = 'gamification'
+		  and module_access.is_enabled = true
+		  and coalesce(participant.participates, true) = true
+		order by season.started_at desc, season.id desc
+		limit 1
+		for share of module_access, season, membership
+	`, organizationID, userID).Scan(&seasonID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
 	}
-	return points
+	if err != nil {
+		return "", err
+	}
+
+	idempotencyKey := gamificationIdempotencyKey(organizationID, actionType, referenceID)
+	payload := map[string]any{
+		"count":         quantity,
+		"source_module": source,
+		"reference_id":  referenceID,
+	}
+	for key, value := range metadata {
+		payload[key] = value
+	}
+
+	var outboxID string
+	err = tx.QueryRow(ctx, `
+		insert into public.gamification_outbox (
+			organization_id,
+			season_id,
+			user_id,
+			action_type,
+			quantity,
+			source,
+			reference_id,
+			idempotency_key,
+			metadata
+		)
+		values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9::jsonb)
+		on conflict (organization_id, idempotency_key)
+		do update set idempotency_key = excluded.idempotency_key
+		returning id::text
+	`, organizationID, seasonID, userID, actionType, quantity, source, referenceID, idempotencyKey, jsonb(payload)).Scan(&outboxID)
+	return outboxID, err
 }
 
 func (repo Repository) tableExists(ctx context.Context, table string) (bool, error) {
@@ -1333,18 +1609,46 @@ func (repo Repository) tableExists(ctx context.Context, table string) (bool, err
 	return exists, err
 }
 
-func (repo Repository) columnExists(ctx context.Context, table string, column string) (bool, error) {
+func (repo Repository) isActiveOrganizationMember(ctx context.Context, organizationID string, userID string) (bool, error) {
 	var exists bool
 	err := repo.db.Pool().QueryRow(ctx, `
 		select exists (
 			select 1
-			from information_schema.columns
-			where table_schema = 'public'
-			  and table_name = $1
-			  and column_name = $2
+			from public.organization_members membership
+			join public.users users on users.id = membership.user_id
+			where membership.organization_id = $1::uuid
+			  and membership.user_id = $2::uuid
+			  and membership.is_active = true
+			  and users.is_active = true
 		)
-	`, table, column).Scan(&exists)
+	`, organizationID, userID).Scan(&exists)
 	return exists, err
+}
+
+func validateManualEntryTransition(currentStatus string, nextStatus string, reason string) error {
+	if currentStatus != "pending" || (nextStatus != "approved" && nextStatus != "rejected") {
+		return ErrInvalidInput
+	}
+	if nextStatus == "rejected" && strings.TrimSpace(reason) == "" {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
+func missionStructureChanged(current missionStructure, next missionStructure) bool {
+	return current.ActionType != next.ActionType ||
+		current.TargetCount != next.TargetCount ||
+		current.BonusPoints != next.BonusPoints ||
+		current.Period != next.Period ||
+		current.TargetScope != next.TargetScope ||
+		current.TargetUserID != next.TargetUserID
+}
+
+func pointerValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func scanEvent(row interface{ Scan(dest ...any) error }) (Event, error) {
@@ -1369,7 +1673,9 @@ func scanEvent(row interface{ Scan(dest ...any) error }) (Event, error) {
 	event.CreatedAt = textPointer(createdAt)
 	event.Details = textPointer(details)
 	event.Source = textPointer(source)
-	event.EventType = normalizeActionType(event.EventType)
+	if normalized := normalizeActionType(event.EventType); normalized != "" {
+		event.EventType = normalized
+	}
 	return event, nil
 }
 
@@ -1446,7 +1752,7 @@ func scanSeason(row interface{ Scan(dest ...any) error }) (Season, error) {
 
 func scanManualEntry(row interface{ Scan(dest ...any) error }) (ManualEntry, error) {
 	var entry ManualEntry
-	var notes, approvedBy, approvedAt, rejectionReason, createdAt pgtype.Text
+	var notes, approvedBy, approvedAt, rejectionReason, awardedAt, awardStatus, createdAt pgtype.Text
 	if err := row.Scan(
 		&entry.ID,
 		&entry.UserID,
@@ -1458,6 +1764,8 @@ func scanManualEntry(row interface{ Scan(dest ...any) error }) (ManualEntry, err
 		&approvedBy,
 		&approvedAt,
 		&rejectionReason,
+		&awardedAt,
+		&awardStatus,
 		&createdAt,
 	); err != nil {
 		return ManualEntry{}, err
@@ -1466,8 +1774,12 @@ func scanManualEntry(row interface{ Scan(dest ...any) error }) (ManualEntry, err
 	entry.ApprovedBy = textPointer(approvedBy)
 	entry.ApprovedAt = textPointer(approvedAt)
 	entry.RejectionReason = textPointer(rejectionReason)
+	entry.AwardedAt = textPointer(awardedAt)
+	entry.AwardStatus = textPointer(awardStatus)
 	entry.CreatedAt = textPointer(createdAt)
-	entry.ActionKey = normalizeActionType(entry.ActionKey)
+	if normalized := normalizeActionType(entry.ActionKey); normalized != "" {
+		entry.ActionKey = normalized
+	}
 	return entry, nil
 }
 
@@ -1524,37 +1836,44 @@ func manualEntrySelectFields() string {
 		gme.approved_by::text,
 		gme.approved_at::text,
 		gme.rejection_reason,
+		gme.awarded_at::text,
+		coalesce(goq.status, case when gme.awarded_at is not null then 'completed' end),
 		gme.created_at::text`
 }
 
 func normalizeMissionRequest(request MissionRequest) (MissionRequest, error) {
 	request.Title = strings.TrimSpace(request.Title)
-	if request.Title == "" || request.TargetCount < 1 || request.BonusPoints < 0 {
+	if request.Title == "" || len(request.Title) > 180 || request.TargetCount < 1 || request.TargetCount > 1_000_000 || request.BonusPoints < 0 || request.BonusPoints > 1_000_000 {
 		return MissionRequest{}, ErrInvalidInput
 	}
 	if request.Description != nil {
 		value := strings.TrimSpace(*request.Description)
+		if len(value) > 2000 {
+			return MissionRequest{}, ErrInvalidInput
+		}
 		if value == "" {
 			request.Description = nil
 		} else {
 			request.Description = &value
 		}
 	}
-	if request.ActionType != nil {
-		value := normalizeActionType(*request.ActionType)
-		if value == "" {
-			request.ActionType = nil
-		} else {
-			request.ActionType = &value
-		}
+	if request.ActionType == nil {
+		return MissionRequest{}, ErrInvalidInput
 	}
+	value := normalizeActionType(*request.ActionType)
+	if value == "" {
+		return MissionRequest{}, ErrInvalidInput
+	}
+	request.ActionType = &value
 	if request.Period != nil {
-		value := strings.TrimSpace(*request.Period)
-		if value == "" {
-			request.Period = nil
-		} else {
-			request.Period = &value
+		period := strings.ToLower(strings.TrimSpace(*request.Period))
+		if period != "daily" && period != "weekly" && period != "monthly" && period != "season" {
+			return MissionRequest{}, ErrInvalidInput
 		}
+		request.Period = &period
+	} else {
+		period := "season"
+		request.Period = &period
 	}
 	request.TargetScope = strings.TrimSpace(request.TargetScope)
 	if request.TargetScope == "" {
@@ -1571,6 +1890,9 @@ func normalizeMissionRequest(request MissionRequest) (MissionRequest, error) {
 	}
 	if request.TargetUserID != nil {
 		value := strings.TrimSpace(*request.TargetUserID)
+		if !isUUIDText(value) {
+			return MissionRequest{}, ErrInvalidInput
+		}
 		request.TargetUserID = &value
 	}
 	return request, nil
@@ -1581,6 +1903,10 @@ func normalizeActionType(actionType string) string {
 	key = strings.ReplaceAll(key, " ", "_")
 	key = strings.ReplaceAll(key, "-", "_")
 	switch key {
+	case "call_made", "message_sent", "contact_made", "visit_scheduled", "visit_confirmed",
+		"meeting_scheduled", "meeting_held", "proposal_sent", "sale_closed", "contract_signed",
+		"lead_created", "lead_created_manual", "property_created", "lost_lead_recovered", "prospecting_report":
+		return key
 	case "ligacao_realizada", "ligacao", "call":
 		return "call_made"
 	case "mensagem", "mensagem_enviada", "whatsapp_message", "message":
@@ -1610,7 +1936,7 @@ func normalizeActionType(actionType string) string {
 	case "lead_recuperado", "recuperar_lead_perdido", "lost_lead_reopened":
 		return "lost_lead_recovered"
 	default:
-		return key
+		return ""
 	}
 }
 
@@ -1636,60 +1962,32 @@ func canManageGamification(tenantContext tenant.Context) bool {
 
 func defaultRules() []Rule {
 	return []Rule{
-		{ID: "default-call_made", ActionType: "call_made", Points: 5, IsActive: true, IsTemp: true},
-		{ID: "default-message_sent", ActionType: "message_sent", Points: 2, IsActive: true, IsTemp: true},
-		{ID: "default-contact_made", ActionType: "contact_made", Points: 3, IsActive: true, IsTemp: true},
-		{ID: "default-visit_scheduled", ActionType: "visit_scheduled", Points: 20, IsActive: true, IsTemp: true},
-		{ID: "default-visit_confirmed", ActionType: "visit_confirmed", Points: 35, IsActive: true, IsTemp: true},
-		{ID: "default-meeting_scheduled", ActionType: "meeting_scheduled", Points: 10, IsActive: true, IsTemp: true},
-		{ID: "default-meeting_held", ActionType: "meeting_held", Points: 25, IsActive: true, IsTemp: true},
-		{ID: "default-proposal_sent", ActionType: "proposal_sent", Points: 30, IsActive: true, IsTemp: true},
-		{ID: "default-sale_closed", ActionType: "sale_closed", Points: 500, IsActive: true, IsTemp: true},
-		{ID: "default-contract_signed", ActionType: "contract_signed", Points: 250, IsActive: true, IsTemp: true},
-		{ID: "default-lost_lead_recovered", ActionType: "lost_lead_recovered", Points: 20, IsActive: true, IsTemp: true},
-		{ID: "default-lead_created", ActionType: "lead_created", Points: 10, IsActive: true, IsTemp: true},
-		{ID: "default-lead_created_manual", ActionType: "lead_created_manual", Points: 10, IsActive: true, IsTemp: true},
-		{ID: "default-property_created", ActionType: "property_created", Points: 50, IsActive: true, IsTemp: true},
-		{ID: "default-prospecting_report", ActionType: "prospecting_report", Points: 10, IsActive: true, IsTemp: true},
+		{ID: "10000000-0000-4000-8000-000000000001", ActionType: "call_made", Points: 5, IsActive: true, IsTemp: true},
+		{ID: "10000000-0000-4000-8000-000000000002", ActionType: "message_sent", Points: 2, IsActive: true, IsTemp: true},
+		{ID: "10000000-0000-4000-8000-000000000003", ActionType: "contact_made", Points: 3, IsActive: true, IsTemp: true},
+		{ID: "10000000-0000-4000-8000-000000000004", ActionType: "visit_scheduled", Points: 20, IsActive: true, IsTemp: true},
+		{ID: "10000000-0000-4000-8000-000000000005", ActionType: "visit_confirmed", Points: 35, IsActive: true, IsTemp: true},
+		{ID: "10000000-0000-4000-8000-000000000006", ActionType: "meeting_scheduled", Points: 10, IsActive: true, IsTemp: true},
+		{ID: "10000000-0000-4000-8000-000000000007", ActionType: "meeting_held", Points: 25, IsActive: true, IsTemp: true},
+		{ID: "10000000-0000-4000-8000-000000000008", ActionType: "proposal_sent", Points: 30, IsActive: true, IsTemp: true},
+		{ID: "10000000-0000-4000-8000-000000000009", ActionType: "sale_closed", Points: 500, IsActive: true, IsTemp: true},
+		{ID: "10000000-0000-4000-8000-000000000010", ActionType: "contract_signed", Points: 250, IsActive: true, IsTemp: true},
+		{ID: "10000000-0000-4000-8000-000000000011", ActionType: "lost_lead_recovered", Points: 20, IsActive: true, IsTemp: true},
+		{ID: "10000000-0000-4000-8000-000000000012", ActionType: "lead_created", Points: 10, IsActive: true, IsTemp: true},
+		{ID: "10000000-0000-4000-8000-000000000013", ActionType: "lead_created_manual", Points: 10, IsActive: true, IsTemp: true},
+		{ID: "10000000-0000-4000-8000-000000000014", ActionType: "property_created", Points: 50, IsActive: true, IsTemp: true},
+		{ID: "10000000-0000-4000-8000-000000000015", ActionType: "prospecting_report", Points: 10, IsActive: true, IsTemp: true},
 	}
 }
 
-func defaultRulePoints(actionType string) int {
+func defaultRulePoints(actionType string) int64 {
 	actionType = normalizeActionType(actionType)
 	for _, rule := range defaultRules() {
 		if rule.ActionType == actionType && rule.IsActive {
 			return rule.Points
 		}
 	}
-	return 10
-}
-
-func firstInt(values ...pgtype.Int4) int {
-	for _, value := range values {
-		if value.Valid {
-			return int(value.Int32)
-		}
-	}
 	return 0
-}
-
-func maxPositiveInt(values ...pgtype.Int4) int {
-	maxValue := 0
-	for _, value := range values {
-		if value.Valid && int(value.Int32) > maxValue {
-			maxValue = int(value.Int32)
-		}
-	}
-	return maxValue
-}
-
-func firstTextValue(values ...pgtype.Text) pgtype.Text {
-	for _, value := range values {
-		if value.Valid && value.String != "" {
-			return value
-		}
-	}
-	return pgtype.Text{}
 }
 
 func firstText(values ...any) string {
@@ -1709,12 +2007,12 @@ func firstText(values ...any) string {
 	return fallback
 }
 
-func fallbackLevel(xp int) int {
+func fallbackLevel(xp int64) int {
 	level := xp/1000 + 1
 	if level < 1 {
 		return 1
 	}
-	return level
+	return int(level)
 }
 
 func textPointer(value pgtype.Text) *string {
@@ -1733,35 +2031,33 @@ func jsonb(value any) string {
 	return string(payload)
 }
 
-func gamificationIdempotencyKey(actionType string, referenceID string, quantity int, userID string) string {
+func gamificationIdempotencyKey(organizationID string, actionType string, referenceID string) string {
 	return strings.Join([]string{
+		"v1",
+		strings.TrimSpace(organizationID),
 		normalizeActionType(actionType),
 		strings.TrimSpace(referenceID),
-		strconv.Itoa(quantity),
-		strings.TrimSpace(userID),
-	}, "_")
+	}, "|")
 }
 
-func uuidTextOrNil(value string) *string {
-	text := strings.TrimSpace(value)
-	if len(text) != 36 {
-		return nil
+func isUUIDText(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != 36 {
+		return false
 	}
-	for index, char := range text {
+	for index, character := range value {
 		switch index {
 		case 8, 13, 18, 23:
-			if char != '-' {
-				return nil
+			if character != '-' {
+				return false
 			}
 		default:
-			if !isUUIDHex(char) {
-				return nil
+			if !((character >= '0' && character <= '9') ||
+				(character >= 'a' && character <= 'f') ||
+				(character >= 'A' && character <= 'F')) {
+				return false
 			}
 		}
 	}
-	return &text
-}
-
-func isUUIDHex(char rune) bool {
-	return (char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')
+	return true
 }

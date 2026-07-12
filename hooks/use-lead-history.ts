@@ -798,8 +798,13 @@ function buildLabel(type: string, metadata: HistoryMetadata): string {
         const prefix = metadata?.is_initial_distribution === false ? 'Redistribuído' : 'Distribuído';
         return `${prefix} por "${metadata.distribution_queue_name}" → ${metadata.to_user_name}`;
       }
-      if (!metadata?.to_user_id && !metadata?.to_user_name) return 'Responsável removido';
-      if (metadata?.to_user_name) return `Atribuído a ${metadata.to_user_name}`;
+      const actorName = metadataString(metadata?.transferred_by_name);
+      const targetName = metadataString(metadata?.to_user_name);
+      if (!metadata?.to_user_id && !targetName) {
+        return actorName ? `Responsável removido por ${actorName}` : 'Responsável removido';
+      }
+      if (actorName && targetName) return `Lead transferido por ${actorName} para ${targetName}`;
+      if (targetName) return `Lead transferido para ${targetName}`;
       return 'Responsável alterado';
     }
     case 'lead_reentry': {
@@ -967,6 +972,47 @@ function auditChangedKeys(audit: AuditLogRow) {
   return Object.keys(newData)
     .filter((key) => !AUDIT_IGNORED_FIELDS.has(key))
     .sort();
+}
+
+function isNearbyHistoryTimestamp(left: string, right: string, toleranceMs = 15_000) {
+  const leftTime = new Date(left).getTime();
+  const rightTime = new Date(right).getTime();
+  return Number.isFinite(leftTime) && Number.isFinite(rightTime) && Math.abs(leftTime - rightTime) <= toleranceMs;
+}
+
+function auditVisibleKeys(audit: AuditLogRow, activityEvents: ActivityEventRow[]) {
+  const visibleKeys = new Set(auditChangedKeys(audit));
+  const nearbyActivities = activityEvents.filter((activity) => {
+    if (!isNearbyHistoryTimestamp(audit.created_at, activity.created_at)) return false;
+    return !audit.user_id || !activity.user_id || audit.user_id === activity.user_id;
+  });
+
+  const hasActivity = (types: string[], predicate?: (activity: ActivityEventRow) => boolean) =>
+    nearbyActivities.some((activity) => types.includes(activity.type) && (!predicate || predicate(activity)));
+
+  if (hasActivity(['status_change'])) {
+    visibleKeys.delete('deal_status');
+    visibleKeys.delete('lost_reason');
+  }
+
+  if (hasActivity(['property_selected', 'property_linked'])) {
+    ['property_id', 'interest_property_id', 'property_code', 'valor_interesse', 'commission_percentage']
+      .forEach((key) => visibleKeys.delete(key));
+  }
+
+  if (hasActivity(['stage_change', 'stage_changed'])) {
+    visibleKeys.delete('stage_id');
+    visibleKeys.delete('pipeline_id');
+  }
+
+  if (hasActivity(['note', 'note_created'], (activity) => {
+    const metadata = asMetadata(activity.metadata);
+    return metadataString(metadata.kind)?.toLowerCase() === 'feedback';
+  })) {
+    visibleKeys.delete('feedback');
+  }
+
+  return [...visibleKeys].sort();
 }
 
 function auditFieldLabel(key: string) {
@@ -1454,15 +1500,21 @@ export function useLeadHistory(leadId: string | null) {
             from_user_name: oldUser?.name || null,
             to_user_id: log.new_user_id,
             to_user_name: newUser?.name || null,
+            transferred_by_id: actor?.id || log.created_by || null,
+            transferred_by_name: actor?.name || null,
             reason: log.reason,
             is_automation: log.reason !== 'manual_transfer',
           };
+          const normalizedReason = metadataString(log.reason)?.toLowerCase();
+          const content = normalizedReason && !['manual_transfer', 'round_robin'].includes(normalizedReason)
+            ? `Motivo: ${log.reason}`
+            : undefined;
 
           return {
             id: `assignment-${log.id}`,
             type: 'assignee_changed',
             label: buildLabel('assignee_changed', metadata),
-            content: log.reason ? `Motivo: ${log.reason}` : undefined,
+            content,
             timestamp: log.created_at,
             actor: actor ? { id: actor.id, name: actor.name, avatar_url: actor.avatar_url || null } : null,
             source: 'timeline' as const,
@@ -1522,8 +1574,8 @@ export function useLeadHistory(leadId: string | null) {
       }
 
       const auditMapped: UnifiedHistoryEvent[] = auditLogs
-        .filter((audit) => {
-          const keys = auditChangedKeys(audit);
+        .map((audit) => ({ audit, keys: auditVisibleKeys(audit, activityEvents) }))
+        .filter(({ audit, keys }) => {
           const eventType = auditEventType(audit.action, keys);
           if (eventType === 'lead_created' && hasLeadCreated) return false;
           if (
@@ -1532,10 +1584,9 @@ export function useLeadHistory(leadId: string | null) {
           ) {
             return false;
           }
-          return true;
+          return audit.action === 'create' || audit.action === 'delete' || keys.length > 0;
         })
-        .map((audit) => {
-          const keys = auditChangedKeys(audit);
+        .map(({ audit, keys }) => {
           const eventType = auditEventType(audit.action, keys);
           const oldData = asMetadata(audit.old_data);
           const newData = asMetadata(audit.new_data);

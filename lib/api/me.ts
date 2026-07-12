@@ -9,6 +9,7 @@ export type TenantContext = {
   organizationLogo?: string
   memberRole?: string
   permissions: string[]
+  enabledModules: string[]
   isSuperAdmin: boolean
 }
 

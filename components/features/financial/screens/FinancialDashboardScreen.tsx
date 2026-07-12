@@ -99,8 +99,8 @@ function RealEstateFinancialDashboard({ data }: { data: ReturnType<typeof useFin
 
   return (
     <AppLayout title="Dashboard Financeiro">
-      <div className="space-y-6">
-        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+      <div data-tour="financial-overview" className="space-y-6">
+        <div data-tour="financial-actions" className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div>
             <h2 className="text-2xl font-bold tracking-tight">Performance Financeira</h2>
             <p className="text-balance text-sm text-muted-foreground">
@@ -129,7 +129,7 @@ function RealEstateFinancialDashboard({ data }: { data: ReturnType<typeof useFin
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 md:gap-6 lg:grid-cols-4">
+        <div data-tour="financial-kpis" className="grid grid-cols-2 gap-3 md:gap-6 lg:grid-cols-4">
           <PremiumFinancialCard
             title="VGV Bruto"
             value={formatCurrency(data?.vgvBruto || 0)}

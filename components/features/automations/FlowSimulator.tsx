@@ -184,7 +184,7 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
           type: 'bot',
           content: node.data.caption || '📷 Imagem enviada',
           mediaType: 'image',
-          mediaUrl: node.data.image_url,
+          mediaUrl: node.data.image_preview_url || node.data.image_url,
         });
         break;
       }
@@ -194,7 +194,7 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
         await delay(600);
         if (abortRef.current) return;
         setIsTyping(false);
-        addMessage({ type: 'bot', content: '🎤 Áudio enviado', mediaType: 'audio', mediaUrl: node.data.audio_url });
+        addMessage({ type: 'bot', content: '🎤 Áudio enviado', mediaType: 'audio', mediaUrl: node.data.audio_preview_url || node.data.audio_url });
         break;
       }
 

@@ -72,22 +72,26 @@ export const FOLLOW_UP_TEMPLATES: FollowUpTemplate[] = [
 interface FollowUpTemplatesProps {
   onSelectTemplate: (template: FollowUpTemplate | null) => void;
   canCreate?: boolean;
+  interactive?: boolean;
 }
 
-export function FollowUpTemplates({ onSelectTemplate, canCreate = true }: FollowUpTemplatesProps) {
-  if (!canCreate) {
-    return null;
-  }
+export function FollowUpTemplates({ onSelectTemplate, canCreate = true, interactive = true }: FollowUpTemplatesProps) {
+  const canUseTemplate = canCreate && interactive;
 
   return (
     <div className="space-y-8">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
         {/* Template cards */}
         {FOLLOW_UP_TEMPLATES.map((template) => (
-          <div
+          <button
             key={template.id}
-            className="group relative flex min-h-[184px] flex-col justify-between overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] p-4 shadow-none transition-all duration-200 cursor-pointer hover:bg-[var(--app-surface-hover)]"
+            type="button"
+            className="group relative flex min-h-[184px] flex-col justify-between overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] p-4 text-left shadow-none transition-all duration-200 enabled:hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-70"
             onClick={() => onSelectTemplate(template)}
+            disabled={!canUseTemplate}
+            aria-label={canUseTemplate
+              ? `Usar modelo ${template.name}, ${template.days} dias e ${template.messages.length} mensagens`
+              : `Consultar modelo ${template.name}, ${template.days} dias e ${template.messages.length} mensagens`}
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -116,11 +120,11 @@ export function FollowUpTemplates({ onSelectTemplate, canCreate = true }: Follow
                   {template.messages.length} msgs
                 </span>
               </div>
-              <span className="text-[11px] font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100">
-                Usar modelo
+              <span className="text-[11px] font-medium text-primary opacity-70 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                {canUseTemplate ? 'Usar modelo' : !canCreate ? 'Somente consulta' : 'Disponível no computador'}
               </span>
             </div>
-          </div>
+          </button>
         ))}
       </div>
     </div>

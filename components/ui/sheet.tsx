@@ -5,7 +5,12 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-const Sheet = SheetPrimitive.Root;
+const Sheet = ({ modal, ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) => {
+  const guideIsActive =
+    typeof document !== "undefined" && document.body.dataset.setupGuideActive === "true";
+
+  return <SheetPrimitive.Root modal={modal ?? !guideIsActive} {...props} />;
+};
 
 const SheetTrigger = SheetPrimitive.Trigger;
 
@@ -54,18 +59,34 @@ interface SheetContentProps
 }
 
 const SheetContent = React.forwardRef<React.ElementRef<typeof SheetPrimitive.Content>, SheetContentProps>(
-  ({ side = "right", className, overlayClassName, children, ...props }, ref) => (
-    <SheetPortal>
-      <SheetOverlay className={overlayClassName} />
-      <SheetPrimitive.Content ref={ref} className={cn(sheetVariants({ side }), className)} {...props}>
-        {children}
-        <SheetPrimitive.Close className="absolute right-4 top-4 rounded-[6px] opacity-70 ring-offset-background transition-opacity data-[state=open]:bg-secondary hover:bg-[var(--app-surface-hover)] hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-primary/35 disabled:pointer-events-none">
-          <X className="h-4 w-4" />
-          <span className="sr-only">Close</span>
-        </SheetPrimitive.Close>
-      </SheetPrimitive.Content>
-    </SheetPortal>
-  ),
+  ({ side = "right", className, overlayClassName, children, onInteractOutside, ...props }, ref) => {
+    const handleInteractOutside: NonNullable<
+      React.ComponentPropsWithoutRef<typeof SheetPrimitive.Content>["onInteractOutside"]
+    > = (event) => {
+      if (document.body.dataset.setupGuideActive === "true") {
+        event.preventDefault();
+      }
+      onInteractOutside?.(event);
+    };
+
+    return (
+      <SheetPortal>
+        <SheetOverlay className={overlayClassName} />
+        <SheetPrimitive.Content
+          ref={ref}
+          className={cn(sheetVariants({ side }), className)}
+          onInteractOutside={handleInteractOutside}
+          {...props}
+        >
+          {children}
+          <SheetPrimitive.Close className="absolute right-4 top-4 rounded-[6px] opacity-70 ring-offset-background transition-opacity data-[state=open]:bg-secondary hover:bg-[var(--app-surface-hover)] hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-primary/35 disabled:pointer-events-none">
+            <X className="h-4 w-4" />
+            <span className="sr-only">Close</span>
+          </SheetPrimitive.Close>
+        </SheetPrimitive.Content>
+      </SheetPortal>
+    );
+  },
 );
 SheetContent.displayName = SheetPrimitive.Content.displayName;
 

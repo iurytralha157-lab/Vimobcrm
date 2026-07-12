@@ -282,8 +282,8 @@ export function AIAssistantTab() {
   };
 
   return (
-    <div className="space-y-5">
-      <section className="grid gap-3 md:grid-cols-4">
+    <div data-tour="ai-overview" className="space-y-5">
+      <section data-tour="ai-metrics" className="grid gap-3 md:grid-cols-4">
         <MetricCard icon={MessageCircle} label="Leads recebidos" value={metricsLoading ? "..." : String(metrics?.leadsReceived ?? 0)} detail="ultimos 30 dias" />
         <MetricCard icon={Bot} label="Atendidos pela IA" value={metricsLoading ? "..." : String(metrics?.leadsAttended ?? 0)} detail={`${activeSessions.length} conexao(oes) ligada(s)`} tone="success" />
         <MetricCard icon={RefreshCcw} label="Follow-up" value={metricsLoading ? "..." : String(metrics?.followUpsActive ?? 0)} detail="retornos programados" tone="warning" />
@@ -314,12 +314,12 @@ export function AIAssistantTab() {
       </div>
 
       <Tabs defaultValue="overview" className="space-y-4">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-[var(--app-surface-soft)] p-1 md:grid-cols-6">
+        <TabsList data-tour="ai-tabs" className="grid h-auto w-full grid-cols-2 gap-1 bg-[var(--app-surface-soft)] p-1 md:grid-cols-6">
           <TabsTrigger value="overview">Visao</TabsTrigger>
-          <TabsTrigger value="connections">Conexoes</TabsTrigger>
-          <TabsTrigger value="agents">Agentes</TabsTrigger>
-          <TabsTrigger value="routing">Roteamento</TabsTrigger>
-          <TabsTrigger value="test">Teste</TabsTrigger>
+          <TabsTrigger data-tour="ai-tab-connections" value="connections">Conexoes</TabsTrigger>
+          <TabsTrigger data-tour="ai-tab-agents" value="agents">Agentes</TabsTrigger>
+          <TabsTrigger data-tour="ai-tab-routing" value="routing">Roteamento</TabsTrigger>
+          <TabsTrigger data-tour="ai-tab-test" value="test">Teste</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
         </TabsList>
 
@@ -397,7 +397,7 @@ export function AIAssistantTab() {
           )}
         </TabsContent>
 
-        <TabsContent value="connections" className="space-y-4">
+        <TabsContent data-tour="ai-connections" value="connections" className="space-y-4">
           <Panel title="Conexoes que a IA pode atender" icon={PlugZap}>
             <div className="grid gap-3 lg:grid-cols-[1fr_0.9fr]">
               <div className="space-y-2">
@@ -475,7 +475,7 @@ export function AIAssistantTab() {
           </Panel>
         </TabsContent>
 
-        <TabsContent value="agents" className="space-y-4">
+        <TabsContent data-tour="ai-agents" value="agents" className="space-y-4">
           <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
             <Panel title="Agentes da organizacao" icon={Bot}>
               <div className="mb-3 flex items-center justify-between gap-3">
@@ -568,7 +568,7 @@ export function AIAssistantTab() {
           </div>
         </TabsContent>
 
-        <TabsContent value="routing" className="space-y-4">
+        <TabsContent data-tour="ai-routing" value="routing" className="space-y-4">
           <div className="grid gap-4 xl:grid-cols-[1fr_0.9fr]">
             <Panel title="Ordem de roteamento" icon={Route}>
               <div className="space-y-2">
@@ -665,7 +665,7 @@ export function AIAssistantTab() {
           </div>
         </TabsContent>
 
-        <TabsContent value="test" className="space-y-4">
+        <TabsContent data-tour="ai-test" value="test" className="space-y-4">
           <Panel title="Simular atendimento" icon={TestTube2}>
             <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
               <div className="space-y-3">

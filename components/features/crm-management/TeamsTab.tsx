@@ -101,7 +101,7 @@ export function TeamsTab() {
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
+      <div data-tour="management-teams" className="space-y-6">
         <div className="flex justify-between items-center">
           <Skeleton className="h-8 w-48" />
           <Skeleton className="h-10 w-32" />
@@ -120,7 +120,7 @@ export function TeamsTab() {
 
   return (
     <TooltipProvider>
-      <div className="space-y-6">
+      <div data-tour="management-teams" className="space-y-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h2 className="text-xl font-semibold">Equipes</h2>
@@ -130,7 +130,7 @@ export function TeamsTab() {
             </p>
           </div>
           {accessScope.isAdmin && (
-            <Button onClick={handleNewTeam} className="gap-2">
+            <Button data-tour="management-team-new" onClick={handleNewTeam} className="gap-2">
               <Plus className="h-4 w-4" />
               Nova Equipe
             </Button>
@@ -154,7 +154,7 @@ export function TeamsTab() {
             )}
           </div>
         ) : (
-          <div className="overflow-hidden rounded-lg border-0 bg-[var(--app-surface)] [&_td:nth-child(n+3)]:hidden [&_th:nth-child(n+3)]:hidden md:[&_td:nth-child(n+3)]:table-cell md:[&_th:nth-child(n+3)]:table-cell">
+          <div data-tour="management-team-list" className="overflow-hidden rounded-lg border-0 bg-[var(--app-surface)] [&_td:nth-child(n+3)]:hidden [&_th:nth-child(n+3)]:hidden md:[&_td:nth-child(n+3)]:table-cell md:[&_th:nth-child(n+3)]:table-cell">
             <Table className="crm-management-table table-fixed md:table-auto">
               <TableHeader>
                 <TableRow className="border-b border-[var(--app-border-strong)] bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-soft)]">
@@ -216,6 +216,7 @@ export function TeamsTab() {
                                 <Tooltip key={member.id}>
                                   <TooltipTrigger asChild>
                                     <button
+                                      data-tour="management-team-member"
                                       type="button"
                                       className="relative shrink-0 rounded-full transition hover:z-10 hover:scale-105"
                                       onClick={(event) => {

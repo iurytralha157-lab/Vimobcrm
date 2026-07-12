@@ -31,10 +31,9 @@ import {
   UserCheck,
   UserPlus,
   Users,
-  Volume2,
   type LucideIcon,
 } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, startOfDay, subDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
   Area,
@@ -62,11 +61,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { DateFilterPopover } from '@/components/ui/date-filter-popover';
 import { type DatePreset, getDateRangeFromPreset } from '@/hooks/use-dashboard-filters';
-import { useAuth } from '@/contexts/AuthContext';
 import {
   useGamificationAdmin,
+  useGamificationEvents,
   useGamificationOverview,
+  useGamificationRanking,
+  useGamificationRealtime,
   type GamificationAdminSnapshot,
+  type GamificationActionType,
   type GamificationEvent,
   type GamificationManualEntry,
   type GamificationMission,
@@ -77,6 +79,8 @@ import {
   type GamificationSeason,
 } from '@/hooks/gamification';
 import { cn } from '@/lib/utils';
+import { useOrganizationModules } from '@/hooks/use-organization-modules';
+import { VimobAPIError } from '@/lib/api/vimob-client';
 
 const ACTION_LABELS: Record<string, string> = {
   call_made: 'Ligacao realizada',
@@ -94,7 +98,7 @@ const ACTION_LABELS: Record<string, string> = {
   lead_created_manual: 'Lead criado manualmente',
   property_created: 'Imovel captado',
   prospecting_report: 'Relatorio de prospeccao',
-  mission_bonus: 'Bonus de missao',
+  mission_bonus: 'Bônus de missão',
   manual_entry: 'Lancamento manual',
 };
 
@@ -123,7 +127,7 @@ const RULE_ICONS: Record<string, LucideIcon> = {
   property_created: Home,
 };
 
-const ACTION_OPTIONS = [
+const ACTION_OPTIONS: GamificationActionType[] = [
   'call_made',
   'message_sent',
   'contact_made',
@@ -135,10 +139,29 @@ const ACTION_OPTIONS = [
   'sale_closed',
   'contract_signed',
   'lost_lead_recovered',
+  'lead_created',
   'property_created',
   'lead_created_manual',
   'prospecting_report',
 ];
+
+type ManualEntryDraft = {
+  actionKey: GamificationActionType | '';
+  quantity: number;
+  notes: string;
+};
+
+type MissionDraft = {
+  title: string;
+  description: string;
+  actionType: GamificationActionType;
+  targetCount: number;
+  bonusPoints: number;
+  period: string;
+  targetScope: 'organization' | 'user';
+  targetUserId: string;
+  isActive: boolean;
+};
 
 const ACTION_ALIASES: Record<string, string> = {
   ligacao_realizada: 'call_made',
@@ -203,6 +226,7 @@ type GamificationTab = 'arena' | 'dashboard' | 'history' | 'config';
 
 function tabFromHash(hash: string): GamificationTab {
   const clean = hash.replace('#', '');
+  if (clean === 'rankings') return 'arena';
   if (clean === 'dashboard' || clean === 'history' || clean === 'config') return clean;
   if (clean === 'admin') return 'config';
   return 'arena';
@@ -237,19 +261,54 @@ function formatDateTime(value: string | null) {
   return format(new Date(value), 'dd/MM/yyyy HH:mm', { locale: ptBR });
 }
 
+function ManualEntryStatusBadge({ entry }: { entry: GamificationManualEntry }) {
+  let label = 'Pendente de aprovação';
+  let variant: 'default' | 'secondary' | 'destructive' | 'outline' = 'secondary';
+
+  if (entry.status === 'rejected') {
+    label = 'Rejeitado';
+    variant = 'destructive';
+  } else if (entry.status === 'approved' && entry.awardStatus === 'completed') {
+    label = 'Pontos concedidos';
+    variant = 'default';
+  } else if (entry.status === 'approved' && entry.awardStatus === 'skipped') {
+    label = 'Aprovado sem pontuar';
+    variant = 'destructive';
+  } else if (entry.status === 'approved' && entry.awardStatus === 'dead') {
+    label = 'Falha ao conceder pontos';
+    variant = 'destructive';
+  } else if (entry.status === 'approved' && entry.awardStatus === 'processing') {
+    label = 'Processando pontos';
+    variant = 'outline';
+  } else if (entry.status === 'approved') {
+    label = 'Aguardando pontuação';
+    variant = 'outline';
+  }
+
+  return <Badge variant={variant}>{label}</Badge>;
+}
+
 function getProgress(entry: GamificationRankingEntry) {
   if (entry.xpNextLevel <= 0) return 0;
   return Math.min(100, Math.round((entry.xpCurrentLevel / entry.xpNextLevel) * 100));
 }
 
 export default function GamificationScreen() {
-  const { profile, isSuperAdmin } = useAuth();
+  const {
+    error: modulesError,
+    isLoading: modulesLoading,
+    hasModule,
+    refetch: refetchModules,
+  } = useOrganizationModules();
   const [activeTab, setActiveTab] = useState<GamificationTab>('arena');
   const [showCelebration, setShowCelebration] = useState(false);
   const previousRankingRef = useRef<Record<string, number>>({});
-  const { overview, isLoading, error } = useGamificationOverview();
-  const isAdmin = isSuperAdmin || profile?.role === 'admin' || profile?.role === 'super_admin';
-  const admin = useGamificationAdmin(activeTab === 'dashboard' || (activeTab === 'config' && isAdmin));
+  const moduleEnabled = !modulesLoading && !modulesError && hasModule('gamification');
+  useGamificationRealtime(moduleEnabled);
+  const overviewEnabled = moduleEnabled && activeTab === 'dashboard';
+  const adminEnabled = moduleEnabled && (activeTab === 'dashboard' || activeTab === 'config');
+  const { overview, isLoading, error, refetch } = useGamificationOverview(overviewEnabled);
+  const admin = useGamificationAdmin(adminEnabled);
 
   const data = overview ?? EMPTY_GAMIFICATION_OVERVIEW;
   const snapshot = admin.snapshot ?? EMPTY_ADMIN_SNAPSHOT;
@@ -300,24 +359,90 @@ export default function GamificationScreen() {
     window.history.replaceState(null, '', `${window.location.pathname}${hash}`);
   };
 
+  if (modulesLoading) {
+    return (
+      <AppLayout title="Gamificação">
+        <div className="flex min-h-[320px] items-center justify-center gap-3 text-sm text-muted-foreground" role="status">
+          <Loader2 className="h-5 w-5 animate-spin text-primary" />
+          Verificando acesso ao módulo...
+        </div>
+      </AppLayout>
+    );
+  }
+
+  if (modulesError) {
+    return (
+      <AppLayout title="Gamificação">
+        <div className="app-card flex min-h-[320px] flex-col items-center justify-center px-6 text-center" role="alert">
+          <ShieldOff className="mb-3 h-9 w-9 text-destructive" aria-hidden="true" />
+          <h1 className="text-lg font-semibold">Não foi possível verificar o acesso à gamificação</h1>
+          <p className="mt-2 max-w-md text-sm text-muted-foreground">
+            O estado do módulo não pôde ser consultado. Tente novamente antes de continuar.
+          </p>
+          <Button type="button" variant="outline" className="mt-4" onClick={() => void refetchModules()}>
+            Tentar novamente
+          </Button>
+        </div>
+      </AppLayout>
+    );
+  }
+
+  if (!moduleEnabled) {
+    return (
+      <AppLayout title="Gamificação">
+        <div className="app-card flex min-h-[320px] flex-col items-center justify-center px-6 text-center">
+          <ShieldOff className="mb-3 h-9 w-9 text-muted-foreground" aria-hidden="true" />
+          <h1 className="text-lg font-semibold">Módulo de gamificação indisponível</h1>
+          <p className="mt-2 max-w-md text-sm text-muted-foreground">
+            Este módulo não está habilitado para a organização selecionada. Solicite a ativação ao administrador da conta.
+          </p>
+        </div>
+      </AppLayout>
+    );
+  }
+
+  if (overviewEnabled && error) {
+    const moduleUnavailable = error instanceof VimobAPIError
+      && error.status === 403
+      && error.code === 'module_unavailable';
+    return (
+      <AppLayout title="Gamificação">
+        <div className="app-card flex min-h-[320px] flex-col items-center justify-center px-6 text-center" role="alert">
+          <ShieldOff className="mb-3 h-9 w-9 text-destructive" aria-hidden="true" />
+          <h1 className="text-lg font-semibold">
+            {moduleUnavailable ? 'Módulo de gamificação indisponível' : 'Não foi possível carregar a gamificação'}
+          </h1>
+          <p className="mt-2 max-w-md text-sm text-muted-foreground">
+            {moduleUnavailable ? 'A organização selecionada não possui acesso a este módulo.' : error.message}
+          </p>
+          {!moduleUnavailable && <Button type="button" variant="outline" className="mt-4" onClick={() => void refetch()}>Tentar novamente</Button>}
+        </div>
+      </AppLayout>
+    );
+  }
+
   return (
-    <AppLayout title="Arena Imobiliaria">
+    <AppLayout title="Arena Imobiliária">
       <div className="space-y-5">
         <ArenaCelebration active={showCelebration} />
-        {(isLoading || error) && (
+        {overviewEnabled && isLoading && (
           <div className="app-card-soft flex items-center gap-3 px-4 py-3 text-sm text-muted-foreground">
             <Trophy className="h-4 w-4 text-primary" />
             <span>
-              {isLoading
-                ? 'Carregando dados da arena...'
-                : 'Arena disponivel. Quando os eventos forem conectados, os dados aparecem automaticamente.'}
+              Carregando dados da arena...
             </span>
           </div>
         )}
 
         <Tabs data-tour="gamification-tabs" value={activeTab} onValueChange={handleTabChange} className="space-y-5">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-md bg-muted/45 p-1 sm:grid-cols-4">
+            <ConfigTab value="arena" icon={Trophy} label="Arena" />
+            <ConfigTab value="dashboard" icon={BarChart3} label="Meu painel" />
+            <ConfigTab value="history" icon={History} label="Histórico" />
+            <ConfigTab value="config" icon={Settings} label="Configuração" />
+          </TabsList>
           <TabsContent data-tour="gamification-arena" value="arena" className="mt-0">
-            <ArenaView data={data} />
+            <ArenaView />
           </TabsContent>
 
           <TabsContent data-tour="gamification-dashboard" value="dashboard" className="mt-0">
@@ -325,11 +450,11 @@ export default function GamificationScreen() {
           </TabsContent>
 
           <TabsContent data-tour="gamification-history" value="history" className="mt-0">
-            <HistoryView events={data.history} currentUserId={profile?.id ?? null} canSeeAll={isAdmin} />
+            <HistoryView />
           </TabsContent>
 
           <TabsContent data-tour="gamification-config" value="config" className="mt-0">
-            <AdminView admin={admin} snapshot={snapshot} isLoading={admin.isLoading} canAccess={isAdmin} />
+            <AdminView admin={admin} snapshot={snapshot} isLoading={admin.isLoading} />
           </TabsContent>
         </Tabs>
       </div>
@@ -392,89 +517,80 @@ const rankLabels: Record<string, { label: string; icon: LucideIcon; iconColor?: 
   vendas: { label: 'Vendas', icon: DollarSign },
   reunioes: { label: 'Reuniões', icon: Users },
   visitas: { label: 'Visitas', icon: ClipboardCheck },
-  vgv: { label: 'Ranking de VGV', icon: DollarSign, iconColor: 'text-emerald-400' },
 };
 
-const eventTypesMap: Record<string, string[]> = {
+const eventTypesMap: Record<string, GamificationActionType[]> = {
   ligacoes: ['call_made'],
   mensagens: ['message_sent'],
   propostas: ['proposal_sent'],
   vendas: ['sale_closed', 'contract_signed', 'lost_lead_recovered'],
   reunioes: ['meeting_held', 'meeting_scheduled'],
   visitas: ['visit_confirmed', 'visit_scheduled'],
-  vgv: ['sale_closed'],
 };
 
-const getFilteredRanking = (
-  baseRanking: GamificationRankingEntry[],
-  history: GamificationEvent[],
-  rankType: string,
-  datePreset: DatePreset | null,
-  customDateRange: { from: Date; to: Date } | null
-): GamificationRankingEntry[] => {
-  // Determine the date range for filtering
-  let fromDate: Date | null = null;
-  let toDate: Date | null = null;
-
-  if (datePreset === 'custom' && customDateRange) {
-    fromDate = customDateRange.from;
-    toDate = customDateRange.to;
-  } else if (datePreset && datePreset !== 'custom') {
-    const range = getDateRangeFromPreset(datePreset);
-    fromDate = range.from;
-    toDate = range.to;
-  }
-  // If datePreset is null, show all history (no filter)
-
-  const periodEvents = history.filter(event => {
-    if (!event.createdAt) return false;
-    if (!fromDate || !toDate) return true; // no filter = all events
-    const date = new Date(event.createdAt);
-    return date >= fromDate && date <= toDate;
-  });
-
-  if (rankType === 'geral') {
-    const pointsByUser: Record<string, number> = {};
-    periodEvents.forEach(event => {
-      if (!event.userId) return;
-      pointsByUser[event.userId] = (pointsByUser[event.userId] || 0) + event.points;
-    });
-
-    return baseRanking
-      .map(entry => ({
-        ...entry,
-        points: pointsByUser[entry.userId] || 0,
-      }))
-      .sort((a, b) => b.points - a.points)
-      .map((entry, idx) => ({ ...entry, position: idx + 1 }));
-  }
-
-  const targetTypes = eventTypesMap[rankType] || [];
-  const pointsByUser: Record<string, number> = {};
-  periodEvents.forEach(event => {
-    if (!event.userId || !targetTypes.includes(normalizeActionKey(event.eventType))) return;
-    pointsByUser[event.userId] = (pointsByUser[event.userId] || 0) + event.points;
-  });
-
-  return baseRanking
-    .map(entry => ({
-      ...entry,
-      points: pointsByUser[entry.userId] || 0,
-    }))
-    .sort((a, b) => b.points - a.points)
-    .map((entry, idx) => ({ ...entry, position: idx + 1 }));
-};
-
-function ArenaView({ data }: { data: GamificationOverview }) {
+function ArenaView() {
   const [datePreset, setDatePreset] = useState<DatePreset | null>('thisMonth');
   const [customDateRange, setCustomDateRange] = useState<{ from: Date; to: Date } | null>(null);
   const [rankType, setRankType] = useState<string>('geral');
+  const [presetClock, setPresetClock] = useState<Date | null>(null);
+  useEffect(() => {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const refreshAtMidnight = () => {
+      const now = new Date();
+      setPresetClock(now);
+      const nextMidnight = new Date(now.getTime());
+      nextMidnight.setHours(24, 0, 1, 0);
+      timeout = setTimeout(refreshAtMidnight, nextMidnight.getTime() - now.getTime());
+    };
+    timeout = setTimeout(refreshAtMidnight, 0);
+    return () => {
+      if (timeout) clearTimeout(timeout);
+    };
+  }, []);
+  const needsPresetClock = Boolean(datePreset && datePreset !== 'custom');
+  const rankingFilters = useMemo(() => {
+    let range: { from: Date; to: Date } | null = null;
+    if (datePreset === 'custom' && customDateRange) {
+      range = customDateRange;
+    } else if (datePreset && datePreset !== 'custom' && presetClock) {
+      range = getDateRangeFromPreset(datePreset);
+    }
 
-  const filteredRanking = getFilteredRanking(data.ranking, data.history, rankType, datePreset, customDateRange);
+    return {
+      from: range?.from.toISOString(),
+      // The API uses a half-open interval; UI ranges are inclusive through the final millisecond.
+      to: range ? new Date(range.to.getTime() + 1).toISOString() : undefined,
+      actionTypes: rankType === 'geral' ? [] : (eventTypesMap[rankType] ?? []),
+    };
+  }, [customDateRange, datePreset, presetClock, rankType]);
+  const rankingQuery = useGamificationRanking(rankingFilters, !needsPresetClock || presetClock !== null);
+  const filteredRanking = rankingQuery.ranking ?? [];
+
+  if (rankingQuery.isLoading && !rankingQuery.ranking) {
+    return (
+      <div className="app-card flex min-h-[500px] items-center justify-center gap-3 text-sm text-muted-foreground" role="status">
+        <Loader2 className="h-5 w-5 animate-spin text-primary" /> Calculando classificação...
+      </div>
+    );
+  }
 
   return (
     <div>
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(340px,0.75fr)] lg:h-[calc(100vh-110px)] lg:min-h-0 overflow-hidden">
+      {rankingQuery.error && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-destructive" role="alert">
+          <span>Não foi possível calcular a classificação deste período.</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => void rankingQuery.refetch()}>
+            Tentar novamente
+          </Button>
+        </div>
+      )}
+      <section
+        className={cn(
+          "grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(340px,0.75fr)] lg:h-[calc(100vh-110px)] lg:min-h-0 overflow-hidden transition-opacity",
+          rankingQuery.isFetching && filteredRanking.length > 0 && 'opacity-70',
+        )}
+        aria-busy={rankingQuery.isFetching}
+      >
         <PodiumStage ranking={filteredRanking} />
         <ClassificationPanel
           ranking={filteredRanking}
@@ -486,6 +602,9 @@ function ArenaView({ data }: { data: GamificationOverview }) {
           setRankType={setRankType}
         />
       </section>
+      {rankingQuery.isLoading && (
+        <p className="sr-only" role="status">Calculando classificação...</p>
+      )}
     </div>
   );
 }
@@ -499,7 +618,7 @@ function DashboardView({
   admin: AdminHook;
   snapshot: GamificationAdminSnapshot;
 }) {
-  const currentUser = data.ranking.find((entry) => entry.isCurrentUser) ?? data.ranking[0];
+  const currentUser = data.ranking.find((entry) => entry.isCurrentUser);
   const metrics = data.performance.metrics;
   const totalActions = Math.max(metrics.totalActions, 1);
 
@@ -511,7 +630,18 @@ function DashboardView({
       </div>
 
       <PerformanceCharts data={data} />
-      <ManualEntrySubmitCard admin={admin} entries={snapshot.myManualEntries} />
+      {admin.error ? (
+        <div className="app-card flex items-center justify-between gap-3 p-4 text-sm" role="alert">
+          <span>Não foi possível carregar os lançamentos manuais: {admin.error.message}</span>
+          <Button type="button" variant="outline" size="sm" onClick={() => void admin.refetch()}>Tentar novamente</Button>
+        </div>
+      ) : admin.isLoading ? (
+        <div className="app-card flex items-center justify-center gap-2 p-6 text-sm text-muted-foreground" role="status">
+          <Loader2 className="h-4 w-4 animate-spin" /> Carregando lançamentos...
+        </div>
+      ) : (
+        <ManualEntrySubmitCard admin={admin} entries={snapshot.myManualEntries} />
+      )}
       <DistributionPanel data={data} totalActions={totalActions} />
       <HistoryView events={data.recentEvents} compact />
     </div>
@@ -584,12 +714,13 @@ function DistributionPanel({ data, totalActions }: { data: GamificationOverview;
 }
 
 function ManualEntrySubmitCard({ admin, entries }: { admin: AdminHook; entries: GamificationManualEntry[] }) {
-  const [form, setForm] = useState({ actionKey: '', quantity: 1, notes: '' });
+  const [form, setForm] = useState<ManualEntryDraft>({ actionKey: '', quantity: 1, notes: '' });
   const recentEntries = entries.slice(0, 3);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    admin.createManualEntry.mutate(form, {
+    if (!form.actionKey) return;
+    admin.createManualEntry.mutate({ ...form, actionKey: form.actionKey }, {
       onSuccess: () => setForm({ actionKey: '', quantity: 1, notes: '' }),
     });
   };
@@ -604,7 +735,7 @@ function ManualEntrySubmitCard({ admin, entries }: { admin: AdminHook; entries: 
           </p>
           <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
             <Field label="Atividade">
-              <Select value={form.actionKey} onValueChange={(value) => setForm({ ...form, actionKey: value })}>
+              <Select value={form.actionKey} onValueChange={(value) => setForm({ ...form, actionKey: value as GamificationActionType })}>
                 <SelectTrigger>
                   <SelectValue placeholder="Selecione" />
                 </SelectTrigger>
@@ -653,9 +784,7 @@ function ManualEntrySubmitCard({ admin, entries }: { admin: AdminHook; entries: 
                     <p className="truncate font-medium">{getEventLabel(entry.actionKey)}</p>
                     <p className="text-muted-foreground">{entry.quantity}x - {formatDateTime(entry.createdAt)}</p>
                   </div>
-                  <Badge variant={entry.status === 'approved' ? 'default' : entry.status === 'rejected' ? 'destructive' : 'secondary'}>
-                    {entry.status === 'approved' ? 'Aprovado' : entry.status === 'rejected' ? 'Rejeitado' : 'Pendente'}
-                  </Badge>
+                  <ManualEntryStatusBadge entry={entry} />
                 </div>
               ))
             )}
@@ -684,13 +813,6 @@ function PodiumStage({ ranking }: { ranking: GamificationRankingEntry[] }) {
             Arena Imobiliária de Elite
           </h2>
         </div>
-        <div className="flex items-center gap-4 text-xs font-semibold">
-          <Volume2 className="h-4 w-4 text-muted-foreground cursor-pointer hover:text-foreground transition-colors" />
-          <span className="flex items-center gap-2 text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            LIVE
-          </span>
-        </div>
       </div>
 
       {ranking.length === 0 ? (
@@ -698,10 +820,10 @@ function PodiumStage({ ranking }: { ranking: GamificationRankingEntry[] }) {
           <EmptyPanel title="Sem pontuação registrada" />
         </div>
       ) : (
-        <div className="relative mt-4 flex flex-1 items-end justify-center gap-4 sm:gap-6 md:gap-10 pb-8 w-full shrink-0 min-h-[320px]">
-          <PodiumSpot entry={second} place={2} tone="silver" className="w-[140px] sm:w-[170px] md:w-[200px] shrink-0" />
-          <PodiumSpot entry={first} place={1} tone="gold" featured className="w-[160px] sm:w-[195px] md:w-[230px] shrink-0" />
-          <PodiumSpot entry={third} place={3} tone="bronze" className="w-[125px] sm:w-[155px] md:w-[185px] shrink-0" />
+        <div className="relative mt-4 flex flex-1 items-end justify-center gap-2 sm:gap-6 md:gap-10 pb-8 w-full shrink-0 min-h-[320px]">
+          <PodiumSpot entry={second} place={2} tone="silver" className="w-[82px] sm:w-[170px] md:w-[200px] shrink-0" />
+          <PodiumSpot entry={first} place={1} tone="gold" featured className="w-[100px] sm:w-[195px] md:w-[230px] shrink-0" />
+          <PodiumSpot entry={third} place={3} tone="bronze" className="w-[74px] sm:w-[155px] md:w-[185px] shrink-0" />
         </div>
       )}
     </section>
@@ -722,9 +844,9 @@ function PodiumSpot({
   className?: string;
 }) {
   const pedestalHeights = {
-    gold: 'h-[250px] md:h-[270px]',
-    silver: 'h-[180px] md:h-[200px]',
-    bronze: 'h-[130px] md:h-[145px]',
+    gold: 'h-[210px] sm:h-[250px] md:h-[270px]',
+    silver: 'h-[160px] sm:h-[180px] md:h-[200px]',
+    bronze: 'h-[120px] sm:h-[130px] md:h-[145px]',
   };
 
   const pedestalStyles = {
@@ -740,9 +862,9 @@ function PodiumSpot({
   };
 
   const avatarSizes = {
-    gold: 'h-32 w-32 md:h-36 md:w-36',
-    silver: 'h-26 w-26 md:h-30 md:w-30',
-    bronze: 'h-22 w-22 md:h-26 md:w-26',
+    gold: 'h-20 w-20 sm:h-32 sm:w-32 md:h-36 md:w-36',
+    silver: 'h-16 w-16 sm:h-26 sm:w-26 md:h-30 md:w-30',
+    bronze: 'h-14 w-14 sm:h-22 sm:w-22 md:h-26 md:w-26',
   };
 
   if (!entry) {
@@ -986,36 +1108,38 @@ function ClassificationRow({ entry }: { entry: GamificationRankingEntry }) {
 }
 
 function HistoryView({
-  events,
+  events = [],
   compact = false,
-  currentUserId = null,
-  canSeeAll = true,
 }: {
-  events: GamificationEvent[];
+  events?: GamificationEvent[];
   compact?: boolean;
-  currentUserId?: string | null;
-  canSeeAll?: boolean;
 }) {
-  const [period, setPeriod] = useState('30');
-  const filteredEvents = useMemo(() => {
-    const now = new Date();
-    const cutoff = period === 'all' ? null : new Date(now.getTime() - Number(period) * 24 * 60 * 60 * 1000);
-    return events.filter((event) => {
-      if (!canSeeAll && currentUserId && event.userId !== currentUserId) return false;
-      if (!cutoff || !event.createdAt) return true;
-      return new Date(event.createdAt) >= cutoff;
-    });
-  }, [canSeeAll, currentUserId, events, period]);
-
-  const visibleEvents = compact ? events.slice(0, 8) : filteredEvents;
+  const [period, setPeriod] = useState('all');
+  const [historyFrom, setHistoryFrom] = useState<string | null>(null);
+  const handlePeriodChange = (value: string) => {
+    setPeriod(value);
+    setHistoryFrom(value === 'all'
+      ? null
+      : startOfDay(subDays(new Date(), Number(value) - 1)).toISOString());
+  };
+  const historyFilters = useMemo(() => {
+    if (!historyFrom) return { limit: 50 };
+    return {
+      from: historyFrom,
+      limit: 50,
+    };
+  }, [historyFrom]);
+  const historyQuery = useGamificationEvents(historyFilters, !compact && (period === 'all' || historyFrom !== null));
+  const visibleEvents = compact ? events.slice(0, 8) : historyQuery.events;
+  const totalEvents = compact ? visibleEvents.length : historyQuery.total;
 
   return (
     <section className="app-card overflow-hidden">
       <div className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <PanelTitle icon={History} eyebrow="Transparencia" title={compact ? 'Atividades recentes' : 'Historico de pontuacao'} showIcon={false} />
+        <PanelTitle icon={History} eyebrow="Transparência" title={compact ? 'Atividades recentes' : 'Histórico de pontuação'} showIcon={false} />
         <div className="flex items-center gap-2">
           {!compact && (
-            <Select value={period} onValueChange={setPeriod}>
+            <Select value={period} onValueChange={handlePeriodChange}>
               <SelectTrigger className="h-9 w-[150px]">
                 <SelectValue />
               </SelectTrigger>
@@ -1027,20 +1151,34 @@ function HistoryView({
               </SelectContent>
             </Select>
           )}
-          <Badge variant="secondary">{visibleEvents.length} registros</Badge>
+          <Badge variant="secondary">
+            {visibleEvents.length < totalEvents ? `${visibleEvents.length} de ${totalEvents}` : `${totalEvents} registros`}
+          </Badge>
         </div>
       </div>
 
-      {visibleEvents.length === 0 ? (
+      {!compact && historyQuery.isLoading ? (
+        <div className="flex min-h-[180px] items-center justify-center gap-2 text-sm text-muted-foreground" role="status">
+          <Loader2 className="h-4 w-4 animate-spin" /> Carregando histórico...
+        </div>
+      ) : !compact && historyQuery.error && visibleEvents.length === 0 ? (
+        <div className="flex min-h-[180px] flex-col items-center justify-center gap-3 px-4 text-center" role="alert">
+          <p className="text-sm text-destructive">Não foi possível carregar o histórico.</p>
+          <Button type="button" size="sm" variant="outline" onClick={() => void historyQuery.refetch()}>
+            Tentar novamente
+          </Button>
+        </div>
+      ) : visibleEvents.length === 0 ? (
         <EmptyPanel title="Nenhuma atividade registrada ainda" />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-sm">
             <thead className="border-y border-border/60 bg-muted/30 text-xs uppercase text-muted-foreground">
               <tr>
                 <th className="px-4 py-3 text-left font-semibold">Data</th>
                 <th className="px-4 py-3 text-left font-semibold">Acao</th>
-                <th className="px-4 py-3 text-left font-semibold">Usuario</th>
+                <th className="px-4 py-3 text-left font-semibold">Usuário</th>
                 <th className="px-4 py-3 text-left font-semibold">Origem</th>
                 <th className="px-4 py-3 text-right font-semibold">Pontos</th>
               </tr>
@@ -1060,8 +1198,23 @@ function HistoryView({
                 </tr>
               ))}
             </tbody>
-          </table>
-        </div>
+            </table>
+          </div>
+          {!compact && historyQuery.hasNextPage && (
+            <div className="flex justify-center border-t border-border/50 p-3">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void historyQuery.fetchNextPage()}
+                disabled={historyQuery.isFetchingNextPage}
+              >
+                {historyQuery.isFetchingNextPage && <Loader2 className="h-4 w-4 animate-spin" />}
+                Carregar mais
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </section>
   );
@@ -1073,18 +1226,20 @@ function AdminView({
   admin,
   snapshot,
   isLoading,
-  canAccess,
 }: {
   admin: AdminHook;
   snapshot: GamificationAdminSnapshot;
   isLoading: boolean;
-  canAccess: boolean;
 }) {
-  if (!canAccess) {
+  if (admin.error) {
     return (
-      <div className="app-card flex min-h-[220px] flex-col items-center justify-center text-center text-muted-foreground">
-        <ShieldOff className="mb-3 h-8 w-8 opacity-40" />
-        <p className="text-sm font-medium">Configuração disponivel apenas para administradores.</p>
+      <div className="app-card flex min-h-[220px] flex-col items-center justify-center px-6 text-center" role="alert">
+        <ShieldOff className="mb-3 h-8 w-8 text-destructive" aria-hidden="true" />
+        <p className="text-sm font-medium">Não foi possível verificar o acesso administrativo.</p>
+        <p className="mt-2 max-w-md text-xs text-muted-foreground">{admin.error.message}</p>
+        <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => void admin.refetch()}>
+          Tentar novamente
+        </Button>
       </div>
     );
   }
@@ -1102,7 +1257,7 @@ function AdminView({
     return (
       <div className="app-card flex min-h-[220px] flex-col items-center justify-center text-center text-muted-foreground">
         <ShieldOff className="mb-3 h-8 w-8 opacity-40" />
-        <p className="text-sm font-medium">Acesso administrativo indisponivel para este usuario.</p>
+        <p className="text-sm font-medium">Você não possui a permissão de gerenciar gamificação.</p>
       </div>
     );
   }
@@ -1147,7 +1302,7 @@ function RulesAdmin({ rules, admin }: { rules: GamificationRule[]; admin: AdminH
 
   return (
     <section className="app-card p-4">
-      <PanelTitle icon={Settings} eyebrow="Configuracao" title="Regras de pontuacao" showIcon={false} />
+      <PanelTitle icon={Settings} eyebrow="Configuração" title="Regras de pontuação" showIcon={false} />
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         {rules.map((rule) => {
           const Icon = RULE_ICONS[rule.actionType] || Trophy;
@@ -1168,15 +1323,18 @@ function RulesAdmin({ rules, admin }: { rules: GamificationRule[]; admin: AdminH
                 <Input
                   type="number"
                   min={0}
+                  max={100000}
                   className="h-9 w-20"
                   value={points}
                   onChange={(event) => setEditing((current) => ({ ...current, [rule.actionType]: Number(event.target.value) || 0 }))}
                 />
                 <Switch
                   checked={rule.isActive}
+                  disabled={admin.upsertRule.isPending}
                   onCheckedChange={(checked) =>
                     admin.upsertRule.mutate({ actionType: rule.actionType, points, isActive: checked })
                   }
+                  aria-label={`${rule.isActive ? 'Desativar' : 'Ativar'} regra ${getEventLabel(rule.actionType)}`}
                 />
                 <Button
                   type="button"
@@ -1184,6 +1342,7 @@ function RulesAdmin({ rules, admin }: { rules: GamificationRule[]; admin: AdminH
                   variant="ghost"
                   onClick={() => admin.upsertRule.mutate({ actionType: rule.actionType, points, isActive: rule.isActive })}
                   disabled={admin.upsertRule.isPending}
+                  aria-label={`Salvar pontos de ${getEventLabel(rule.actionType)}`}
                 >
                   <Save className="h-4 w-4" />
                 </Button>
@@ -1205,7 +1364,7 @@ function MissionsAdmin({
   users: GamificationAdminSnapshot['users'];
   admin: AdminHook;
 }) {
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<MissionDraft>({
     title: '',
     description: '',
     actionType: 'call_made',
@@ -1214,8 +1373,12 @@ function MissionsAdmin({
     period: 'daily',
     targetScope: 'organization' as 'organization' | 'user',
     targetUserId: '',
+    isActive: true,
   });
   const [editingId, setEditingId] = useState<string | null>(null);
+  const editingMissionHasProgress = editingId
+    ? missions.some((mission) => mission.id === editingId && mission.currentProgress > 0)
+    : false;
 
   const resetForm = () => {
     setEditingId(null);
@@ -1228,6 +1391,7 @@ function MissionsAdmin({
       period: 'daily',
       targetScope: 'organization',
       targetUserId: '',
+      isActive: true,
     });
   };
 
@@ -1242,6 +1406,7 @@ function MissionsAdmin({
       period: mission.period || 'daily',
       targetScope: mission.targetScope === 'user' ? 'user' : 'organization',
       targetUserId: mission.targetUserId || '',
+      isActive: mission.isActive,
     });
   };
 
@@ -1256,7 +1421,7 @@ function MissionsAdmin({
       period: form.period,
       targetScope: form.targetScope,
       targetUserId: form.targetScope === 'user' ? form.targetUserId : null,
-      isActive: true,
+      isActive: form.isActive,
     };
     if (editingId) {
       admin.updateMission.mutate({ id: editingId, mission: payload }, { onSuccess: resetForm });
@@ -1268,7 +1433,12 @@ function MissionsAdmin({
   return (
     <div className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
       <form onSubmit={submit} className="app-card space-y-4 p-4">
-        <PanelTitle icon={Plus} eyebrow="Missoes" title={editingId ? 'Editar missao' : 'Nova missao'} showIcon={false} />
+        <PanelTitle icon={Plus} eyebrow="Missões" title={editingId ? 'Editar missão' : 'Nova missão'} showIcon={false} />
+        {editingMissionHasProgress && (
+          <p className="rounded-md border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200" role="note">
+            Esta missão já possui progresso. Ação, período, meta, bônus e público ficam bloqueados para preservar o histórico.
+          </p>
+        )}
         <Field label="Titulo">
           <Input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required />
         </Field>
@@ -1277,7 +1447,7 @@ function MissionsAdmin({
         </Field>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Acao">
-            <Select value={form.actionType} onValueChange={(value) => setForm({ ...form, actionType: value })}>
+            <Select disabled={editingMissionHasProgress} value={form.actionType} onValueChange={(value) => setForm({ ...form, actionType: value as GamificationActionType })}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -1291,7 +1461,7 @@ function MissionsAdmin({
             </Select>
           </Field>
           <Field label="Periodo">
-            <Select value={form.period} onValueChange={(value) => setForm({ ...form, period: value })}>
+            <Select disabled={editingMissionHasProgress} value={form.period} onValueChange={(value) => setForm({ ...form, period: value })}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -1306,6 +1476,7 @@ function MissionsAdmin({
             <Input
               type="number"
               min={1}
+              disabled={editingMissionHasProgress}
               value={form.targetCount}
               onChange={(event) => setForm({ ...form, targetCount: Number(event.target.value) || 1 })}
             />
@@ -1314,6 +1485,7 @@ function MissionsAdmin({
             <Input
               type="number"
               min={0}
+              disabled={editingMissionHasProgress}
               value={form.bonusPoints}
               onChange={(event) => setForm({ ...form, bonusPoints: Number(event.target.value) || 0 })}
             />
@@ -1321,6 +1493,7 @@ function MissionsAdmin({
         </div>
         <Field label="Publico">
           <Select
+            disabled={editingMissionHasProgress}
             value={form.targetScope}
             onValueChange={(value: 'organization' | 'user') => setForm({ ...form, targetScope: value, targetUserId: '' })}
           >
@@ -1335,7 +1508,7 @@ function MissionsAdmin({
         </Field>
         {form.targetScope === 'user' && (
           <Field label="Participante">
-            <Select value={form.targetUserId} onValueChange={(value) => setForm({ ...form, targetUserId: value })}>
+            <Select disabled={editingMissionHasProgress} value={form.targetUserId} onValueChange={(value) => setForm({ ...form, targetUserId: value })}>
               <SelectTrigger>
                 <SelectValue placeholder="Selecione" />
               </SelectTrigger>
@@ -1358,10 +1531,15 @@ function MissionsAdmin({
           <Button
             type="submit"
             className="flex-1"
-            disabled={admin.createMission.isPending || admin.updateMission.isPending || !form.title.trim()}
+            disabled={
+              admin.createMission.isPending
+              || admin.updateMission.isPending
+              || form.title.trim().length < 2
+              || (form.targetScope === 'user' && !form.targetUserId)
+            }
           >
             {admin.createMission.isPending || admin.updateMission.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-            {editingId ? 'Salvar missao' : 'Criar missao'}
+            {editingId ? 'Salvar missão' : 'Criar missão'}
           </Button>
         </div>
       </form>
@@ -1370,7 +1548,7 @@ function MissionsAdmin({
         <PanelTitle icon={Target} eyebrow="Missoes" title="Missoes configuradas" />
         <div className="mt-4 space-y-3">
           {missions.length === 0 ? (
-            <EmptyPanel title="Nenhuma missao criada ainda" compact />
+            <EmptyPanel title="Nenhuma missão criada ainda" compact />
           ) : (
             missions.map((mission) => (
               <div key={mission.id} className="rounded-md bg-[var(--app-surface-soft)] p-3">
@@ -1383,6 +1561,7 @@ function MissionsAdmin({
                     <Badge variant={mission.isActive ? 'default' : 'secondary'}>{mission.isActive ? 'Ativa' : 'Inativa'}</Badge>
                     <Switch
                       checked={mission.isActive}
+                      disabled={admin.updateMission.isPending}
                       onCheckedChange={(checked) =>
                         admin.updateMission.mutate({
                           id: mission.id,
@@ -1399,11 +1578,23 @@ function MissionsAdmin({
                           },
                         })
                       }
+                      aria-label={`${mission.isActive ? 'Desativar' : 'Ativar'} missão ${mission.title}`}
                     />
-                    <Button type="button" size="icon" variant="ghost" onClick={() => startEdit(mission)}>
+                    <Button type="button" size="icon" variant="ghost" onClick={() => startEdit(mission)} disabled={admin.updateMission.isPending || admin.deleteMission.isPending} aria-label={`Editar missão ${mission.title}`}>
                       <Pencil className="h-4 w-4" />
                     </Button>
-                    <Button type="button" size="icon" variant="ghost" onClick={() => admin.deleteMission.mutate(mission.id)}>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      disabled={admin.updateMission.isPending || admin.deleteMission.isPending}
+                      onClick={() => {
+                        if (window.confirm(`Excluir a missão "${mission.title}"? Esta ação não pode ser desfeita.`)) {
+                          admin.deleteMission.mutate(mission.id);
+                        }
+                      }}
+                      aria-label={`Excluir missão ${mission.title}`}
+                    >
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
                   </div>
@@ -1447,6 +1638,7 @@ function ParticipantsAdmin({ participants, admin }: { participants: Gamification
                 checked={participant.participates}
                 onCheckedChange={(checked) => admin.setParticipant.mutate({ userId: participant.userId, participates: checked })}
                 disabled={admin.setParticipant.isPending}
+                aria-label={`${participant.participates ? 'Remover' : 'Adicionar'} ${participant.name} do ranking`}
               />
             </div>
           </div>
@@ -1463,9 +1655,13 @@ function SeasonsAdmin({ seasons, admin }: { seasons: GamificationSeason[]; admin
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    admin.resetSeason.mutate({ name, reason });
-    setName('');
-    setReason('');
+    if (!window.confirm('Iniciar uma nova temporada? O ranking da temporada atual será encerrado.')) return;
+    admin.resetSeason.mutate({ name, reason }, {
+      onSuccess: () => {
+        setName('');
+        setReason('');
+      },
+    });
   };
 
   return (
@@ -1483,16 +1679,16 @@ function SeasonsAdmin({ seasons, admin }: { seasons: GamificationSeason[]; admin
           <Input value={name} onChange={(event) => setName(event.target.value)} required />
         </Field>
         <Field label="Mensagem para equipe">
-          <Textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={4} />
+          <Textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={4} required minLength={2} />
         </Field>
-        <Button type="submit" disabled={admin.resetSeason.isPending || !name.trim()}>
+        <Button type="submit" disabled={admin.resetSeason.isPending || name.trim().length < 2 || reason.trim().length < 2}>
           {admin.resetSeason.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Flag className="h-4 w-4" />}
           Iniciar temporada
         </Button>
       </form>
 
       <section className="app-card p-4">
-        <PanelTitle icon={History} eyebrow="Temporadas" title="Historico" />
+        <PanelTitle icon={History} eyebrow="Temporadas" title="Histórico" />
         <div className="mt-4 space-y-3">
           {seasons.length === 0 ? (
             <EmptyPanel title="Nenhuma temporada registrada" compact />
@@ -1516,13 +1712,15 @@ function SeasonsAdmin({ seasons, admin }: { seasons: GamificationSeason[]; admin
 }
 
 function ManualEntriesAdmin({ snapshot, admin }: { snapshot: GamificationAdminSnapshot; admin: AdminHook }) {
-  const [form, setForm] = useState({ actionKey: '', quantity: 1, notes: '' });
+  const [form, setForm] = useState<ManualEntryDraft>({ actionKey: '', quantity: 1, notes: '' });
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    admin.createManualEntry.mutate(form);
-    setForm({ actionKey: '', quantity: 1, notes: '' });
+    if (!form.actionKey) return;
+    admin.createManualEntry.mutate({ ...form, actionKey: form.actionKey }, {
+      onSuccess: () => setForm({ actionKey: '', quantity: 1, notes: '' }),
+    });
   };
 
   return (
@@ -1533,7 +1731,7 @@ function ManualEntriesAdmin({ snapshot, admin }: { snapshot: GamificationAdminSn
           Aprovacoes sao atividades enviadas pela equipe para validar pontos feitos fora do CRM.
         </p>
         <Field label="Tipo de atividade">
-          <Select value={form.actionKey} onValueChange={(value) => setForm({ ...form, actionKey: value })}>
+          <Select value={form.actionKey} onValueChange={(value) => setForm({ ...form, actionKey: value as GamificationActionType })}>
             <SelectTrigger>
               <SelectValue placeholder="Selecione" />
             </SelectTrigger>
@@ -1564,7 +1762,7 @@ function ManualEntriesAdmin({ snapshot, admin }: { snapshot: GamificationAdminSn
       </form>
 
       <section className="space-y-4">
-        <ManualEntryList title="Aprovacoes pendentes" entries={snapshot.pendingManualEntries} admin={admin} rejectReasons={rejectReasons} setRejectReasons={setRejectReasons} />
+        <ManualEntryList title="Fila de aprovacoes e concessoes" entries={snapshot.pendingManualEntries} admin={admin} rejectReasons={rejectReasons} setRejectReasons={setRejectReasons} />
         <ManualEntryList title="Minhas ultimas solicitacoes" entries={snapshot.myManualEntries} admin={admin} />
       </section>
     </div>
@@ -1584,6 +1782,21 @@ function ManualEntryList({
   rejectReasons?: Record<string, string>;
   setRejectReasons?: (value: Record<string, string>) => void;
 }) {
+  const approveEntry = (entry: GamificationManualEntry) => {
+    if (!window.confirm(`Aprovar ${entry.quantity} ocorrência(s) de ${getEventLabel(entry.actionKey)}? A pontuação será processada em seguida.`)) return;
+    admin.decideManualEntry.mutate({ id: entry.id, status: 'approved' });
+  };
+
+  const rejectEntry = (entry: GamificationManualEntry) => {
+    const reason = rejectReasons?.[entry.id]?.trim() || '';
+    if (!reason || !setRejectReasons) return;
+    if (!window.confirm('Rejeitar este lançamento manual? Esta decisão não poderá ser alterada.')) return;
+    admin.decideManualEntry.mutate(
+      { id: entry.id, status: 'rejected', reason },
+      { onSuccess: () => setRejectReasons({ ...rejectReasons, [entry.id]: '' }) },
+    );
+  };
+
   return (
     <div className="app-card p-4">
       <PanelTitle icon={ClipboardCheck} eyebrow="Manual" title={title} />
@@ -1602,17 +1815,16 @@ function ManualEntryList({
                   {entry.notes && <p className="mt-2 text-xs text-muted-foreground">{entry.notes}</p>}
                   {entry.rejectionReason && <p className="mt-2 text-xs text-destructive">{entry.rejectionReason}</p>}
                 </div>
-                <Badge variant={entry.status === 'approved' ? 'default' : entry.status === 'rejected' ? 'destructive' : 'secondary'}>
-                  {entry.status === 'approved' ? 'Aprovado' : entry.status === 'rejected' ? 'Rejeitado' : 'Pendente'}
-                </Badge>
+                <ManualEntryStatusBadge entry={entry} />
               </div>
 
               {entry.status === 'pending' && rejectReasons && setRejectReasons && (
                 <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                   <Button
                     type="button"
-                    size="sm"
-                    onClick={() => admin.decideManualEntry.mutate({ id: entry.id, status: 'approved' })}
+                     size="sm"
+                     onClick={() => approveEntry(entry)}
+                     disabled={admin.decideManualEntry.isPending}
                   >
                     <CheckCircle2 className="h-4 w-4" />
                     Aprovar
@@ -1625,8 +1837,9 @@ function ManualEntryList({
                   <Button
                     type="button"
                     size="sm"
-                    variant="destructive"
-                    onClick={() => admin.decideManualEntry.mutate({ id: entry.id, status: 'rejected', reason: rejectReasons[entry.id] || '' })}
+                     variant="destructive"
+                    onClick={() => rejectEntry(entry)}
+                     disabled={admin.decideManualEntry.isPending || !(rejectReasons[entry.id] || '').trim()}
                   >
                     Rejeitar
                   </Button>
@@ -1646,7 +1859,7 @@ function MissionsPanel({ missions }: { missions: GamificationMission[] }) {
       <PanelTitle icon={Target} eyebrow="Missoes" title="Desafios ativos" />
       <div className="mt-4 space-y-4">
         {missions.length === 0 ? (
-          <EmptyPanel title="Nenhuma missao ativa" compact />
+          <EmptyPanel title="Nenhuma missão ativa" compact />
         ) : (
           missions.map((mission) => {
             const progress = mission.targetCount > 0
@@ -1679,7 +1892,7 @@ function StatsWidget({ entry, myPosition }: { entry?: GamificationRankingEntry; 
   if (!entry) {
     return (
       <section className="app-card p-4">
-        <EmptyPanel title="Sem pontuacao individual ainda" compact />
+        <EmptyPanel title="Sem pontuação individual ainda" compact />
       </section>
     );
   }

@@ -304,6 +304,10 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 			      when $21::uuid is null or stage_id is not distinct from $21::uuid then stage_entered_at
 			      else now()
 			    end,
+			    board_order_at = case
+			      when $21::uuid is null or stage_id is not distinct from $21::uuid then coalesce(board_order_at, stage_entered_at, created_at)
+			      else now()
+			    end,
 			    metadata = coalesce(metadata, '{}'::jsonb) || $22::jsonb,
 			    last_entry_at = now(),
 			    reentry_count = coalesce(reentry_count, 0) + 1,
@@ -338,6 +342,7 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 				utm_content,
 				metadata,
 				stage_entered_at,
+				board_order_at,
 				last_entry_at
 			)
 			values (
@@ -364,6 +369,7 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 				$19,
 				$20,
 				$21::jsonb,
+				case when $3::uuid is null then null else now() end,
 				case when $3::uuid is null then null else now() end,
 				now()
 			)

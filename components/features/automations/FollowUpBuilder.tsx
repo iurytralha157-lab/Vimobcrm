@@ -28,12 +28,8 @@ import {
   GitBranch,
   Webhook,
   Tag,
-  ArrowRightLeft,
-  UserCheck,
   ChevronDown,
   ChevronRight,
-  Home,
-  CircleDot,
 } from 'lucide-react';
 import { MessageSquare, Timer } from 'lucide-react';
 import { MessageNode, WaitNode, StartNode, ImageNode, AudioNode, VideoNode, ConditionNode, WebhookNode, TagNode, MoveStageNode, AssignUserNode, PropertyInterestNode, DealStatusNode } from './nodes';
@@ -42,12 +38,14 @@ import { NodeConfigPanel } from './NodeConfigPanel';
 import { useWhatsAppSessions } from '@/hooks/use-whatsapp-sessions';
 import { useTags } from '@/hooks/use-tags';
 import { useStages, usePipelines } from '@/hooks/use-stages';
-import { useCreateAutomation, useSaveAutomationFlow, TriggerType, ActionType } from '@/hooks/use-automations';
+import { useAutomationMedia, useCreateAutomation, TriggerType, ActionType, type FlowDefinition } from '@/hooks/use-automations';
+import { saveAutomationFlowInputSchema } from '@/lib/validation';
 import { useUsers } from '@/hooks/use-users';
 import { useProperties } from '@/hooks/use-properties';
 import { toast } from 'sonner';
 import DeletableEdge from './edges/DeletableEdge';
 import { FlowSimulator } from './FlowSimulator';
+import { createAutomationMediaPreviewIndex, withAutomationMediaPreview } from './media-preview';
 
 const edgeTypes = {
   deletable: DeletableEdge,
@@ -68,6 +66,8 @@ const nodeTypes = {
   property_interest: PropertyInterestNode,
   deal_status: DealStatusNode,
 };
+
+const UNSUPPORTED_CRM_NODE_TYPES = new Set(['move_stage', 'assign_user', 'property_interest', 'deal_status']);
 
 interface FollowUpBuilderProps {
   onBack: () => void;
@@ -91,19 +91,14 @@ interface PaletteItem {
 }
 
 const NODE_PALETTE: PaletteItem[] = [
-  { type: 'start', label: 'Início', icon: Play, color: 'bg-orange-500 text-white', category: 'actions', defaultData: { trigger_type: 'manual' } },
   { type: 'message', label: 'Texto', icon: MessageSquare, color: 'bg-green-500 text-white', category: 'bubbles', defaultData: { message: 'Nova mensagem...', day: 1 } },
-  { type: 'image', label: 'Imagem', icon: Image, color: 'bg-blue-500 text-white', category: 'bubbles', defaultData: { image_url: '', caption: '' } },
-  { type: 'video', label: 'Vídeo', icon: Video, color: 'bg-rose-500 text-white', category: 'bubbles', defaultData: { video_url: '' } },
-  { type: 'audio', label: 'Áudio', icon: Headphones, color: 'bg-amber-500 text-white', category: 'bubbles', defaultData: { audio_url: '' } },
+  { type: 'image', label: 'Imagem', icon: Image, color: 'bg-blue-500 text-white', category: 'bubbles', defaultData: { media_path: '', media_bucket: 'automation-media', image_preview_url: '', caption: '' } },
+  { type: 'video', label: 'Vídeo', icon: Video, color: 'bg-rose-500 text-white', category: 'bubbles', defaultData: { media_path: '', media_bucket: 'automation-media', video_preview_url: '' } },
+  { type: 'audio', label: 'Áudio', icon: Headphones, color: 'bg-amber-500 text-white', category: 'bubbles', defaultData: { media_path: '', media_bucket: 'automation-media', audio_preview_url: '' } },
   { type: 'condition', label: 'Condição', icon: GitBranch, color: 'bg-yellow-500 text-white', category: 'conditionals', defaultData: { condition_type: 'custom', variable: '', operator: 'equals', value: '' } },
   { type: 'wait', label: 'Espera', icon: Timer, color: 'bg-purple-500 text-white', category: 'actions', defaultData: { wait_type: 'days', wait_value: 1 } },
   { type: 'webhook', label: 'Webhook', icon: Webhook, color: 'bg-indigo-500 text-white', category: 'actions', defaultData: { webhook_url: '', method: 'POST' } },
   { type: 'tag', label: 'Tag', icon: Tag, color: 'bg-teal-500 text-white', category: 'actions', defaultData: { tag_id: '', tag_action: 'add' } },
-  { type: 'move_stage', label: 'Mudar Etapa', icon: ArrowRightLeft, color: 'bg-violet-500 text-white', category: 'actions', defaultData: { move_pipeline_id: '', move_stage_id: '' } },
-  { type: 'assign_user', label: 'Responsável', icon: UserCheck, color: 'bg-sky-500 text-white', category: 'actions', defaultData: { assign_user_id: '' } },
-  { type: 'property_interest', label: 'Imóvel Interesse', icon: Home, color: 'bg-emerald-500 text-white', category: 'actions', defaultData: { property_id: '', property_name: '' } },
-  { type: 'deal_status', label: 'Status', icon: CircleDot, color: 'bg-pink-500 text-white', category: 'actions', defaultData: { deal_status: '' } },
 ];
 
 const CATEGORY_LABELS: Record<NodeCategory, string> = {
@@ -147,20 +142,39 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
   const { data: pipelines } = usePipelines();
   const { data: users } = useUsers();
   const { data: properties } = useProperties();
+  const imageMedia = useAutomationMedia('image');
+  const audioMedia = useAutomationMedia('audio');
+  const videoMedia = useAutomationMedia('video');
   const [pipelineId, setPipelineId] = useState<string>('');
   const { data: stages } = useStages(pipelineId || undefined);
   const createAutomation = useCreateAutomation();
-  const saveFlow = useSaveAutomationFlow();
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
+  const mediaPreviewIndex = useMemo(
+    () => createAutomationMediaPreviewIndex([
+      ...(imageMedia.data ?? []),
+      ...(audioMedia.data ?? []),
+      ...(videoMedia.data ?? []),
+    ]),
+    [audioMedia.data, imageMedia.data, videoMedia.data],
+  );
+  const renderedNodes = useMemo(
+    () => nodes.map((node) => withAutomationMediaPreview(node, mediaPreviewIndex)),
+    [mediaPreviewIndex, nodes],
+  );
+  const renderedSelectedNode = useMemo(
+    () => selectedNode ? withAutomationMediaPreview(selectedNode, mediaPreviewIndex) : null,
+    [mediaPreviewIndex, selectedNode],
+  );
+
   // Config
   const [name, setName] = useState(initialTemplate?.name || 'Meu Follow-up');
   const [sessionId, setSessionId] = useState<string>('');
-  const [triggerType, setTriggerType] = useState<TriggerType>('tag_added');
+  const [triggerType, setTriggerType] = useState<TriggerType>('manual');
   const [stageId, setStageId] = useState<string>('');
   const [tagId, setTagId] = useState<string>('');
 
@@ -169,6 +183,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
   const [stopOnReply] = useState<boolean>(true);
   const [onReplyStageId] = useState<string>('');
   const [showSimulator, setShowSimulator] = useState(false);
+  const [showVariables, setShowVariables] = useState(false);
   const [, setSimulatorHighlightNodeId] = useState<string | null>(null);
 
   // Apply visual highlight to the active node on canvas
@@ -193,6 +208,15 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
   });
   const [onReplyMessage] = useState<string>(initialTemplate?.onReplyMessage || DEFAULT_ON_REPLY_MESSAGE);
 
+  useEffect(() => {
+    const warnAboutUnsavedChanges = (event: BeforeUnloadEvent) => {
+      if (isSaving) return;
+      event.preventDefault();
+    };
+    window.addEventListener('beforeunload', warnAboutUnsavedChanges);
+    return () => window.removeEventListener('beforeunload', warnAboutUnsavedChanges);
+  }, [isSaving]);
+
   // Initialize flow with template or default
   useEffect(() => {
     const initialNodes: Node[] = [];
@@ -203,8 +227,9 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
     initialNodes.push({
       id: startId,
       type: 'start',
+      deletable: false,
       position: { x: 250, y: 50 },
-      data: { trigger_type: 'tag_added' },
+      data: { trigger_type: 'manual' },
     });
 
     if (initialTemplate?.messages && initialTemplate.messages.length > 0) {
@@ -326,6 +351,10 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
   }, []);
 
   const handleAddNode = useCallback((paletteItem: PaletteItem) => {
+    if (paletteItem.type === 'start' && nodes.some((node) => node.type === 'start')) {
+      toast.error('O fluxo já possui um gatilho inicial');
+      return;
+    }
     const lastNode = nodes[nodes.length - 1];
     const newX = lastNode ? lastNode.position.x + 300 : 250;
     const newY = lastNode ? lastNode.position.y : 200;
@@ -363,10 +392,15 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
   }, [nodes, setNodes, setEdges]);
 
   const handleDeleteNode = useCallback((nodeId: string) => {
+    const node = nodes.find((item) => item.id === nodeId);
+    if (node?.type === 'start' && nodes.filter((item) => item.type === 'start').length <= 1) {
+      toast.error('O gatilho inicial é obrigatório');
+      return;
+    }
     setNodes((nds) => nds.filter((n) => n.id !== nodeId));
     setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
     setSelectedNode(null);
-  }, [setNodes, setEdges]);
+  }, [nodes, setNodes, setEdges]);
 
   const handleNodeDataChange = useCallback((nodeId: string, data: Record<string, unknown>) => {
     setNodes((nds) =>
@@ -404,7 +438,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
 
       if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
-        const selected = nodes.filter(n => n.selected);
+        const selected = nodes.filter(n => n.selected && n.type !== 'start');
         if (selected.length > 0) {
           clipboardRef.current = selected;
           toast.success(`${selected.length} nó(s) copiado(s)`);
@@ -452,6 +486,10 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
     const type = e.dataTransfer.getData('application/reactflow-type');
     const dataStr = e.dataTransfer.getData('application/reactflow-data');
     if (!type) return;
+    if (type === 'start' && nodes.some((node) => node.type === 'start')) {
+      toast.error('O fluxo já possui um gatilho inicial');
+      return;
+    }
 
     const position = reactFlowInstance.screenToFlowPosition({ x: e.clientX, y: e.clientY });
     const defaultData = dataStr ? JSON.parse(dataStr) : {};
@@ -468,7 +506,12 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
   }, [reactFlowInstance, nodes, setNodes]);
 
   const handleSave = async () => {
-    if (!sessionId) {
+    if (nodes.some((node) => UNSUPPORTED_CRM_NODE_TYPES.has(node.type || ''))) {
+      toast.error('Remova as ações de CRM indisponíveis antes de publicar o fluxo');
+      return;
+    }
+    const whatsappNodes = nodes.filter((node) => ['message', 'image', 'audio', 'video'].includes(node.type || ''));
+    if (whatsappNodes.length > 0 && !sessionId) {
       toast.error('Selecione uma sessão WhatsApp');
       return;
     }
@@ -493,42 +536,59 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
       return;
     }
 
-    const messageNodes = nodes.filter(n => n.type === 'message');
-    if (messageNodes.length === 0) {
-      toast.error('Adicione pelo menos uma mensagem');
+    const startNode = nodes.find((node) => node.type === 'start');
+    const startNodeData = startNode?.data || {};
+    if (triggerType === 'scheduled' && (!startNodeData.scheduled_at || !startNodeData.timezone)) {
+      toast.error('Informe a data, a hora e o fuso do disparo');
       return;
     }
+    if (triggerType === 'scheduled' && new Date(String(startNodeData.scheduled_at)).getTime() < Date.now() + 60_000) {
+      toast.error('O disparo deve ser agendado com pelo menos um minuto de antecedência');
+      return;
+    }
+    if (triggerType === 'scheduled' && !startNodeData.target_lead_id) {
+      toast.error('Selecione o lead destinatário do disparo agendado');
+      return;
+    }
+    if (triggerType === 'inactivity' && (!startNodeData.inactivity_value || !startNodeData.inactivity_unit)) {
+      toast.error('Informe o período de inatividade');
+      return;
+    }
+
+    const waitReplyConfig = getWaitReplyConfig(nodes);
+    const shouldStopOnReply = waitReplyConfig.hasWaitNodes ? waitReplyConfig.stopOnReply : stopOnReply;
+    const resolvedOnReplyStageId = shouldStopOnReply
+      ? (waitReplyConfig.onReplyMoveToStageId ?? (onReplyStageId && onReplyStageId !== '__none__' ? onReplyStageId : null))
+      : null;
+    const resolvedOnReplyMessage = shouldStopOnReply
+      ? (waitReplyConfig.onReplyMessage ?? (onReplyMessage?.trim() ? onReplyMessage.trim() : null))
+      : null;
+    const triggerConfig: Record<string, unknown> = {
+      ...(triggerType === 'tag_added' ? { tag_id: tagId } : {}),
+      ...(triggerType === 'lead_stage_changed' ? { pipeline_id: pipelineId, to_stage_id: stageId } : {}),
+      ...(triggerType === 'lead_created' ? {
+        source: typeof startNodeData.source === 'string' ? startNodeData.source : null,
+        meta_form_id: typeof startNodeData.meta_form_id === 'string' ? startNodeData.meta_form_id : null,
+      } : {}),
+      ...(triggerType === 'scheduled' ? {
+        scheduled_at: startNodeData.scheduled_at,
+        timezone: startNodeData.timezone,
+        target_type: 'lead',
+        target_lead_id: startNodeData.target_lead_id,
+      } : {}),
+      ...(triggerType === 'inactivity' ? {
+        inactivity_value: startNodeData.inactivity_value,
+        inactivity_unit: startNodeData.inactivity_unit,
+      } : {}),
+      filter_user_id: filterUserId && filterUserId !== '__all__' ? filterUserId : null,
+      stop_on_reply: shouldStopOnReply,
+      on_reply_move_to_stage_id: resolvedOnReplyStageId,
+      on_reply_message: resolvedOnReplyMessage,
+    };
 
     setIsSaving(true);
 
     try {
-      const waitReplyConfig = getWaitReplyConfig(nodes);
-      const shouldStopOnReply = waitReplyConfig.hasWaitNodes ? waitReplyConfig.stopOnReply : stopOnReply;
-      const resolvedOnReplyStageId = shouldStopOnReply
-        ? (waitReplyConfig.onReplyMoveToStageId ?? (onReplyStageId && onReplyStageId !== '__none__' ? onReplyStageId : null))
-        : null;
-      const resolvedOnReplyMessage = shouldStopOnReply
-        ? (waitReplyConfig.onReplyMessage ?? (onReplyMessage?.trim() ? onReplyMessage.trim() : null))
-        : null;
-
-      // Create automation
-      const automation = await createAutomation.mutateAsync({
-        name,
-        description: `Follow-up com ${messageNodes.length} mensagens`,
-        trigger_type: triggerType,
-        trigger_config: {
-          ...(triggerType === 'tag_added' ? { tag_id: tagId } : {}),
-          ...(triggerType === 'lead_stage_changed' ? {
-            pipeline_id: pipelineId,
-            to_stage_id: stageId
-          } : {}),
-          filter_user_id: filterUserId && filterUserId !== "__all__" ? filterUserId : null,
-          stop_on_reply: shouldStopOnReply,
-          on_reply_move_to_stage_id: resolvedOnReplyStageId,
-          on_reply_message: resolvedOnReplyMessage,
-        },
-      });
-
       // Build nodes for database
       const dbNodes: {
         id: string;
@@ -546,11 +606,8 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
           dbNodes.push({
             id: node.id, node_type: 'trigger', action_type: null,
             config: {
-              trigger_type: triggerType, tag_id: tagId, pipeline_id: pipelineId, to_stage_id: stageId,
-              filter_user_id: filterUserId && filterUserId !== "__all__" ? filterUserId : null,
-              stop_on_reply: stopOnReply,
-              on_reply_move_to_stage_id: stopOnReply && onReplyStageId && onReplyStageId !== "__none__" ? onReplyStageId : null,
-              on_reply_message: stopOnReply && onReplyMessage?.trim() ? onReplyMessage.trim() : null,
+              trigger_type: triggerType,
+              ...triggerConfig,
             },
             ...pos,
           });
@@ -563,19 +620,19 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
         } else if (node.type === 'image') {
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: 'send_image',
-            config: { session_id: sessionId, image_url: node.data.image_url, caption: node.data.caption, actionType: 'send_image' },
+            config: { session_id: sessionId, media_bucket: 'automation-media', media_path: node.data.media_path, caption: node.data.caption, actionType: 'send_image' },
             ...pos,
           });
         } else if (node.type === 'audio') {
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: 'send_audio',
-            config: { session_id: sessionId, audio_url: node.data.audio_url, actionType: 'send_audio' },
+            config: { session_id: sessionId, media_bucket: 'automation-media', media_path: node.data.media_path, actionType: 'send_audio' },
             ...pos,
           });
         } else if (node.type === 'video') {
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: 'send_video',
-            config: { session_id: sessionId, video_url: node.data.video_url, actionType: 'send_video' },
+            config: { session_id: sessionId, media_bucket: 'automation-media', media_path: node.data.media_path, actionType: 'send_video' },
             ...pos,
           });
         } else if (node.type === 'wait') {
@@ -622,7 +679,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
           });
         } else if (node.type === 'tag') {
           dbNodes.push({
-            id: node.id, node_type: 'action', action_type: 'add_tag',
+            id: node.id, node_type: 'action', action_type: node.data.tag_action === 'remove' ? 'remove_tag' : 'add_tag',
             config: { tag_id: node.data.tag_id, tag_action: node.data.tag_action || 'add', actionType: node.data.tag_action === 'remove' ? 'remove_tag' : 'add_tag' },
             ...pos,
           });
@@ -658,31 +715,44 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
         source_node_id: edge.source,
         target_node_id: edge.target,
         source_handle: edge.sourceHandle || null,
-        condition_branch: edge.sourceHandle || 'default',
+        condition_branch: edge.sourceHandle || null,
       }));
 
-      await saveFlow.mutateAsync({
-        automationId: automation.id,
-        nodes: dbNodes.map(n => ({
-          id: n.id,
-          automation_id: automation.id,
-          node_type: n.node_type,
-          action_type: n.action_type,
-          config: n.config as unknown as import('@/integrations/supabase/types').Json,
-          position_x: n.position_x,
-          position_y: n.position_y,
+      const flowDefinition: FlowDefinition = {
+        nodes: dbNodes.map((node) => ({
+          id: node.id,
+          type: node.node_type,
+          action_type: node.action_type,
+          position: { x: node.position_x, y: node.position_y },
+          config: node.config,
         })),
-        connections: dbConnections.map(c => ({
-          automation_id: automation.id,
-          ...c,
+        connections: dbConnections.map((connection) => ({
+          source: connection.source_node_id,
+          target: connection.target_node_id,
+          source_handle: connection.source_handle,
+          condition_branch: connection.condition_branch,
         })),
+        settings: {},
+      };
+      const validation = saveAutomationFlowInputSchema.safeParse({ flowDefinition });
+      if (!validation.success) {
+        toast.error(validation.error.issues[0]?.message || 'O fluxo está incompleto.');
+        return;
+      }
+
+      const automation = await createAutomation.mutateAsync({
+        name,
+        description: `Fluxo visual com ${nodes.length} blocos`,
+        trigger_type: triggerType,
+        trigger_config: triggerConfig,
+        flow_definition: validation.data.flowDefinition,
+        is_active: false,
       });
 
       toast.success('Follow-up criado com sucesso!');
       onComplete(automation.id);
     } catch (error) {
       console.error('Error saving follow-up:', error);
-      toast.error('Erro ao salvar follow-up');
     } finally {
       setIsSaving(false);
     }
@@ -693,7 +763,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
       {/* Header */}
       <div className="automation-header flex items-center justify-between bg-[var(--app-surface)] p-3">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={onBack} className="text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground">
+          <Button variant="ghost" size="icon" onClick={onBack} className="text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground" aria-label="Voltar sem salvar">
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
@@ -712,7 +782,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
             className="gap-2 border-0"
           >
             <Play className="h-4 w-4" />
-            Preview
+            Simular localmente
           </Button>
           <Button onClick={handleSave} disabled={isSaving}>
             {isSaving ? (
@@ -739,6 +809,8 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
                 return (
                   <div key={category}>
                     <button
+                      type="button"
+                      aria-expanded={isExpanded}
                       className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm font-medium transition-colors hover:bg-[var(--app-surface-hover)]"
                       onClick={() => setExpandedCategories(prev => ({ ...prev, [category]: !prev[category] }))}
                     >
@@ -751,8 +823,9 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
                         {items.map((item, idx) => {
                           const Icon = item.icon;
                           return (
-                            <div
+                            <button
                               key={`${item.type}-${item.label}-${idx}`}
+                              type="button"
                               draggable
                               onDragStart={(e) => {
                                 e.dataTransfer.setData('application/reactflow-type', item.type);
@@ -761,12 +834,13 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
                               }}
                               className="automation-palette-card group flex cursor-grab items-center gap-2 rounded-[8px] px-3 py-2.5 text-left transition-all hover:bg-primary/10 active:cursor-grabbing"
                               onClick={() => handleAddNode(item)}
+                              aria-label={`Adicionar bloco ${item.label}`}
                             >
                               <div className={`rounded-[6px] p-1 ${item.color}`}>
                                 <Icon className="h-3.5 w-3.5" />
                               </div>
                               <span className="truncate text-xs font-medium text-foreground">{item.label}</span>
-                            </div>
+                            </button>
                           );
                         })}
                       </div>
@@ -777,18 +851,21 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
 
               {/* Variables Help */}
               <button
+                type="button"
                 className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-[var(--app-surface-hover)]"
-                onClick={() => {}}
+                onClick={() => setShowVariables((visible) => !visible)}
+                aria-expanded={showVariables}
+                aria-controls="automation-variable-list"
               >
-                📋 Variáveis
+                📋 {showVariables ? 'Ocultar variáveis' : 'Mostrar variáveis'}
               </button>
-              <div className="px-3 pb-2 text-xs text-muted-foreground space-y-0.5">
+              {showVariables && <div id="automation-variable-list" className="px-3 pb-2 text-xs text-muted-foreground space-y-0.5">
                 <code className="block rounded-[4px] bg-[var(--app-surface-hover)] px-1.5 py-0.5 text-[10px] text-foreground">{'{{lead.name}}'}</code>
                 <code className="block rounded-[4px] bg-[var(--app-surface-hover)] px-1.5 py-0.5 text-[10px] text-foreground">{'{{lead.phone}}'}</code>
                 <code className="block rounded-[4px] bg-[var(--app-surface-hover)] px-1.5 py-0.5 text-[10px] text-foreground">{'{{lead.email}}'}</code>
                 <code className="block rounded-[4px] bg-[var(--app-surface-hover)] px-1.5 py-0.5 text-[10px] text-foreground">{'{{organization.name}}'}</code>
                 <code className="block rounded-[4px] bg-[var(--app-surface-hover)] px-1.5 py-0.5 text-[10px] text-foreground">{'{{date}}'}</code>
-              </div>
+              </div>}
             </div>
           </div>
         </div>
@@ -796,7 +873,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
         {/* Flow Editor */}
         <div className="flex-1 relative">
           <ReactFlow
-            nodes={nodes}
+            nodes={renderedNodes}
             edges={edgesWithDelete}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
@@ -821,21 +898,21 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
         {/* Flow Simulator */}
         {showSimulator && (
           <FlowSimulator
-            nodes={nodes}
+            nodes={renderedNodes}
             edges={edges}
             onClose={() => { setShowSimulator(false); handleHighlightNode(null); }}
             onHighlightNode={handleHighlightNode}
           />
         )}
 
-        {selectedNode && (
+        {renderedSelectedNode && (
             <NodeConfigPanel
-              key={`${selectedNode.id}-${panelPosition?.x ?? 0}-${panelPosition?.y ?? 0}`}
-              selectedNode={selectedNode}
+              key={`${renderedSelectedNode.id}-${panelPosition?.x ?? 0}-${panelPosition?.y ?? 0}`}
+              selectedNode={renderedSelectedNode}
               onClose={() => setSelectedNode(null)}
               onNodeDataChange={handleNodeDataChange}
               onDeleteNode={handleDeleteNode}
-              onSaveNode={() => { toast.success('Configuração do nó guardada'); setSelectedNode(null); }}
+              canDeleteNode={renderedSelectedNode.type !== 'start' || nodes.filter((node) => node.type === 'start').length > 1}
               triggerType={triggerType}
               setTriggerType={setTriggerType}
               tags={tags || []}

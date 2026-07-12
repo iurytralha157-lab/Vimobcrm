@@ -53,6 +53,7 @@ type APILead = {
   createdAt: string
   updatedAt: string
   stageEnteredAt?: string
+  boardOrderAt?: string
   lastContactAt?: string
   nextFollowUpAt?: string
   additionalFields?: {
@@ -116,7 +117,7 @@ type LeadCreateInput = Partial<LeadInsert> & {
 type LeadMoveStageInput = {
   stageId: string
   isOwnResource?: boolean | null
-  stageEnteredAt?: string | null
+  boardOrderAt?: string | null
 }
 
 // Leads API functions
@@ -478,6 +479,7 @@ export function toLegacyLead(lead: APILead): LeadRow & {
     source: lead.source,
     source_session_id: null,
     source_webhook_id: null,
+    board_order_at: lead.boardOrderAt || null,
     stage_entered_at: lead.stageEnteredAt || null,
     stage_id: lead.stageId || null,
     trabalha: null,

@@ -776,6 +776,10 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 			      when $21::uuid is null or stage_id is not distinct from $21::uuid then stage_entered_at
 			      else now()
 			    end,
+			    board_order_at = case
+			      when $21::uuid is null or stage_id is not distinct from $21::uuid then coalesce(board_order_at, stage_entered_at, created_at)
+			      else now()
+			    end,
 			    stage_id = coalesce($21::uuid, stage_id),
 			    property_id = coalesce($22::uuid, property_id),
 			    interest_property_id = coalesce($22::uuid, interest_property_id),
@@ -817,6 +821,7 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 				utm_campaign,
 				valor_interesse,
 				stage_entered_at,
+				board_order_at,
 				last_entry_at
 			)
 			values (
@@ -847,6 +852,7 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 				'lead_ads',
 				$22,
 				$23::numeric,
+				case when $3::uuid is null then null else now() end,
 				case when $3::uuid is null then null else now() end,
 				now()
 			)
@@ -1565,8 +1571,8 @@ func (repo Repository) insertLeadRedistributionJob(ctx context.Context, tx pgx.T
 		warningMinutes = 0
 	}
 	maxAttempts := intSetting(settings, "redistribution_max_attempts", 1)
-	if maxAttempts <= 0 {
-		maxAttempts = 1
+	if maxAttempts < 0 {
+		maxAttempts = 0
 	}
 
 	_, err := tx.Exec(ctx, `

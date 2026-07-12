@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  apiStartAutomationResponseSchema,
+  apiAutomationMediaListResponseSchema,
+  apiAutomationRuntimeIssuesResponseSchema,
   createAutomationInputSchema,
   saveAutomationFlowInputSchema,
 } from './automations'
-import { createCadenceTaskInputSchema } from './cadences'
+import { apiCadenceTemplateSchema, createCadenceTaskInputSchema } from './cadences'
 import {
   financialCategoryInputSchema,
   financialContractCreateInputSchema,
@@ -26,7 +29,14 @@ import {
   adminModuleAccessInputSchema,
   analyticsQuerySchema,
   dashboardFiltersSchema,
+  apiGamificationRuleSchema,
+  gamificationActionTypeSchema,
   gamificationDecisionInputSchema,
+  gamificationEventListQuerySchema,
+  gamificationManualEntryInputSchema,
+  gamificationMissionInputSchema,
+  gamificationRankingQuerySchema,
+  gamificationRuleInputSchema,
   safePathSegmentSchema,
 } from './final-domains'
 import {
@@ -41,33 +51,231 @@ import {
 
 const ID = '11111111-1111-4111-8111-111111111111'
 
+const validAutomationFlow = {
+  nodes: [
+    {
+      id: 'trigger-1',
+      type: 'trigger' as const,
+      position: { x: 0, y: 0 },
+      config: { trigger_type: 'manual' },
+    },
+    {
+      id: 'message-1',
+      type: 'action' as const,
+      action_type: 'send_whatsapp' as const,
+      position: { x: 200, y: 0 },
+      config: { session_id: ID, message: 'Olá {{lead.name}}' },
+    },
+  ],
+  connections: [{ source: 'trigger-1', target: 'message-1' }],
+  settings: {},
+}
+
 test('imovel exige titulo e filtros usam UUID valido', () => {
   assert.equal(propertyCreateInputSchema.safeParse({ status: 'active' }).success, false)
   assert.equal(propertyCreateInputSchema.safeParse({ title: 'Apartamento Centro', quartos: 2 }).success, true)
   assert.equal(propertyListQuerySchema.safeParse({ owner_id: 'invalido' }).success, false)
 })
 
-test('automacao pode nascer sem nos, mas nao salvar fluxo vazio', () => {
+test('automacao pode nascer como rascunho ou publicar o fluxo atomicamente', () => {
   assert.equal(createAutomationInputSchema.safeParse({
     name: 'Primeiro atendimento',
     trigger_type: 'manual',
-    flow_definition: { nodes: [], connections: [], settings: {} },
   }).success, true)
+  assert.equal(createAutomationInputSchema.safeParse({
+    name: 'Primeiro atendimento',
+    trigger_type: 'manual',
+    flow_definition: validAutomationFlow,
+  }).success, true)
+  assert.equal(createAutomationInputSchema.safeParse({
+    name: 'Primeiro atendimento',
+    trigger_type: 'manual',
+    is_active: true,
+  }).success, false)
   assert.equal(saveAutomationFlowInputSchema.safeParse({
     flowDefinition: { nodes: [], connections: [], settings: {} },
   }).success, false)
   assert.equal(saveAutomationFlowInputSchema.safeParse({
+    flowDefinition: validAutomationFlow,
+  }).success, true)
+})
+
+test('automacao rejeita grafo desconectado, ciclico e acao desconhecida', () => {
+  assert.equal(saveAutomationFlowInputSchema.safeParse({
     flowDefinition: {
-      nodes: [{
-        id: 'trigger-1',
-        type: 'trigger',
-        position: { x: 0, y: 0 },
-        config: {},
+      ...validAutomationFlow,
+      nodes: [...validAutomationFlow.nodes, {
+        id: 'orphan-1',
+        type: 'action' as const,
+        action_type: 'send_whatsapp' as const,
+        position: { x: 400, y: 0 },
+        config: { session_id: ID, message: 'Órfão' },
       }],
-      connections: [],
-      settings: {},
+    },
+  }).success, false)
+
+  assert.equal(saveAutomationFlowInputSchema.safeParse({
+    flowDefinition: {
+      ...validAutomationFlow,
+      connections: [
+        ...validAutomationFlow.connections,
+        { source: 'message-1', target: 'trigger-1' },
+      ],
+    },
+  }).success, false)
+
+  assert.equal(saveAutomationFlowInputSchema.safeParse({
+    flowDefinition: {
+      ...validAutomationFlow,
+      nodes: validAutomationFlow.nodes.map((node) => node.id === 'message-1'
+        ? { ...node, action_type: 'send_email' }
+        : node),
+    },
+  }).success, false)
+
+  assert.equal(saveAutomationFlowInputSchema.safeParse({
+    flowDefinition: {
+      ...validAutomationFlow,
+      nodes: validAutomationFlow.nodes.map((node) => node.id === 'message-1'
+        ? {
+            ...node,
+            action_type: 'set_variable' as const,
+            config: { actionType: 'deal_status', deal_status: 'won' },
+          }
+      : node),
+    },
+  }).success, false)
+
+  const unsupportedCrmActions = [
+    { action_type: 'move_lead' as const, config: { pipeline_id: ID, stage_id: ID } },
+    { action_type: 'assign_user' as const, config: { user_id: ID } },
+    { action_type: 'set_variable' as const, config: { actionType: 'property_interest', property_id: ID } },
+  ]
+  for (const unsupportedAction of unsupportedCrmActions) {
+    assert.equal(saveAutomationFlowInputSchema.safeParse({
+      flowDefinition: {
+        ...validAutomationFlow,
+        nodes: validAutomationFlow.nodes.map((node) => node.id === 'message-1'
+          ? { ...node, ...unsupportedAction }
+          : node),
+      },
+    }).success, false)
+  }
+})
+
+test('galeria de automacao pagina sem truncar silenciosamente', () => {
+  assert.equal(apiAutomationMediaListResponseSchema.safeParse({
+    data: { files: [], nextOffset: 50 },
+  }).success, true)
+  assert.equal(apiAutomationMediaListResponseSchema.safeParse({ data: [] }).success, false)
+})
+
+test('inicio de automacao aceita o estado real observado pelo backend', () => {
+  const base = {
+    executionId: ID,
+    automationId: ID,
+    automationName: 'Primeiro atendimento',
+    executorStarted: true,
+    dispatchPending: false,
+  }
+
+  for (const status of ['queued', 'running', 'waiting', 'completed', 'cancelled']) {
+    assert.equal(apiStartAutomationResponseSchema.safeParse({ data: { ...base, status } }).success, true)
+  }
+  assert.equal(apiStartAutomationResponseSchema.safeParse({ data: { ...base, status: 'failed' } }).success, false)
+})
+
+test('saude das automacoes distingue retry seguro de efeito ambiguo', () => {
+  assert.equal(apiAutomationRuntimeIssuesResponseSchema.safeParse({
+    data: {
+      summary: {
+        deadLetters: 1,
+        failedEvents: 0,
+        openCircuits: 0,
+        duplicateDecisions: 0,
+        unknownEffects: 1,
+        staleSendingEffects: 0,
+      },
+      issues: [{
+        id: ID,
+        kind: 'ambiguous_effect',
+        severity: 'error',
+        status: 'unknown',
+        automationId: ID,
+        automationName: 'Primeiro atendimento',
+        executionId: ID,
+        leadId: ID,
+        message: 'Resultado externo desconhecido',
+        details: { effectType: 'send_whatsapp' },
+        retryable: false,
+        occurredAt: '2026-07-12T12:00:00Z',
+      }],
     },
   }).success, true)
+})
+
+test('automacao exige audiencia e fuso validos no agendamento', () => {
+  const scheduledFlow = {
+    ...validAutomationFlow,
+    nodes: validAutomationFlow.nodes.map((node) => node.id === 'trigger-1'
+      ? {
+          ...node,
+          config: {
+            trigger_type: 'scheduled',
+            scheduled_at: '2030-01-01T10:00:00-03:00',
+            timezone: 'America/Sao_Paulo',
+            target_type: 'lead',
+            target_lead_id: ID,
+          },
+        }
+      : node),
+  }
+  assert.equal(saveAutomationFlowInputSchema.safeParse({ flowDefinition: scheduledFlow }).success, true)
+  assert.equal(saveAutomationFlowInputSchema.safeParse({
+    flowDefinition: {
+      ...scheduledFlow,
+      nodes: scheduledFlow.nodes.map((node) => node.id === 'trigger-1'
+        ? { ...node, config: { ...node.config, target_lead_id: null } }
+        : node),
+    },
+  }).success, false)
+  assert.equal(saveAutomationFlowInputSchema.safeParse({
+    flowDefinition: {
+      ...scheduledFlow,
+      nodes: scheduledFlow.nodes.map((node) => node.id === 'trigger-1'
+        ? { ...node, config: { ...node.config, timezone: 'Fuso/Inexistente' } }
+        : node),
+    },
+  }).success, false)
+})
+
+test('automacao limita inatividade e espera conforme a unidade', () => {
+  const withInactivity = (value: number, unit: 'hours' | 'days') => ({
+    ...validAutomationFlow,
+    nodes: validAutomationFlow.nodes.map((node) => node.id === 'trigger-1'
+      ? { ...node, config: { trigger_type: 'inactivity', inactivity_value: value, inactivity_unit: unit } }
+      : node),
+  })
+  assert.equal(saveAutomationFlowInputSchema.safeParse({ flowDefinition: withInactivity(8760, 'hours') }).success, true)
+  assert.equal(saveAutomationFlowInputSchema.safeParse({ flowDefinition: withInactivity(8761, 'hours') }).success, false)
+  assert.equal(saveAutomationFlowInputSchema.safeParse({ flowDefinition: withInactivity(365, 'days') }).success, true)
+  assert.equal(saveAutomationFlowInputSchema.safeParse({ flowDefinition: withInactivity(366, 'days') }).success, false)
+
+  const withDelay = (days: number) => ({
+    nodes: [validAutomationFlow.nodes[0], {
+      id: 'delay-1',
+      type: 'delay' as const,
+      position: { x: 120, y: 0 },
+      config: { delay_type: 'days', delay_value: days, stop_on_reply: false },
+    }, validAutomationFlow.nodes[1]],
+    connections: [
+      { source: 'trigger-1', target: 'delay-1' },
+      { source: 'delay-1', target: 'message-1', source_handle: 'no_reply', condition_branch: 'no_reply' },
+    ],
+    settings: {},
+  })
+  assert.equal(saveAutomationFlowInputSchema.safeParse({ flowDefinition: withDelay(30) }).success, true)
+  assert.equal(saveAutomationFlowInputSchema.safeParse({ flowDefinition: withDelay(31) }).success, false)
 })
 
 test('cadencia rejeita dia negativo', () => {
@@ -76,6 +284,37 @@ test('cadencia rejeita dia negativo', () => {
     day_offset: -1,
     type: 'call',
     title: 'Ligar',
+  }).success, false)
+})
+
+test('cadencia le tarefa historica negativa sem liberar escrita negativa', () => {
+  assert.equal(apiCadenceTemplateSchema.safeParse({
+    id: ID,
+    organization_id: ID,
+    pipeline_id: ID,
+    stage_id: ID,
+    stage_key: 'base',
+    name: 'Base',
+    is_active: true,
+    created_at: '2026-07-12T00:00:00Z',
+    tasks: [{
+      id: ID,
+      cadence_template_id: ID,
+      day_offset: -1,
+      title: 'Preparar atendimento',
+      description: null,
+      position: 0,
+      type: 'note',
+      observation: null,
+      recommended_message: null,
+    }],
+  }).success, true)
+
+  assert.equal(createCadenceTaskInputSchema.safeParse({
+    cadence_template_id: ID,
+    day_offset: -1,
+    type: 'note',
+    title: 'Preparar atendimento',
   }).success, false)
 })
 
@@ -160,6 +399,63 @@ test('IA limita temperatura e exige mensagem real', () => {
 test('gamificacao exige motivo ao rejeitar lancamento', () => {
   assert.equal(gamificationDecisionInputSchema.safeParse({ status: 'rejected' }).success, false)
   assert.equal(gamificationDecisionInputSchema.safeParse({ status: 'rejected', reason: 'Duplicado' }).success, true)
+})
+
+test('gamificacao usa catalogo fechado e nao aceita pontos negativos', () => {
+  assert.equal(gamificationActionTypeSchema.safeParse('sale_closed').success, true)
+  assert.equal(gamificationActionTypeSchema.safeParse('evento_inventado').success, false)
+  assert.equal(gamificationRuleInputSchema.safeParse({ points: 0, isActive: true }).success, true)
+  assert.equal(gamificationRuleInputSchema.safeParse({ points: -1, isActive: true }).success, false)
+  assert.equal(gamificationManualEntryInputSchema.safeParse({
+    actionKey: 'call_made',
+    quantity: 100,
+    notes: 'Relatorio anexado',
+  }).success, true)
+  assert.equal(gamificationManualEntryInputSchema.safeParse({
+    actionKey: 'call_made',
+    quantity: 101,
+    notes: '',
+  }).success, false)
+  assert.equal(gamificationMissionInputSchema.safeParse({
+    title: 'Desafio semanal',
+    actionType: 'acao_inexistente',
+    targetCount: 10,
+    bonusPoints: 50,
+    targetScope: 'organization',
+  }).success, false)
+})
+
+test('ranking da gamificacao usa intervalo meio-aberto e acoes canonicas', () => {
+  assert.equal(gamificationRankingQuerySchema.safeParse({
+    from: '2026-07-01T03:00:00.000Z',
+    to: '2026-08-01T03:00:00.000Z',
+    actionTypes: ['call_made', 'message_sent'],
+  }).success, true)
+  assert.equal(gamificationRankingQuerySchema.safeParse({
+    from: '2026-08-01T03:00:00.000Z',
+    to: '2026-07-01T03:00:00.000Z',
+    actionTypes: [],
+  }).success, false)
+  assert.equal(gamificationRankingQuerySchema.safeParse({ actionTypes: ['acao_inventada'] }).success, false)
+  assert.equal(gamificationEventListQuerySchema.safeParse({ limit: 100, cursor: 'cursor-opaco' }).success, true)
+  assert.equal(gamificationEventListQuerySchema.safeParse({ limit: 101 }).success, false)
+})
+
+test('gamificacao aceita ids temporarios apenas no contrato de regras', () => {
+  assert.equal(apiGamificationRuleSchema.safeParse({
+    id: 'default-call_made',
+    actionType: 'call_made',
+    points: 5,
+    isActive: true,
+    isTemp: true,
+  }).success, true)
+  assert.equal(apiGamificationRuleSchema.safeParse({
+    id: 'default-evento_inventado',
+    actionType: 'evento_inventado',
+    points: 5,
+    isActive: true,
+    isTemp: true,
+  }).success, false)
 })
 
 test('admin e dashboard rejeitam referencias inseguras', () => {

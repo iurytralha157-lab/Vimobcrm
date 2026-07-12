@@ -146,6 +146,7 @@ const tenantContextSchema = z.object({
   userRole: z.string(),
   organizationId: uuidSchema.optional(),
   permissions: z.array(z.string()),
+  enabledModules: z.array(z.string()),
   isSuperAdmin: z.boolean(),
 }).passthrough()
 const meResponseSchema = z.object({

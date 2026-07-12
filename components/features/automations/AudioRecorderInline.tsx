@@ -5,10 +5,10 @@ import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { automationsAPI } from "@/lib/api/automations";
+import { automationsAPI, type AutomationMediaFile } from "@/lib/api/automations";
 
 interface AudioRecorderInlineProps {
-  onUploaded: (url: string) => void;
+  onUploaded: (file: AutomationMediaFile) => void;
 }
 
 function getErrorMessage(error: unknown) {
@@ -69,6 +69,7 @@ export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
     duration,
     base64,
     audioBlob,
+    mimeType,
     startRecording,
     stopRecording,
     cancelRecording,
@@ -82,7 +83,7 @@ export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
     try {
       await startRecording();
     } catch {
-      toast.error("Microfone nao disponivel");
+      toast.error("Microfone não disponível");
     }
   };
 
@@ -91,9 +92,17 @@ export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
 
     setIsUploading(true);
     try {
-      const fileName = `${Date.now()}-voice-${Math.random().toString(36).slice(2, 6)}.ogg`;
+      const normalizedMimeType = (audioBlob.type || mimeType || "audio/webm").split(";")[0];
+      const extension = normalizedMimeType === "audio/ogg"
+        ? "ogg"
+        : normalizedMimeType === "audio/mp4"
+          ? "m4a"
+          : normalizedMimeType === "audio/mpeg"
+            ? "mp3"
+            : "webm";
+      const fileName = `${Date.now()}-voice-${Math.random().toString(36).slice(2, 6)}.${extension}`;
       const file = new File([audioBlob], fileName, {
-        type: audioBlob.type || "audio/ogg; codecs=opus",
+        type: audioBlob.type || mimeType || "audio/webm",
       });
       const uploaded = await automationsAPI.uploadMedia(
         {
@@ -105,7 +114,7 @@ export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
       );
 
       queryClient.invalidateQueries({ queryKey: ["automation-media", orgId, "audio"] });
-      onUploaded(uploaded.publicUrl);
+      onUploaded(uploaded);
       clearRecording();
       toast.success("Audio gravado e salvo!");
     } catch (err: unknown) {
@@ -121,8 +130,10 @@ export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
       audioPlayRef.current.pause();
       setIsPlaying(false);
     } else {
-      audioPlayRef.current.play().catch(() => {});
-      setIsPlaying(true);
+      void audioPlayRef.current.play().then(() => setIsPlaying(true)).catch(() => {
+        setIsPlaying(false);
+        toast.error("Não foi possível reproduzir a prévia");
+      });
     }
   };
 
@@ -136,10 +147,10 @@ export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
         <div className="flex-1 overflow-hidden">
           <WaveformBars isActive={true} />
         </div>
-        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={cancelRecording}>
+        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={cancelRecording} aria-label="Cancelar gravação">
           <X className="h-3.5 w-3.5" />
         </Button>
-        <Button variant="default" size="icon" className="h-7 w-7 shrink-0" onClick={stopRecording}>
+        <Button variant="default" size="icon" className="h-7 w-7 shrink-0" onClick={stopRecording} aria-label="Parar gravação">
           <Square className="h-3 w-3 fill-current" />
         </Button>
       </div>
@@ -155,6 +166,7 @@ export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
             size="icon"
             className="h-7 w-7 shrink-0"
             onClick={togglePlayback}
+            aria-label={isPlaying ? 'Pausar prévia' : 'Reproduzir prévia'}
           >
             {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 ml-0.5" />}
           </Button>
@@ -169,6 +181,7 @@ export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
               setIsPlaying(false);
               clearRecording();
             }}
+            aria-label="Descartar gravação"
           >
             <X className="h-3.5 w-3.5" />
           </Button>
@@ -178,6 +191,7 @@ export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
             className="h-7 w-7 shrink-0"
             onClick={handleUpload}
             disabled={isUploading}
+            aria-label="Salvar gravação"
           >
             {isUploading ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -188,7 +202,7 @@ export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
         </div>
         <audio
           ref={audioPlayRef}
-          src={`data:audio/ogg;base64,${base64}`}
+          src={`data:${audioBlob?.type || mimeType || "audio/webm"};base64,${base64}`}
           onEnded={() => setIsPlaying(false)}
           preload="auto"
         />

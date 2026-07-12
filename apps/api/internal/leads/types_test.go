@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
@@ -149,6 +150,37 @@ func TestUpdateRequestRejectsInvalidValues(t *testing.T) {
 		if _, err := request.Validate(); err == nil {
 			t.Fatalf("Validate(%s) expected error", payload)
 		}
+	}
+}
+
+func TestMoveStageRequestValidatesBoardOrderAt(t *testing.T) {
+	boardOrderAt := time.Date(2026, time.July, 12, 15, 30, 0, 0, time.UTC)
+	request := MoveStageRequest{
+		StageID:      "11111111-1111-1111-1111-111111111111",
+		BoardOrderAt: &boardOrderAt,
+	}
+
+	input, err := request.Validate()
+	if err != nil {
+		t.Fatalf("Validate() returned error: %v", err)
+	}
+	if input.BoardOrderAt == nil || !input.BoardOrderAt.Equal(boardOrderAt) {
+		t.Fatalf("Validate() board order = %#v", input.BoardOrderAt)
+	}
+	if input.StageEnteredAt != nil {
+		t.Fatalf("Validate() legacy stage entered at = %#v, want nil", input.StageEnteredAt)
+	}
+}
+
+func TestMoveStageRequestRejectsZeroBoardOrderAt(t *testing.T) {
+	zero := time.Time{}
+	request := MoveStageRequest{
+		StageID:      "11111111-1111-1111-1111-111111111111",
+		BoardOrderAt: &zero,
+	}
+
+	if _, err := request.Validate(); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("Validate() error = %v, want ErrInvalidInput", err)
 	}
 }
 

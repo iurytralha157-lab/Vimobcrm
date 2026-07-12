@@ -17,6 +17,7 @@ type Context struct {
 	OrganizationLogo string   `json:"organizationLogo,omitempty"`
 	MemberRole       string   `json:"memberRole,omitempty"`
 	Permissions      []string `json:"permissions"`
+	EnabledModules   []string `json:"enabledModules"`
 	IsTeamLeader     bool     `json:"isTeamLeader"`
 	LedTeamIDs       []string `json:"ledTeamIds,omitempty"`
 	LedUserIDs       []string `json:"ledUserIds,omitempty"`
@@ -63,6 +64,21 @@ func (ctx Context) HasPermission(permission string) bool {
 	for _, candidate := range ctx.Permissions {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == "*" || candidate == permission {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (ctx Context) HasModule(module string) bool {
+	module = strings.ToLower(strings.TrimSpace(module))
+	if module == "" {
+		return false
+	}
+
+	for _, candidate := range ctx.EnabledModules {
+		if strings.ToLower(strings.TrimSpace(candidate)) == module {
 			return true
 		}
 	}

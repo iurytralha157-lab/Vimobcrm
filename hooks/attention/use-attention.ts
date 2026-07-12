@@ -1,0 +1,185 @@
+'use client'
+
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
+
+import { useAuth } from '@/contexts/AuthContext'
+import {
+  attentionAPI,
+  type AttentionItemStatus,
+  type AttentionScope,
+  type CreateAttentionPolicyInput,
+  type UpdateAttentionPolicyInput,
+  type UpdateAttentionSettingsInput,
+} from '@/lib/api/attention'
+
+const ATTENTION_PAGE_SIZE = 50
+const ATTENTION_REFETCH_INTERVAL_MS = 60_000
+
+function useOrganizationId() {
+  const { organization, profile } = useAuth()
+  return organization?.id || profile?.organization_id || undefined
+}
+
+export function useAttentionItems(scope: AttentionScope, status?: AttentionItemStatus) {
+  const organizationId = useOrganizationId()
+
+  return useInfiniteQuery({
+    queryKey: ['attention', 'items', organizationId, scope, status || 'all'],
+    enabled: Boolean(organizationId),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => attentionAPI.listItems({
+      scope,
+      status,
+      limit: ATTENTION_PAGE_SIZE,
+      cursor: pageParam,
+      organizationId,
+    }),
+    getNextPageParam: (page) => page.nextCursor || undefined,
+    staleTime: 30_000,
+    gcTime: 10 * 60_000,
+    refetchInterval: ATTENTION_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: false,
+  })
+}
+
+export function useAttentionSummary(scope: AttentionScope) {
+  const organizationId = useOrganizationId()
+
+  return useQuery({
+    queryKey: ['attention', 'summary', organizationId, scope],
+    enabled: Boolean(organizationId),
+    queryFn: () => attentionAPI.getSummary(scope, organizationId),
+    staleTime: 30_000,
+    gcTime: 10 * 60_000,
+    refetchInterval: ATTENTION_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: false,
+  })
+}
+
+export function useAttentionPolicies() {
+  const organizationId = useOrganizationId()
+
+  return useQuery({
+    queryKey: ['attention', 'policies', organizationId],
+    enabled: Boolean(organizationId),
+    queryFn: () => attentionAPI.listPolicies(organizationId),
+    staleTime: 60_000,
+    gcTime: 10 * 60_000,
+  })
+}
+
+export function useAttentionSettings() {
+  const organizationId = useOrganizationId()
+
+  return useQuery({
+    queryKey: ['attention', 'settings', organizationId],
+    enabled: Boolean(organizationId),
+    queryFn: () => attentionAPI.getSettings(organizationId),
+    staleTime: 60_000,
+    gcTime: 10 * 60_000,
+  })
+}
+
+function useAttentionMutationInvalidation() {
+  const queryClient = useQueryClient()
+
+  return () => {
+    queryClient.invalidateQueries({ queryKey: ['attention', 'items'] })
+    queryClient.invalidateQueries({ queryKey: ['attention', 'summary'] })
+  }
+}
+
+export function useAcknowledgeAttentionItem() {
+  const organizationId = useOrganizationId()
+  const invalidate = useAttentionMutationInvalidation()
+
+  return useMutation({
+    mutationFn: ({ id, note }: { id: string; note?: string }) => attentionAPI.acknowledgeItem(id, note, organizationId),
+    onSuccess: () => {
+      invalidate()
+      toast.success('Alerta assumido. A equipe agora sabe que voce esta cuidando dele.')
+    },
+    onError: (error: Error) => toast.error(error.message || 'Nao foi possivel assumir o alerta.'),
+  })
+}
+
+export function useSnoozeAttentionItem() {
+  const organizationId = useOrganizationId()
+  const invalidate = useAttentionMutationInvalidation()
+
+  return useMutation({
+    mutationFn: ({ id, minutes, note }: { id: string; minutes: number; note?: string }) => (
+      attentionAPI.snoozeItem(id, minutes, note, organizationId)
+    ),
+    onSuccess: () => {
+      invalidate()
+      toast.success('Alerta adiado pelo periodo selecionado.')
+    },
+    onError: (error: Error) => toast.error(error.message || 'Nao foi possivel adiar o alerta.'),
+  })
+}
+
+export function useResolveAttentionItem() {
+  const organizationId = useOrganizationId()
+  const invalidate = useAttentionMutationInvalidation()
+
+  return useMutation({
+    mutationFn: ({ id, reason, note }: { id: string; reason: string; note?: string }) => (
+      attentionAPI.resolveItem(id, reason, note, organizationId)
+    ),
+    onSuccess: () => {
+      invalidate()
+      toast.success('Alerta resolvido.')
+    },
+    onError: (error: Error) => toast.error(error.message || 'Nao foi possivel resolver o alerta.'),
+  })
+}
+
+export function useCreateAttentionPolicy() {
+  const organizationId = useOrganizationId()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (input: CreateAttentionPolicyInput) => attentionAPI.createPolicy(input, organizationId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attention', 'policies'] })
+      toast.success('Regra criada em modo de observacao.')
+    },
+    onError: (error: Error) => toast.error(error.message || 'Nao foi possivel criar a regra.'),
+  })
+}
+
+export function useUpdateAttentionPolicy() {
+  const organizationId = useOrganizationId()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: UpdateAttentionPolicyInput }) => (
+      attentionAPI.updatePolicy(id, input, organizationId)
+    ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attention', 'policies'] })
+      queryClient.invalidateQueries({ queryKey: ['attention', 'items'] })
+      queryClient.invalidateQueries({ queryKey: ['attention', 'summary'] })
+      toast.success('Regra atualizada. Ciclos existentes mantem a versao original.')
+    },
+    onError: (error: Error) => toast.error(error.message || 'Nao foi possivel atualizar a regra.'),
+  })
+}
+
+export function useUpdateAttentionSettings() {
+  const organizationId = useOrganizationId()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (input: UpdateAttentionSettingsInput) => attentionAPI.updateSettings(input, organizationId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attention', 'settings'] })
+      queryClient.invalidateQueries({ queryKey: ['attention', 'items'] })
+      queryClient.invalidateQueries({ queryKey: ['attention', 'summary'] })
+      toast.success('Configuracoes globais do motor atualizadas.')
+    },
+    onError: (error: Error) => toast.error(error.message || 'Nao foi possivel atualizar a seguranca global.'),
+  })
+}

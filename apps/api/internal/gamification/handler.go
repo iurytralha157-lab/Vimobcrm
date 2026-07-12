@@ -1,9 +1,13 @@
 package gamification
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -30,6 +34,42 @@ func (handler Handler) Overview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[Overview]{Data: overview})
+}
+
+func (handler Handler) Ranking(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := gamificationOrganizationContext(w, r)
+	if !ok {
+		return
+	}
+	query, err := rankingQueryFromRequest(r)
+	if err != nil {
+		writeGamificationError(w, r, err)
+		return
+	}
+	ranking, err := handler.repo.FilteredRanking(r.Context(), tenantContext, query)
+	if err != nil {
+		writeGamificationError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]RankingEntry]{Data: ranking})
+}
+
+func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := gamificationOrganizationContext(w, r)
+	if !ok {
+		return
+	}
+	query, err := eventQueryFromRequest(r)
+	if err != nil {
+		writeGamificationError(w, r, err)
+		return
+	}
+	page, err := handler.repo.EventPage(r.Context(), tenantContext, query)
+	if err != nil {
+		writeGamificationError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[EventPage]{Data: page})
 }
 
 func (handler Handler) AdminSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -183,6 +223,128 @@ func gamificationOrganizationContext(w http.ResponseWriter, r *http.Request) (te
 		return tenant.Context{}, false
 	}
 	return tenantContext, true
+}
+
+func rankingQueryFromRequest(r *http.Request) (RankingQuery, error) {
+	query := RankingQuery{}
+	var err error
+	query.From, err = parseOptionalQueryTime(r, "from")
+	if err != nil {
+		return RankingQuery{}, err
+	}
+	query.To, err = parseOptionalQueryTime(r, "to")
+	if err != nil {
+		return RankingQuery{}, err
+	}
+	if query.From != nil && query.To != nil && !query.From.Before(*query.To) {
+		return RankingQuery{}, ErrInvalidInput
+	}
+
+	seen := map[string]struct{}{}
+	for _, rawValue := range r.URL.Query()["actionType"] {
+		for _, candidate := range strings.Split(rawValue, ",") {
+			actionType := normalizeActionType(candidate)
+			if actionType == "" {
+				return RankingQuery{}, ErrInvalidInput
+			}
+			if _, exists := seen[actionType]; exists {
+				continue
+			}
+			seen[actionType] = struct{}{}
+			query.ActionTypes = append(query.ActionTypes, actionType)
+		}
+	}
+	if len(query.ActionTypes) > len(defaultRules()) {
+		return RankingQuery{}, ErrInvalidInput
+	}
+	return query, nil
+}
+
+type eventCursorPayload struct {
+	OccurredAt string `json:"occurredAt"`
+	ID         string `json:"id"`
+}
+
+func eventQueryFromRequest(r *http.Request) (EventQuery, error) {
+	query := EventQuery{Limit: 30}
+	var err error
+	query.From, err = parseOptionalQueryTime(r, "from")
+	if err != nil {
+		return EventQuery{}, err
+	}
+	query.To, err = parseOptionalQueryTime(r, "to")
+	if err != nil {
+		return EventQuery{}, err
+	}
+	if query.From != nil && query.To != nil && !query.From.Before(*query.To) {
+		return EventQuery{}, ErrInvalidInput
+	}
+
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		query.Limit, err = strconv.Atoi(rawLimit)
+		if err != nil || query.Limit < 1 || query.Limit > 100 {
+			return EventQuery{}, ErrInvalidInput
+		}
+	}
+	query.UserID = strings.TrimSpace(r.URL.Query().Get("userId"))
+	if query.UserID != "" && !isUUIDText(query.UserID) {
+		return EventQuery{}, ErrInvalidInput
+	}
+
+	if rawCursor := strings.TrimSpace(r.URL.Query().Get("cursor")); rawCursor != "" {
+		payload, decodeErr := decodeEventCursor(rawCursor)
+		if decodeErr != nil {
+			return EventQuery{}, decodeErr
+		}
+		query.CursorOccurredAt = &payload.OccurredAt
+		query.CursorID = payload.ID
+	}
+	return query, nil
+}
+
+type decodedEventCursor struct {
+	OccurredAt time.Time
+	ID         string
+}
+
+func encodeEventCursor(occurredAt time.Time, id string) (string, error) {
+	payload, err := json.Marshal(eventCursorPayload{
+		OccurredAt: occurredAt.UTC().Format(time.RFC3339Nano),
+		ID:         id,
+	})
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func decodeEventCursor(value string) (decodedEventCursor, error) {
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(value))
+	if err != nil {
+		return decodedEventCursor{}, ErrInvalidInput
+	}
+	var cursor eventCursorPayload
+	if err := json.Unmarshal(payload, &cursor); err != nil || !isUUIDText(cursor.ID) {
+		return decodedEventCursor{}, ErrInvalidInput
+	}
+	occurredAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(cursor.OccurredAt))
+	if err != nil {
+		return decodedEventCursor{}, ErrInvalidInput
+	}
+	return decodedEventCursor{OccurredAt: occurredAt.UTC(), ID: cursor.ID}, nil
+}
+
+func parseOptionalQueryTime(r *http.Request, name string) (*time.Time, error) {
+	value := strings.TrimSpace(r.URL.Query().Get(name))
+	if value == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return nil, ErrInvalidInput
+	}
+	parsed = parsed.UTC()
+	return &parsed, nil
 }
 
 func decodeGamificationJSON(w http.ResponseWriter, r *http.Request, target any) bool {

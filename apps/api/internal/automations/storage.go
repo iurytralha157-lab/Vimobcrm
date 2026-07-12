@@ -43,18 +43,21 @@ func newStorageClient(config StorageConfig) storageClient {
 	}
 }
 
-func (client storageClient) list(ctx context.Context, bucket string, prefix string, limit int) ([]storageObject, error) {
+func (client storageClient) list(ctx context.Context, bucket string, prefix string, limit int, offset int) ([]storageObject, error) {
 	if client.projectURL == "" || client.apiKey == "" {
 		return nil, ErrAutomationStorageNotConfigured
 	}
 	if limit < 1 || limit > 500 {
 		limit = 100
 	}
+	if offset < 0 || offset > 10000 {
+		offset = 0
+	}
 
 	payload, _ := json.Marshal(map[string]any{
 		"prefix": strings.Trim(prefix, "/"),
 		"limit":  limit,
-		"offset": 0,
+		"offset": offset,
 		"sortBy": map[string]string{
 			"column": "created_at",
 			"order":  "desc",
@@ -170,17 +173,81 @@ func (client storageClient) remove(ctx context.Context, bucket string, objectPat
 	return nil
 }
 
-func (client storageClient) publicURL(bucket string, objectPath string) string {
-	if client.projectURL == "" {
-		return ""
+func (client storageClient) exists(ctx context.Context, bucket string, objectPath string) (bool, error) {
+	if client.projectURL == "" || client.apiKey == "" {
+		return false, ErrAutomationStorageNotConfigured
 	}
-
-	return fmt.Sprintf(
-		"%s/storage/v1/object/public/%s/%s",
+	endpoint := fmt.Sprintf(
+		"%s/storage/v1/object/%s/%s",
 		client.projectURL,
 		url.PathEscape(bucket),
 		escapeStorageObjectPath(objectPath),
 	)
+	request, err := http.NewRequestWithContext(ctx, http.MethodHead, endpoint, nil)
+	if err != nil {
+		return false, err
+	}
+	client.setAuthHeaders(request)
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return false, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return false, storageStatusError("head", response.Status, raw)
+	}
+	return true, nil
+}
+
+func (client storageClient) signedURL(ctx context.Context, bucket string, objectPath string, expiresIn time.Duration) (string, error) {
+	if client.projectURL == "" || client.apiKey == "" {
+		return "", ErrAutomationStorageNotConfigured
+	}
+	seconds := int64(expiresIn / time.Second)
+	if seconds < 60 || seconds > 24*60*60 {
+		seconds = 15 * 60
+	}
+	payload, _ := json.Marshal(map[string]any{"expiresIn": seconds})
+	endpoint := fmt.Sprintf(
+		"%s/storage/v1/object/sign/%s/%s",
+		client.projectURL,
+		url.PathEscape(bucket),
+		escapeStorageObjectPath(objectPath),
+	)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	client.setJSONHeaders(request)
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return "", storageStatusError("sign", response.Status, raw)
+	}
+	var result struct {
+		SignedURL string `json:"signedURL"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(result.SignedURL) == "" {
+		return "", fmt.Errorf("%w: signed storage URL is empty", ErrAutomationStorage)
+	}
+	if strings.HasPrefix(result.SignedURL, "/") {
+		return client.projectURL + result.SignedURL, nil
+	}
+	return result.SignedURL, nil
 }
 
 func (client storageClient) setJSONHeaders(request *http.Request) {

@@ -8,7 +8,7 @@ import {
   LayoutDashboard, Kanban, Building2, Shuffle,
   ChevronLeft, ChevronRight, Users, MessageSquare, Calendar, DollarSign,
   FileText, Receipt, TrendingUp, BarChart3, Zap, MapPin,
-  Globe, Trophy, CreditCard, Tags, Activity, History, Megaphone, Settings, Plug, Bot
+  Globe, Trophy, CreditCard, Tags, Activity, History, Megaphone, Settings, Plug, Bot, BellRing
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -74,6 +74,11 @@ const allNavItems: NavItem[] = [
     icon: Kanban,
     labelKey: 'pipelines',
     path: '/crm/pipelines',
+    module: 'crm'
+  }, {
+    icon: BellRing,
+    labelKey: 'attentionCenter',
+    path: '/attention',
     module: 'crm'
   }, {
     icon: MessageSquare, // Substituído o WhatsAppIcon pelo padrão

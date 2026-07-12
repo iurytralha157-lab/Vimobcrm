@@ -31,6 +31,10 @@ func newFunctionsClient(config FunctionsConfig) functionsClient {
 	}
 }
 
+func (client functionsClient) isConfigured() bool {
+	return client.projectURL != "" && client.apiKey != ""
+}
+
 func (client functionsClient) invoke(ctx context.Context, functionName string, body map[string]any) error {
 	if client.projectURL == "" || client.apiKey == "" {
 		return fmt.Errorf("supabase functions are not configured")

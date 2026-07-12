@@ -374,7 +374,7 @@ func (repo Repository) listPipelineBoardLeads(ctx context.Context, tenantContext
 			`+pipelineBoardLeadSelectFields()+`
 		from public.leads l
 		where `+strings.Join(where, " and ")+`
-		order by coalesce(l.last_entry_at, l.stage_entered_at, l.updated_at, l.created_at) desc, l.id desc
+		order by coalesce(l.board_order_at, l.stage_entered_at, l.created_at) desc, l.id desc
 		limit $`+fmt.Sprint(limitIndex)+`
 		offset $`+fmt.Sprint(offsetIndex)+`
 	`, args...)
@@ -437,7 +437,7 @@ func (repo Repository) listPipelineBoardLeadsByStage(ctx context.Context, tenant
 				count(*) over(partition by l.stage_id) as stage_total_count,
 				row_number() over(
 					partition by l.stage_id
-					order by coalesce(l.last_entry_at, l.stage_entered_at, l.updated_at, l.created_at) desc, l.id desc
+					order by coalesce(l.board_order_at, l.stage_entered_at, l.created_at) desc, l.id desc
 				) as stage_rank,
 				`+pipelineBoardLeadSelectFields()+`
 			from public.leads l
@@ -633,6 +633,7 @@ func pipelineBoardLeadSelectFields() string {
 		l.pipeline_id::text,
 		l.message,
 		l.stage_entered_at,
+		l.board_order_at,
 		l.organization_id::text,
 		l.last_entry_at,
 		l.reentry_count,
@@ -663,6 +664,7 @@ func pipelineBoardLeadColumnFields() string {
 		pipeline_id,
 		message,
 		stage_entered_at,
+		board_order_at,
 		organization_id,
 		last_entry_at,
 		reentry_count,
@@ -683,7 +685,7 @@ func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int6
 	var lead PipelineBoardLead
 	var total int64
 	var phone, email, stageID, assignedUserID, pipelineID, message, organizationID pgtype.Text
-	var lastEntryAt, stageEnteredAt, wonAt, lostAt, firstResponseAt pgtype.Timestamptz
+	var lastEntryAt, stageEnteredAt, boardOrderAt, wonAt, lostAt, firstResponseAt pgtype.Timestamptz
 	var whatsappAvatarURL, propertyID, lostReason, interestPropertyID pgtype.Text
 	var interestValue pgtype.Float8
 	var firstResponseSeconds pgtype.Int4
@@ -702,6 +704,7 @@ func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int6
 		&pipelineID,
 		&message,
 		&stageEnteredAt,
+		&boardOrderAt,
 		&organizationID,
 		&lastEntryAt,
 		&lead.ReentryCount,
@@ -732,6 +735,7 @@ func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int6
 	lead.Message = pipelineTextPtr(message)
 	lead.OrganizationID = textValue(organizationID)
 	lead.StageEnteredAt = pipelineTimePtr(stageEnteredAt)
+	lead.BoardOrderAt = pipelineTimePtr(boardOrderAt)
 	lead.LastEntryAt = pipelineTimePtr(lastEntryAt)
 	lead.WhatsAppAvatarURL = pipelineTextPtr(whatsappAvatarURL)
 	lead.PropertyID = pipelineTextPtr(propertyID)

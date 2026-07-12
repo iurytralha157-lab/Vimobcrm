@@ -4,6 +4,7 @@ import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { useUserAccessScope } from '@/hooks/use-user-access-scope';
 import { settingsAPI } from '@/lib/api/settings';
+import { canUseFinancialModule } from '@/lib/financial-access';
 
 export type SetupStepId =
   | 'dashboard'
@@ -16,13 +17,15 @@ export type SetupStepId =
   | 'profile'
   | 'whatsapp'
   | 'team'
+  | 'teams'
   | 'distribution'
   | 'integrations_meta'
-  | 'integrations_google'
   | 'properties'
   | 'automations'
   | 'gamification'
-  | 'site';
+  | 'site'
+  | 'financial'
+  | 'ai';
 
 export interface SetupStep {
   id: SetupStepId;
@@ -66,8 +69,8 @@ export function useSetupGuide() {
     organization,
     userOrganizations = [],
   } = useAuth();
-  const { hasPermission } = useUserPermissions();
-  const { hasModule } = useOrganizationModules();
+  const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
+  const { hasModule, isLoading: modulesLoading } = useOrganizationModules();
   const accessScope = useUserAccessScope();
 
   const [progress, setProgress] = useState<Record<string, boolean>>({});
@@ -76,6 +79,13 @@ export function useSetupGuide() {
   const [open, setOpen] = useState(false);
   const userId = user?.id;
   const organizationId = organization?.id || profile?.organization_id;
+  const loginSessionId = user?.last_sign_in_at || user?.created_at || 'current';
+  const sessionShownKey = userId && organizationId
+    ? `${SESSION_SHOWN_KEY}:${userId}:${organizationId}:${loginSessionId}`
+    : null;
+  const activeStepStorageKey = userId && organizationId
+    ? `${SETUP_GUIDE_ACTIVE_STEP_PREFIX}${userId}:${organizationId}`
+    : null;
   const isNewUser = !!user?.created_at && new Date(user.created_at) >= GUIDE_CUTOFF_DATE;
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -95,8 +105,16 @@ export function useSetupGuide() {
   const canManagePipelines = isAdmin || hasPermission('settings_pipelines');
   const canExportLeads = isAdmin || hasPermission('lead_export') || hasPermission('lead_view_all');
   const canUseAutomations = hasModule('automations') && hasPermission('automations_view');
+  const canAccessFinancial =
+    isAdmin &&
+    hasModule('financial') &&
+    canUseFinancialModule({
+      id: organizationId,
+      name: organization?.name || userOrganizations.find((org) => org.organization_id === organizationId)?.organization_name,
+    });
+  const canManageAI = isAdmin && hasModule('ai_agent');
 
-  const steps = useMemo<SetupStep[]>(() => {
+  const resolvedSteps = useMemo<SetupStep[]>(() => {
     const contactsChecklist = [
       'Buscar contatos por nome, telefone ou e-mail.',
       'Usar filtros para separar leads em aberto, ganhos, perdidos e responsáveis.',
@@ -144,47 +162,47 @@ export function useSetupGuide() {
       {
         id: 'first_lead',
         title: 'Criar primeiro lead',
-        subtitle: 'Base inicial para testar o CRM',
-        description: 'Cadastre um lead manual para conseguir testar card, historico, pipeline, agenda e atendimento.',
+        subtitle: 'Cadastre, organize e abra o card completo',
+        description: 'Crie um lead manual e conheça o fluxo atual de dados básicos, perfil e gestão antes de iniciar o atendimento.',
         route: '/crm/contacts',
         ctaLabel: 'Criar lead',
         section: 'Primeiros passos',
         badge: 'Lead',
-        audience: 'Usuarios com CRM',
+        audience: 'Usuários com CRM',
         details: [
-          'O primeiro lead ajuda a validar a rotina basica antes da entrada automatica por Meta ou WhatsApp.',
-          'Depois de criado, ele aparece na base de contatos e pode ser movimentado pela pipeline.',
-          'O card do lead concentra historico, mensagens, dados, anexos, agenda e feedback.',
+          'O cadastro é dividido em Básico, Perfil e Gestão para separar contato, interesse e destino comercial.',
+          'Depois de criado, o lead aparece em Contatos e na etapa escolhida da Pipeline.',
+          'O card completo reúne dados, status, imóvel, documentos, agenda, cadência, feedback e histórico.',
         ],
         checklist: [
-          'Abrir contatos e clicar em novo lead.',
-          'Preencher nome e pelo menos um contato.',
-          'Abrir o lead na pipeline para revisar o card completo.',
+          'Abrir Contatos e clicar em Novo lead.',
+          'Preencher nome, telefone ou e-mail e avançar pelas três abas.',
+          'Definir responsável, pipeline e etapa; depois abrir o card na Pipeline.',
         ],
         tourTarget: 'contacts-new',
         visible: hasModule('crm'),
       },
       {
         id: 'first_property',
-        title: 'Cadastrar primeiro imovel',
+        title: 'Cadastrar primeiro imóvel',
         subtitle: 'Carteira usada no atendimento',
-        description: 'Cadastre um imovel com responsavel, proprietario, dados principais, localizacao, valores e midias.',
+        description: 'Cadastre um imóvel seguindo as etapas atuais de proprietário, estrutura, localização, valores, mídia e publicação.',
         route: '/properties/new',
-        ctaLabel: 'Cadastrar imovel',
-        section: 'ImÃ³veis',
-        badge: 'Imovel',
-        audience: isAdmin ? 'Administradores e usuarios com modulo' : 'Usuarios com modulo de imoveis',
+        ctaLabel: 'Cadastrar imóvel',
+        section: 'Imóveis',
+        badge: 'Imóvel',
+        audience: isAdmin ? 'Administradores e usuários com módulo' : 'Usuários com módulo de imóveis',
         details: [
-          'O cadastro de imovel alimenta a carteira usada pela equipe e pelo site quando o modulo estiver liberado.',
+          'O cadastro de imóvel alimenta a carteira usada pela equipe e pelo site quando o módulo estiver liberado.',
           isAdmin
-            ? 'Administradores podem revisar imoveis de toda a organizacao.'
-            : 'Usuarios comuns trabalham principalmente com imoveis sob seu proprio acesso.',
-          'Quanto melhor o cadastro, mais facil fica vincular o interesse do lead ao imovel certo.',
+            ? 'Administradores podem revisar imóveis de toda a organização.'
+            : 'Usuários comuns trabalham principalmente com imóveis sob o próprio acesso.',
+          'Quanto melhor o cadastro, mais fácil fica vincular o interesse do lead ao imóvel certo.',
         ],
         checklist: [
-          'Definir responsavel e dados do proprietario.',
-          'Preencher tipo, modalidade, localizacao e valores.',
-          'Adicionar fotos, descricao e publicar quando o plano permitir.',
+          'Definir responsável e dados do proprietário.',
+          'Preencher tipo, modalidade, localização e valores.',
+          'Adicionar fotos, descrição e publicar quando o plano permitir.',
         ],
         tourTarget: 'property-form',
         visible: hasModule('properties'),
@@ -253,9 +271,10 @@ export function useSetupGuide() {
           'As mensagens precisam respeitar a conexão do WhatsApp liberada para o usuário e para a organização.',
         ],
         checklist: [
+          'Concluir a conexão do WhatsApp antes de abrir esta etapa.',
           'Abrir a lista de conversas e conferir mensagens recentes.',
           'Entrar em uma conversa e identificar se existe lead vinculado.',
-          'Usar a conversa para continuar o atendimento com contexto do CRM.',
+          'Usar busca e filtros para localizar conversas, grupos e arquivadas.',
         ],
         tourTarget: 'conversations-overview',
         visible: hasModule('whatsapp'),
@@ -273,12 +292,12 @@ export function useSetupGuide() {
         details: [
           'A agenda organiza visitas, reuniões e retornos com leads.',
           'Os filtros ajudam a enxergar compromissos por usuário, data e tipo de atividade.',
-          'Quando o Google Agenda estiver conectado, a rotina pode ficar sincronizada com a conta autorizada.',
+          'Os compromissos ficam ligados ao responsável, lead e imóvel quando essas relações forem informadas.',
         ],
         checklist: [
           'Usar os filtros para encontrar compromissos do dia ou do período.',
           'Criar um agendamento a partir da agenda ou do card do lead.',
-          'Conectar o Google Agenda quando quiser sincronizar compromissos externos.',
+          'Revisar responsável, visibilidade, recorrência e vínculos antes de salvar.',
         ],
         tourTarget: 'agenda-overview',
         visible: hasModule('agenda'),
@@ -331,26 +350,49 @@ export function useSetupGuide() {
       },
       {
         id: 'team',
-        title: 'Equipe e usuários',
-        subtitle: 'Adicionar pessoas e definir acesso',
-        description: 'Configure quem participa da operação e quais permissões cada pessoa recebe.',
+        title: 'Usuários e acessos',
+        subtitle: 'Convites, perfis, funções e status',
+        description: 'Convide pessoas e controle o papel, a função e o status de cada acesso da organização.',
         route: '/settings?tab=team',
         ctaLabel: 'Gerenciar equipe',
         section: 'Gestão',
         badge: 'Admin',
         audience: 'Administradores',
         details: [
-          'Administradores podem adicionar usuários, revisar dados e organizar papéis de acesso.',
-          'Usuários comuns não veem essa etapa porque não podem cadastrar ou gerenciar outros usuários.',
-          'Permissões corretas evitam vazamento de dados e impedem que alguém veja conversas ou leads que não deveria.',
+          'Novos usuários entram por convite e concluem o próprio acesso com segurança.',
+          'Administradores podem alterar o perfil entre usuário e administrador, aplicar funções personalizadas e desativar acessos.',
+          'Permissões corretas evitam que alguém veja conversas, leads ou integrações fora do próprio acesso.',
         ],
         checklist: [
-          'Adicionar usuários da organização.',
-          'Definir perfil e permissões de cada pessoa.',
-          'Revisar quem pode ver todos os leads, exportar dados e gerenciar integrações.',
+          'Enviar um convite com nome, e-mail, telefone e perfil inicial.',
+          'Definir administrador, usuário ou função personalizada conforme a responsabilidade.',
+          'Desativar ou excluir acessos somente depois de revisar leads e imóveis vinculados.',
         ],
         tourTarget: 'team-add-user',
         visible: canManageTeam,
+      },
+      {
+        id: 'teams',
+        title: 'Gestão de equipes',
+        subtitle: 'Líderes, membros e disponibilidade',
+        description: 'Organize as pessoas em equipes e defina a disponibilidade usada na distribuição de leads.',
+        route: '/crm/management?tab=teams',
+        ctaLabel: 'Abrir equipes',
+        section: 'Gestão',
+        badge: 'Equipe',
+        audience: isAdmin ? 'Administradores' : 'Líderes de equipe',
+        details: [
+          'Administradores enxergam todas as equipes; líderes enxergam somente as equipes que lideram.',
+          'Cada equipe possui membros, líderes e disponibilidade própria por usuário.',
+          'A disponibilidade é consultada por equipe e pode mudar entre equipes para a mesma pessoa.',
+        ],
+        checklist: [
+          'Criar ou abrir uma equipe e revisar seus membros.',
+          'Definir os líderes responsáveis pelo acompanhamento.',
+          'Abrir a disponibilidade de cada membro e conferir dias e horários.',
+        ],
+        tourTarget: 'management-teams',
+        visible: canAccessManagement && hasModule('crm'),
       },
       {
         id: 'distribution',
@@ -397,29 +439,6 @@ export function useSetupGuide() {
         ],
         tourTarget: 'meta-integration',
         visible: isAdmin && hasModule('campaigns'),
-      },
-      {
-        id: 'integrations_google',
-        title: 'Google Agenda',
-        subtitle: 'Sincronizar compromissos',
-        description: 'Conecte o Google Agenda para manter compromissos alinhados com o CRM.',
-        route: '/settings?tab=integrations',
-        ctaLabel: 'Conectar Google',
-        section: 'Integrações',
-        badge: 'Google',
-        audience: 'Usuários com agenda liberada',
-        details: [
-          'A integração com Google Agenda ajuda a sincronizar visitas, reuniões e compromissos importantes.',
-          'A conexão é feita pela conta Google autorizada pelo usuário.',
-          'Depois de conectar, os agendamentos ficam mais fáceis de acompanhar fora e dentro do CRM.',
-        ],
-        checklist: [
-          'Abrir Configurações e entrar em Integrações.',
-          'Conectar Google Agenda com a conta correta.',
-          'Criar um compromisso de teste e conferir se a rotina ficou sincronizada.',
-        ],
-        tourTarget: 'google-calendar-integration',
-        visible: hasModule('agenda'),
       },
       {
         id: 'properties',
@@ -489,6 +508,52 @@ export function useSetupGuide() {
         visible: hasModule('gamification'),
       },
       {
+        id: 'financial',
+        title: 'Financeiro',
+        subtitle: 'Receitas, despesas, contratos e comissões',
+        description: 'Entenda os indicadores financeiros e onde acompanhar a operação comercial depois do fechamento.',
+        route: '/financeiro',
+        ctaLabel: 'Abrir financeiro',
+        section: 'Financeiro',
+        badge: 'Admin',
+        audience: 'Administradores com módulo financeiro',
+        details: [
+          'O painel financeiro reúne VGV, receitas, despesas, valores vencidos e projeções da organização.',
+          'Contas, contratos, comissões, relatórios e DRE ficam separados para facilitar a conferência da operação.',
+          'Esta etapa só aparece para organizações e administradores com acesso financeiro liberado.',
+        ],
+        checklist: [
+          'Conferir os indicadores principais do período.',
+          'Revisar contas a receber, contas a pagar e vencimentos.',
+          'Conhecer os fluxos de contratos, comissões e relatórios antes de cadastrar dados reais.',
+        ],
+        tourTarget: 'financial-overview',
+        visible: canAccessFinancial,
+      },
+      {
+        id: 'ai',
+        title: 'Atendimento com IA',
+        subtitle: 'Conexões, agentes, roteamento e testes',
+        description: 'Configure com segurança quais conexões podem ser atendidas pela IA e como cada agente deve atuar.',
+        route: '/settings?tab=ai',
+        ctaLabel: 'Configurar IA',
+        section: 'Avançado',
+        badge: 'Admin',
+        audience: 'Administradores com IA liberada',
+        details: [
+          'A central de IA mostra métricas, conexões autorizadas, agentes, regras de roteamento, testes e logs.',
+          'Somente conexões explicitamente liberadas podem ser visualizadas e atendidas pelos agentes.',
+          'As regras determinam quando a triagem responde, quando ocorre handoff e qual agente recebe cada conversa.',
+        ],
+        checklist: [
+          'Selecionar as conexões que a IA pode atender.',
+          'Revisar o agente de triagem e os especialistas disponíveis.',
+          'Testar o roteamento antes de ativar respostas reais.',
+        ],
+        tourTarget: 'ai-overview',
+        visible: canManageAI,
+      },
+      {
         id: 'site',
         title: 'Site imobiliário',
         subtitle: 'Publicação e vitrine de imóveis',
@@ -513,16 +578,46 @@ export function useSetupGuide() {
       },
     ];
 
-    return allSteps.filter((step) => step.visible);
+    const stepOrder: SetupStepId[] = [
+      'dashboard',
+      'first_lead',
+      'first_property',
+      'pipeline',
+      'contacts',
+      'whatsapp',
+      'conversations',
+      'agenda',
+      'profile',
+      'team',
+      'teams',
+      'distribution',
+      'integrations_meta',
+      'properties',
+      'automations',
+      'gamification',
+      'financial',
+      'ai',
+      'site',
+    ];
+
+    return allSteps
+      .filter((step) => step.visible)
+      .sort((left, right) => stepOrder.indexOf(left.id) - stepOrder.indexOf(right.id));
   }, [
     canAccessManagement,
+    canAccessFinancial,
     canExportLeads,
+    canManageAI,
     canManagePipelines,
     canManageTeam,
     canUseAutomations,
     hasModule,
     isAdmin,
   ]);
+
+  const accessLoading = permissionsLoading || modulesLoading || accessScope.isLoading;
+  const steps = resolvedSteps;
+  const guideReady = loaded && !accessLoading;
 
   /* eslint-disable react-hooks/set-state-in-effect -- Hydrates setup-guide state from DB with metadata fallback. */
   useEffect(() => {
@@ -580,21 +675,21 @@ export function useSetupGuide() {
   );
 
   useEffect(() => {
-    if (!userId || !profile || !loaded) return;
-    if (!isNewUser) return;
+    if (!userId || !profile || !guideReady) return;
     if (skipped) return;
 
-    const shownThisSession = sessionStorage.getItem(SESSION_SHOWN_KEY) === 'true';
+    if (!sessionShownKey) return;
+    const shownThisSession = sessionStorage.getItem(sessionShownKey) === 'true';
     const allDone = steps.length > 0 && steps.every((s) => progress[s.id]);
 
     if (!shownThisSession && !allDone) {
       const timer = setTimeout(() => {
         setOpen(true);
-        sessionStorage.setItem(SESSION_SHOWN_KEY, 'true');
+        sessionStorage.setItem(sessionShownKey, 'true');
       }, 1200);
       return () => clearTimeout(timer);
     }
-  }, [userId, profile, loaded, isNewUser, skipped, steps, progress]);
+  }, [userId, profile, guideReady, skipped, steps, progress, sessionShownKey]);
 
   useEffect(() => {
     const handler = () => setOpen(true);
@@ -611,16 +706,16 @@ export function useSetupGuide() {
         return next;
       });
       try {
-        const active = localStorage.getItem(SETUP_GUIDE_ACTIVE_STEP_PREFIX + userId);
+        const active = activeStepStorageKey ? localStorage.getItem(activeStepStorageKey) : null;
         if (active === id) {
-          localStorage.removeItem(SETUP_GUIDE_ACTIVE_STEP_PREFIX + userId);
+          localStorage.removeItem(activeStepStorageKey!);
           window.dispatchEvent(new CustomEvent(SETUP_GUIDE_STEP_EVENT, { detail: null }));
         }
       } catch {
         // ignore
       }
     },
-    [userId, persist],
+    [activeStepStorageKey, userId, persist],
   );
 
   useEffect(() => {
@@ -628,6 +723,7 @@ export function useSetupGuide() {
       const id = (event as CustomEvent<SetupStepId | null>).detail;
       if (!id) return;
       markComplete(id);
+      window.setTimeout(() => setOpen(true), 80);
     };
 
     window.addEventListener(SETUP_GUIDE_COMPLETE_EVENT, handler);
@@ -667,36 +763,36 @@ export function useSetupGuide() {
     setSkipped(false);
     persist({ completed_steps: {}, skipped: false });
     try {
-      localStorage.removeItem(SETUP_GUIDE_ACTIVE_STEP_PREFIX + userId);
+      if (activeStepStorageKey) localStorage.removeItem(activeStepStorageKey);
       window.dispatchEvent(new CustomEvent(SETUP_GUIDE_STEP_EVENT, { detail: null }));
     } catch {
       // ignore
     }
-    sessionStorage.removeItem(SESSION_SHOWN_KEY);
-  }, [userId, persist]);
+    if (sessionShownKey) sessionStorage.removeItem(sessionShownKey);
+  }, [activeStepStorageKey, userId, persist, sessionShownKey]);
 
   const setActiveStepId = useCallback(
     (id: string | null) => {
       if (!userId) return;
       try {
-        if (id) {
-          localStorage.setItem(SETUP_GUIDE_ACTIVE_STEP_PREFIX + userId, id);
+        if (id && activeStepStorageKey) {
+          localStorage.setItem(activeStepStorageKey, id);
         } else {
-          localStorage.removeItem(SETUP_GUIDE_ACTIVE_STEP_PREFIX + userId);
+          if (activeStepStorageKey) localStorage.removeItem(activeStepStorageKey);
         }
         window.dispatchEvent(new CustomEvent(SETUP_GUIDE_STEP_EVENT, { detail: id }));
       } catch {
         // ignore
       }
     },
-    [userId],
+    [activeStepStorageKey, userId],
   );
 
   const activeStepId = (() => {
     if (!userId) return null;
     try {
       const fromMeta = user?.user_metadata?.setup_active_step;
-      const fromLS = localStorage.getItem(SETUP_GUIDE_ACTIVE_STEP_PREFIX + userId);
+      const fromLS = activeStepStorageKey ? localStorage.getItem(activeStepStorageKey) : null;
       return fromMeta || fromLS || null;
     } catch {
       return user?.user_metadata?.setup_active_step || null;
@@ -724,5 +820,6 @@ export function useSetupGuide() {
     setActiveStepId,
     isNewUser,
     skipped,
+    guideReady,
   };
 }

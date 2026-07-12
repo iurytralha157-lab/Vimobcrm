@@ -120,6 +120,10 @@ func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrga
 	if err != nil {
 		return Context{}, fmt.Errorf("%w: %v", ErrTenantResolutionUnhealthy, err)
 	}
+	resolved.EnabledModules, err = repo.getEnabledModules(ctx, organizationID)
+	if err != nil {
+		return Context{}, fmt.Errorf("%w: %v", ErrTenantResolutionUnhealthy, err)
+	}
 	resolved, err = repo.applyTeamLeadershipScope(ctx, resolved)
 	if err != nil {
 		return Context{}, err
@@ -202,6 +206,7 @@ func cloneContext(source Context) Context {
 	clone := source
 	// The API contract requires an array even when the role has no explicit permissions.
 	clone.Permissions = append([]string{}, source.Permissions...)
+	clone.EnabledModules = append([]string{}, source.EnabledModules...)
 	if source.LedTeamIDs != nil {
 		clone.LedTeamIDs = append([]string(nil), source.LedTeamIDs...)
 	}
@@ -239,11 +244,12 @@ func (repo Repository) getUserProfile(ctx context.Context, userID string) (userP
 
 func (repo Repository) resolveSuperAdmin(ctx context.Context, profile userProfile, organizationID string) (Context, error) {
 	resolved := Context{
-		UserID:       profile.ID,
-		UserRole:     profile.Role,
-		MemberRole:   "super_admin",
-		Permissions:  []string{"*"},
-		IsSuperAdmin: true,
+		UserID:         profile.ID,
+		UserRole:       profile.Role,
+		MemberRole:     "super_admin",
+		Permissions:    []string{"*"},
+		EnabledModules: []string{},
+		IsSuperAdmin:   true,
 	}
 
 	if organizationID == "" {
@@ -258,8 +264,43 @@ func (repo Repository) resolveSuperAdmin(ctx context.Context, profile userProfil
 	resolved.OrganizationID = org.ID
 	resolved.OrganizationName = org.Name
 	resolved.OrganizationLogo = org.LogoURL
+	resolved.EnabledModules, err = repo.getEnabledModules(ctx, organizationID)
+	if err != nil {
+		return Context{}, fmt.Errorf("%w: %v", ErrTenantResolutionUnhealthy, err)
+	}
 
 	return resolved, nil
+}
+
+func (repo Repository) getEnabledModules(ctx context.Context, organizationID string) ([]string, error) {
+	rows, err := repo.db.Pool().Query(ctx, `
+		select lower(trim(module_name))
+		from public.organization_modules
+		where organization_id = $1::uuid
+		  and coalesce(is_enabled, false) = true
+		order by lower(trim(module_name))
+	`, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	modules := []string{}
+	for rows.Next() {
+		var module string
+		if err := rows.Scan(&module); err != nil {
+			return nil, err
+		}
+		module = strings.TrimSpace(module)
+		if module != "" {
+			modules = appendUniqueString(modules, module)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return modules, nil
 }
 
 type organization struct {

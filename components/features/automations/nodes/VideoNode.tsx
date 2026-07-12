@@ -3,7 +3,8 @@ import { Handle, Position, NodeProps } from 'reactflow';
 import { Video } from 'lucide-react';
 
 export const VideoNode = memo(({ data, selected }: NodeProps) => {
-  const url = data.video_url || '';
+  const url = data.video_preview_url || data.video_url || '';
+  const isConfigured = Boolean(data.media_path || url);
 
   return (
     <div className={`automation-node px-4 py-3 rounded-xl min-w-[220px] max-w-[280px] ${
@@ -17,7 +18,7 @@ export const VideoNode = memo(({ data, selected }: NodeProps) => {
         <div>
           <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wider">Vídeo</span>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {url ? 'Vídeo configurado' : 'Clique para configurar...'}
+            {isConfigured ? 'Vídeo configurado' : 'Clique para configurar...'}
           </p>
         </div>
       </div>

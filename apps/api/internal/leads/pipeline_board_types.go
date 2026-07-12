@@ -68,6 +68,7 @@ type PipelineBoardLead struct {
 	PipelineID                *string                 `json:"pipeline_id"`
 	Message                   *string                 `json:"message"`
 	StageEnteredAt            *time.Time              `json:"stage_entered_at"`
+	BoardOrderAt              *time.Time              `json:"board_order_at"`
 	OrganizationID            string                  `json:"organization_id"`
 	LastEntryAt               *time.Time              `json:"last_entry_at"`
 	ReentryCount              int                     `json:"reentry_count"`

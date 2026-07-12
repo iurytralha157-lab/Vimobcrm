@@ -523,7 +523,7 @@ func (repo Repository) GetDashboardTeamLeadIDs(ctx context.Context, tenantContex
 }
 
 func (repo Repository) countDashboardProperties(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (int64, error) {
-	where, args, err := buildDashboardPropertyWhere(tenantContext, filter, true)
+	where, args, err := buildDashboardPropertyWhere(tenantContext, filter, false)
 	if err != nil {
 		return 0, err
 	}
@@ -1060,7 +1060,7 @@ func buildDashboardPropertyWhere(tenantContext tenant.Context, filter DashboardF
 		}
 		args = append(args, userID)
 		index := len(args)
-		where = append(where, fmt.Sprintf("(p.responsible_user_id = $%d::uuid or p.created_by = $%d::uuid)", index, index))
+		where = append(where, fmt.Sprintf("p.responsible_user_id = $%d::uuid", index))
 	}
 	if filter.TeamID != "" && filter.TeamID != "all" {
 		teamID, ok := normalizeUUID(filter.TeamID)

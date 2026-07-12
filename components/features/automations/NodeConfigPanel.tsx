@@ -8,7 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Trash2, Play, MessageSquare, Timer, Image, Headphones, Video,
-  GitBranch, Webhook, Tag, ArrowRightLeft, UserCheck, X, Save, GripHorizontal,
+  GitBranch, Webhook, Tag, ArrowRightLeft, UserCheck, X, GripHorizontal,
   Home, CircleDot,
 } from 'lucide-react';
 import { TriggerType } from '@/hooks/use-automations';
@@ -19,13 +19,15 @@ import { AutomationMediaGallery } from './AutomationMediaGallery';
 import { AudioRecorderInline } from './AudioRecorderInline';
 import { PropertyPickerDialog } from '@/components/features/properties/PropertyPickerDialog';
 import { Plus } from 'lucide-react';
+import { useLeads } from '@/hooks/use-leads';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
 
 interface NodeConfigPanelProps {
   selectedNode: Node;
   onClose: () => void;
   onNodeDataChange: (nodeId: string, data: Record<string, unknown>) => void;
   onDeleteNode: (nodeId: string) => void;
-  onSaveNode?: () => void;
+  canDeleteNode?: boolean;
   triggerType?: TriggerType;
   setTriggerType?: (t: TriggerType) => void;
   tags?: Array<{ id: string; name: string; color?: string | null }>;
@@ -64,6 +66,25 @@ const NODE_TITLES: Record<string, { icon: React.ComponentType<{ className?: stri
   deal_status: { icon: CircleDot, label: 'Status', color: 'text-pink-600 dark:text-pink-400' },
 };
 
+function toLocalDateTimeInput(value: unknown) {
+  if (typeof value !== 'string' || !value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function localDateTimeToISOWithOffset(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const offsetMinutes = -date.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? '+' : '-';
+  const absoluteOffset = Math.abs(offsetMinutes);
+  const hours = String(Math.floor(absoluteOffset / 60)).padStart(2, '0');
+  const minutes = String(absoluteOffset % 60).padStart(2, '0');
+  return `${value.length === 16 ? `${value}:00` : value}${sign}${hours}:${minutes}`;
+}
+
 function MetaFormSelector({ value, onChange }: { value: string | undefined; onChange: (id: string | null) => void }) {
   const { data: formConfigs, isLoading } = useAllMetaFormConfigs();
 
@@ -88,7 +109,7 @@ function MetaFormSelector({ value, onChange }: { value: string | undefined; onCh
 }
 
 export function NodeConfigPanel({
-  selectedNode, onClose, onNodeDataChange, onDeleteNode, onSaveNode,
+  selectedNode, onClose, onNodeDataChange, onDeleteNode, canDeleteNode = true,
   tags, tagId, setTagId, setTriggerType,
   pipelines, pipelineId, setPipelineId, stages, stageId, setStageId,
   position,
@@ -97,10 +118,18 @@ export function NodeConfigPanel({
   properties,
 }: NodeConfigPanelProps) {
   const nodeInfo = NODE_TITLES[selectedNode.type || ''] || { icon: Play, label: 'Nó', color: 'text-foreground' };
+  const isUnsupportedCrmAction = selectedNode.type === 'move_stage'
+    || selectedNode.type === 'assign_user'
+    || selectedNode.type === 'property_interest'
+    || selectedNode.type === 'deal_status';
   const Icon = nodeInfo.icon;
   const createTag = useCreateTag();
   const [newTagName, setNewTagName] = useState('');
   const [isCreatingTag, setIsCreatingTag] = useState(false);
+  const [leadSearch, setLeadSearch] = useState('');
+  const [minimumScheduledAt] = useState(() => toLocalDateTimeInput(new Date(Date.now() + 60_000).toISOString()));
+  const debouncedLeadSearch = useDebouncedValue(leadSearch.trim(), 300);
+  const { data: scheduledLeads = [], isLoading: scheduledLeadsLoading } = useLeads({ search: debouncedLeadSearch, limit: 10 });
 
   // Dragging logic
   const panelRef = useRef<HTMLDivElement>(null);
@@ -150,7 +179,7 @@ export function NodeConfigPanel({
           <Icon className={`h-4 w-4 ${nodeInfo.color}`} />
           <span className="text-sm font-semibold text-foreground">{nodeInfo.label}</span>
         </div>
-        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose}>
+        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose} aria-label="Fechar configuração do nó">
           <X className="h-3.5 w-3.5" />
         </Button>
       </div>
@@ -170,6 +199,7 @@ export function NodeConfigPanel({
                     <SelectItem value="lead_stage_changed">Mudou de etapa</SelectItem>
                     <SelectItem value="manual">Disparo manual</SelectItem>
                     <SelectItem value="message_received">Mensagem recebida</SelectItem>
+                    <SelectItem value="scheduled">Data e hora agendada</SelectItem>
                     <SelectItem value="inactivity">Inatividade</SelectItem>
                   </SelectContent>
                 </Select>
@@ -240,13 +270,90 @@ export function NodeConfigPanel({
                 <div className="space-y-1.5">
                   <Label className="text-xs">Tempo de inatividade</Label>
                   <div className="flex gap-2">
-                    <Input type="number" min={1} className="w-20 h-9" value={selectedNode.data.inactivity_value || 1}
+                    <Input
+                      type="number"
+                      min={1}
+                      max={selectedNode.data.inactivity_unit === 'hours' ? 8760 : 365}
+                      className="w-24 h-9"
+                      value={selectedNode.data.inactivity_value || 1}
                       onChange={(e) => onNodeDataChange(selectedNode.id, { inactivity_value: parseInt(e.target.value) || 1 })} />
                     <Select value={selectedNode.data.inactivity_unit || 'days'}
                       onValueChange={(v) => onNodeDataChange(selectedNode.id, { inactivity_unit: v })}>
                       <SelectTrigger className="flex-1 h-9"><SelectValue /></SelectTrigger>
                       <SelectContent className="z-[200]"><SelectItem value="hours">Horas</SelectItem><SelectItem value="days">Dias</SelectItem></SelectContent>
                     </Select>
+                  </div>
+                </div>
+              )}
+
+              {selectedNode.data.trigger_type === 'scheduled' && (
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor={`scheduled-at-${selectedNode.id}`} className="text-xs">Data e hora do disparo</Label>
+                    <Input
+                      id={`scheduled-at-${selectedNode.id}`}
+                      type="datetime-local"
+                      className="h-9"
+                      min={minimumScheduledAt}
+                      value={toLocalDateTimeInput(selectedNode.data.scheduled_at)}
+                      onChange={(event) => {
+                        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Sao_Paulo';
+                        onNodeDataChange(selectedNode.id, {
+                          scheduled_at: localDateTimeToISOWithOffset(event.target.value),
+                          timezone,
+                        });
+                      }}
+                    />
+                    <p className="text-[10px] text-muted-foreground">Escolha um horário com pelo menos um minuto de antecedência.</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor={`scheduled-timezone-${selectedNode.id}`} className="text-xs">Fuso horário</Label>
+                    <Input
+                      id={`scheduled-timezone-${selectedNode.id}`}
+                      className="h-9"
+                      value={selectedNode.data.timezone || ''}
+                      placeholder="Definido ao escolher a data"
+                      readOnly
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor={`scheduled-lead-${selectedNode.id}`} className="text-xs">Lead destinatário</Label>
+                    {selectedNode.data.target_lead_id && (
+                      <div className="rounded-md bg-primary/10 px-2.5 py-2 text-xs text-primary">
+                        Selecionado: {selectedNode.data.target_lead_name || selectedNode.data.target_lead_id}
+                      </div>
+                    )}
+                    <Input
+                      id={`scheduled-lead-${selectedNode.id}`}
+                      value={leadSearch}
+                      onChange={(event) => setLeadSearch(event.target.value)}
+                      placeholder="Buscar lead por nome, telefone ou e-mail"
+                      className="h-9"
+                    />
+                    <div className="max-h-36 space-y-1 overflow-y-auto rounded-md border border-[var(--app-border)] p-1">
+                      {scheduledLeadsLoading ? (
+                        <p className="px-2 py-3 text-center text-[11px] text-muted-foreground">Buscando leads...</p>
+                      ) : scheduledLeads.length === 0 ? (
+                        <p className="px-2 py-3 text-center text-[11px] text-muted-foreground">Nenhum lead encontrado.</p>
+                      ) : scheduledLeads.map((lead) => (
+                        <button
+                          key={lead.id}
+                          type="button"
+                          className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          onClick={() => {
+                            onNodeDataChange(selectedNode.id, {
+                              target_type: 'lead',
+                              target_lead_id: lead.id,
+                              target_lead_name: lead.name || lead.phone || 'Lead sem nome',
+                            });
+                            setLeadSearch('');
+                          }}
+                        >
+                          <span className="block truncate font-medium">{lead.name || 'Lead sem nome'}</span>
+                          <span className="block truncate text-[10px] text-muted-foreground">{lead.phone || lead.email || 'Sem contato'}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
@@ -325,6 +432,33 @@ export function NodeConfigPanel({
             </div>
           )}
 
+          {selectedNode.type === 'webhook' && (
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor={`webhook-url-${selectedNode.id}`} className="text-xs">URL HTTPS pública</Label>
+                <Input
+                  id={`webhook-url-${selectedNode.id}`}
+                  type="url"
+                  value={selectedNode.data.webhook_url || ''}
+                  placeholder="https://api.exemplo.com/webhook"
+                  className="h-9"
+                  onChange={(event) => onNodeDataChange(selectedNode.id, { webhook_url: event.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Método</Label>
+                <Select value={selectedNode.data.method || 'POST'} onValueChange={(method) => onNodeDataChange(selectedNode.id, { method })}>
+                  <SelectTrigger className="h-9" aria-label="Método do webhook"><SelectValue /></SelectTrigger>
+                  <SelectContent className="z-[200]">
+                    <SelectItem value="POST">POST</SelectItem>
+                    <SelectItem value="PUT">PUT</SelectItem>
+                    <SelectItem value="PATCH">PATCH</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+
           {selectedNode.type === 'image' && (
             <div className="space-y-3">
               <div className="space-y-1.5">
@@ -332,12 +466,24 @@ export function NodeConfigPanel({
                 <AutomationMediaGallery
                   mediaType="image"
                   accept="image/*"
-                  selectedUrl={selectedNode.data.image_url || ''}
-                  onSelect={(url) => onNodeDataChange(selectedNode.id, { image_url: url })}
+                  selectedPath={selectedNode.data.media_path || ''}
+                  onSelect={(file) => onNodeDataChange(selectedNode.id, {
+                    media_path: file.path,
+                    media_bucket: file.bucket,
+                    image_preview_url: file.publicUrl,
+                  })}
+                  onClearSelection={() => onNodeDataChange(selectedNode.id, {
+                    media_path: '',
+                    image_url: '',
+                    image_preview_url: '',
+                  })}
                 />
               </div>
-              <div className="space-y-1.5"><Label className="text-xs">Ou cole uma URL</Label>
-                <Input value={selectedNode.data.image_url || ''} placeholder="https://..." className="h-9" onChange={(e) => onNodeDataChange(selectedNode.id, { image_url: e.target.value })} /></div>
+              {selectedNode.data.image_url && !selectedNode.data.media_path && (
+                <p className="rounded-md bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-300">
+                  Esta automação usa uma URL legada. Selecione novamente o arquivo na galeria antes de salvar.
+                </p>
+              )}
               <div className="space-y-1.5"><Label className="text-xs">Legenda</Label>
                 <Input value={selectedNode.data.caption || ''} placeholder="Legenda" className="h-9" onChange={(e) => onNodeDataChange(selectedNode.id, { caption: e.target.value })} /></div>
             </div>
@@ -348,7 +494,12 @@ export function NodeConfigPanel({
               <div className="space-y-1.5">
                 <Label className="text-xs">Gravar Áudio</Label>
                 <AudioRecorderInline
-                  onUploaded={(url) => onNodeDataChange(selectedNode.id, { audio_url: url, audio_type: 'voice' })}
+                  onUploaded={(file) => onNodeDataChange(selectedNode.id, {
+                    media_path: file.path,
+                    media_bucket: file.bucket,
+                    audio_preview_url: file.publicUrl,
+                    audio_type: 'voice',
+                  })}
                 />
               </div>
               <div className="space-y-1.5">
@@ -356,12 +507,24 @@ export function NodeConfigPanel({
                 <AutomationMediaGallery
                   mediaType="audio"
                   accept="audio/*"
-                  selectedUrl={selectedNode.data.audio_url || ''}
-                  onSelect={(url) => onNodeDataChange(selectedNode.id, { audio_url: url })}
+                  selectedPath={selectedNode.data.media_path || ''}
+                  onSelect={(file) => onNodeDataChange(selectedNode.id, {
+                    media_path: file.path,
+                    media_bucket: file.bucket,
+                    audio_preview_url: file.publicUrl,
+                  })}
+                  onClearSelection={() => onNodeDataChange(selectedNode.id, {
+                    media_path: '',
+                    audio_url: '',
+                    audio_preview_url: '',
+                  })}
                 />
               </div>
-              <div className="space-y-1.5"><Label className="text-xs">Ou cole uma URL</Label>
-                <Input value={selectedNode.data.audio_url || ''} placeholder="https://..." className="h-9" onChange={(e) => onNodeDataChange(selectedNode.id, { audio_url: e.target.value })} /></div>
+              {selectedNode.data.audio_url && !selectedNode.data.media_path && (
+                <p className="rounded-md bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-300">
+                  Este áudio usa uma URL legada. Selecione novamente o arquivo na galeria antes de salvar.
+                </p>
+              )}
             </div>
           )}
 
@@ -372,12 +535,24 @@ export function NodeConfigPanel({
                 <AutomationMediaGallery
                   mediaType="video"
                   accept="video/*"
-                  selectedUrl={selectedNode.data.video_url || ''}
-                  onSelect={(url) => onNodeDataChange(selectedNode.id, { video_url: url })}
+                  selectedPath={selectedNode.data.media_path || ''}
+                  onSelect={(file) => onNodeDataChange(selectedNode.id, {
+                    media_path: file.path,
+                    media_bucket: file.bucket,
+                    video_preview_url: file.publicUrl,
+                  })}
+                  onClearSelection={() => onNodeDataChange(selectedNode.id, {
+                    media_path: '',
+                    video_url: '',
+                    video_preview_url: '',
+                  })}
                 />
               </div>
-              <div className="space-y-1.5"><Label className="text-xs">Ou cole uma URL</Label>
-                <Input value={selectedNode.data.video_url || ''} placeholder="https://..." className="h-9" onChange={(e) => onNodeDataChange(selectedNode.id, { video_url: e.target.value })} /></div>
+              {selectedNode.data.video_url && !selectedNode.data.media_path && (
+                <p className="rounded-md bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-300">
+                  Este vídeo usa uma URL legada. Selecione novamente o arquivo na galeria antes de salvar.
+                </p>
+              )}
             </div>
           )}
 
@@ -460,7 +635,13 @@ export function NodeConfigPanel({
             </div>
           )}
 
-          {selectedNode.type === 'move_stage' && (
+          {isUnsupportedCrmAction && (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200" role="alert">
+              Esta ação está temporariamente indisponível porque precisa passar pelo serviço canônico do CRM. Remova o bloco para publicar o fluxo.
+            </div>
+          )}
+
+          {selectedNode.type === 'move_stage' && !isUnsupportedCrmAction && (
             <div className="space-y-3">
               {pipelines && pipelines.length > 0 && (
                 <div className="space-y-1.5">
@@ -497,7 +678,7 @@ export function NodeConfigPanel({
             </div>
           )}
 
-          {selectedNode.type === 'assign_user' && (
+          {selectedNode.type === 'assign_user' && !isUnsupportedCrmAction && (
             <div className="space-y-3">
               {users && users.length > 0 && (
                 <div className="space-y-1.5">
@@ -516,7 +697,7 @@ export function NodeConfigPanel({
             </div>
           )}
 
-          {selectedNode.type === 'property_interest' && (
+          {selectedNode.type === 'property_interest' && !isUnsupportedCrmAction && (
             <div className="space-y-3">
               <Label className="text-xs">Imóvel de interesse</Label>
               {selectedNode.data.property_name && (
@@ -550,37 +731,6 @@ export function NodeConfigPanel({
                   </Button>
                 }
               />
-            </div>
-          )}
-
-          {selectedNode.type === 'deal_status' && (
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Novo status do lead</Label>
-                <Select value={selectedNode.data.deal_status || ''} onValueChange={(v) => onNodeDataChange(selectedNode.id, { deal_status: v })}>
-                  <SelectTrigger className="h-9"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                  <SelectContent className="z-[200]">
-                    <SelectItem value="open">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-                        Em aberto
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="won">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
-                        Ganho
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="lost">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
-                        Perdido
-                      </div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
             </div>
           )}
 
@@ -659,16 +809,23 @@ export function NodeConfigPanel({
           )}
 
           <div className="pt-3 border-t border-white/[0.055] space-y-2">
-            {onSaveNode && (
-              <Button size="sm" className="w-full h-8 text-xs" onClick={onSaveNode}>
-                <Save className="h-3.5 w-3.5 mr-1.5" />
-                Guardar
+            {canDeleteNode ? (
+              <Button
+                variant="destructive"
+                size="sm"
+                className="w-full h-8 text-xs"
+                onClick={() => {
+                  if (window.confirm(`Remover o bloco ${nodeInfo.label} deste rascunho?`)) onDeleteNode(selectedNode.id);
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                Remover nó
               </Button>
+            ) : (
+              <p className="rounded-md bg-muted px-3 py-2 text-center text-[11px] text-muted-foreground">
+                O gatilho inicial é obrigatório e não pode ser removido.
+              </p>
             )}
-            <Button variant="destructive" size="sm" className="w-full h-8 text-xs" onClick={() => onDeleteNode(selectedNode.id)}>
-              <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-              Remover nó
-            </Button>
           </div>
         </div>
       </ScrollArea>

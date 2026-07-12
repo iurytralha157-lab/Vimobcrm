@@ -162,13 +162,6 @@ export const LeadCard = memo(function LeadCard({
   const handlePhoneClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (lead.phone) {
-      recordFirstResponse({
-        leadId: lead.id,
-        organizationId: lead.organization_id || profile?.organization_id || '',
-        channel: 'phone',
-        actorUserId: profile?.id || null,
-        firstResponseAt: lead.first_response_at,
-      });
       window.open(`tel:${lead.phone.replace(/\D/g, '')}`, '_blank');
       setOutcomeType('call');
       setOutcomeDialogOpen(true);
@@ -190,12 +183,19 @@ export const LeadCard = memo(function LeadCard({
     }
   };
 
-  const handleOutcomeConfirm = (outcome: TaskOutcome, notes: string) => {
-    createActivity.mutate({
+  const handleOutcomeConfirm = async (outcome: TaskOutcome, notes: string) => {
+    await createActivity.mutateAsync({
       lead_id: lead.id,
       type: outcomeType === 'call' ? 'call' : 'email',
       content: outcomeType === 'call' ? 'Tentativa de ligação' : 'Email enviado',
       metadata: { outcome, notes, channel: outcomeType },
+    });
+    await recordFirstResponse({
+      leadId: lead.id,
+      organizationId: lead.organization_id || profile?.organization_id || '',
+      channel: outcomeType === 'call' ? 'phone' : 'email',
+      actorUserId: profile?.id || null,
+      firstResponseAt: lead.first_response_at,
     });
     setOutcomeDialogOpen(false);
   };

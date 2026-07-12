@@ -34,6 +34,7 @@ export const ptBR = {
     dashboardSite: 'Dashboard do site',
     dashboardCampaigns: 'Dashboard de campanhas',
     pipelines: 'Pipelines',
+    attentionCenter: 'Centro de Atenção',
     contacts: 'Contatos',
     schedule: 'Agenda',
     conversations: 'Conversas',

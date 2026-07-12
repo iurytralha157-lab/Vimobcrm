@@ -530,14 +530,14 @@ export function CreateLeadDialog({
           <div className="flex-1 min-h-0 overflow-y-auto">
             <div className="px-6 pb-4 pt-3">
               <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                <TabsList className="mb-4 grid h-10 w-full grid-cols-3 rounded-xl bg-[var(--app-surface-soft)] p-1">
-                  <TabsTrigger value="basic" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Básico</TabsTrigger>
-                  <TabsTrigger value="profile" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Perfil</TabsTrigger>
-                  <TabsTrigger value="management" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Gestão</TabsTrigger>
+                <TabsList data-tour="lead-form-tabs" className="mb-4 grid h-10 w-full grid-cols-3 rounded-xl bg-[var(--app-surface-soft)] p-1">
+                  <TabsTrigger data-tour="lead-form-tab-basic" value="basic" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Básico</TabsTrigger>
+                  <TabsTrigger data-tour="lead-form-tab-profile" value="profile" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Perfil</TabsTrigger>
+                  <TabsTrigger data-tour="lead-form-tab-management" value="management" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Gestão</TabsTrigger>
                 </TabsList>
 
                 {/* Basic Info Tab */}
-                <TabsContent value="basic" className="space-y-4 mt-0">
+                <TabsContent data-tour="lead-form-basic" value="basic" className="space-y-4 mt-0">
                     <div className="space-y-4">
                       {/* Real Estate: Basic Info - Clean Layout */}
                       <div className="space-y-1.5">
@@ -610,7 +610,7 @@ export function CreateLeadDialog({
                 </TabsContent>
 
                 {/* Profile/Contract Tab */}
-                <TabsContent value="profile" className="space-y-4 mt-0">
+                <TabsContent data-tour="lead-form-profile" value="profile" className="space-y-4 mt-0">
                     <>
                       {/* Real Estate: Profile */}
                       <div className="grid gap-4 sm:grid-cols-2">
@@ -723,7 +723,7 @@ export function CreateLeadDialog({
                 </TabsContent>
 
                 {/* Management Tab */}
-                <TabsContent value="management" className="space-y-4 mt-0">
+                <TabsContent data-tour="lead-form-management" value="management" className="space-y-4 mt-0">
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
                       <Label className="flex items-center gap-2">
@@ -860,6 +860,7 @@ export function CreateLeadDialog({
               </Button>
             ) : (
               <Button
+                data-tour="lead-form-submit"
                 key="btn-submit"
                 type="submit"
                 className="h-10 w-[60%] bg-primary text-white hover:bg-primary/90"

@@ -193,19 +193,23 @@ func (handler Handler) MoveStage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lead, err := handler.repo.MoveStage(r.Context(), tenantContext, r.PathValue("id"), input)
+	result, err := handler.repo.MoveStage(r.Context(), tenantContext, r.PathValue("id"), input)
 	if err != nil {
 		writeLeadError(w, r, err)
 		return
 	}
 
-	handler.publishLeadEvent(tenantContext, "lead.stage_moved", lead.ID, map[string]any{
-		"leadId":     lead.ID,
-		"pipelineId": lead.PipelineID,
-		"stageId":    lead.StageID,
+	eventName := "lead.reordered"
+	if result.StageChanged {
+		eventName = "lead.stage_moved"
+	}
+	handler.publishLeadEvent(tenantContext, eventName, result.Lead.ID, map[string]any{
+		"leadId":     result.Lead.ID,
+		"pipelineId": result.Lead.PipelineID,
+		"stageId":    result.Lead.StageID,
 	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]Lead{
-		"data": lead,
+		"data": result.Lead,
 	})
 }
 

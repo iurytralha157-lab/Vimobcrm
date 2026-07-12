@@ -343,6 +343,8 @@ export type Database = {
       }
       assignments_log: {
         Row: {
+          attention_eligible: boolean
+          attention_enrolled_at: string | null
           assigned_at: string | null
           assigned_user_id: string | null
           created_at: string
@@ -354,6 +356,8 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          attention_eligible?: boolean
+          attention_enrolled_at?: string | null
           assigned_at?: string | null
           assigned_user_id?: string | null
           created_at?: string
@@ -365,6 +369,8 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          attention_eligible?: boolean
+          attention_enrolled_at?: string | null
           assigned_at?: string | null
           assigned_user_id?: string | null
           created_at?: string
@@ -3515,6 +3521,7 @@ export type Database = {
           assigned_at: string | null
           assigned_user_id: string | null
           bairro: string | null
+          board_order_at: string | null
           cargo: string | null
           cep: string | null
           cidade: string | null
@@ -3588,6 +3595,7 @@ export type Database = {
           assigned_at?: string | null
           assigned_user_id?: string | null
           bairro?: string | null
+          board_order_at?: string | null
           cargo?: string | null
           cep?: string | null
           cidade?: string | null
@@ -3661,6 +3669,7 @@ export type Database = {
           assigned_at?: string | null
           assigned_user_id?: string | null
           bairro?: string | null
+          board_order_at?: string | null
           cargo?: string | null
           cep?: string | null
           cidade?: string | null

@@ -5,6 +5,9 @@ import { automationsAPI } from "@/lib/api/automations";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { Clock, GitBranch, Loader2, MessageSquare, Play, Tag, UserPlus, Zap } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import { useHasPermission } from "@/hooks/use-organization-roles";
 
 interface StartAutomationDialogProps {
   open: boolean;
@@ -49,14 +52,16 @@ export function StartAutomationDialog({
   conversationId,
   contactName,
 }: StartAutomationDialogProps) {
-  const { data: automations, isLoading } = useAutomations();
+  const { data: canStartAutomations = false, isLoading: permissionLoading } = useHasPermission("automations_edit");
+  const { data: automations, isLoading, error, refetch } = useAutomations(open && canStartAutomations);
   const { profile } = useAuth();
+  const queryClient = useQueryClient();
   const [starting, setStarting] = useState<string | null>(null);
 
   const activeAutomations = automations?.filter((automation) => automation.is_active) || [];
 
   const handleStart = async (automationId: string, automationName: string) => {
-    if (!profile?.organization_id) return;
+    if (!profile?.organization_id || !canStartAutomations) return;
     setStarting(automationId);
 
     try {
@@ -66,15 +71,25 @@ export function StartAutomationDialog({
         profile.organization_id,
       );
 
-      if (!result.executorStarted) {
-        toast.error("Automacao criada, mas o processamento nao iniciou.");
-        return;
+      await queryClient.invalidateQueries({ queryKey: ["automation-executions"] });
+
+      if (result.status === 'completed') {
+        toast.success(`Automação "${automationName}" concluída.`);
+      } else if (result.status === 'waiting') {
+        toast.success(`Automação "${automationName}" iniciada e aguardando a próxima etapa.`);
+      } else if (result.status === 'cancelled' || result.status === 'canceled') {
+        toast.warning(`A execução de "${automationName}" foi cancelada.`);
+      } else if (result.status === 'queued' && result.dispatchPending) {
+        toast.warning("Automação enfileirada para processamento. Ela será retomada automaticamente.");
+      } else if (result.status === 'queued') {
+        toast.info(`Automação "${automationName}" foi enfileirada.`);
+      } else {
+        toast.success(`Automação "${automationName}" iniciada!`);
       }
 
-      toast.success(`Automacao "${automationName}" iniciada!`);
       onOpenChange(false);
     } catch (err: unknown) {
-      toast.error("Erro ao iniciar automacao: " + getErrorMessage(err));
+      toast.error("Erro ao iniciar automação: " + getErrorMessage(err));
     } finally {
       setStarting(null);
     }
@@ -86,25 +101,41 @@ export function StartAutomationDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Zap className="h-5 w-5 text-primary" />
-            Iniciar Automacao
+            Iniciar automação
           </DialogTitle>
           <DialogDescription>
             {contactName
-              ? `Selecione uma automacao para iniciar para ${contactName}`
-              : "Selecione uma automacao para iniciar para este contato"}
+              ? `Selecione uma automação para iniciar para ${contactName}`
+              : "Selecione uma automação para iniciar para este contato"}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-2 max-h-[400px] overflow-y-auto">
-          {isLoading ? (
+          {permissionLoading ? (
+            <div className="flex items-center justify-center py-8" role="status">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : !canStartAutomations ? (
+            <div className="py-8 text-center" role="alert">
+              <p className="text-sm font-medium">Você não possui permissão para iniciar automações.</p>
+            </div>
+          ) : isLoading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : error ? (
+            <div className="py-8 text-center" role="alert">
+              <p className="text-sm font-medium">Não foi possível carregar as automações.</p>
+              <p className="mt-1 text-xs text-muted-foreground">{getErrorMessage(error)}</p>
+              <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void refetch()}>
+                Tentar novamente
+              </Button>
             </div>
           ) : activeAutomations.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Zap className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">Nenhuma automacao ativa encontrada</p>
-              <p className="text-xs mt-1">Crie automacoes na pagina de Automacoes</p>
+              <p className="text-sm">Nenhuma automação ativa encontrada</p>
+              <p className="text-xs mt-1">Crie automações na página de Automações</p>
             </div>
           ) : (
             activeAutomations.map((automation) => {
@@ -114,6 +145,7 @@ export function StartAutomationDialog({
               return (
                 <button
                   key={automation.id}
+                  type="button"
                   onClick={() => handleStart(automation.id, automation.name)}
                   disabled={!!starting}
                   className="w-full flex items-center gap-3 p-3 rounded-xl border border-white/[0.055] hover:bg-white/[0.055] transition-colors text-left disabled:opacity-50"

@@ -4,7 +4,7 @@ import { leadsAPI } from '@/lib/api/leads';
 interface RecordFirstResponseParams {
   leadId: string;
   organizationId: string;
-  channel: 'whatsapp' | 'phone';
+  channel: 'whatsapp' | 'phone' | 'email';
   actorUserId: string | null;
   isAutomation?: boolean;
 }
@@ -29,7 +29,7 @@ export function useRecordFirstResponse() {
 interface CheckAndRecordParams {
   leadId: string;
   organizationId: string;
-  channel: 'whatsapp' | 'phone';
+  channel: 'whatsapp' | 'phone' | 'email';
   actorUserId: string | null;
   firstResponseAt?: string | null; // Se já existe, não faz nada
 }

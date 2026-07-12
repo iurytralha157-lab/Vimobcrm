@@ -402,14 +402,44 @@ func (repo Repository) ToggleNotificationSession(ctx context.Context, tenantCont
 		return err
 	}
 
-	_, err := repo.db.Pool().Exec(ctx, `
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Serialize changes per organization so two concurrent requests cannot leave
+	// more than one notification sender selected.
+	if _, err = tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended($1, 0))`, tenantContext.OrganizationID); err != nil {
+		return err
+	}
+	if enabled {
+		if _, err = tx.Exec(ctx, `
+			update public.whatsapp_sessions
+			set is_notification_session = false,
+			    updated_at = now()
+			where organization_id = $1::uuid
+			  and is_notification_session = true
+			  and id <> $2::uuid
+		`, tenantContext.OrganizationID, sessionID); err != nil {
+			return err
+		}
+	}
+
+	command, err := tx.Exec(ctx, `
 		update public.whatsapp_sessions
 		set is_notification_session = $3::boolean,
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 	`, tenantContext.OrganizationID, sessionID, enabled)
-	return err
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return ErrSessionNotFound
+	}
+	return tx.Commit(ctx)
 }
 
 func (repo Repository) ToggleAutoReplySession(ctx context.Context, tenantContext tenant.Context, sessionID string, input ToggleAutoReplyRequest) error {

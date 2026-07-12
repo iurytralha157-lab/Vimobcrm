@@ -55,6 +55,7 @@ type Lead struct {
 	CreatedAt          time.Time    `json:"createdAt"`
 	UpdatedAt          time.Time    `json:"updatedAt"`
 	StageEnteredAt     *time.Time   `json:"stageEnteredAt,omitempty"`
+	BoardOrderAt       *time.Time   `json:"boardOrderAt,omitempty"`
 	LastContactAt      *time.Time   `json:"lastContactAt,omitempty"`
 	NextFollowUpAt     *time.Time   `json:"nextFollowUpAt,omitempty"`
 	AdditionalFields   LeadMetadata `json:"additionalFields,omitempty"`
@@ -214,15 +215,24 @@ type tagInput struct {
 }
 
 type MoveStageRequest struct {
-	StageID        string     `json:"stageId"`
-	IsOwnResource  *bool      `json:"isOwnResource,omitempty"`
+	StageID       string     `json:"stageId"`
+	IsOwnResource *bool      `json:"isOwnResource,omitempty"`
+	BoardOrderAt  *time.Time `json:"boardOrderAt,omitempty"`
+	// StageEnteredAt is kept temporarily for compatibility with older clients
+	// that used this field as the visual Kanban order.
 	StageEnteredAt *time.Time `json:"stageEnteredAt,omitempty"`
 }
 
 type moveStageInput struct {
 	StageID        string
 	IsOwnResource  *bool
+	BoardOrderAt   *time.Time
 	StageEnteredAt *time.Time
+}
+
+type moveStageResult struct {
+	Lead         Lead
+	StageChanged bool
 }
 
 type AssignRequest struct {
@@ -465,10 +475,14 @@ func (request MoveStageRequest) Validate() (moveStageInput, error) {
 	if request.StageEnteredAt != nil && request.StageEnteredAt.IsZero() {
 		return moveStageInput{}, fmt.Errorf("%w: stageEnteredAt is invalid", ErrInvalidInput)
 	}
+	if request.BoardOrderAt != nil && request.BoardOrderAt.IsZero() {
+		return moveStageInput{}, fmt.Errorf("%w: boardOrderAt is invalid", ErrInvalidInput)
+	}
 
 	return moveStageInput{
 		StageID:        stageID,
 		IsOwnResource:  request.IsOwnResource,
+		BoardOrderAt:   request.BoardOrderAt,
 		StageEnteredAt: request.StageEnteredAt,
 	}, nil
 }

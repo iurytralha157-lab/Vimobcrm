@@ -222,6 +222,7 @@ async function getStageLeadsFromSupabase(params: {
     .eq('organization_id', params.organizationId)
     .eq('pipeline_id', params.pipelineId)
     .eq('stage_id', params.stageId)
+    .order('board_order_at', { ascending: false, nullsFirst: false })
     .order('stage_entered_at', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)

@@ -601,15 +601,34 @@ func (repo Repository) RecordFirstResponse(ctx context.Context, tenantContext te
 	if err := repo.ensureLeadEditable(ctx, tenantContext, input.LeadID); err != nil {
 		return nil, err
 	}
+	if input.IsAutomation {
+		return map[string]any{
+			"recorded": false,
+			"skipped":  true,
+			"reason":   "automated_actions_do_not_count",
+		}, nil
+	}
 
-	var createdAt time.Time
+	var responseBaselineAt time.Time
 	var firstResponseAt pgtype.Timestamptz
 	err := repo.db.Pool().QueryRow(ctx, `
-		select created_at, first_response_at
-		from public.leads
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-	`, tenantContext.OrganizationID, input.LeadID).Scan(&createdAt, &firstResponseAt)
+		select
+			coalesce(
+				(
+					select lac.assigned_at
+					from public.lead_assignment_cycles lac
+					where lac.lead_id = l.id and lac.ended_at is null
+					order by lac.cycle_number desc
+					limit 1
+				),
+				l.assigned_at,
+				l.created_at
+			),
+			l.first_response_at
+		from public.leads l
+		where l.organization_id = $1::uuid
+		  and l.id = $2::uuid
+	`, tenantContext.OrganizationID, input.LeadID).Scan(&responseBaselineAt, &firstResponseAt)
 	if err == pgx.ErrNoRows {
 		return nil, ErrLeadNotFound
 	}
@@ -624,7 +643,7 @@ func (repo Repository) RecordFirstResponse(ctx context.Context, tenantContext te
 		}, nil
 	}
 
-	responseSeconds := int(time.Since(createdAt).Seconds())
+	responseSeconds := int(time.Since(responseBaselineAt).Seconds())
 	if responseSeconds < 0 {
 		responseSeconds = 0
 	}

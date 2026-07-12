@@ -20,7 +20,9 @@ export const updateCadenceTaskBodySchema = cadenceTaskBodySchema
 export const apiCadenceTaskSchema = z.object({
   id: uuidSchema,
   cadence_template_id: uuidSchema,
-  day_offset: nonNegativeIntegerSchema,
+  // Historical templates can contain pre-stage tasks represented by negative days.
+  // Mutation schemas remain non-negative, so new invalid offsets are still rejected.
+  day_offset: z.number().int(),
   title: z.string().min(1),
   description: z.string().nullable(),
   position: nonNegativeIntegerSchema.nullable(),

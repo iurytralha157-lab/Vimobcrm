@@ -295,7 +295,7 @@ export default function Properties() {
       </div>
 
       <div className="max-h-[calc(100dvh-210px)] space-y-3 overflow-y-auto px-4 py-4 [scrollbar-width:none] lg:max-h-[calc(100dvh-190px)] [&::-webkit-scrollbar]:hidden">
-        <div>
+        <div data-tour="properties-filter-search">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -311,7 +311,7 @@ export default function Properties() {
         </div>
 
         <div className="grid grid-cols-1 gap-3">
-          <div>
+          <div data-tour="properties-filter-modality">
             <Select value={filters.tipo_de_negocio || ALL_FILTER_VALUE} onValueChange={(value) => updateFilter('tipo_de_negocio', value)}>
               <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
                 <span className={cn("truncate", !filters.tipo_de_negocio && "text-muted-foreground")}>
@@ -329,7 +329,7 @@ export default function Properties() {
             </Select>
           </div>
 
-          <div>
+          <div data-tour="properties-filter-availability">
             <Select value={availabilityValue} onValueChange={updateAvailabilityFilter}>
               <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
                 <span className={cn("truncate", availabilityValue === ALL_FILTER_VALUE && "text-muted-foreground")}>
@@ -348,7 +348,7 @@ export default function Properties() {
             </Select>
           </div>
 
-          <div>
+          <div data-tour="properties-filter-type">
             <Select value={filters.tipo_de_imovel || ALL_FILTER_VALUE} onValueChange={(value) => updateFilter('tipo_de_imovel', value)}>
               <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
                 <span className={cn("truncate", !filters.tipo_de_imovel && "text-muted-foreground")}>
@@ -364,7 +364,7 @@ export default function Properties() {
             </Select>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div data-tour="properties-filter-location" className="grid grid-cols-2 gap-2">
             <Select value={selectedCity?.id || ALL_FILTER_VALUE} onValueChange={updateCityFilter}>
               <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
                 <span className={cn("truncate", !filters.cidade && "text-muted-foreground")}>
@@ -395,7 +395,7 @@ export default function Properties() {
             </Select>
           </div>
 
-          <div>
+          <div data-tour="properties-filter-responsible">
             <Select value={filters.responsavel_id || ALL_FILTER_VALUE} onValueChange={(value) => updateFilter('responsavel_id', value)}>
               <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
                 <span className={cn("truncate", !filters.responsavel_id && "text-muted-foreground")}>
@@ -411,7 +411,7 @@ export default function Properties() {
             </Select>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div data-tour="properties-filter-value" className="grid grid-cols-2 gap-2">
             <div>
               <Input
                 value={filters.valor_min || ''}
@@ -434,6 +434,7 @@ export default function Properties() {
         </div>
 
         <button
+          data-tour="properties-filter-more"
           type="button"
           onClick={() => setAdvancedFiltersOpen((open) => !open)}
           className="flex h-10 w-full items-center justify-between rounded-md bg-[var(--app-surface-soft)] px-3 text-sm font-medium transition-colors hover:bg-[var(--app-surface-hover)]"
@@ -443,7 +444,7 @@ export default function Properties() {
         </button>
 
         {advancedFiltersOpen && (
-          <div className="space-y-3">
+          <div data-tour="properties-filter-more-panel" className="space-y-3">
             <div>
               <Select value={filters.owner_id || ALL_FILTER_VALUE} onValueChange={(value) => updateFilter('owner_id', value)}>
                 <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">

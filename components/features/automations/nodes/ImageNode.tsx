@@ -4,7 +4,8 @@ import { Handle, Position, NodeProps } from 'reactflow';
 import { Image as ImageIcon } from 'lucide-react';
 
 export const ImageNode = memo(({ data, selected }: NodeProps) => {
-  const url = data.image_url || '';
+  const url = data.image_preview_url || data.image_url || '';
+  const isConfigured = Boolean(data.media_path || url);
   const caption = data.caption || '';
 
   return (
@@ -19,7 +20,7 @@ export const ImageNode = memo(({ data, selected }: NodeProps) => {
         <div className="flex-1 min-w-0">
           <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">Imagem</span>
           <p className="text-xs text-muted-foreground line-clamp-1 mt-1">
-            {url ? caption || 'Imagem configurada' : 'Clique para configurar...'}
+            {isConfigured ? caption || 'Imagem configurada' : 'Clique para configurar...'}
           </p>
         </div>
       </div>

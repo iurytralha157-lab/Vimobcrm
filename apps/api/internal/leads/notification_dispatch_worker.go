@@ -295,27 +295,6 @@ func (repo Repository) dispatchPendingWhatsAppNotification(ctx context.Context, 
 		UserID:         notification.UserID,
 	}
 	result, err := repo.dispatchWhatsAppNotification(ctx, tenantContext, request, recipient, notification.Title, notification.Content, eventKey, request.DedupeKey)
-	if result.Enabled && !result.Attempted && !result.OK && strings.TrimSpace(result.Error) == "" {
-		config, configErr := repo.getNotificationWhatsAppConfig(ctx)
-		if configErr != nil {
-			result.Error = configErr.Error()
-			if err != nil {
-				return result, err
-			}
-			return result, configErr
-		}
-		if config.Enabled && notificationConfigUsesDirectInstance(config) {
-			directResult, directErr := repo.dispatchWhatsAppViaEvolutionGo(ctx, notificationWhatsAppSession{
-				InstanceID:  strings.TrimSpace(config.InstanceID),
-				InstanceKey: firstNotificationText(config.InstanceName, config.InstanceID),
-				Token:       strings.TrimSpace(config.Token),
-			}, recipient.WhatsApp, buildWhatsAppNotificationText(eventKey, notification.Title, notification.Content, variables), "evolution_go_global_instance_worker_fallback")
-			if directResult.Attempted || directResult.Error != "" {
-				return directResult, directErr
-			}
-		}
-		result.Error = "notification_whatsapp_not_attempted"
-	}
 	return result, err
 }
 

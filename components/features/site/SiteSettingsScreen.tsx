@@ -559,6 +559,7 @@ ${getWorkerCode()}`;
                     return (
                       <button
                         key={section.value}
+                        data-tour={`site-tab-${section.value}`}
                         type="button"
                         title={`${section.label} - ${section.description}`}
                         onClick={() => setSiteActiveTab(section.value)}
@@ -592,7 +593,7 @@ ${getWorkerCode()}`;
               </nav>
 
               <div className="flex shrink-0 items-center gap-2">
-                <a href={previewUrl} target="_blank" rel="noopener noreferrer">
+                <a data-tour="site-preview" href={previewUrl} target="_blank" rel="noopener noreferrer">
                   <Button
                     type="button"
                     variant="ghost"
@@ -800,7 +801,7 @@ ${getWorkerCode()}`;
               </Card>
             </TabsContent>
 
-            <TabsContent value="appearance" className="mt-0">
+            <TabsContent data-tour="site-appearance-settings" value="appearance" className="mt-0">
               <Card className="app-card">
                 <CardHeader>
                   <CardTitle className="text-lg">Aparência</CardTitle>
@@ -1143,7 +1144,7 @@ ${getWorkerCode()}`;
               </Card>
             </TabsContent>
 
-            <TabsContent value="contact" className="mt-0">
+            <TabsContent data-tour="site-contact-settings" value="contact" className="mt-0">
               <Card className="app-card">
                 <CardHeader>
                   <CardTitle className="text-lg">Contato</CardTitle>
@@ -1219,7 +1220,7 @@ ${getWorkerCode()}`;
               </Card>
             </TabsContent>
 
-            <TabsContent value="social" className="mt-0">
+            <TabsContent data-tour="site-social-settings" value="social" className="mt-0">
               <Card className="app-card">
                 <CardHeader>
                   <CardTitle className="text-lg">Social</CardTitle>
@@ -1270,7 +1271,7 @@ ${getWorkerCode()}`;
               </Card>
             </TabsContent>
 
-            <TabsContent value="seo" className="mt-0">
+            <TabsContent data-tour="site-seo-settings" value="seo" className="mt-0">
               <Card className="app-card">
                 <CardHeader>
                   <CardTitle className="text-lg">SEO</CardTitle>
@@ -1385,7 +1386,7 @@ ${getWorkerCode()}`;
               </Card>
             </TabsContent>
 
-            <TabsContent value="menu" className="mt-0">
+            <TabsContent data-tour="site-menu-settings" value="menu" className="mt-0">
               <Card className="app-card">
                 <CardHeader>
                   <CardTitle className="text-lg">Menu</CardTitle>
@@ -1397,7 +1398,7 @@ ${getWorkerCode()}`;
               </Card>
             </TabsContent>
 
-            <TabsContent value="about" className="mt-0">
+            <TabsContent data-tour="site-about-settings" value="about" className="mt-0">
               <AboutTab
                 formData={formData}
                 setFormData={setFormData}

@@ -1854,7 +1854,7 @@ export default function PropertyForm() {
 
           {/* 9. Comissões */}
           <TabsContent value="commissions">
-            <Card className="app-card">
+            <Card data-tour="property-commissions-section" className="app-card">
               <CardHeader><CardTitle className="text-lg">Comissões e Condições</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1902,7 +1902,7 @@ export default function PropertyForm() {
 
           {/* 10. Confidencial */}
           <TabsContent value="confidential">
-            <Card className="app-card">
+            <Card data-tour="property-confidential-section" className="app-card">
               <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Lock className="h-4 w-4" /> Dados Confidenciais</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

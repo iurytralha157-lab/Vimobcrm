@@ -8,6 +8,7 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/admin"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/ai"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/analytics"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/attention"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/audit"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/automations"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/cadences"
@@ -61,7 +62,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	healthHandler := health.NewHandler(postgres, cfg.Database.HealthTimeout)
 	realtimeHandler := realtime.NewHandler(realtimeHub)
 	analyticsHandler := analytics.NewHandler(analytics.NewRepository(postgres))
+	attentionRepository := attention.NewRepository(postgres)
+	attentionRepository.StartWorker(ctx, logger)
+	attentionHandler := attention.NewHandler(attentionRepository)
 	gamificationRepository := gamification.NewRepository(postgres)
+	gamificationRepository.StartWorker(ctx, logger)
 	gamificationHandler := gamification.NewHandler(gamificationRepository)
 	cadencesHandler := cadences.NewHandler(cadences.NewRepository(postgres))
 	financialHandler := financial.NewHandler(financial.NewRepository(postgres, financial.StorageConfig{
@@ -143,13 +148,15 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 	}))
-	automationsHandler := automations.NewHandler(automations.NewRepository(postgres, automations.FunctionsConfig{
+	automationsRepository := automations.NewRepository(postgres, automations.FunctionsConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 	}, automations.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
-	}))
+	})
+	automationsRepository.StartRuntimeWorker(ctx, logger)
+	automationsHandler := automations.NewHandler(automationsRepository)
 	whatsappHandler := whatsapp.NewHandler(whatsapp.NewRepository(postgres, gamificationRepository, whatsapp.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
@@ -189,6 +196,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		return withOrganization(tenant.RequireFinancialAccess(handler))
 	}
 
+	withModule := func(module string, handler http.Handler) http.Handler {
+		return withOrganization(tenant.RequireModule(module, handler))
+	}
+
 	mux.HandleFunc("GET /healthz", healthHandler.Health)
 	mux.HandleFunc("GET /readyz", healthHandler.Ready)
 	mux.HandleFunc("POST /v1/internal/whatsapp/auto-reply", whatsappHandler.AutoReply)
@@ -214,18 +225,30 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("GET /v1/analytics/stage-vgv", withOrganization(http.HandlerFunc(analyticsHandler.StageVGV)))
 	mux.Handle("GET /v1/analytics/leader-stats", withOrganization(http.HandlerFunc(analyticsHandler.LeaderStats)))
 	mux.Handle("GET /v1/analytics/team-leader-stats/{teamId}", withOrganization(http.HandlerFunc(analyticsHandler.TeamLeaderStats)))
+	mux.Handle("GET /v1/attention/settings", withOrganization(http.HandlerFunc(attentionHandler.GetSettings)))
+	mux.Handle("PATCH /v1/attention/settings", withOrganization(http.HandlerFunc(attentionHandler.UpdateSettings)))
+	mux.Handle("GET /v1/attention/policies", withOrganization(http.HandlerFunc(attentionHandler.ListPolicies)))
+	mux.Handle("POST /v1/attention/policies", withOrganization(http.HandlerFunc(attentionHandler.CreatePolicy)))
+	mux.Handle("PATCH /v1/attention/policies/{id}", withOrganization(http.HandlerFunc(attentionHandler.UpdatePolicy)))
+	mux.Handle("GET /v1/attention/items", withOrganization(http.HandlerFunc(attentionHandler.ListItems)))
+	mux.Handle("GET /v1/attention/summary", withOrganization(http.HandlerFunc(attentionHandler.Summary)))
+	mux.Handle("POST /v1/attention/items/{id}/acknowledge", withOrganization(http.HandlerFunc(attentionHandler.AcknowledgeItem)))
+	mux.Handle("POST /v1/attention/items/{id}/snooze", withOrganization(http.HandlerFunc(attentionHandler.SnoozeItem)))
+	mux.Handle("POST /v1/attention/items/{id}/resolve", withOrganization(http.HandlerFunc(attentionHandler.ResolveItem)))
 	mux.Handle("GET /v1/admin/error-events", withAuthTenant(http.HandlerFunc(telemetryHandler.ListErrorEvents)))
 	mux.Handle("POST /v1/admin/error-events/{id}/resolve", withAuthTenant(http.HandlerFunc(telemetryHandler.ResolveErrorEvent)))
-	mux.Handle("GET /v1/gamification/overview", withOrganization(http.HandlerFunc(gamificationHandler.Overview)))
-	mux.Handle("GET /v1/gamification/admin", withOrganization(http.HandlerFunc(gamificationHandler.AdminSnapshot)))
-	mux.Handle("PUT /v1/gamification/rules/{actionType}", withOrganization(http.HandlerFunc(gamificationHandler.UpsertRule)))
-	mux.Handle("PATCH /v1/gamification/participants/{userId}", withOrganization(http.HandlerFunc(gamificationHandler.SetParticipant)))
-	mux.Handle("POST /v1/gamification/missions", withOrganization(http.HandlerFunc(gamificationHandler.CreateMission)))
-	mux.Handle("PATCH /v1/gamification/missions/{id}", withOrganization(http.HandlerFunc(gamificationHandler.UpdateMission)))
-	mux.Handle("DELETE /v1/gamification/missions/{id}", withOrganization(http.HandlerFunc(gamificationHandler.DeleteMission)))
-	mux.Handle("POST /v1/gamification/manual-entries", withOrganization(http.HandlerFunc(gamificationHandler.CreateManualEntry)))
-	mux.Handle("PATCH /v1/gamification/manual-entries/{id}", withOrganization(http.HandlerFunc(gamificationHandler.DecideManualEntry)))
-	mux.Handle("POST /v1/gamification/seasons", withOrganization(http.HandlerFunc(gamificationHandler.ResetSeason)))
+	mux.Handle("GET /v1/gamification/overview", withModule("gamification", http.HandlerFunc(gamificationHandler.Overview)))
+	mux.Handle("GET /v1/gamification/ranking", withModule("gamification", http.HandlerFunc(gamificationHandler.Ranking)))
+	mux.Handle("GET /v1/gamification/events", withModule("gamification", http.HandlerFunc(gamificationHandler.Events)))
+	mux.Handle("GET /v1/gamification/admin", withModule("gamification", http.HandlerFunc(gamificationHandler.AdminSnapshot)))
+	mux.Handle("PUT /v1/gamification/rules/{actionType}", withModule("gamification", http.HandlerFunc(gamificationHandler.UpsertRule)))
+	mux.Handle("PATCH /v1/gamification/participants/{userId}", withModule("gamification", http.HandlerFunc(gamificationHandler.SetParticipant)))
+	mux.Handle("POST /v1/gamification/missions", withModule("gamification", http.HandlerFunc(gamificationHandler.CreateMission)))
+	mux.Handle("PATCH /v1/gamification/missions/{id}", withModule("gamification", http.HandlerFunc(gamificationHandler.UpdateMission)))
+	mux.Handle("DELETE /v1/gamification/missions/{id}", withModule("gamification", http.HandlerFunc(gamificationHandler.DeleteMission)))
+	mux.Handle("POST /v1/gamification/manual-entries", withModule("gamification", http.HandlerFunc(gamificationHandler.CreateManualEntry)))
+	mux.Handle("PATCH /v1/gamification/manual-entries/{id}", withModule("gamification", http.HandlerFunc(gamificationHandler.DecideManualEntry)))
+	mux.Handle("POST /v1/gamification/seasons", withModule("gamification", http.HandlerFunc(gamificationHandler.ResetSeason)))
 	mux.Handle("GET /v1/cadence-templates", withOrganization(http.HandlerFunc(cadencesHandler.ListTemplates)))
 	mux.Handle("POST /v1/cadence-tasks", withOrganization(http.HandlerFunc(cadencesHandler.CreateTask)))
 	mux.Handle("PATCH /v1/cadence-tasks/{id}", withOrganization(http.HandlerFunc(cadencesHandler.UpdateTask)))
@@ -262,11 +285,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("POST /v1/dre/mappings", withFinancialOrganization(http.HandlerFunc(financialHandler.CreateDREMapping)))
 	mux.Handle("DELETE /v1/dre/mappings/{id}", withFinancialOrganization(http.HandlerFunc(financialHandler.DeleteDREMapping)))
 	mux.Handle("POST /v1/dre/groups/initialize", withFinancialOrganization(http.HandlerFunc(financialHandler.InitializeDREGroups)))
-	mux.Handle("GET /v1/stage-automations", withOrganization(http.HandlerFunc(stageConfigHandler.ListAutomations)))
-	mux.Handle("POST /v1/stage-automations", withOrganization(http.HandlerFunc(stageConfigHandler.CreateAutomation)))
-	mux.Handle("PATCH /v1/stage-automations/{id}", withOrganization(http.HandlerFunc(stageConfigHandler.UpdateAutomation)))
-	mux.Handle("DELETE /v1/stage-automations/{id}", withOrganization(http.HandlerFunc(stageConfigHandler.DeleteAutomation)))
-	mux.Handle("PATCH /v1/stage-automations/{id}/status", withOrganization(http.HandlerFunc(stageConfigHandler.ToggleAutomation)))
+	mux.Handle("GET /v1/stage-automations", withModule("automations", http.HandlerFunc(stageConfigHandler.ListAutomations)))
+	mux.Handle("POST /v1/stage-automations", withModule("automations", http.HandlerFunc(stageConfigHandler.CreateAutomation)))
+	mux.Handle("PATCH /v1/stage-automations/{id}", withModule("automations", http.HandlerFunc(stageConfigHandler.UpdateAutomation)))
+	mux.Handle("DELETE /v1/stage-automations/{id}", withModule("automations", http.HandlerFunc(stageConfigHandler.DeleteAutomation)))
+	mux.Handle("PATCH /v1/stage-automations/{id}/status", withModule("automations", http.HandlerFunc(stageConfigHandler.ToggleAutomation)))
 	mux.Handle("GET /v1/stage-operational-configs", withOrganization(http.HandlerFunc(stageConfigHandler.ListOperationalConfigs)))
 	mux.Handle("PUT /v1/stage-operational-configs", withOrganization(http.HandlerFunc(stageConfigHandler.UpsertOperationalConfig)))
 	mux.Handle("GET /v1/pipeline-sla-settings", withOrganization(http.HandlerFunc(stageConfigHandler.ListPipelineSLASettings)))
@@ -345,22 +368,27 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("GET /v1/schedule/events/{id}/assignees", withOrganization(http.HandlerFunc(scheduleHandler.ListAssignees)))
 	mux.Handle("POST /v1/schedule/events/{id}/assignees", withOrganization(http.HandlerFunc(scheduleHandler.AddAssignee)))
 	mux.Handle("DELETE /v1/schedule/events/{id}/assignees/{userId}", withOrganization(http.HandlerFunc(scheduleHandler.RemoveAssignee)))
-	mux.Handle("GET /v1/automations", withOrganization(http.HandlerFunc(automationsHandler.List)))
-	mux.Handle("POST /v1/automations", withOrganization(http.HandlerFunc(automationsHandler.Create)))
-	mux.Handle("GET /v1/automations/{id}", withOrganization(http.HandlerFunc(automationsHandler.Show)))
-	mux.Handle("PATCH /v1/automations/{id}", withOrganization(http.HandlerFunc(automationsHandler.Update)))
-	mux.Handle("DELETE /v1/automations/{id}", withOrganization(http.HandlerFunc(automationsHandler.Delete)))
-	mux.Handle("POST /v1/automations/{id}/duplicate", withOrganization(http.HandlerFunc(automationsHandler.Duplicate)))
-	mux.Handle("PUT /v1/automations/{id}/flow", withOrganization(http.HandlerFunc(automationsHandler.SaveFlow)))
-	mux.Handle("POST /v1/automations/{id}/start", withOrganization(http.HandlerFunc(automationsHandler.Start)))
-	mux.Handle("GET /v1/automation-templates", withOrganization(http.HandlerFunc(automationsHandler.ListTemplates)))
-	mux.Handle("POST /v1/automation-templates", withOrganization(http.HandlerFunc(automationsHandler.CreateTemplate)))
-	mux.Handle("DELETE /v1/automation-templates/{id}", withOrganization(http.HandlerFunc(automationsHandler.DeleteTemplate)))
-	mux.Handle("GET /v1/automation-executions", withOrganization(http.HandlerFunc(automationsHandler.ListExecutions)))
-	mux.Handle("POST /v1/automation-executions/{id}/cancel", withOrganization(http.HandlerFunc(automationsHandler.CancelExecution)))
-	mux.Handle("GET /v1/automation-media", withOrganization(http.HandlerFunc(automationsHandler.ListMedia)))
-	mux.Handle("POST /v1/automation-media", withOrganization(http.HandlerFunc(automationsHandler.UploadMedia)))
-	mux.Handle("DELETE /v1/automation-media", withOrganization(http.HandlerFunc(automationsHandler.DeleteMedia)))
+	mux.Handle("GET /v1/automations", withModule("automations", http.HandlerFunc(automationsHandler.List)))
+	mux.Handle("POST /v1/automations", withModule("automations", http.HandlerFunc(automationsHandler.Create)))
+	mux.Handle("GET /v1/automations/{id}", withModule("automations", http.HandlerFunc(automationsHandler.Show)))
+	mux.Handle("PATCH /v1/automations/{id}", withModule("automations", http.HandlerFunc(automationsHandler.Update)))
+	mux.Handle("DELETE /v1/automations/{id}", withModule("automations", http.HandlerFunc(automationsHandler.Delete)))
+	mux.Handle("POST /v1/automations/{id}/duplicate", withModule("automations", http.HandlerFunc(automationsHandler.Duplicate)))
+	mux.Handle("PUT /v1/automations/{id}/flow", withModule("automations", http.HandlerFunc(automationsHandler.SaveFlow)))
+	mux.Handle("POST /v1/automations/{id}/start", withModule("automations", http.HandlerFunc(automationsHandler.Start)))
+	mux.Handle("GET /v1/automation-templates", withModule("automations", http.HandlerFunc(automationsHandler.ListTemplates)))
+	mux.Handle("POST /v1/automation-templates", withModule("automations", http.HandlerFunc(automationsHandler.CreateTemplate)))
+	mux.Handle("DELETE /v1/automation-templates/{id}", withModule("automations", http.HandlerFunc(automationsHandler.DeleteTemplate)))
+	mux.Handle("GET /v1/automation-executions", withModule("automations", http.HandlerFunc(automationsHandler.ListExecutions)))
+	mux.Handle("GET /v1/automation-executions/summary", withModule("automations", http.HandlerFunc(automationsHandler.ListExecutionSummaries)))
+	mux.Handle("GET /v1/automation-executions/{id}/steps", withModule("automations", http.HandlerFunc(automationsHandler.ListExecutionSteps)))
+	mux.Handle("POST /v1/automation-executions/{id}/cancel", withModule("automations", http.HandlerFunc(automationsHandler.CancelExecution)))
+	mux.Handle("POST /v1/automations/{id}/executions/cancel", withModule("automations", http.HandlerFunc(automationsHandler.CancelAutomationExecutions)))
+	mux.Handle("GET /v1/automation-runtime/issues", withModule("automations", http.HandlerFunc(automationsHandler.ListRuntimeIssues)))
+	mux.Handle("POST /v1/automation-runtime/issues/{kind}/{id}/retry", withModule("automations", http.HandlerFunc(automationsHandler.RetryRuntimeIssue)))
+	mux.Handle("GET /v1/automation-media", withModule("automations", http.HandlerFunc(automationsHandler.ListMedia)))
+	mux.Handle("POST /v1/automation-media", withModule("automations", http.HandlerFunc(automationsHandler.UploadMedia)))
+	mux.Handle("DELETE /v1/automation-media", withModule("automations", http.HandlerFunc(automationsHandler.DeleteMedia)))
 	mux.HandleFunc("GET /v1/whatsapp/webhook/evolution-go", whatsappHandler.EvolutionGoWebhook)
 	mux.HandleFunc("POST /v1/whatsapp/webhook/evolution-go", whatsappHandler.EvolutionGoWebhook)
 	mux.Handle("POST /v1/public/webhooks/generic", http.HandlerFunc(webhooksHandler.ReceiveLead))

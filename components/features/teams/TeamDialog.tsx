@@ -201,7 +201,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
   const displayLogo = logoPreview || logoUrl || undefined;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88vh] w-[calc(100vw-16px)] max-w-[560px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none backdrop-blur-xl sm:rounded-[12px] [&_button.absolute]:hidden">
+      <DialogContent data-tour="management-team-dialog" className="max-h-[88vh] w-[calc(100vw-16px)] max-w-[560px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none backdrop-blur-xl sm:rounded-[12px] [&_button.absolute]:hidden">
         <div className="flex max-h-[88vh] flex-col p-4 sm:p-5">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">

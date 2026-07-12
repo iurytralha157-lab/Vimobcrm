@@ -94,7 +94,11 @@ export const apiPipelineResponseSchema = apiEnvelopeSchema(apiPipelineSchema)
 export const apiStageListResponseSchema = apiEnvelopeSchema(z.array(apiStageSchema))
 export const apiStageResponseSchema = apiEnvelopeSchema(apiStageSchema)
 
-export const pipelineBoardLeadSchema = z.object({ id: uuidSchema }).passthrough()
+export const pipelineBoardLeadSchema = z.object({
+  id: uuidSchema,
+  board_order_at: timestampSchema.nullable().optional(),
+  stage_entered_at: timestampSchema.nullable().optional(),
+}).passthrough()
 export const pipelineBoardStageSchema = z.object({
   id: uuidSchema,
   leads: z.array(pipelineBoardLeadSchema),

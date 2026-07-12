@@ -243,6 +243,19 @@ func (handler Handler) ListExecutions(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]AutomationExecution]{Data: items})
 }
 
+func (handler Handler) ListExecutionSummaries(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	items, err := handler.repo.ListExecutionSummaries(r.Context(), tenantContext)
+	if err != nil {
+		writeAutomationError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]AutomationExecutionSummary]{Data: items})
+}
+
 func (handler Handler) CancelExecution(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := organizationContext(w, r)
 	if !ok {
@@ -255,6 +268,102 @@ func (handler Handler) CancelExecution(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (handler Handler) CancelAutomationExecutions(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	cancelled, err := handler.repo.CancelAutomationExecutions(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writeAutomationError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "cancelled": cancelled})
+}
+
+func (handler Handler) ListExecutionSteps(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+
+	limit := 50
+	offset := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 200 {
+			writeAutomationError(w, r, ErrInvalidInput)
+			return
+		}
+		limit = value
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("offset")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 || value > 10000 {
+			writeAutomationError(w, r, ErrInvalidInput)
+			return
+		}
+		offset = value
+	}
+
+	steps, err := handler.repo.ListExecutionSteps(r.Context(), tenantContext, r.PathValue("id"), ExecutionStepFilter{
+		Limit: limit, Offset: offset,
+	})
+	if err != nil {
+		writeAutomationError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]AutomationExecutionStep]{Data: steps})
+}
+
+func (handler Handler) ListRuntimeIssues(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	limit := 50
+	offset := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 200 {
+			writeAutomationError(w, r, ErrInvalidInput)
+			return
+		}
+		limit = value
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("offset")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 || value > 10000 {
+			writeAutomationError(w, r, ErrInvalidInput)
+			return
+		}
+		offset = value
+	}
+	issues, err := handler.repo.ListRuntimeIssues(r.Context(), tenantContext, limit, offset)
+	if err != nil {
+		writeAutomationError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[RuntimeIssuesResult]{Data: issues})
+}
+
+func (handler Handler) RetryRuntimeIssue(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	if err := handler.repo.RetryRuntimeIssue(
+		r.Context(),
+		tenantContext,
+		r.PathValue("kind"),
+		r.PathValue("id"),
+	); err != nil {
+		writeAutomationError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 }
 
 func (handler Handler) Start(w http.ResponseWriter, r *http.Request) {
@@ -317,12 +426,26 @@ func writeAutomationError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusNotFound, "automation_template_not_found", "Automation template was not found.")
 	case errors.Is(err, ErrExecutionNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "automation_execution_not_found", "Automation execution was not found.")
+	case errors.Is(err, ErrExecutionNotCancellable):
+		httpserver.WriteError(w, r, http.StatusConflict, "automation_execution_not_cancellable", "Automation execution is already finished.")
+	case errors.Is(err, ErrExecutionAlreadyActive):
+		httpserver.WriteError(w, r, http.StatusConflict, "automation_execution_already_active", "Automation already has an active execution for this lead.")
+	case errors.Is(err, ErrExecutionDispatchFailed):
+		httpserver.WriteError(w, r, http.StatusBadGateway, "automation_execution_dispatch_failed", "Automation execution failed during initial dispatch.")
+	case errors.Is(err, ErrFlowInUse):
+		httpserver.WriteError(w, r, http.StatusConflict, "automation_flow_in_use", "Automation has an active legacy execution and cannot be changed yet.")
 	case errors.Is(err, ErrAutomationMediaNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "automation_media_not_found", "Automation media was not found.")
+	case errors.Is(err, ErrAutomationMediaInUse):
+		httpserver.WriteError(w, r, http.StatusConflict, "automation_media_in_use", "Automation media is referenced by an active flow.")
 	case errors.Is(err, ErrAutomationStorageNotConfigured):
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "automation_storage_not_configured", "Automation storage is not configured.")
 	case errors.Is(err, ErrAutomationStorage):
 		httpserver.WriteError(w, r, http.StatusBadGateway, "automation_storage_failed", "Automation storage operation failed.")
+	case errors.Is(err, ErrAutomationRuntime):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "automation_runtime_unavailable", "Automation runtime is not configured.")
+	case errors.Is(err, ErrRuntimeIssueNotRetryable):
+		httpserver.WriteError(w, r, http.StatusConflict, "automation_runtime_issue_not_retryable", "This runtime issue cannot be retried safely yet.")
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	default:

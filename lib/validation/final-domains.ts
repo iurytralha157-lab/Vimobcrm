@@ -168,15 +168,56 @@ export const apiAIRunEnvelopeSchema = apiEnvelopeSchema(apiAIRunResponseSchema)
 export const apiAIMetricsResponseSchema = apiEnvelopeSchema(apiAIMetricsSchema)
 export const apiAIEventListResponseSchema = apiEnvelopeSchema(z.array(apiAIEventSchema))
 
+export const gamificationActionTypeSchema = z.enum([
+  'call_made',
+  'message_sent',
+  'contact_made',
+  'visit_scheduled',
+  'visit_confirmed',
+  'meeting_scheduled',
+  'meeting_held',
+  'proposal_sent',
+  'sale_closed',
+  'contract_signed',
+  'lost_lead_recovered',
+  'lead_created',
+  'lead_created_manual',
+  'property_created',
+  'prospecting_report',
+])
+export type GamificationActionType = z.infer<typeof gamificationActionTypeSchema>
+
+export const gamificationRankingQuerySchema = z.object({
+  from: timestampSchema.optional(),
+  to: timestampSchema.optional(),
+  actionTypes: z.array(gamificationActionTypeSchema).max(20).default([]),
+}).strict().superRefine((input, ctx) => {
+  if (input.from && input.to && new Date(input.from) >= new Date(input.to)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['to'], message: 'O fim do período precisa ser posterior ao início' })
+  }
+})
+
+export const gamificationEventListQuerySchema = z.object({
+  from: timestampSchema.optional(),
+  to: timestampSchema.optional(),
+  userId: uuidSchema.optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+  cursor: z.string().trim().min(1).max(1_024).optional(),
+}).strict().superRefine((input, ctx) => {
+  if (input.from && input.to && new Date(input.from) >= new Date(input.to)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['to'], message: 'O fim do período precisa ser posterior ao início' })
+  }
+})
+
 export const gamificationRuleInputSchema = z.object({
-  points: z.number().int().min(-100_000).max(100_000),
+  points: z.number().int().min(0).max(100_000),
   isActive: z.boolean().optional(),
 }).strict()
 export const gamificationParticipantInputSchema = z.object({ participates: z.boolean() }).strict()
 export const gamificationMissionInputSchema = z.object({
   title: z.string().trim().min(2).max(180),
   description: z.string().trim().max(2_000).nullish(),
-  actionType: z.string().trim().max(120).nullish(),
+  actionType: gamificationActionTypeSchema.nullish(),
   targetCount: z.number().int().min(1).max(1_000_000),
   bonusPoints: z.number().int().min(0).max(1_000_000),
   period: z.string().trim().max(80).nullish(),
@@ -189,8 +230,8 @@ export const gamificationMissionInputSchema = z.object({
   }
 })
 export const gamificationManualEntryInputSchema = z.object({
-  actionKey: z.string().trim().min(1).max(120),
-  quantity: z.number().int().min(1).max(100_000),
+  actionKey: gamificationActionTypeSchema,
+  quantity: z.number().int().min(1).max(100),
   notes: z.string().trim().max(2_000),
 }).strict()
 export const gamificationDecisionInputSchema = z.object({
@@ -215,19 +256,39 @@ const apiGamificationEventSchema = z.object({
   details: z.string().nullable(),
   source: z.string().nullable(),
 }).passthrough()
+const apiGamificationRankingEntrySchema = z.object({
+  userId: uuidSchema,
+  name: z.string(),
+  avatarUrl: z.string().nullable(),
+  points: z.number().int(),
+  xp: nonNegativeIntegerSchema,
+  level: nonNegativeIntegerSchema,
+  rank: z.string(),
+  streakDays: nonNegativeIntegerSchema,
+  xpCurrentLevel: nonNegativeIntegerSchema,
+  xpNextLevel: nonNegativeIntegerSchema,
+  lastActivityAt: timestampSchema.nullable(),
+  position: nonNegativeIntegerSchema,
+  isCurrentUser: z.boolean(),
+}).passthrough()
 export const apiGamificationMissionSchema = z.object({
   id: uuidSchema,
   title: z.string(),
+  description: z.string().nullable(),
+  actionType: gamificationActionTypeSchema.nullable(),
   targetCount: nonNegativeIntegerSchema,
   currentProgress: nonNegativeIntegerSchema,
   bonusPoints: nonNegativeIntegerSchema,
   isActive: z.boolean(),
   targetScope: z.string(),
   targetUserId: uuidSchema.nullable(),
+  period: z.string().nullable(),
+  createdAt: timestampSchema.nullable(),
+  updatedAt: timestampSchema.nullable(),
 }).passthrough()
 export const apiGamificationRuleSchema = z.object({
-  id: uuidSchema,
-  actionType: z.string(),
+  id: z.union([uuidSchema, z.string().regex(/^default-[a-z0-9_-]+$/)]),
+  actionType: gamificationActionTypeSchema,
   points: z.number().int(),
   isActive: z.boolean(),
   isTemp: z.boolean(),
@@ -253,21 +314,53 @@ export const apiGamificationSeasonSchema = z.object({
 export const apiGamificationManualEntrySchema = z.object({
   id: uuidSchema,
   userId: uuidSchema,
-  actionKey: z.string(),
+  userName: z.string(),
+  actionKey: gamificationActionTypeSchema,
   quantity: z.number().int(),
+  notes: z.string().nullable(),
   status: z.enum(['pending', 'approved', 'rejected']),
+  approvedBy: uuidSchema.nullable(),
+  approvedAt: timestampSchema.nullable(),
+  rejectionReason: z.string().nullable(),
+  awardedAt: timestampSchema.nullable(),
+  awardStatus: z.enum(['pending', 'processing', 'completed', 'skipped', 'dead']).nullable(),
   createdAt: timestampSchema.nullable(),
 }).passthrough()
+const apiGamificationPerformanceSchema = z.object({
+  chartData: z.array(z.object({
+    name: z.string(),
+    points: z.number().int(),
+    actions: nonNegativeIntegerSchema,
+  }).passthrough()),
+  metrics: z.object({
+    points: z.number().int(),
+    growth: z.number().finite(),
+    avgActionsPerDay: z.number().finite(),
+    totalActions: nonNegativeIntegerSchema,
+    efficiency: z.number().finite(),
+    consistency: z.number().finite(),
+  }).passthrough(),
+  distribution: z.array(z.object({
+    label: z.string(),
+    value: nonNegativeIntegerSchema,
+  }).passthrough()),
+}).passthrough()
 export const apiGamificationOverviewResponseSchema = apiEnvelopeSchema(z.object({
-  ranking: z.array(z.record(z.unknown())),
+  ranking: z.array(apiGamificationRankingEntrySchema),
   recentEvents: z.array(apiGamificationEventSchema),
   history: z.array(apiGamificationEventSchema),
   missions: z.array(apiGamificationMissionSchema),
-  performance: z.record(z.unknown()),
+  performance: apiGamificationPerformanceSchema,
   totalPoints: z.number().int(),
   activeUsers: nonNegativeIntegerSchema,
   totalEvents: nonNegativeIntegerSchema,
   myPosition: nonNegativeIntegerSchema.nullable(),
+}).passthrough())
+export const apiGamificationRankingResponseSchema = apiEnvelopeSchema(z.array(apiGamificationRankingEntrySchema))
+export const apiGamificationEventPageResponseSchema = apiEnvelopeSchema(z.object({
+  events: z.array(apiGamificationEventSchema),
+  total: nonNegativeIntegerSchema,
+  nextCursor: z.string().nullable(),
 }).passthrough())
 export const apiGamificationAdminResponseSchema = apiEnvelopeSchema(z.object({
   rules: z.array(apiGamificationRuleSchema),

@@ -124,3 +124,57 @@ func TestRequireOrganization(t *testing.T) {
 		t.Fatalf("allowed organization status = %d, want %d", allowedRecorder.Code, http.StatusNoContent)
 	}
 }
+
+func TestRequireModule(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	tests := []struct {
+		name           string
+		tenantContext  Context
+		module         string
+		wantStatusCode int
+	}{
+		{
+			name:           "requires organization context",
+			module:         "gamification",
+			wantStatusCode: http.StatusForbidden,
+		},
+		{
+			name: "denies disabled module",
+			tenantContext: Context{
+				UserID:         "10000000-0000-0000-0000-000000000001",
+				OrganizationID: "20000000-0000-0000-0000-000000000001",
+				EnabledModules: []string{"crm"},
+			},
+			module:         "gamification",
+			wantStatusCode: http.StatusForbidden,
+		},
+		{
+			name: "allows enabled module case insensitively",
+			tenantContext: Context{
+				UserID:         "10000000-0000-0000-0000-000000000001",
+				OrganizationID: "20000000-0000-0000-0000-000000000001",
+				EnabledModules: []string{"Gamification"},
+			},
+			module:         " gamification ",
+			wantStatusCode: http.StatusNoContent,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/v1/gamification/overview", nil)
+			if test.tenantContext.OrganizationID != "" {
+				request = request.WithContext(ContextWithTenant(request.Context(), test.tenantContext))
+			}
+			recorder := httptest.NewRecorder()
+
+			RequireModule(test.module, next).ServeHTTP(recorder, request)
+			if recorder.Code != test.wantStatusCode {
+				t.Fatalf("status = %d, want %d", recorder.Code, test.wantStatusCode)
+			}
+		})
+	}
+}
