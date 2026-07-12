@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
@@ -48,19 +49,16 @@ func (repo Repository) ListEnrichments(ctx context.Context, tenantContext tenant
 		}
 	}
 
-	if err := repo.attachLeadEnrichmentTags(ctx, tenantContext, visibleLeadIDs, enrichmentsByLead); err != nil {
-		return nil, err
-	}
-	if err := repo.attachLeadEnrichmentTaskCounts(ctx, tenantContext, visibleLeadIDs, enrichmentsByLead); err != nil {
-		return nil, err
-	}
-	if err := repo.attachLeadEnrichmentMeta(ctx, tenantContext, visibleLeadIDs, enrichmentsByLead); err != nil {
-		return nil, err
-	}
-	if err := repo.attachLeadEnrichmentUsers(ctx, tenantContext, assignedUserIDs, assignedUserByLead, enrichmentsByLead); err != nil {
-		return nil, err
-	}
-	if err := repo.attachLeadEnrichmentProperties(ctx, tenantContext, propertyIDs, propertyByLead, enrichmentsByLead); err != nil {
+	if err := repo.attachLeadEnrichmentsBatch(
+		ctx,
+		tenantContext,
+		visibleLeadIDs,
+		assignedUserIDs,
+		assignedUserByLead,
+		propertyIDs,
+		propertyByLead,
+		enrichmentsByLead,
+	); err != nil {
 		return nil, err
 	}
 
@@ -123,17 +121,24 @@ func (repo Repository) listVisibleLeadEnrichmentSeeds(ctx context.Context, tenan
 	return ordered, nil
 }
 
-func (repo Repository) attachLeadEnrichmentTags(ctx context.Context, tenantContext tenant.Context, leadIDs []string, enrichments map[string]*LeadEnrichment) error {
-	if len(leadIDs) == 0 {
-		return nil
-	}
+func (repo Repository) attachLeadEnrichmentsBatch(
+	ctx context.Context,
+	tenantContext tenant.Context,
+	leadIDs []string,
+	userIDs []string,
+	userByLead map[string]string,
+	propertyIDs []string,
+	propertyByLead map[string]string,
+	enrichments map[string]*LeadEnrichment,
+) error {
+	batch := &pgx.Batch{}
 
-	args := []any{tenantContext.OrganizationID}
+	leadArgs := []any{tenantContext.OrganizationID}
 	for _, id := range leadIDs {
-		args = append(args, id)
+		leadArgs = append(leadArgs, id)
 	}
 
-	rows, err := repo.db.Pool().Query(ctx, `
+	batch.Queue(`
 		select
 			lt.lead_id::text,
 			t.id::text,
@@ -145,40 +150,24 @@ func (repo Repository) attachLeadEnrichmentTags(ctx context.Context, tenantConte
 		  and t.organization_id = $1::uuid
 		  and lt.lead_id in (`+uuidPlaceholders(2, leadIDs)+`)
 		order by lt.created_at asc
-	`, args...)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var leadID string
-		var tag LeadEnrichmentTag
-		var name, color pgtype.Text
-		if err := rows.Scan(&leadID, &tag.ID, &name, &color); err != nil {
-			return err
+	`, leadArgs...).Query(func(rows pgx.Rows) error {
+		for rows.Next() {
+			var leadID string
+			var tag LeadEnrichmentTag
+			var name, color pgtype.Text
+			if err := rows.Scan(&leadID, &tag.ID, &name, &color); err != nil {
+				return err
+			}
+			if enrichment, ok := enrichments[leadID]; ok {
+				tag.Name = textPtr(name)
+				tag.Color = textPtr(color)
+				enrichment.Tags = append(enrichment.Tags, tag)
+			}
 		}
-		if enrichment, ok := enrichments[leadID]; ok {
-			tag.Name = textPtr(name)
-			tag.Color = textPtr(color)
-			enrichment.Tags = append(enrichment.Tags, tag)
-		}
-	}
+		return rows.Err()
+	})
 
-	return rows.Err()
-}
-
-func (repo Repository) attachLeadEnrichmentTaskCounts(ctx context.Context, tenantContext tenant.Context, leadIDs []string, enrichments map[string]*LeadEnrichment) error {
-	if len(leadIDs) == 0 {
-		return nil
-	}
-
-	args := []any{tenantContext.OrganizationID}
-	for _, id := range leadIDs {
-		args = append(args, id)
-	}
-
-	rows, err := repo.db.Pool().Query(ctx, `
+	batch.Queue(`
 		select
 			lead_id::text,
 			count(*) filter (where is_done = false) as pending,
@@ -187,40 +176,24 @@ func (repo Repository) attachLeadEnrichmentTaskCounts(ctx context.Context, tenan
 		where organization_id = $1::uuid
 		  and lead_id in (`+uuidPlaceholders(2, leadIDs)+`)
 		group by lead_id
-	`, args...)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var leadID string
-		var pending, completed int64
-		if err := rows.Scan(&leadID, &pending, &completed); err != nil {
-			return err
-		}
-		if enrichment, ok := enrichments[leadID]; ok {
-			enrichment.TasksCount = LeadEnrichmentTaskCount{
-				Pending:   int(pending),
-				Completed: int(completed),
+	`, leadArgs...).Query(func(rows pgx.Rows) error {
+		for rows.Next() {
+			var leadID string
+			var pending, completed int64
+			if err := rows.Scan(&leadID, &pending, &completed); err != nil {
+				return err
+			}
+			if enrichment, ok := enrichments[leadID]; ok {
+				enrichment.TasksCount = LeadEnrichmentTaskCount{
+					Pending:   int(pending),
+					Completed: int(completed),
+				}
 			}
 		}
-	}
+		return rows.Err()
+	})
 
-	return rows.Err()
-}
-
-func (repo Repository) attachLeadEnrichmentMeta(ctx context.Context, tenantContext tenant.Context, leadIDs []string, enrichments map[string]*LeadEnrichment) error {
-	if len(leadIDs) == 0 {
-		return nil
-	}
-
-	args := []any{tenantContext.OrganizationID}
-	for _, id := range leadIDs {
-		args = append(args, id)
-	}
-
-	rows, err := repo.db.Pool().Query(ctx, `
+	batch.Queue(`
 		select
 			lead_id::text,
 			campaign_name,
@@ -234,139 +207,117 @@ func (repo Repository) attachLeadEnrichmentMeta(ctx context.Context, tenantConte
 		where organization_id = $1::uuid
 		  and lead_id in (`+uuidPlaceholders(2, leadIDs)+`)
 		order by created_at asc
-	`, args...)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var meta LeadEnrichmentMeta
-		var campaignName, campaignID, adsetName, adsetID, adName, adID, platform pgtype.Text
-		if err := rows.Scan(&meta.LeadID, &campaignName, &campaignID, &adsetName, &adsetID, &adName, &adID, &platform); err != nil {
-			return err
+	`, leadArgs...).Query(func(rows pgx.Rows) error {
+		for rows.Next() {
+			var meta LeadEnrichmentMeta
+			var campaignName, campaignID, adsetName, adsetID, adName, adID, platform pgtype.Text
+			if err := rows.Scan(&meta.LeadID, &campaignName, &campaignID, &adsetName, &adsetID, &adName, &adID, &platform); err != nil {
+				return err
+			}
+			if enrichment, ok := enrichments[meta.LeadID]; ok {
+				meta.CampaignName = textPtr(campaignName)
+				meta.CampaignID = textPtr(campaignID)
+				meta.AdsetName = textPtr(adsetName)
+				meta.AdsetID = textPtr(adsetID)
+				meta.AdName = textPtr(adName)
+				meta.AdID = textPtr(adID)
+				meta.Platform = textPtr(platform)
+				enrichment.LeadMeta = append(enrichment.LeadMeta, meta)
+			}
 		}
-		if enrichment, ok := enrichments[meta.LeadID]; ok {
-			meta.CampaignName = textPtr(campaignName)
-			meta.CampaignID = textPtr(campaignID)
-			meta.AdsetName = textPtr(adsetName)
-			meta.AdsetID = textPtr(adsetID)
-			meta.AdName = textPtr(adName)
-			meta.AdID = textPtr(adID)
-			meta.Platform = textPtr(platform)
-			enrichment.LeadMeta = append(enrichment.LeadMeta, meta)
-		}
-	}
+		return rows.Err()
+	})
 
-	return rows.Err()
-}
-
-func (repo Repository) attachLeadEnrichmentUsers(ctx context.Context, tenantContext tenant.Context, userIDs []string, userByLead map[string]string, enrichments map[string]*LeadEnrichment) error {
 	userIDs = uniqueStrings(userIDs)
-	if len(userIDs) == 0 {
-		return nil
-	}
-
-	args := []any{tenantContext.OrganizationID}
-	for _, id := range userIDs {
-		args = append(args, id)
-	}
-
-	rows, err := repo.db.Pool().Query(ctx, `
-		select
-			u.id::text,
-			u.name,
-			u.avatar_url
-		from public.users u
-		join public.organization_members om
-		  on om.user_id = u.id
-		 and om.organization_id = $1::uuid
-		where u.id in (`+uuidPlaceholders(2, userIDs)+`)
-		  and coalesce(u.is_active, false) = true
-		  and coalesce(om.is_active, false) = true
-	`, args...)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	usersByID := map[string]*LeadEnrichmentUser{}
-	for rows.Next() {
-		var user LeadEnrichmentUser
-		var name, avatarURL pgtype.Text
-		if err := rows.Scan(&user.ID, &name, &avatarURL); err != nil {
-			return err
+	if len(userIDs) > 0 {
+		userArgs := []any{tenantContext.OrganizationID}
+		for _, id := range userIDs {
+			userArgs = append(userArgs, id)
 		}
-		user.Name = textPtr(name)
-		user.AvatarURL = textPtr(avatarURL)
-		usersByID[user.ID] = &user
-	}
-	if err := rows.Err(); err != nil {
-		return err
+
+		batch.Queue(`
+			select
+				u.id::text,
+				u.name,
+				u.avatar_url
+			from public.users u
+			join public.organization_members om
+			  on om.user_id = u.id
+			 and om.organization_id = $1::uuid
+			where u.id in (`+uuidPlaceholders(2, userIDs)+`)
+			  and coalesce(u.is_active, false) = true
+			  and coalesce(om.is_active, false) = true
+		`, userArgs...).Query(func(rows pgx.Rows) error {
+			usersByID := map[string]*LeadEnrichmentUser{}
+			for rows.Next() {
+				var user LeadEnrichmentUser
+				var name, avatarURL pgtype.Text
+				if err := rows.Scan(&user.ID, &name, &avatarURL); err != nil {
+					return err
+				}
+				user.Name = textPtr(name)
+				user.AvatarURL = textPtr(avatarURL)
+				usersByID[user.ID] = &user
+			}
+			if err := rows.Err(); err != nil {
+				return err
+			}
+			for leadID, userID := range userByLead {
+				if enrichment, ok := enrichments[leadID]; ok {
+					enrichment.Assignee = usersByID[userID]
+				}
+			}
+			return nil
+		})
 	}
 
-	for leadID, userID := range userByLead {
-		if enrichment, ok := enrichments[leadID]; ok {
-			enrichment.Assignee = usersByID[userID]
-		}
-	}
-
-	return nil
-}
-
-func (repo Repository) attachLeadEnrichmentProperties(ctx context.Context, tenantContext tenant.Context, propertyIDs []string, propertyByLead map[string]string, enrichments map[string]*LeadEnrichment) error {
 	propertyIDs = uniqueStrings(propertyIDs)
-	if len(propertyIDs) == 0 {
-		return nil
-	}
-
-	args := []any{tenantContext.OrganizationID}
-	for _, id := range propertyIDs {
-		args = append(args, id)
-	}
-
-	rows, err := repo.db.Pool().Query(ctx, `
-		select
-			id::text,
-			code,
-			title,
-			preco::double precision
-		from public.properties
-		where organization_id = $1::uuid
-		  and id in (`+uuidPlaceholders(2, propertyIDs)+`)
-	`, args...)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	propertiesByID := map[string]*LeadEnrichmentProperty{}
-	for rows.Next() {
-		var property LeadEnrichmentProperty
-		var code, title pgtype.Text
-		var price pgtype.Float8
-		if err := rows.Scan(&property.ID, &code, &title, &price); err != nil {
-			return err
+	if len(propertyIDs) > 0 {
+		propertyArgs := []any{tenantContext.OrganizationID}
+		for _, id := range propertyIDs {
+			propertyArgs = append(propertyArgs, id)
 		}
-		property.Code = textPtr(code)
-		property.Title = textPtr(title)
-		if price.Valid {
-			value := price.Float64
-			property.Price = &value
-		}
-		propertiesByID[property.ID] = &property
-	}
-	if err := rows.Err(); err != nil {
-		return err
+
+		batch.Queue(`
+			select
+				id::text,
+				code,
+				title,
+				preco::double precision
+			from public.properties
+			where organization_id = $1::uuid
+			  and id in (`+uuidPlaceholders(2, propertyIDs)+`)
+		`, propertyArgs...).Query(func(rows pgx.Rows) error {
+			propertiesByID := map[string]*LeadEnrichmentProperty{}
+			for rows.Next() {
+				var property LeadEnrichmentProperty
+				var code, title pgtype.Text
+				var price pgtype.Float8
+				if err := rows.Scan(&property.ID, &code, &title, &price); err != nil {
+					return err
+				}
+				property.Code = textPtr(code)
+				property.Title = textPtr(title)
+				if price.Valid {
+					value := price.Float64
+					property.Price = &value
+				}
+				propertiesByID[property.ID] = &property
+			}
+			if err := rows.Err(); err != nil {
+				return err
+			}
+			for leadID, propertyID := range propertyByLead {
+				if enrichment, ok := enrichments[leadID]; ok {
+					enrichment.InterestProperty = propertiesByID[propertyID]
+				}
+			}
+			return nil
+		})
 	}
 
-	for leadID, propertyID := range propertyByLead {
-		if enrichment, ok := enrichments[leadID]; ok {
-			enrichment.InterestProperty = propertiesByID[propertyID]
-		}
-	}
-
-	return nil
+	results := repo.db.Pool().SendBatch(ctx, batch)
+	return results.Close()
 }
 
 func normalizeLeadEnrichmentIDs(values []string) []string {
