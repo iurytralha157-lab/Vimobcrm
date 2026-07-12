@@ -7,10 +7,11 @@ import {
   getDashboardStats,
   getDashboardTopBrokers,
   getDashboardUpcomingTasks,
+  type DashboardAPIFilters,
 } from "@/lib/api/dashboard";
 import { performanceTracker } from "@/lib/performance";
 import { useAuth } from "@/contexts/AuthContext";
-import { DashboardFilters, sourceLabels } from "./use-dashboard-filters";
+import { sourceLabels } from "./use-dashboard-filters";
 
 const DASHBOARD_STALE_TIME_MS = 1000 * 60 * 10;
 const DASHBOARD_SHORT_STALE_TIME_MS = 1000 * 60 * 5;
@@ -162,7 +163,7 @@ export function useDashboardStats() {
   });
 }
 
-export function useEnhancedDashboardStats(filters?: DashboardFilters) {
+export function useEnhancedDashboardStats(filters?: DashboardAPIFilters) {
   const { user, organization } = useAuth();
   const currentUserId = user?.id;
   const organizationId = organization?.id;
@@ -206,7 +207,7 @@ export function useLeadsChartData() {
   });
 }
 
-export function useFunnelData(filters?: DashboardFilters, pipelineId?: string | null) {
+export function useFunnelData(filters?: DashboardAPIFilters, pipelineId?: string | null) {
   const { user, organization } = useAuth();
   const organizationId = organization?.id;
 
@@ -234,7 +235,7 @@ export function useFunnelData(filters?: DashboardFilters, pipelineId?: string | 
   });
 }
 
-export function useLeadSourcesData(filters?: DashboardFilters, pipelineId?: string | null) {
+export function useLeadSourcesData(filters?: DashboardAPIFilters, pipelineId?: string | null) {
   const { user, organization } = useAuth();
   const organizationId = organization?.id;
 
@@ -269,7 +270,7 @@ export function useLeadSourcesData(filters?: DashboardFilters, pipelineId?: stri
   });
 }
 
-export function useTopBrokers(filters?: DashboardFilters) {
+export function useTopBrokers(filters?: DashboardAPIFilters) {
   const { user, organization } = useAuth();
   const currentUserId = user?.id;
   const organizationId = organization?.id;
@@ -310,7 +311,7 @@ export function useUpcomingTasks() {
   });
 }
 
-export function useDealsEvolutionData(filters?: DashboardFilters) {
+export function useDealsEvolutionData(filters?: DashboardAPIFilters) {
   const { user, organization } = useAuth();
   const currentUserId = user?.id;
   const organizationId = organization?.id;
@@ -346,7 +347,7 @@ export function useDealsEvolutionData(filters?: DashboardFilters) {
   });
 }
 
-function isSingleDashboardDayRange(dateRange?: DashboardFilters["dateRange"]) {
+function isSingleDashboardDayRange(dateRange?: DashboardAPIFilters["dateRange"]) {
   if (!dateRange?.from || !dateRange?.to) {
     return false;
   }

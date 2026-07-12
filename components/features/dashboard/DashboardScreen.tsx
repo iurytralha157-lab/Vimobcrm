@@ -1,6 +1,6 @@
 "use client";
 
-import { type KeyboardEvent, useState, useEffect } from "react";
+import { type KeyboardEvent, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import {
@@ -49,7 +49,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { SharedFilters } from "@/components/shared/SharedFilters";
 import { datePresetOptions, sourceLabels } from "@/hooks/use-dashboard-filters";
-import { getDashboardExtraCounts } from "@/lib/api/dashboard";
+import { getDashboardExtraCounts, type DashboardAPIFilters } from "@/lib/api/dashboard";
 
 const DASHBOARD_EXTRA_COUNTS_STALE_TIME_MS = 1000 * 60 * 10;
 
@@ -130,10 +130,23 @@ export default function Dashboard() {
   const dateFromStr = filters.dateRange.from.toISOString();
   const dateToStr = filters.dateRange.to.toISOString();
 
+  const dashboardFilters = useMemo<DashboardAPIFilters>(() => ({
+    dateRange: filters.dateRange,
+    teamId: filters.teamId,
+    userId: filters.userId,
+    source: filters.source,
+    campaignId: filters.campaignId,
+    adSetId: filters.adSetId,
+    adId: filters.adId,
+    tagId: filters.tagId,
+    dealStatus: filters.dealStatus,
+    searchQuery: filters.searchQuery,
+  }), [filters]);
+
   // Data hooks - Imobiliário
-  const { data: stats, isLoading: statsLoading } = useEnhancedDashboardStats(filters);
-  const { data: evolutionData = [], isLoading: evolutionLoading } = useDealsEvolutionData(filters);
-  const { data: sourcesData = [], isLoading: sourcesLoading } = useLeadSourcesData(filters);
+  const { data: stats, isLoading: statsLoading } = useEnhancedDashboardStats(dashboardFilters);
+  const { data: evolutionData = [], isLoading: evolutionLoading } = useDealsEvolutionData(dashboardFilters);
+  const { data: sourcesData = [], isLoading: sourcesLoading } = useLeadSourcesData(dashboardFilters);
   const hasOrganization = Boolean(organization?.id);
 
   const { data: extraCounts, isLoading: extraCountsLoading } = useQuery({
@@ -152,7 +165,7 @@ export default function Dashboard() {
       filters.dealStatus,
       filters.searchQuery,
     ],
-    queryFn: () => getDashboardExtraCounts({ organizationId: organization?.id, filters }),
+    queryFn: () => getDashboardExtraCounts({ organizationId: organization?.id, filters: dashboardFilters }),
     enabled: !!organization?.id,
     staleTime: DASHBOARD_EXTRA_COUNTS_STALE_TIME_MS,
   });
@@ -170,7 +183,7 @@ export default function Dashboard() {
     }
   }, [hasOrganization, statsLoading, evolutionLoading]);
 
-  const funnelComponent = <SalesFunnelWithPipeline filters={filters} />;
+  const funnelComponent = <SalesFunnelWithPipeline filters={dashboardFilters} />;
   const periodLabel = datePresetOptions.find((o) => o.value === datePreset)?.label || "Período selecionado";
 
   const kpiData: EnhancedDashboardStats = stats || {

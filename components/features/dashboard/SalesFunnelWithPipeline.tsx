@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
 import { TrendingDown } from 'lucide-react';
 import { usePipelines } from '@/hooks/use-stages';
 import { useFunnelData } from '@/hooks/use-dashboard-stats';
-import { DashboardFilters } from '@/hooks/use-dashboard-filters';
+import type { DashboardAPIFilters } from '@/lib/api/dashboard';
 import { useAuth } from '@/contexts/AuthContext';
 
 const funnelGradients = [
@@ -27,7 +27,7 @@ const funnelGradients = [
 ];
 
 interface SalesFunnelWithPipelineProps {
-  filters?: DashboardFilters;
+  filters?: DashboardAPIFilters;
 }
 
 function FunnelSkeleton() {
