@@ -87,7 +87,8 @@ export default function Dashboard() {
   const [lostDialogOpen, setLostDialogOpen] = useState(false);
   const [wonDialogOpen, setWonDialogOpen] = useState(false);
   const [shouldLoadFilterOptions, setShouldLoadFilterOptions] = useState(false);
-  const { organization } = useAuth();
+  const { organization, profile } = useAuth();
+  const activeOrganizationId = organization?.id ?? profile?.organization_id;
 
   const {
     filters,
@@ -147,12 +148,12 @@ export default function Dashboard() {
   const { data: stats, isLoading: statsLoading } = useEnhancedDashboardStats(dashboardFilters);
   const { data: evolutionData = [], isLoading: evolutionLoading } = useDealsEvolutionData(dashboardFilters);
   const { data: sourcesData = [], isLoading: sourcesLoading } = useLeadSourcesData(dashboardFilters);
-  const hasOrganization = Boolean(organization?.id);
+  const hasOrganization = Boolean(activeOrganizationId);
 
   const { data: extraCounts, isLoading: extraCountsLoading } = useQuery({
     queryKey: [
       "dashboard-extra-counts",
-      organization?.id,
+      activeOrganizationId,
       dateFromStr,
       dateToStr,
       filters.userId,
@@ -165,8 +166,8 @@ export default function Dashboard() {
       filters.dealStatus,
       filters.searchQuery,
     ],
-    queryFn: () => getDashboardExtraCounts({ organizationId: organization?.id, filters: dashboardFilters }),
-    enabled: !!organization?.id,
+    queryFn: () => getDashboardExtraCounts({ organizationId: activeOrganizationId, filters: dashboardFilters }),
+    enabled: !!activeOrganizationId,
     staleTime: DASHBOARD_EXTRA_COUNTS_STALE_TIME_MS,
   });
 

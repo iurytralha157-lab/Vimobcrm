@@ -1246,6 +1246,11 @@ func canManageWhatsApp(tenantContext tenant.Context) bool {
 		tenantContext.HasPermission("settings_manage")
 }
 
+func canCreateOwnWhatsAppSession(tenantContext tenant.Context) bool {
+	return canManageWhatsApp(tenantContext) ||
+		(tenantContext.IsOrganizationMember() && tenantContext.HasModule("whatsapp"))
+}
+
 func textValue(value pgtype.Text) string {
 	if !value.Valid {
 		return ""

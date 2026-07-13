@@ -48,13 +48,14 @@ function FunnelSkeleton() {
 }
 
 export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProps) {
-  const { organization } = useAuth();
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id ?? profile?.organization_id ?? null;
   const { data: pipelines = [] } = usePipelines();
   const [manualPipelineSelection, setManualPipelineSelection] = useState<{
     organizationId: string | null;
     pipelineId: string | null;
   }>({ organizationId: null, pipelineId: null });
-  const manualPipelineId = manualPipelineSelection.organizationId === organization?.id
+  const manualPipelineId = manualPipelineSelection.organizationId === organizationId
     ? manualPipelineSelection.pipelineId
     : null;
 
@@ -65,7 +66,7 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
 
   const { data: funnelData = [], isLoading: funnelLoading } = useFunnelData(filters, manualPipelineId);
 
-  const isLoading = !organization?.id || funnelLoading;
+  const isLoading = !organizationId || funnelLoading;
   const total = funnelData.reduce((sum, d) => sum + d.value, 0);
   const maxStages = Math.max(funnelData.length, 1);
 
@@ -83,7 +84,7 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
                 value={selectedPipelineId || ''}
                 onValueChange={(pipelineId) => {
                   setManualPipelineSelection({
-                    organizationId: organization?.id || null,
+                    organizationId,
                     pipelineId,
                   });
                 }}

@@ -101,6 +101,23 @@ func TestProviderActionRequiresWhatsAppManager(t *testing.T) {
 	}
 }
 
+func TestCreateOwnWhatsAppSessionAllowsOrganizationMemberWithModule(t *testing.T) {
+	broker := tenant.Context{
+		OrganizationID: "20000000-0000-0000-0000-000000000001",
+		UserID:         "10000000-0000-0000-0000-000000000001",
+		MemberRole:     "user",
+		EnabledModules: []string{"crm", "whatsapp"},
+	}
+	if !canCreateOwnWhatsAppSession(broker) {
+		t.Fatal("organization member with WhatsApp module should create their own session")
+	}
+
+	broker.EnabledModules = []string{"crm"}
+	if canCreateOwnWhatsAppSession(broker) {
+		t.Fatal("organization member without WhatsApp module should not create a session")
+	}
+}
+
 func TestGenericProviderActionCannotBypassLeadBoundAPIs(t *testing.T) {
 	for _, action := range []string{
 		"send.text",

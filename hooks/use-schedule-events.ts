@@ -67,47 +67,50 @@ function syncGoogleCalendarEventInBackground(
 }
 
 export function useScheduleEvents(options: UseScheduleEventsOptions = {}) {
-  const { profile } = useAuth()
+  const { profile, organization } = useAuth()
+  const organizationId = organization?.id ?? profile?.organization_id
 
   return useQuery({
-    queryKey: ['schedule-events', profile?.organization_id, options],
+    queryKey: ['schedule-events', organizationId, options],
     queryFn: () =>
       scheduleAPI.getScheduleEvents({
-        organizationId: profile?.organization_id,
+        organizationId,
         eventId: options.eventId,
         userId: options.userId,
         leadId: options.leadId,
         startDate: options.startDate,
         endDate: options.endDate,
       }),
-    enabled: !!profile?.organization_id && options.enabled !== false,
+    enabled: !!organizationId && options.enabled !== false,
     staleTime: 1000 * 60 * 5,
   })
 }
 
 export function useScheduleCapabilities() {
-  const { profile } = useAuth()
+  const { profile, organization } = useAuth()
+  const organizationId = organization?.id ?? profile?.organization_id
 
   return useQuery({
-    queryKey: ['schedule-capabilities', profile?.organization_id, profile?.id],
-    queryFn: () => scheduleAPI.getCapabilities(profile?.organization_id),
-    enabled: !!profile?.organization_id && !!profile?.id,
+    queryKey: ['schedule-capabilities', organizationId, profile?.id],
+    queryFn: () => scheduleAPI.getCapabilities(organizationId),
+    enabled: !!organizationId && !!profile?.id,
     staleTime: 1000 * 60 * 5,
   })
 }
 
 export function useCreateScheduleEvent() {
   const queryClient = useQueryClient()
-  const { profile } = useAuth()
+  const { profile, organization } = useAuth()
+  const organizationId = organization?.id ?? profile?.organization_id
 
   return useMutation({
     mutationFn: async (event: CreateScheduleEventInput) => {
-      if (!profile?.organization_id) throw new Error('Organização não encontrada')
-      return scheduleAPI.createScheduleEvent(profile.organization_id, event)
+      if (!organizationId) throw new Error('Organização não encontrada')
+      return scheduleAPI.createScheduleEvent(organizationId, event)
     },
     onSuccess: (data) => {
       invalidateScheduleCaches(queryClient, data?.lead_id)
-      syncGoogleCalendarEventInBackground(queryClient, 'push_upsert', data?.id, profile?.organization_id)
+      syncGoogleCalendarEventInBackground(queryClient, 'push_upsert', data?.id, organizationId)
       toast.success('Atividade criada com sucesso!')
     },
     onError: (error: Error) => {
@@ -119,7 +122,8 @@ export function useCreateScheduleEvent() {
 
 export function useUpdateScheduleEvent() {
   const queryClient = useQueryClient()
-  const { profile } = useAuth()
+  const { profile, organization } = useAuth()
+  const organizationId = organization?.id ?? profile?.organization_id
 
   return useMutation({
     mutationFn: async ({
@@ -134,12 +138,12 @@ export function useUpdateScheduleEvent() {
       id: string
       visibility?: ScheduleEventVisibility
     }) => {
-      if (!profile?.organization_id) throw new Error('Organização não encontrada')
-      return scheduleAPI.updateScheduleEvent(id, toScheduleUpdateBody(updates), profile.organization_id)
+      if (!organizationId) throw new Error('Organização não encontrada')
+      return scheduleAPI.updateScheduleEvent(id, toScheduleUpdateBody(updates), organizationId)
     },
     onSuccess: (data) => {
       invalidateScheduleCaches(queryClient, data?.lead_id)
-      syncGoogleCalendarEventInBackground(queryClient, 'push_upsert', data?.id, profile?.organization_id)
+      syncGoogleCalendarEventInBackground(queryClient, 'push_upsert', data?.id, organizationId)
       toast.success('Atividade atualizada!')
     },
     onError: (error: Error) => {
@@ -151,16 +155,17 @@ export function useUpdateScheduleEvent() {
 
 export function useCompleteScheduleEvent() {
   const queryClient = useQueryClient()
-  const { profile } = useAuth()
+  const { profile, organization } = useAuth()
+  const organizationId = organization?.id ?? profile?.organization_id
 
   return useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
-      if (!profile?.organization_id) throw new Error('Organização não encontrada')
-      return scheduleAPI.completeScheduleEvent(id, status, profile.organization_id)
+      if (!organizationId) throw new Error('Organização não encontrada')
+      return scheduleAPI.completeScheduleEvent(id, status, organizationId)
     },
     onSuccess: (data) => {
       invalidateScheduleCaches(queryClient, data?.lead_id)
-      syncGoogleCalendarEventInBackground(queryClient, 'push_upsert', data?.id, profile?.organization_id)
+      syncGoogleCalendarEventInBackground(queryClient, 'push_upsert', data?.id, organizationId)
       toast.success(data.status === 'completed' ? 'Atividade concluida!' : 'Atividade reaberta')
     },
     onError: (error: Error) => {
@@ -172,13 +177,14 @@ export function useCompleteScheduleEvent() {
 
 export function useDeleteScheduleEvent() {
   const queryClient = useQueryClient()
-  const { profile } = useAuth()
+  const { profile, organization } = useAuth()
+  const organizationId = organization?.id ?? profile?.organization_id
 
   return useMutation({
     mutationFn: async ({ id }: { id: string }) => {
-      if (!profile?.organization_id) throw new Error('Organização não encontrada')
-      await syncGoogleCalendarEvent('push_delete', id, profile.organization_id)
-      return scheduleAPI.deleteScheduleEvent(id, profile.organization_id)
+      if (!organizationId) throw new Error('Organização não encontrada')
+      await syncGoogleCalendarEvent('push_delete', id, organizationId)
+      return scheduleAPI.deleteScheduleEvent(id, organizationId)
     },
     onSuccess: (data) => {
       invalidateScheduleCaches(queryClient, data?.lead_id)

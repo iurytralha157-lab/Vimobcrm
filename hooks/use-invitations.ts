@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { adminAPI } from '@/lib/api/admin';
+import { useAuth } from '@/contexts/AuthContext';
 
 export interface Invitation {
   id: string;
@@ -17,23 +18,33 @@ export interface Invitation {
 }
 
 export function useInvitations() {
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id ?? profile?.organization_id;
+
   return useQuery({
-    queryKey: ['invitations'],
-    queryFn: () => adminAPI.listInvitations<Invitation>(),
+    queryKey: ['invitations', organizationId],
+    queryFn: () => adminAPI.listInvitations<Invitation>(organizationId),
+    enabled: !!organizationId,
   });
 }
 
 export function useCreateInvitation() {
   const queryClient = useQueryClient();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id ?? profile?.organization_id;
 
   return useMutation({
-    mutationFn: ({ email, role }: { email?: string; role: 'admin' | 'user' }) =>
-      adminAPI.createInvitation<Invitation>({
-        email: email || null,
+    mutationFn: ({ email, role }: { email?: string; role: 'admin' | 'user' }) => {
+      if (!organizationId) throw new Error('Organização não encontrada');
+      return adminAPI.createInvitation<Invitation>({
+        email: email || '',
         role,
-      }),
+        organizationId,
+      });
+    },
     onSuccess: (invitation) => {
       queryClient.invalidateQueries({ queryKey: ['invitations'] });
+      queryClient.invalidateQueries({ queryKey: ['organization-users'] });
       toast.success(invitation.email_sent === false ? 'Convite criado sem envio de e-mail.' : 'Convite enviado por e-mail.');
     },
     onError: (error) => {
@@ -49,6 +60,7 @@ export function useDeleteInvitation() {
     mutationFn: (id: string) => adminAPI.deleteInvitation(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['invitations'] });
+      queryClient.invalidateQueries({ queryKey: ['organization-users'] });
       toast.success('Convite cancelado!');
     },
     onError: (error) => {

@@ -142,8 +142,8 @@ export interface UpcomingTask {
 }
 
 export function useDashboardStats() {
-  const { organization, user } = useAuth();
-  const organizationId = organization?.id;
+  const { organization, profile, user } = useAuth();
+  const organizationId = organization?.id ?? profile?.organization_id;
 
   return useQuery({
     queryKey: ["dashboard-stats", organizationId, user?.id],
@@ -164,9 +164,9 @@ export function useDashboardStats() {
 }
 
 export function useEnhancedDashboardStats(filters?: DashboardAPIFilters) {
-  const { user, organization } = useAuth();
+  const { user, organization, profile } = useAuth();
   const currentUserId = user?.id;
-  const organizationId = organization?.id;
+  const organizationId = organization?.id ?? profile?.organization_id;
 
   return useQuery({
     queryKey: [
@@ -195,11 +195,12 @@ export function useEnhancedDashboardStats(filters?: DashboardAPIFilters) {
 }
 
 export function useLeadsChartData() {
-  const { user, organization } = useAuth();
+  const { user, organization, profile } = useAuth();
+  const organizationId = organization?.id ?? profile?.organization_id;
 
   return useQuery({
-    queryKey: ["leads-chart-data", user?.id, organization?.id],
-    enabled: !!user?.id && !!organization?.id,
+    queryKey: ["leads-chart-data", user?.id, organizationId],
+    enabled: !!user?.id && !!organizationId,
     queryFn: async (): Promise<ChartDataPoint[]> => {
       return [];
     },
@@ -208,8 +209,8 @@ export function useLeadsChartData() {
 }
 
 export function useFunnelData(filters?: DashboardAPIFilters, pipelineId?: string | null) {
-  const { user, organization } = useAuth();
-  const organizationId = organization?.id;
+  const { user, organization, profile } = useAuth();
+  const organizationId = organization?.id ?? profile?.organization_id;
 
   return useQuery({
     queryKey: [
@@ -236,8 +237,8 @@ export function useFunnelData(filters?: DashboardAPIFilters, pipelineId?: string
 }
 
 export function useLeadSourcesData(filters?: DashboardAPIFilters, pipelineId?: string | null) {
-  const { user, organization } = useAuth();
-  const organizationId = organization?.id;
+  const { user, organization, profile } = useAuth();
+  const organizationId = organization?.id ?? profile?.organization_id;
 
   return useQuery({
     queryKey: [
@@ -271,9 +272,9 @@ export function useLeadSourcesData(filters?: DashboardAPIFilters, pipelineId?: s
 }
 
 export function useTopBrokers(filters?: DashboardAPIFilters) {
-  const { user, organization } = useAuth();
+  const { user, organization, profile } = useAuth();
   const currentUserId = user?.id;
-  const organizationId = organization?.id;
+  const organizationId = organization?.id ?? profile?.organization_id;
 
   return useQuery({
     queryKey: [
@@ -299,9 +300,9 @@ export function useTopBrokers(filters?: DashboardAPIFilters) {
 }
 
 export function useUpcomingTasks() {
-  const { user, organization } = useAuth();
+  const { user, organization, profile } = useAuth();
   const currentUserId = user?.id;
-  const organizationId = organization?.id;
+  const organizationId = organization?.id ?? profile?.organization_id;
 
   return useQuery({
     queryKey: ["upcoming-tasks", currentUserId, organizationId],
@@ -312,9 +313,9 @@ export function useUpcomingTasks() {
 }
 
 export function useDealsEvolutionData(filters?: DashboardAPIFilters) {
-  const { user, organization } = useAuth();
+  const { user, organization, profile } = useAuth();
   const currentUserId = user?.id;
-  const organizationId = organization?.id;
+  const organizationId = organization?.id ?? profile?.organization_id;
   const dealsEvolutionFilters = {
     ...filters,
     granularity: isSingleDashboardDayRange(filters?.dateRange) ? ("hour" as const) : null,

@@ -6,35 +6,36 @@ export type { AssigneeUser }
 
 export function useScheduleEventAssignees(eventId: string | undefined) {
   const queryClient = useQueryClient()
-  const { profile } = useAuth()
+  const { profile, organization } = useAuth()
+  const organizationId = organization?.id ?? profile?.organization_id
 
   const { data: assignees = [], isLoading } = useQuery({
-    queryKey: ['schedule_assignees', profile?.organization_id, eventId],
+    queryKey: ['schedule_assignees', organizationId, eventId],
     queryFn: async () => {
       if (!eventId) return []
-      return scheduleAPI.getAssignees(eventId, profile?.organization_id)
+      return scheduleAPI.getAssignees(eventId, organizationId)
     },
-    enabled: !!eventId && !!profile?.organization_id,
+    enabled: !!eventId && !!organizationId,
   })
 
   const addAssignee = useMutation({
     mutationFn: async (userId: string) => {
-      if (!eventId || !profile?.organization_id) throw new Error('Dados insuficientes')
-      return scheduleAPI.addAssignee(eventId, userId, profile.organization_id)
+      if (!eventId || !organizationId) throw new Error('Dados insuficientes')
+      return scheduleAPI.addAssignee(eventId, userId, organizationId)
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['schedule_assignees', profile?.organization_id, eventId] })
+      queryClient.invalidateQueries({ queryKey: ['schedule_assignees', organizationId, eventId] })
       queryClient.invalidateQueries({ queryKey: ['schedule-events'] })
     },
   })
 
   const removeAssignee = useMutation({
     mutationFn: async (userId: string) => {
-      if (!eventId || !profile?.organization_id) throw new Error('Dados insuficientes')
-      return scheduleAPI.removeAssignee(eventId, userId, profile.organization_id)
+      if (!eventId || !organizationId) throw new Error('Dados insuficientes')
+      return scheduleAPI.removeAssignee(eventId, userId, organizationId)
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['schedule_assignees', profile?.organization_id, eventId] })
+      queryClient.invalidateQueries({ queryKey: ['schedule_assignees', organizationId, eventId] })
       queryClient.invalidateQueries({ queryKey: ['schedule-events'] })
     },
   })

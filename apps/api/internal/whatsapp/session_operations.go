@@ -625,7 +625,7 @@ func (repo Repository) GetManageableSession(ctx context.Context, tenantContext t
 }
 
 func (repo Repository) ensureCanCreateSession(ctx context.Context, tenantContext tenant.Context) error {
-	if !canManageWhatsApp(tenantContext) {
+	if !canCreateOwnWhatsAppSession(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 

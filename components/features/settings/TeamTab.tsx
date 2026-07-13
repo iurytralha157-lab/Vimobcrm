@@ -34,11 +34,12 @@ import {
   Plus, 
   Trash2, 
   Loader2,
+  Mail,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useDeleteUser, useDeleteUserImpact, useOrganizationUsers, useUpdateUser } from '@/hooks/use-users';
-import { useCreateInvitation } from '@/hooks/use-invitations';
+import { useCreateInvitation, useDeleteInvitation, useInvitations } from '@/hooks/use-invitations';
 import { 
   useOrganizationRoles, 
   useUserOrganizationRoles, 
@@ -61,11 +62,13 @@ export function TeamTab() {
   const queryClient = useQueryClient();
   
   const { data: users = [], isLoading: usersLoading } = useOrganizationUsers();
+  const { data: invitations = [], isLoading: invitationsLoading } = useInvitations();
   const { data: organizationRoles = [] } = useOrganizationRoles();
   const { data: userOrgRoles = [] } = useUserOrganizationRoles();
   
   const updateUser = useUpdateUser();
   const deleteUser = useDeleteUser();
+  const deleteInvitation = useDeleteInvitation();
   const assignUserRole = useAssignUserRole();
   const createInvitation = useCreateInvitation();
 
@@ -105,6 +108,7 @@ export function TeamTab() {
     !deletingUser &&
     (!requiresLeadTransfer || !!transferLeadsToUserId) &&
     (!requiresPropertyTransfer || !!transferPropertiesToUserId);
+  const pendingInvitations = invitations.filter((invitation) => !invitation.used_at);
 
   // Helper para obter a função customizada de um usuário
   const getUserCustomRole = (userId: string): OrganizationRole | undefined => {
@@ -253,12 +257,49 @@ export function TeamTab() {
             )}
           </CardHeader>
           <CardContent className="px-4 md:px-6 pb-4">
-            {usersLoading ? (
+            {usersLoading || invitationsLoading ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
             ) : (
               <div data-tour="team-users-list" className="space-y-3">
+                {pendingInvitations.map((invitation) => (
+                  <div
+                    key={`invitation-${invitation.id}`}
+                    className="flex items-center justify-between p-3 rounded-lg border border-dashed border-amber-500/30 bg-amber-500/5"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Avatar className="h-9 w-9">
+                        <AvatarFallback className="bg-amber-500 text-white text-sm">
+                          <Mail className="h-4 w-4" />
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="truncate text-sm font-medium">{invitation.email || 'Convite sem e-mail'}</p>
+                          <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-200">
+                            Pendente
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Convite enviado como {invitation.role === 'admin' ? t.settings.users.admin : t.settings.users.user}
+                        </p>
+                      </div>
+                    </div>
+                    {isAdmin && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={() => deleteInvitation.mutate(invitation.id)}
+                        disabled={deleteInvitation.isPending}
+                        aria-label="Cancelar convite"
+                      >
+                        {deleteInvitation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                      </Button>
+                    )}
+                  </div>
+                ))}
                 {users.filter(user => user.role !== 'super_admin').map(user => (
                   <div 
                     key={user.id} 

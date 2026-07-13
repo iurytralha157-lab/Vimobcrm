@@ -1491,12 +1491,9 @@ function ConversationItem({
               <span className="truncate font-sans font-semibold text-xs text-foreground">
                 {displayName}
               </span>
-              {conversation.is_group && <Badge className="h-4 shrink-0 border-0 bg-orange-500/15 px-1.5 text-[9px] font-medium text-orange-700 shadow-none dark:bg-orange-500/15 dark:text-orange-300">
-                  Grupo
-                </Badge>}
-              {!hasLead && (
-                <Badge className="h-4 shrink-0 border-0 bg-sky-500/15 px-1.5 text-[9px] font-medium text-sky-700 shadow-none dark:text-sky-300">
-                  Sem lead
+              {hasLead && (
+                <Badge className="h-4 shrink-0 border-0 bg-emerald-500/15 px-1.5 text-[9px] font-medium text-emerald-700 shadow-none dark:text-emerald-300">
+                  Lead
                 </Badge>
               )}
               {otherAssigneeName && (

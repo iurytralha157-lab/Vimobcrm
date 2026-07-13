@@ -39,8 +39,8 @@ function optionalFilter(value: string | null | undefined) {
 }
 
 export function useSharedFilters(options?: { loadDynamicOptions?: boolean }) {
-  const { organization } = useAuth();
-  const organizationId = organization?.id;
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id ?? profile?.organization_id;
   const {
     datePreset,
     setDatePreset,

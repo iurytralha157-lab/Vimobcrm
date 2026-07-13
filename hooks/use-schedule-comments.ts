@@ -10,27 +10,28 @@ function getErrorMessage(error: unknown): string {
 }
 
 export function useScheduleComments(eventId: string | undefined) {
-  const { profile } = useAuth()
+  const { profile, organization } = useAuth()
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const organizationId = organization?.id ?? profile?.organization_id
 
   const { data: comments = [], isLoading } = useQuery({
-    queryKey: ['schedule_comments', profile?.organization_id, eventId],
+    queryKey: ['schedule_comments', organizationId, eventId],
     queryFn: async () => {
       if (!eventId) return []
-      return scheduleAPI.getComments(eventId, profile?.organization_id)
+      return scheduleAPI.getComments(eventId, organizationId)
     },
-    enabled: !!eventId && !!profile?.organization_id,
+    enabled: !!eventId && !!organizationId,
   })
 
   const addCommentMutation = useMutation({
     mutationFn: async (content: string) => {
       if (!eventId) throw new Error('Evento nao identificado')
-      if (!profile?.organization_id) throw new Error('Organização não encontrada')
-      return scheduleAPI.addComment(eventId, content, profile.organization_id)
+      if (!organizationId) throw new Error('Organização não encontrada')
+      return scheduleAPI.addComment(eventId, content, organizationId)
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['schedule_comments', profile?.organization_id, eventId] })
+      queryClient.invalidateQueries({ queryKey: ['schedule_comments', organizationId, eventId] })
     },
     onError: (error) => {
       toast({

@@ -6,8 +6,8 @@ import { usersAPI, type CreateUserInput, type DeleteUserInput, type UpdateUserIn
 export type { CreateUserInput, DeleteUserImpact, DeleteUserInput, UpdateUserInput, User } from '@/lib/api/users';
 
 export function useOrganizationUsers(options?: { enabled?: boolean }) {
-  const { profile } = useAuth();
-  const orgId = profile?.organization_id;
+  const { profile, organization } = useAuth();
+  const orgId = organization?.id ?? profile?.organization_id;
 
   return useQuery({
     queryKey: ['organization-users', orgId],
@@ -23,8 +23,8 @@ export function useOrganizationUsers(options?: { enabled?: boolean }) {
 export const useUsers = useOrganizationUsers;
 
 export function useDeleteUserImpact(userId?: string | null, enabled = true) {
-  const { profile } = useAuth();
-  const orgId = profile?.organization_id;
+  const { profile, organization } = useAuth();
+  const orgId = organization?.id ?? profile?.organization_id;
 
   return useQuery({
     queryKey: ['organization-user-delete-impact', orgId, userId],
@@ -35,9 +35,9 @@ export function useDeleteUserImpact(userId?: string | null, enabled = true) {
 }
 
 export function useCreateUser() {
-  const { profile } = useAuth();
+  const { profile, organization } = useAuth();
   const queryClient = useQueryClient();
-  const orgId = profile?.organization_id;
+  const orgId = organization?.id ?? profile?.organization_id;
 
   return useMutation({
     mutationFn: (input: CreateUserInput) => usersAPI.createUser(input, orgId),
@@ -48,9 +48,9 @@ export function useCreateUser() {
 }
 
 export function useUpdateUser() {
-  const { profile } = useAuth();
+  const { profile, organization } = useAuth();
   const queryClient = useQueryClient();
-  const orgId = profile?.organization_id;
+  const orgId = organization?.id ?? profile?.organization_id;
 
   return useMutation({
     mutationFn: (input: UpdateUserInput) => usersAPI.updateUser(input, orgId),
@@ -69,9 +69,9 @@ export function useUpdateUser() {
 }
 
 export function useDeleteUser() {
-  const { profile } = useAuth();
+  const { profile, organization } = useAuth();
   const queryClient = useQueryClient();
-  const orgId = profile?.organization_id;
+  const orgId = organization?.id ?? profile?.organization_id;
 
   return useMutation({
     mutationFn: (input: DeleteUserInput) => usersAPI.deleteUser(input, orgId),

@@ -41,15 +41,16 @@ const activityConfig: Record<string, { icon: LucideIcon; color: string; label: s
 const defaultConfig = { icon: Activity, color: 'text-muted-foreground', label: 'Atividade' };
 
 export function RecentActivities() {
-  const { organization } = useAuth();
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id ?? profile?.organization_id;
 
   const { data: activities = [], isLoading } = useQuery({
-    queryKey: ['dashboard-recent-activities', organization?.id],
+    queryKey: ['dashboard-recent-activities', organizationId],
     queryFn: async () => {
-      if (!organization?.id) return [];
-      return getDashboardRecentActivities({ organizationId: organization.id, limit: 8 });
+      if (!organizationId) return [];
+      return getDashboardRecentActivities({ organizationId, limit: 8 });
     },
-    enabled: !!organization?.id,
+    enabled: !!organizationId,
     refetchInterval: 30000,
   });
 
