@@ -37,7 +37,7 @@ import {
 } from "@/components/ui/command";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { cn } from '@/lib/utils';
-import { format } from 'date-fns';
+import { format, type Locale } from 'date-fns';
 import { ptBR, enUS } from 'date-fns/locale';
 import { useLeadTasks, useCompleteCadenceTask } from '@/hooks/use-lead-tasks';
 import { useCadenceTemplates } from '@/hooks/use-cadences';
@@ -108,6 +108,22 @@ const taskTypeLabels: Record<string, string> = {
   message: 'Mensagem',
   email: 'Email',
   note: 'Observação'
+};
+const scheduleEventTypeLabels: Record<EventType, string> = {
+  call: 'Ligação',
+  email: 'E-mail',
+  meeting: 'Reunião',
+  task: 'Tarefa',
+  message: 'Mensagem',
+  visit: 'Visita'
+};
+const scheduleEventTypeIcons: Record<EventType, typeof Phone> = {
+  call: Phone,
+  email: Mail,
+  meeting: Calendar,
+  task: ListTodo,
+  message: MessageCircle,
+  visit: MapPin
 };
 const activityTypeIcons: Record<string, typeof Phone> = {
   call: Phone,
@@ -516,6 +532,120 @@ function normalizeCadenceLabel(label: string) {
 
   if (normalized === 'contactados') return 'Contatados';
   return label;
+}
+
+function getScheduleEventType(value?: string | null): EventType {
+  return value === 'email' ||
+    value === 'meeting' ||
+    value === 'task' ||
+    value === 'message' ||
+    value === 'visit'
+    ? value
+    : 'call';
+}
+
+function getScheduleStatusLabel(status?: string | null, isLate = false) {
+  if (status === 'completed') return 'Concluído';
+  if (status === 'cancelled' || status === 'canceled') return 'Cancelado';
+  if (status === 'no_show') return 'Não compareceu';
+  if (isLate) return 'Atrasado';
+  return 'Pendente';
+}
+
+function getScheduleStatusClass(status?: string | null, isLate = false) {
+  if (status === 'completed') return 'bg-emerald-500/12 text-emerald-500';
+  if (status === 'cancelled' || status === 'canceled') return 'bg-red-500/12 text-red-500';
+  if (status === 'no_show') return 'bg-amber-500/12 text-amber-500';
+  if (isLate) return 'bg-red-500/12 text-red-500';
+  return 'bg-primary/12 text-primary';
+}
+
+function getScheduleDateLabel(event: ScheduleEvent, locale: Locale) {
+  const startDate = new Date(event.start_time);
+  const endDate = new Date(event.end_time);
+  const dateLabel = format(startDate, 'dd/MM', { locale });
+  const startTime = format(startDate, 'HH:mm', { locale });
+  const endTime = format(endDate, 'HH:mm', { locale });
+
+  if (event.is_all_day) return `${dateLabel} - dia todo`;
+  if (event.end_time && startTime !== endTime) return `${dateLabel} ${startTime}-${endTime}`;
+  return `${dateLabel} ${startTime}`;
+}
+
+function CompactScheduleEventsList({
+  events,
+  locale,
+  onEditEvent,
+}: {
+  events: ScheduleEvent[];
+  locale: Locale;
+  onEditEvent: (event: ScheduleEvent) => void;
+}) {
+  const [currentTime] = useState(() => Date.now());
+  const sortedEvents = [...events].sort((left, right) => {
+    const leftCompleted = left.status === 'completed';
+    const rightCompleted = right.status === 'completed';
+    if (leftCompleted !== rightCompleted) return leftCompleted ? 1 : -1;
+    return new Date(left.start_time).getTime() - new Date(right.start_time).getTime();
+  });
+
+  if (sortedEvents.length === 0) {
+    return (
+      <p className="mt-3 rounded-[6px] bg-[var(--app-surface-solid)] px-3 py-2 text-xs text-[var(--app-text-tertiary)]">
+        Nenhum compromisso agendado
+      </p>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        'mt-3 space-y-1.5 overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+        sortedEvents.length > 2 ? 'h-[148px]' : 'max-h-[148px]',
+      )}
+    >
+      {sortedEvents.map((event) => {
+        const eventType = getScheduleEventType(event.event_type);
+        const EventIcon = scheduleEventTypeIcons[eventType] || Calendar;
+        const isCompleted = event.status === 'completed';
+        const isLate = !isCompleted && new Date(event.start_time).getTime() < currentTime;
+
+        return (
+          <button
+            key={event.id}
+            type="button"
+            onClick={() => onEditEvent(event)}
+            className={cn(
+              'flex w-full items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-2 text-left transition-colors hover:bg-primary/10',
+              isCompleted && 'opacity-65',
+            )}
+          >
+            <span
+              className={cn(
+                'flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]',
+                isCompleted ? 'bg-emerald-500/18 text-emerald-500' : 'bg-primary/12 text-primary',
+              )}
+            >
+              {isCompleted ? <Check className="h-3 w-3" /> : <EventIcon className="h-3 w-3" />}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className={cn('block truncate text-xs font-medium', isCompleted && 'line-through')}>
+                {event.title || scheduleEventTypeLabels[eventType]}
+              </span>
+              <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-[10px] text-[var(--app-text-tertiary)]">
+                <span>{scheduleEventTypeLabels[eventType]}</span>
+                <span>-</span>
+                <span>{getScheduleDateLabel(event, locale)}</span>
+                <span className={cn('rounded-[4px] px-1.5 py-0.5 font-medium', getScheduleStatusClass(event.status, isLate))}>
+                  {getScheduleStatusLabel(event.status, isLate)}
+                </span>
+              </span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function getStageStepperStyle(stageCount: number): CSSProperties {
@@ -2797,6 +2927,11 @@ export function LeadDetailDialog({
                       Agendar
                     </Button>
                   </div>
+                  <CompactScheduleEventsList
+                    events={scheduleEvents}
+                    locale={dateLocale}
+                    onEditEvent={handleEditScheduleEvent}
+                  />
                 </section>
 
                 <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
@@ -3185,6 +3320,11 @@ export function LeadDetailDialog({
                       Agendar
                     </Button>
                   </div>
+                  <CompactScheduleEventsList
+                    events={scheduleEvents}
+                    locale={dateLocale}
+                    onEditEvent={handleEditScheduleEvent}
+                  />
                 </section>
 
                 <section data-tour="lead-detail-cadence" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">

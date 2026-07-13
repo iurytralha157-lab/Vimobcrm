@@ -242,7 +242,7 @@ export const LeadCard = memo(function LeadCard({
           {hasLeadLabels && (
             <div className="mb-2 flex flex-wrap items-center gap-1">
               {/* Deal Status Badge */}
-              {lead.deal_status && lead.deal_status !== 'open' && <span className={cn("text-[9px] px-1.5 py-0.5 font-medium flex items-center gap-0.5 rounded", dealStatusConfig[lead.deal_status as keyof typeof dealStatusConfig].color)}>
+              {lead.deal_status && lead.deal_status !== 'open' && <span className={cn("inline-flex h-[18px] items-center justify-center gap-0.5 rounded px-1.5 text-[9px] font-normal leading-none", dealStatusConfig[lead.deal_status as keyof typeof dealStatusConfig].color)}>
                   {dealStatusConfig[lead.deal_status as keyof typeof dealStatusConfig].icon && (() => {
               const Icon = dealStatusConfig[lead.deal_status as keyof typeof dealStatusConfig].icon;
               return Icon ? <Icon className="h-2.5 w-2.5" /> : null;
@@ -253,14 +253,14 @@ export const LeadCard = memo(function LeadCard({
               {/* Tags - primeira tag em destaque */}
               {lead.tags && lead.tags.length > 0 ? (
                   <>
-                    <span className="text-[9px] px-1.5 py-0.5 font-medium rounded-[4px] border-0" style={{
+                    <span className="inline-flex h-[18px] items-center justify-center rounded-[4px] border-0 px-1.5 text-[9px] font-normal leading-none" style={{
                       backgroundColor: lead.tags[0].color || '#6b7280',
                       color: '#FFFFFF',
                       borderColor: lead.tags[0].color || '#6b7280'
                     }}>
                       {lead.tags[0].name}
                     </span>
-                    {lead.tags.length > 1 && <span className="text-[10px] text-muted-foreground">+{lead.tags.length - 1}</span>}
+                    {lead.tags.length > 1 && <span className="inline-flex h-[18px] items-center text-[10px] leading-none text-muted-foreground">+{lead.tags.length - 1}</span>}
                   </>
                 ) : null}
             </div>
