@@ -87,7 +87,6 @@ export function TeamTab() {
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
   const isAdmin = canManageOrganization({
     isSuperAdmin,
-    profileRole: profile?.role,
     memberRole: activeMemberRole,
   });
   const { data: deleteImpact, isLoading: deleteImpactLoading, isError: deleteImpactFailed } = useDeleteUserImpact(

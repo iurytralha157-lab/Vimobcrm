@@ -2,10 +2,12 @@ package integrations
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -30,6 +32,15 @@ func (handler Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if item, handled, err := handler.handleLocalMetaOAuthAction(r.Context(), tenantContext, r.PathValue("name"), body); handled {
+		if err != nil {
+			writeIntegrationError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
+		return
+	}
+
 	response, err := handler.repo.InvokeFunction(r.Context(), r.PathValue("name"), r.Header.Get("Authorization"), body)
 	if err != nil {
 		writeIntegrationError(w, r, err)
@@ -42,6 +53,31 @@ func (handler Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(response.Body)
+}
+
+type metaOAuthActionRequest struct {
+	Action string `json:"action"`
+	PageID string `json:"page_id"`
+}
+
+func (handler Handler) handleLocalMetaOAuthAction(ctx context.Context, tenantContext tenant.Context, name string, body []byte) (map[string]any, bool, error) {
+	if name != "meta-oauth" {
+		return nil, false, nil
+	}
+
+	var request metaOAuthActionRequest
+	if err := json.Unmarshal(body, &request); err != nil {
+		return nil, true, ErrInvalidInput
+	}
+	if strings.TrimSpace(request.Action) != "get_page_forms" {
+		return nil, false, nil
+	}
+
+	forms, err := handler.repo.ListMetaPageForms(ctx, tenantContext, request.PageID)
+	if err != nil {
+		return nil, true, err
+	}
+	return map[string]any{"forms": forms}, true, nil
 }
 
 func (handler Handler) PublicCheckoutInfo(w http.ResponseWriter, r *http.Request) {

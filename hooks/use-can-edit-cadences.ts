@@ -12,7 +12,6 @@ export function useCanEditCadences(options?: { enabled?: boolean }) {
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
   const canEditByRole = Boolean(
     isSuperAdmin ||
-    profile?.role === 'admin' ||
     activeMemberRole === 'admin' ||
     activeMemberRole === 'owner',
   );

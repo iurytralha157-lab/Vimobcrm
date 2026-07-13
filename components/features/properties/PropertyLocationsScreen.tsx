@@ -132,7 +132,6 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
   const canSeeOwnerContact =
     organization?.property_owner_contact_visibility !== 'hidden' ||
     isSuperAdmin ||
-    profile?.role === 'admin' ||
     ['owner', 'admin', 'manager'].includes(activeMemberRole || '');
 
   const [tab, setTab] = useState<PropertyLocationsTab>(initialTab);

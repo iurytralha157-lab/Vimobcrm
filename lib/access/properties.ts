@@ -3,7 +3,6 @@ type PropertyAccessInput = {
   organizationId?: string | null
   isSuperAdmin?: boolean
   memberRole?: string | null
-  profileRole?: string | null
   permissions?: readonly string[] | null
   propertyEditPolicy?: 'everyone' | 'responsible_or_admin' | null
   ownerIds?: Array<string | null | undefined>
@@ -47,7 +46,7 @@ export function canManageProperties(input: PropertyAccessInput) {
   if (input.isSuperAdmin) return true
   if (!isOrganizationMember(input)) return false
 
-  const memberRole = normalizeRole(input.memberRole || input.profileRole)
+  const memberRole = normalizeRole(input.memberRole)
   return PROPERTY_MANAGER_ROLES.has(memberRole) || hasPermission(input.permissions, 'property_manage')
 }
 
@@ -55,7 +54,7 @@ export function canDeleteProperties(input: PropertyAccessInput) {
   if (input.isSuperAdmin) return true
   if (!isOrganizationMember(input)) return false
 
-  const memberRole = normalizeRole(input.memberRole || input.profileRole)
+  const memberRole = normalizeRole(input.memberRole)
   return PROPERTY_DELETE_ROLES.has(memberRole) || hasPermission(input.permissions, 'property_delete')
 }
 

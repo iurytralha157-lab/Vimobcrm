@@ -104,7 +104,7 @@ export function SharedFilters({
   onFiltersOpenChange,
   tourPrefix,
 }: SharedFiltersProps) {
-  const { user, profile } = useAuth();
+  const { user, isSuperAdmin } = useAuth();
   const { data: teams = [] } = useTeams({ enabled: loadDynamicOptions });
   const { data: users = [] } = useOrganizationUsers({ enabled: loadDynamicOptions });
   const isMobile = useIsMobile();
@@ -197,8 +197,7 @@ export function SharedFilters({
     [commitSearch, onFiltersOpenChange],
   );
 
-  const isAdmin = profile?.role === "admin" || profile?.role === "super_admin";
-  const canViewAllLeads = isAdmin || hasPermission("lead_view_all");
+  const canViewAllLeads = isSuperAdmin || hasPermission("lead_view_all");
 
   const isTeamLeader = useMemo(
     () => teams.some((team) => team.members?.some((member) => member.user_id === currentUserId && member.is_leader)),

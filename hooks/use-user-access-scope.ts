@@ -14,14 +14,11 @@ export function useUserAccessScope() {
   const { profile, organization, tenantContext, isSuperAdmin, userOrganizations } = useAuth();
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
   const profileId = profile?.id;
-  const profileRole = profile?.role;
   const activeOrganizationId = organization?.id || profile?.organization_id;
   const hasCurrentTenantContext = isTenantContextForOrganization(activeOrganizationId, tenantContext);
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
   const isAdminProfile =
     isSuperAdmin ||
-    profileRole === 'admin' ||
-    profileRole === 'super_admin' ||
     activeMemberRole === 'admin' ||
     activeMemberRole === 'owner';
   const shouldLoadTeams = !isAdminProfile;

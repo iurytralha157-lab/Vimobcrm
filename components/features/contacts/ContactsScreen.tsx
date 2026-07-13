@@ -117,7 +117,7 @@ export default function Contacts() {
   const { organization, profile, isSuperAdmin } = useAuth();
   const { hasPermission } = useUserPermissions();
   const organizationId = organization?.id ?? profile?.organization_id ?? null;
-  const canDeleteLeads = isSuperAdmin || profile?.role === "admin" || hasPermission("lead_delete");
+  const canDeleteLeads = isSuperAdmin || hasPermission("lead_delete");
   const isMobile = useIsMobile();
   const { toast } = useToast();
 

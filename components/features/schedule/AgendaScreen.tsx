@@ -193,7 +193,7 @@ export default function Agenda() {
   }, [openCreateSheet]);
 
 
-  const canFilterUsers = profile?.role === "admin" || Boolean(scheduleCapabilities?.isTeamLeader);
+  const canFilterUsers = Boolean(scheduleCapabilities?.isTeamLeader);
 
   const VIEW_MODES: Array<{ value: AgendaViewMode; label: string; icon: React.ElementType }> = [
     { value: "day", label: "Dia", icon: Clock },

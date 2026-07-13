@@ -22,6 +22,7 @@ import { useSystemSettings } from '@/hooks/use-system-settings';
 import { useAuth } from '@/contexts/AuthContext';
 import { VimobLoader } from '@/components/shared/loading';
 import { Wrench } from 'lucide-react';
+import { canManageOrganization } from '@/lib/access/organization';
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -32,9 +33,11 @@ interface AppLayoutProps {
 
 function MaintenanceBanner() {
   const { data: settings } = useSystemSettings();
-  const { profile, isSuperAdmin } = useAuth();
+  const { profile, organization, isSuperAdmin, userOrganizations } = useAuth();
 
-  const isAdmin = profile?.role === 'admin' || profile?.role === 'super_admin' || isSuperAdmin;
+  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
+  const isAdmin = canManageOrganization({ isSuperAdmin, memberRole: activeMemberRole });
 
   if (!settings?.maintenance_mode || isAdmin) return null;
 

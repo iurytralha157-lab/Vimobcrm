@@ -189,13 +189,13 @@ export function useAssignUserRole() {
 }
 
 export function useHasPermission(permissionKey: string) {
-  const { profile } = useAuth();
+  const { profile, isSuperAdmin } = useAuth();
 
   return useQuery({
-    queryKey: ['has-permission', profile?.id, permissionKey],
+    queryKey: ['has-permission', profile?.id, isSuperAdmin, permissionKey],
     queryFn: async () => {
       if (!profile?.id) return false;
-      if (profile.role === 'admin' || profile.role === 'super_admin') return true;
+      if (isSuperAdmin) return true;
       return settingsAPI.hasPermission(permissionKey);
     },
     enabled: !!profile?.id,

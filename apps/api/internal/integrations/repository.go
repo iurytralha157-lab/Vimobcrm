@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -23,6 +24,12 @@ type Repository struct {
 }
 
 func NewRepository(db *dbpkg.Postgres, external ExternalConfig) Repository {
+	if strings.TrimSpace(external.MetaGraphVersion) == "" {
+		external.MetaGraphVersion = "v25.0"
+	}
+	if strings.TrimSpace(external.MetaGraphBaseURL) == "" {
+		external.MetaGraphBaseURL = "https://graph.facebook.com"
+	}
 	return Repository{
 		db:       db,
 		external: external,
@@ -170,6 +177,178 @@ func (repo Repository) ListMetaIntegrations(ctx context.Context, tenantContext t
 		where mi.organization_id = $1::uuid
 		order by mi.created_at desc
 	`, tenantContext.OrganizationID)
+}
+
+func (repo Repository) ListMetaPageForms(ctx context.Context, tenantContext tenant.Context, pageID string) ([]map[string]any, error) {
+	if !canManageMetaIntegrations(tenantContext) {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
+
+	pageID = strings.TrimSpace(pageID)
+	if pageID == "" {
+		return nil, ErrInvalidInput
+	}
+
+	integration, err := repo.getMetaIntegrationByPage(ctx, tenantContext.OrganizationID, pageID)
+	if err != nil {
+		return nil, err
+	}
+	if integration.AccessToken == nil || strings.TrimSpace(*integration.AccessToken) == "" {
+		return nil, ErrInvalidInput
+	}
+
+	return repo.fetchMetaLeadForms(ctx, pageID, *integration.AccessToken)
+}
+
+type metaIntegrationSnapshot struct {
+	ID          string
+	AccessToken *string
+}
+
+type metaLeadFormsResponse struct {
+	Data   []metaLeadForm `json:"data"`
+	Paging struct {
+		Next string `json:"next"`
+	} `json:"paging"`
+}
+
+type metaLeadForm struct {
+	ID         string             `json:"id"`
+	Name       string             `json:"name"`
+	Status     string             `json:"status"`
+	LeadsCount *int               `json:"leads_count,omitempty"`
+	Questions  []metaFormQuestion `json:"questions,omitempty"`
+}
+
+type metaFormQuestion struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Type  string `json:"type"`
+}
+
+func (repo Repository) getMetaIntegrationByPage(ctx context.Context, organizationID string, pageID string) (metaIntegrationSnapshot, error) {
+	var raw []byte
+	err := repo.db.Pool().QueryRow(ctx, `
+		select to_jsonb(mi)
+		from public.meta_integrations mi
+		where mi.organization_id = $1::uuid
+		  and mi.page_id = $2
+		  and coalesce(mi.is_connected, true) = true
+		order by mi.updated_at desc nulls last, mi.created_at desc nulls last
+		limit 1
+	`, organizationID, pageID).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return metaIntegrationSnapshot{}, ErrIntegrationNotFound
+	}
+	if err != nil {
+		return metaIntegrationSnapshot{}, err
+	}
+
+	var item map[string]any
+	if err := json.Unmarshal(raw, &item); err != nil {
+		return metaIntegrationSnapshot{}, err
+	}
+
+	accessToken := cleanTextFromAny(item["access_token"])
+	if accessToken == nil {
+		accessToken = plainSecretValue(cleanTextFromAny(item["access_token_secret_ref"]))
+	}
+
+	return metaIntegrationSnapshot{
+		ID:          cleanStringFromAny(item["id"]),
+		AccessToken: accessToken,
+	}, nil
+}
+
+func (repo Repository) fetchMetaLeadForms(ctx context.Context, pageID string, accessToken string) ([]map[string]any, error) {
+	pageID = strings.TrimSpace(pageID)
+	accessToken = strings.TrimSpace(accessToken)
+	if pageID == "" || accessToken == "" {
+		return nil, ErrInvalidInput
+	}
+
+	endpoint, err := url.Parse(strings.TrimRight(repo.external.MetaGraphBaseURL, "/") + "/" + strings.Trim(strings.TrimSpace(repo.external.MetaGraphVersion), "/") + "/" + url.PathEscape(pageID) + "/leadgen_forms")
+	if err != nil {
+		return nil, err
+	}
+	query := endpoint.Query()
+	query.Set("access_token", accessToken)
+	query.Set("fields", "id,name,status,leads_count,questions{key,label,type}")
+	query.Set("limit", "100")
+	endpoint.RawQuery = query.Encode()
+
+	forms := []map[string]any{}
+	nextURL := endpoint.String()
+	for page := 0; page < 10 && nextURL != ""; page++ {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		request.Header.Set("Accept", "application/json")
+
+		response, err := repo.client.Do(request)
+		if err != nil {
+			return nil, err
+		}
+
+		var payload metaLeadFormsResponse
+		if response.StatusCode >= 400 {
+			message := readMetaGraphError(response.Body)
+			response.Body.Close()
+			return nil, fmt.Errorf("Meta Graph returned HTTP %d: %s", response.StatusCode, message)
+		}
+		if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&payload); err != nil {
+			response.Body.Close()
+			return nil, err
+		}
+		response.Body.Close()
+
+		for _, form := range payload.Data {
+			forms = append(forms, metaLeadFormToMap(form))
+		}
+		nextURL = strings.TrimSpace(payload.Paging.Next)
+	}
+
+	return forms, nil
+}
+
+func metaLeadFormToMap(form metaLeadForm) map[string]any {
+	status := strings.TrimSpace(form.Status)
+	if status == "" {
+		status = "ACTIVE"
+	}
+	item := map[string]any{
+		"id":     strings.TrimSpace(form.ID),
+		"name":   strings.TrimSpace(form.Name),
+		"status": status,
+	}
+	if form.LeadsCount != nil {
+		item["leads_count"] = *form.LeadsCount
+	}
+	if len(form.Questions) > 0 {
+		questions := make([]map[string]any, 0, len(form.Questions))
+		for _, question := range form.Questions {
+			questions = append(questions, map[string]any{
+				"key":   strings.TrimSpace(question.Key),
+				"label": strings.TrimSpace(question.Label),
+				"type":  strings.TrimSpace(question.Type),
+			})
+		}
+		item["questions"] = questions
+	}
+	return item
+}
+
+func readMetaGraphError(reader io.Reader) string {
+	var body map[string]any
+	if err := json.NewDecoder(io.LimitReader(reader, 1<<20)).Decode(&body); err == nil {
+		if errorBody, ok := body["error"].(map[string]any); ok {
+			if message := cleanStringFromAny(errorBody["message"]); message != "" {
+				return message
+			}
+		}
+	}
+	return "request failed"
 }
 
 func (repo Repository) GetMetaOAuthFlow(ctx context.Context, tenantContext tenant.Context, flowID string) (map[string]any, error) {
@@ -668,6 +847,10 @@ func emptyMetaWebhookHealth(missing bool) map[string]any {
 	}
 }
 
+func canManageMetaIntegrations(tenantContext tenant.Context) bool {
+	return tenantContext.HasPermission("settings_manage")
+}
+
 const googleCalendarIntegrationEnabled = false
 
 func allowedFunction(name string) bool {
@@ -724,6 +907,37 @@ func cleanString(value *string) *string {
 		return nil
 	}
 	return &cleaned
+}
+
+func cleanTextFromAny(value any) *string {
+	text := cleanStringFromAny(value)
+	if text == "" {
+		return nil
+	}
+	return &text
+}
+
+func cleanStringFromAny(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	default:
+		return ""
+	}
+}
+
+func plainSecretValue(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	text := strings.TrimSpace(*value)
+	text = strings.TrimPrefix(text, "plain:")
+	if text == "" {
+		return nil
+	}
+	return &text
 }
 
 func nullableString(value *string) any {

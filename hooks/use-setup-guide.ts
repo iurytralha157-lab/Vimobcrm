@@ -95,8 +95,6 @@ export function useSetupGuide() {
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === organizationId)?.member_role;
   const isAdmin =
     isSuperAdmin ||
-    profile?.role === 'admin' ||
-    profile?.role === 'super_admin' ||
     activeMemberRole === 'admin' ||
     activeMemberRole === 'owner';
   const isTeamLeader = accessScope.isTeamLeader;

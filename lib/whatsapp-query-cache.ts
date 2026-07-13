@@ -10,7 +10,6 @@ export type WhatsAppQueryScope = {
 }
 
 export type WhatsAppAccessContext = {
-  profileRole?: string | null
   memberRole?: string | null
   permissions?: readonly string[] | null
   isTeamLeader?: boolean | null
@@ -63,7 +62,6 @@ const stableList = (values?: readonly string[] | null) =>
 
 export function createWhatsAppAccessScope(context: WhatsAppAccessContext): string {
   return [
-    `profile:${context.profileRole ?? MISSING_SCOPE_VALUE}`,
     `member:${context.memberRole ?? MISSING_SCOPE_VALUE}`,
     `permissions:${stableList(context.permissions)}`,
     `team-leader:${context.isTeamLeader ? 'yes' : 'no'}`,

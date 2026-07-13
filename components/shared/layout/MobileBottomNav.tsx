@@ -23,6 +23,7 @@ import { MobileSidebar } from './MobileSidebar';
 import { CreateLeadDialog } from '@/components/features/leads/CreateLeadDialog';
 import { isBillingBlockedStatus } from '@/lib/billing-access';
 import { canUseFinancialModule } from '@/lib/financial-access';
+import { canManageOrganization } from '@/lib/access/organization';
 
 interface TabItem {
   icon: ElementType;
@@ -35,11 +36,14 @@ export function MobileBottomNav() {
   const router = useRouter();
   const pathname = usePathname() || '';
   const searchParams = useSearchParams();
-  const { profile, isSuperAdmin, organization } = useAuth();
+  const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
   const { t } = useLanguage();
   const { hasModule } = useOrganizationModules();
   const isBillingBlocked = !isSuperAdmin && isBillingBlockedStatus(organization?.subscription_status);
   const canAccessFinancialModule = canUseFinancialModule(organization);
+  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
+  const canManageCurrentOrganization = canManageOrganization({ isSuperAdmin, memberRole: activeMemberRole });
 
   // Build the 4 visible tabs dynamically based on modules
   const tabs = useMemo(() => {
@@ -59,7 +63,7 @@ export function MobileBottomNav() {
       result.push({ icon: Calendar, labelKey: 'schedule', path: '/agenda' });
     } else if (hasModule('properties')) {
       result.push({ icon: Building2, labelKey: 'properties', path: '/properties' });
-    } else if (hasModule('financial') && canAccessFinancialModule && (profile?.role === 'admin' || isSuperAdmin)) {
+    } else if (hasModule('financial') && canAccessFinancialModule && canManageCurrentOrganization) {
       result.push({ icon: DollarSign, labelKey: 'financial', path: '/financeiro' });
     }
 
@@ -79,7 +83,7 @@ export function MobileBottomNav() {
     result.push('more');
 
     return result;
-  }, [canAccessFinancialModule, hasModule, profile?.role, isSuperAdmin, isBillingBlocked]);
+  }, [canAccessFinancialModule, canManageCurrentOrganization, hasModule, isBillingBlocked]);
 
   const isActive = (path: string) => {
     return pathname === path || pathname.startsWith(path + '/');

@@ -625,13 +625,12 @@ func (repo Repository) GetManageableSession(ctx context.Context, tenantContext t
 }
 
 func (repo Repository) ensureCanCreateSession(ctx context.Context, tenantContext tenant.Context) error {
-	if !canCreateOwnWhatsAppSession(tenantContext) {
-		return tenant.ErrOrganizationAccessDenied
-	}
-
 	quota, err := repo.GetSessionQuota(ctx, tenantContext.OrganizationID)
 	if err != nil {
 		return err
+	}
+	if !canCreateOwnWhatsAppSessionWithQuota(tenantContext, quota) {
+		return tenant.ErrOrganizationAccessDenied
 	}
 	if quota.MaxSessions == nil || *quota.MaxSessions <= 0 || quota.CurrentSessions < *quota.MaxSessions {
 		return nil

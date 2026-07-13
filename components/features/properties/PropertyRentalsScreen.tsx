@@ -63,7 +63,6 @@ export default function PropertyRentals() {
     organizationId,
     isSuperAdmin,
     memberRole: tenantContext?.memberRole,
-    profileRole: profile?.role,
     permissions: tenantContext?.permissions,
     propertyEditPolicy: organization?.property_edit_policy,
   };

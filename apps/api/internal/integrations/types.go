@@ -13,8 +13,10 @@ type Envelope[T any] struct {
 }
 
 type ExternalConfig struct {
-	ProjectURL string
-	APIKey     string
+	ProjectURL       string
+	APIKey           string
+	MetaGraphVersion string
+	MetaGraphBaseURL string
 }
 
 type FunctionResponse struct {

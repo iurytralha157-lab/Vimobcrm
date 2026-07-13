@@ -30,11 +30,6 @@ export function useUserPermissions(): UserPermissions {
     queryFn: async () => {
       if (!profile?.id) return [];
 
-      // Admin and super admin have all permissions
-      if (profile.role === 'admin' || profile.role === 'super_admin') {
-        return ['*']; // Wildcard means all permissions
-      }
-
       try {
         const response = await meAPI.getMe(organizationId);
         const context = response.context;
@@ -57,8 +52,6 @@ export function useUserPermissions(): UserPermissions {
     if (isSuperAdmin) return true;
 
     // Admin always has permission
-    if (profile?.role === 'admin') return true;
-
     // Still loading - return false to prevent unauthorized access
     // This is safer than returning true during load
     if (isLoading) return false;

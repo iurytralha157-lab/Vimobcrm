@@ -2873,7 +2873,7 @@ export function LeadDetailDialog({
                 <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-xs font-semibold">Documentação</h3>
-                    {(profile?.role === 'admin' || profile?.id === lead.assigned_user_id) && (
+                    {(accessScope.isAdmin || profile?.id === lead.assigned_user_id) && (
                       <>
                         <Button variant="ghost" size="sm" className="h-7 rounded-[5px] px-2 text-[10px]" disabled={isUploading} onClick={() => fileInputRef.current?.click()}>
                           {isUploading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Paperclip className="mr-1 h-3 w-3" />}
@@ -3265,7 +3265,7 @@ export function LeadDetailDialog({
                 <div data-tour="lead-detail-documents" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-xs font-semibold">Documentacao</h3>
-                    {(profile?.role === 'admin' || profile?.id === lead.assigned_user_id) && (
+                    {(accessScope.isAdmin || profile?.id === lead.assigned_user_id) && (
                       <>
                         <Button variant="ghost" size="sm" className="h-7 rounded-[5px] px-2 text-[10px]" disabled={isUploading} onClick={() => fileInputRef.current?.click()}>
                           {isUploading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Paperclip className="mr-1 h-3 w-3" />}
@@ -4065,7 +4065,7 @@ export function LeadDetailDialog({
                           </div>
                           <h3 className="font-medium text-sm">Documentação</h3>
                         </div>
-                        {(profile?.role === 'admin' || profile?.id === lead.assigned_user_id) && (
+                        {(accessScope.isAdmin || profile?.id === lead.assigned_user_id) && (
                           <>
                             <Button
                               variant="outline"

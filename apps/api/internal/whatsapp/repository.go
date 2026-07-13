@@ -1279,6 +1279,11 @@ func canCreateOwnWhatsAppSession(tenantContext tenant.Context) bool {
 		(tenantContext.IsOrganizationMember() && tenantContext.HasModule("whatsapp"))
 }
 
+func canCreateOwnWhatsAppSessionWithQuota(tenantContext tenant.Context, quota SessionQuota) bool {
+	return canCreateOwnWhatsAppSession(tenantContext) ||
+		(tenantContext.IsOrganizationMember() && quota.MaxSessions != nil)
+}
+
 func textValue(value pgtype.Text) string {
 	if !value.Valid {
 		return ""

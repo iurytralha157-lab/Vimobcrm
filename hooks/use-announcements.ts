@@ -66,9 +66,10 @@ function isAnnouncementTargeted(
   currentUserId?: string,
   currentRole?: string | null,
   currentOrgId?: string | null,
+  isSuperAdmin?: boolean,
 ) {
   if (announcement.target_type === 'all') return true;
-  if (announcement.target_type === 'admins') return currentRole === 'admin' || currentRole === 'super_admin';
+  if (announcement.target_type === 'admins') return isSuperAdmin || currentRole === 'admin' || currentRole === 'owner';
   if (announcement.target_type === 'brokers') return BROKER_ROLES.has((currentRole || '').toLowerCase());
   if (announcement.target_type === 'organizations') {
     return !!currentOrgId && (announcement.target_organization_ids || []).includes(currentOrgId);
@@ -80,7 +81,7 @@ function isAnnouncementTargeted(
 }
 
 export function useActiveAnnouncements() {
-  const { profile, organization } = useAuth();
+  const { profile, organization, userOrganizations, isSuperAdmin } = useAuth();
   const [readyProfileId, setReadyProfileId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -92,17 +93,17 @@ export function useActiveAnnouncements() {
   const ready = !!profile?.id && readyProfileId === profile.id;
 
   return useQuery({
-    queryKey: ['active-announcements', profile?.id, profile?.role, organization?.id],
+    queryKey: ['active-announcements', profile?.id, isSuperAdmin, organization?.id, userOrganizations],
     queryFn: async () => {
       const data = await adminAPI.listActiveAnnouncements<Announcement>();
       const currentUserId = profile?.id;
       const currentOrgId = organization?.id || profile?.organization_id;
-      const currentRole = profile?.role;
+      const currentRole = userOrganizations.find((org) => org.organization_id === currentOrgId)?.member_role;
       const now = new Date();
 
       return data
         .filter((announcement) => isWithinSchedule(announcement, now))
-        .filter((announcement) => isAnnouncementTargeted(announcement, currentUserId, currentRole, currentOrgId));
+        .filter((announcement) => isAnnouncementTargeted(announcement, currentUserId, currentRole, currentOrgId, isSuperAdmin));
     },
     enabled: ready && !!profile?.id,
     staleTime: 1000 * 60,

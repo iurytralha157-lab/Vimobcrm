@@ -93,13 +93,11 @@ test('sinal privado do inbox nao aceita ids, status ou conteudo', () => {
 
 test('normaliza o escopo de acesso sem depender da ordem das permissoes', () => {
   const first = createWhatsAppAccessScope({
-    profileRole: 'user',
     memberRole: 'broker',
     permissions: ['whatsapp_send', 'whatsapp_view'],
     ledTeamIds: ['team-b', 'team-a'],
   })
   const second = createWhatsAppAccessScope({
-    profileRole: 'user',
     memberRole: 'broker',
     permissions: ['whatsapp_view', 'whatsapp_send'],
     ledTeamIds: ['team-a', 'team-b'],

@@ -301,7 +301,6 @@ export const AppSidebar = React.memo(function AppSidebar() {
   });
   const canAccessAdminItems = canManageOrganization({
     isSuperAdmin,
-    profileRole: profile?.role,
     memberRole: activeMemberRole,
   });
 

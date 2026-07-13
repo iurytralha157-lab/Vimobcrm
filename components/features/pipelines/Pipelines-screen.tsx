@@ -224,7 +224,6 @@ export default function Pipelines() {
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
   const isAdmin =
     isSuperAdmin ||
-    profile?.role === 'admin' ||
     activeMemberRole === 'admin' ||
     activeMemberRole === 'owner';
   const newButtonLabel = 'Novo Lead';

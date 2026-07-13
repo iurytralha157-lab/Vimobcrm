@@ -13,7 +13,6 @@ export function useWhatsAppQueryScope(): WhatsAppQueryScope {
     organizationId: organization?.id ?? profile?.organization_id ?? null,
     userId: profile?.id ?? null,
     accessScope: createWhatsAppAccessScope({
-      profileRole: profile?.role,
       memberRole: tenantContext?.memberRole,
       permissions: tenantContext?.permissions,
       isTeamLeader: tenantContext?.isTeamLeader,
@@ -22,5 +21,5 @@ export function useWhatsAppQueryScope(): WhatsAppQueryScope {
       ledPipelineIds: tenantContext?.ledPipelineIds,
       isSuperAdmin: tenantContext?.isSuperAdmin,
     }),
-  }), [organization?.id, profile?.id, profile?.organization_id, profile?.role, tenantContext])
+  }), [organization?.id, profile?.id, profile?.organization_id, tenantContext])
 }

@@ -115,18 +115,25 @@ export function IntegrationsTab({
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
   const canManageAdminIntegrations = canManageOrganization({
     isSuperAdmin,
-    profileRole: profile?.role,
     memberRole: activeMemberRole,
   });
   const defaultIntegrationKey = isIntegrationKey(defaultIntegration) ? defaultIntegration : null;
+  const { data: metaIntegrations = [], refetch: refetchMetaIntegrations } = useMetaIntegrations();
+  const { data: whatsappSessions = [] } = useWhatsAppSessions();
+  const { data: vistaIntegration } = useVistaIntegration();
+  const { data: imoviewIntegration } = useImoviewIntegration();
+  const { data: googleCalendarStatus } = useGoogleCalendarStatus();
+  const { data: grupoOLXIntegration } = useGrupoOLXIntegration({ enabled: hasPortalsModule });
+  const whatsappQuota = whatsappSessions.meta;
+  const hasWhatsAppAccess = hasWhatsAppModule || whatsappQuota?.maxSessions !== undefined;
   const isIntegrationEnabled = useCallback((key: IntegrationKey) => {
-    if (key === "whatsapp") return hasWhatsAppModule;
+    if (key === "whatsapp") return hasWhatsAppAccess;
     if (key === "ai") return hasAIModule;
     if (key === "webhooks") return hasWebhooksModule;
     if (key === "api") return hasAPIModule;
     if (key === "grupo-olx") return hasPortalsModule;
     return true;
-  }, [hasAIModule, hasAPIModule, hasPortalsModule, hasWebhooksModule, hasWhatsAppModule]);
+  }, [hasAIModule, hasAPIModule, hasPortalsModule, hasWebhooksModule, hasWhatsAppAccess]);
   const defaultIntegrationUnavailable =
     defaultIntegrationKey !== null &&
     (!isIntegrationEnabled(defaultIntegrationKey) || TEMPORARILY_DISABLED_INTEGRATIONS.has(defaultIntegrationKey));
@@ -141,12 +148,6 @@ export function IntegrationsTab({
     defaultIntegrationKey && !defaultIntegrationLocked && !defaultIntegrationUnavailable ? defaultIntegrationKey : null,
   );
   const handledMetaOAuthEventRef = useRef<string | number | null>(null);
-  const { data: metaIntegrations = [], refetch: refetchMetaIntegrations } = useMetaIntegrations();
-  const { data: whatsappSessions = [] } = useWhatsAppSessions();
-  const { data: vistaIntegration } = useVistaIntegration();
-  const { data: imoviewIntegration } = useImoviewIntegration();
-  const { data: googleCalendarStatus } = useGoogleCalendarStatus();
-  const { data: grupoOLXIntegration } = useGrupoOLXIntegration({ enabled: hasPortalsModule });
   const disabledIntegrations = TEMPORARILY_DISABLED_INTEGRATIONS;
 
   useEffect(() => {
@@ -296,7 +297,7 @@ export function IntegrationsTab({
         key: "whatsapp" as const,
         title: "WhatsApp",
         description: "Conecte números, gerencie permissões, etiquetas e sincronizações.",
-        enabled: hasWhatsAppModule,
+        enabled: hasWhatsAppAccess,
         connected: whatsappConnected,
         detail: `${whatsappSessions.length} ${whatsappSessions.length === 1 ? "conexão" : "conexões"}`,
         icon: <MessageCircle className="h-7 w-7 text-primary" />,
@@ -381,7 +382,7 @@ export function IntegrationsTab({
         icon: <Key className="h-7 w-7 text-primary" />,
       },
     ].filter((item) => item.enabled);
-  }, [googleCalendarStatus, grupoOLXIntegration, hasAIModule, hasAPIModule, hasPortalsModule, hasWebhooksModule, hasWhatsAppModule, imoviewIntegration, metaIntegrations, vistaIntegration, whatsappSessions]);
+  }, [googleCalendarStatus, grupoOLXIntegration, hasAIModule, hasAPIModule, hasPortalsModule, hasWebhooksModule, hasWhatsAppAccess, imoviewIntegration, metaIntegrations, vistaIntegration, whatsappSessions]);
 
   const filteredIntegrations = integrations.filter((item) => {
     const query = search.trim().toLowerCase();

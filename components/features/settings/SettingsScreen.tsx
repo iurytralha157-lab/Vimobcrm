@@ -33,17 +33,11 @@ export default function Settings() {
   const isBillingBlocked = !isSuperAdmin && isBillingBlockedStatus(organization?.subscription_status);
   const activeOrganizationId = organization?.id || profile?.organization_id;
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
-  const hasDirectManagementRole = canManageOrganizationAccess({
+  const canManageOrganization = canManageOrganizationAccess({
     isSuperAdmin,
-    profileRole: profile?.role,
+    memberRole: activeMemberRole,
   });
-  const accessReady = !!profile && (hasDirectManagementRole || (!loading && organizationsLoaded));
-  const canManageOrganization =
-    accessReady &&
-    (hasDirectManagementRole ||
-      canManageOrganizationAccess({
-        memberRole: activeMemberRole,
-      }));
+  const accessReady = !!profile && (canManageOrganization || (!loading && organizationsLoaded));
   const legacyIntegrationTabs = !accessReady || canManageOrganization
     ? ['webhooks', 'meta', 'grupo-olx', 'whatsapp', 'api', 'ai']
     : ['webhooks', 'meta', 'whatsapp', 'api'];

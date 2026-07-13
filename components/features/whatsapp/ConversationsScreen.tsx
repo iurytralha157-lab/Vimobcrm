@@ -5,14 +5,13 @@ import { MessageBox } from "@/components/ui/message-box";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent } from "@/components/ui/dropdown-menu";
-import { Search, MessageSquare, MessageCircle, User, Loader2, MoreVertical, Archive, Trash2, Users, Paperclip, Tag, UserPlus, ArrowLeft, ExternalLink, Zap, Plus, SlidersHorizontal } from "lucide-react";
+import { Search, MessageSquare, MessageCircle, User, Loader2, MoreVertical, Archive, Trash2, Users, Paperclip, Tag, UserPlus, ArrowLeft, Zap, Plus, SlidersHorizontal } from "lucide-react";
 import { StartAutomationDialog } from "@/components/features/whatsapp/StartAutomationDialog";
 import { MessageBubble } from "@/components/features/whatsapp/MessageBubble";
 import { MessageErrorBoundary } from "@/components/features/whatsapp/MessageErrorBoundary";
@@ -954,7 +953,6 @@ export default function Conversations() {
                           leadId: conv.lead.id,
                           tagId
                         })}
-                        onViewLead={conv.lead ? () => router.push(`/crm/pipelines?lead=${conv.lead!.id}`) : undefined}
                         onCreateLead={() => {
                           setCreateLeadContact({
                             phone: conv.contact_phone || undefined,
@@ -988,7 +986,7 @@ export default function Conversations() {
   return <AppLayout title="Conversas" disableMainScroll>
       <div className="flex h-full min-h-0 gap-3 overflow-hidden">
         {/* Sidebar */}
-        <aside data-tour="conversations-overview" className="app-card flex w-[350px] min-w-[350px] max-w-[350px] flex-col overflow-hidden">
+        <aside data-tour="conversations-overview" className="app-card flex w-[365px] min-w-[365px] max-w-[365px] flex-col overflow-hidden">
           {/* Header com filtros */}
           <div className="space-y-2 border-b border-white/[0.045] bg-[var(--app-surface)] p-2.5">
             <div className="flex items-center gap-2">
@@ -1204,7 +1202,6 @@ export default function Conversations() {
                         leadId: conv.lead.id,
                         tagId
                       })}
-                      onViewLead={conv.lead ? () => router.push(`/crm/pipelines?lead=${conv.lead!.id}`) : undefined}
                       onCreateLead={() => {
                         setCreateLeadContact({
                           phone: conv.contact_phone || undefined,
@@ -1453,6 +1450,31 @@ export default function Conversations() {
       )}
     </AppLayout>;
 }
+function ConversationChip({
+  children,
+  className,
+  title,
+  style,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  title?: string;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <span
+      title={title}
+      className={cn(
+        "inline-flex h-[17px] shrink-0 items-center justify-center rounded-[4px] border-0 px-1.5 text-[9px] font-medium leading-none shadow-none",
+        className
+      )}
+      style={style}
+    >
+      {children}
+    </span>
+  );
+}
+
 function ConversationItem({
   conversation,
   isSelected,
@@ -1464,7 +1486,6 @@ function ConversationItem({
   availableTags,
   onAddTag,
   onRemoveTag,
-  onViewLead,
   onCreateLead
 }: {
   conversation: WhatsAppConversation;
@@ -1477,7 +1498,6 @@ function ConversationItem({
   availableTags: TagType[];
   onAddTag: (tagId: string) => void;
   onRemoveTag: (tagId: string) => void;
-  onViewLead?: () => void;
   onCreateLead: () => void;
 }) {
   const hasLead = Boolean(conversation.lead_id || conversation.lead?.id);
@@ -1511,8 +1531,8 @@ function ConversationItem({
     previewMessage,
   );
 
-  return <div data-tour="conversations-item" className={cn("w-full text-left p-2 grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1.5 hover:bg-white/[0.045] transition-colors group overflow-hidden", isSelected && "bg-white/[0.07]")}>
-      <button type="button" onClick={onClick} className="flex items-center gap-2.5 flex-1 min-w-0">
+  return <div data-tour="conversations-item" className={cn("w-full text-left p-2 grid grid-cols-[minmax(0,1fr)_30px_auto] items-center gap-1.5 hover:bg-white/[0.045] transition-colors group overflow-hidden", isSelected && "bg-white/[0.07]")}>
+      <button type="button" onClick={onClick} className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden">
         <Avatar className="h-9 w-9 shrink-0 relative">
           <AvatarImage src={getConversationAvatarUrl(conversation)} />
           <AvatarFallback className="text-xs bg-white/[0.06] text-muted-foreground">
@@ -1522,32 +1542,32 @@ function ConversationItem({
 
         <div className="flex-1 w-0 min-w-0">
           <div className="flex items-center justify-between gap-1.5">
-            <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
-              <span className="truncate font-sans font-semibold text-xs text-foreground">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+              <span className="min-w-[72px] flex-1 truncate font-sans text-[12px] font-semibold leading-[17px] text-foreground" title={displayName}>
                 {displayName}
               </span>
               {hasLead && (
-                <Badge className="h-4 shrink-0 rounded-[4px] border-0 bg-emerald-500 px-1.5 text-[9px] font-medium text-white shadow-none">
+                <ConversationChip className="bg-emerald-500 text-white" title="Lead">
                   Lead
-                </Badge>
+                </ConversationChip>
               )}
               {otherAssigneeName && (
-                <Badge className="h-4 max-w-[72px] shrink-0 border-0 bg-amber-500/15 px-1.5 text-[9px] font-medium text-amber-700 shadow-none dark:text-amber-300">
+                <ConversationChip className="max-w-[88px] bg-amber-500/15 text-amber-700 dark:text-amber-300" title={`com ${otherAssigneeName}`}>
                   <span className="truncate">com {otherAssigneeName}</span>
-                </Badge>
+                </ConversationChip>
               )}
               {leadTags.slice(0, 2).map(lt => (
-                <Badge
+                <ConversationChip
                   key={lt.tag.id}
-                  variant="secondary"
-                  className="text-[8px] px-1.5 py-0 h-4 font-medium border-0 truncate max-w-[54px] shrink-0"
+                  className="max-w-[62px] text-white"
+                  title={lt.tag.name}
                   style={{
                     backgroundColor: lt.tag.color,
                     color: '#FFFFFF',
                   }}
                 >
-                  {lt.tag.name}
-                </Badge>
+                  <span className="truncate">{lt.tag.name}</span>
+                </ConversationChip>
               ))}
               {leadTags.length > 2 && (
                 <span className="text-[9px] text-muted-foreground shrink-0">
@@ -1571,25 +1591,11 @@ function ConversationItem({
         </div>
       </button>
 
-      <div className="flex items-center justify-end gap-1.5 shrink-0 self-center min-w-[54px] max-w-[104px] overflow-hidden">
-        {conversation.unread_count > 0 && <Badge className="h-5 min-w-5 px-1.5 text-[10px]">
+      <div className="flex w-[30px] shrink-0 flex-col items-end justify-center gap-1 overflow-hidden">
+        {conversation.unread_count > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#FF4529] px-1.5 text-[10px] font-semibold leading-none text-white">
             {conversation.unread_count}
-          </Badge>}
-        {onViewLead && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-            onClick={(e) => {
-              e.stopPropagation();
-              onViewLead();
-            }}
-            title="Ver lead no pipeline"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-          </Button>
-        )}
-        <span className="text-[10px] text-muted-foreground whitespace-nowrap shrink-0">
+          </span>}
+        <span className="whitespace-nowrap text-[10px] leading-none text-muted-foreground">
           {formatTime(conversation.last_message_at)}
         </span>
       </div>

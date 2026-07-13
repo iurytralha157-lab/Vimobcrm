@@ -202,7 +202,6 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
   });
   const canAccessAdminItems = canManageOrganization({
     isSuperAdmin,
-    profileRole: profile?.role,
     memberRole: activeMemberRole,
   });
 

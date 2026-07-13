@@ -118,6 +118,24 @@ func TestCreateOwnWhatsAppSessionAllowsOrganizationMemberWithModule(t *testing.T
 	}
 }
 
+func TestCreateOwnWhatsAppSessionAllowsOrganizationMemberWithQuota(t *testing.T) {
+	maxSessions := 2
+	broker := tenant.Context{
+		OrganizationID: "20000000-0000-0000-0000-000000000001",
+		UserID:         "10000000-0000-0000-0000-000000000001",
+		MemberRole:     "user",
+		EnabledModules: []string{"crm"},
+	}
+
+	if !canCreateOwnWhatsAppSessionWithQuota(broker, SessionQuota{MaxSessions: &maxSessions, CurrentSessions: 1, CanCreate: true}) {
+		t.Fatal("organization member with WhatsApp quota should create their own session")
+	}
+
+	if canCreateOwnWhatsAppSessionWithQuota(broker, SessionQuota{MaxSessions: nil, CurrentSessions: 0, CanCreate: true}) {
+		t.Fatal("organization member without module or WhatsApp quota should not create a session")
+	}
+}
+
 func TestGenericProviderActionCannotBypassLeadBoundAPIs(t *testing.T) {
 	for _, action := range []string{
 		"send.text",
