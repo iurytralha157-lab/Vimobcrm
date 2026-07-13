@@ -9,6 +9,7 @@ import { performanceTracker } from '@/lib/performance';
 import { performFullCacheClear } from '@/lib/cache-utils';
 import { ROUTES, getPublicAppUrl } from '@/config/constants';
 import { meAPI, type TenantContext } from '@/lib/api/me';
+import { VimobAPIError } from '@/lib/api/vimob-client';
 
 const isAuthDebugEnabled =
   process.env.NODE_ENV !== 'production' ||
@@ -24,6 +25,19 @@ function authDebugWarn(...args: unknown[]) {
   if (isAuthDebugEnabled) {
     console.warn(...args);
   }
+}
+
+function isExpiredAPISessionError(error: unknown) {
+  if (error instanceof VimobAPIError) {
+    return (
+      error.status === 401 ||
+      error.code === 'unauthorized' ||
+      error.code === 'missing_session'
+    );
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return /invalid or expired bearer token|sess[aã]o expirada|missing bearer token/i.test(message);
 }
 
 interface UserProfile {
@@ -236,6 +250,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return true;
       } catch (error) {
         console.error('Error fetching profile:', error);
+        if (isExpiredAPISessionError(error)) {
+          isLoggingOutRef.current = true;
+          setUser(null);
+          setSession(null);
+          setProfile(null);
+          setOrganization(null);
+          setTenantContext(null);
+          setUserOrganizations([]);
+          setOrganizationsLoaded(true);
+
+          try {
+            await supabase.auth.signOut({ scope: 'global' });
+          } catch (signOutError) {
+            authDebug('Logout server-side falhou apos token invalido:', signOutError);
+          }
+
+          await performFullCacheClear({
+            clearAuth: true,
+            redirectTo: '/login',
+          });
+        }
         return false;
       }
     });
