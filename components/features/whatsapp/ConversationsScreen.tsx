@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { MessageBox } from "@/components/ui/message-box";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { Button } from "@/components/ui/button";
@@ -22,8 +22,10 @@ import { ConversationHeader } from "@/components/features/whatsapp/ConversationH
 import { ConversationLeadPanel } from "@/components/features/whatsapp/ConversationLeadPanel";
 import { cn } from "@/lib/utils";
 import { format, isToday, isYesterday } from "date-fns";
-import { useWhatsAppConversations, useWhatsAppMessages, useSendWhatsAppMessage, useMarkConversationAsRead, useWhatsAppRealtimeConversations, useArchiveConversation, useDeleteConversation, type WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
+import { useWhatsAppConversations, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppRealtimeConversations, useArchiveConversation, useDeleteConversation, type WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
+import { useWhatsAppMessagesPaginated } from "@/hooks/use-whatsapp-messages-paginated";
 import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
+import { resolveWhatsAppConversationSessionFilter } from "@/lib/whatsapp-query-cache";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "@/hooks/use-toast";
@@ -157,17 +159,28 @@ async function compressImageFile(file: File): Promise<File> {
 }
 
 export default function Conversations() {
-  const { user, profile } = useAuth();
+  const { user, profile, organization } = useAuth();
   const { data: canStartAutomations = false } = useHasPermission("automations_edit");
   const isMobile = useIsMobile();
   const router = useRouter();
   const currentUserId = profile?.id || user?.id || null;
+  const activeTenantKey = `${currentUserId || "anonymous"}:${organization?.id || profile?.organization_id || "none"}`;
   const [activePlatform, setActivePlatform] = useState<'whatsapp' | 'instagram' | 'facebook'>('whatsapp');
   const [selectedSessionId, setSelectedSessionId] = useState<string>("all");
   const [selectedPageId, setSelectedPageId] = useState<string>("all");
-  const [selectedConversation, setSelectedConversation] = useState<ScreenConversation | null>(null);
+  const [selectedConversationState, setSelectedConversationState] = useState<{
+    tenantKey: string;
+    conversation: ScreenConversation;
+  } | null>(null);
+  const selectedConversation = selectedConversationState?.tenantKey === activeTenantKey
+    ? selectedConversationState.conversation
+    : null;
+  const setSelectedConversation = useCallback((conversation: ScreenConversation | null) => {
+    setSelectedConversationState(conversation
+      ? { tenantKey: activeTenantKey, conversation }
+      : null);
+  }, [activeTenantKey]);
   const [searchTerm, setSearchTerm] = useState("");
-  const [messageLimit, setMessageLimit] = useState(50);
   const [messageText, setMessageText] = useState("");
   const [hideGroups, setHideGroups] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -182,8 +195,25 @@ export default function Conversations() {
   const [showAutomationDialog, setShowAutomationDialog] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const previousMessagesLengthRef = useRef<number>(0);
+  const lastVisibleMessageIdRef = useRef<string | null>(null);
   const isUserScrollingRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    let isActive = true;
+    queueMicrotask(() => {
+      if (!isActive) return;
+      setSelectedConversation(null);
+      setSelectedSessionId("all");
+      setSelectedPageId("all");
+      setActivePlatform("whatsapp");
+      setMessageText("");
+      lastVisibleMessageIdRef.current = null;
+      isUserScrollingRef.current = false;
+    });
+    return () => {
+      isActive = false;
+    };
+  }, [user?.id, organization?.id, profile?.organization_id, setSelectedConversation]);
   const {
     data: sessions,
     isLoading: loadingSessions,
@@ -192,18 +222,22 @@ export default function Conversations() {
   // Extract accessible session IDs for filtering
   const accessibleSessionIds = useMemo(() => sessions?.map(s => s.id) || [], [sessions]);
   const conversationFilters = useMemo(() => ({ hideGroups, showArchived }), [hideGroups, showArchived]);
-  const conversationSessionIds = selectedSessionId === "all"
-    ? (loadingSessions ? [] : accessibleSessionIds)
-    : undefined;
+  const conversationSessionFilter = useMemo(
+    () => resolveWhatsAppConversationSessionFilter(
+      selectedSessionId,
+      loadingSessions ? [] : accessibleSessionIds,
+    ),
+    [accessibleSessionIds, loadingSessions, selectedSessionId],
+  );
 
   const {
     data: conversations,
     isLoading: loadingConversations,
     isError: conversationsFailed,
   } = useWhatsAppConversations(
-    selectedSessionId === "all" ? undefined : selectedSessionId,
+    conversationSessionFilter.sessionId,
     conversationFilters,
-    conversationSessionIds
+    conversationSessionFilter.accessibleSessionIds,
   );
 
   const {
@@ -220,19 +254,16 @@ export default function Conversations() {
     : selectedConversation?.lead?.id || null;
 
   const {
-    data: whatsappMessages,
+    messages: whatsappMessages,
     isLoading: loadingWhatsAppMessages,
     isFetching: fetchingWhatsAppMessages,
-    refetch: refetchWhatsAppMessages
-  } = useWhatsAppMessages(
+    refetch: refetchWhatsAppMessages,
+    hasOlderMessages,
+    loadOlderMessages,
+    isLoadingOlder,
+  } = useWhatsAppMessagesPaginated(
     activePlatform === 'whatsapp' ? selectedConversation?.id || null : null,
-    activePlatform === 'whatsapp' ? selectedLeadId : null,
-    messageLimit,
-    {
-      includeLeadHistory: false,
-      refetchIntervalMs: 15_000,
-      refetchOnWindowFocus: false,
-    }
+    { pageSize: 50 },
   );
 
   const {
@@ -256,6 +287,7 @@ export default function Conversations() {
   }, [activePlatform, messages]);
 
   const sendMessage = useSendWhatsAppMessage();
+  const reactToMessage = useReactToWhatsAppMessage();
   const sendMetaMessage = useSendMetaMessage();
   const { mutate: markConversationAsRead } = useMarkConversationAsRead();
   const archiveConversation = useArchiveConversation();
@@ -272,7 +304,11 @@ export default function Conversations() {
     conversationId?: string;
   }>({});
   const [showLeadPanel, setShowLeadPanel] = useState(true);
-  useWhatsAppRealtimeConversations(true, loadingSessions ? undefined : accessibleSessionIds);
+  useWhatsAppRealtimeConversations(
+    true,
+    loadingSessions ? undefined : accessibleSessionIds,
+    (conversations || []).map((conversation) => conversation.lead_id || conversation.lead?.id || ""),
+  );
 
   const handleChannelChange = (value: string) => {
     if (value === 'meta-all') {
@@ -313,35 +349,28 @@ export default function Conversations() {
   useEffect(() => {
     localStorage.setItem("whatsapp-show-archived", String(showArchived));
   }, [showArchived]);
-  // Scroll to bottom only when new messages arrive (not on every re-render)
+  // Loading an older cursor prepends rows but keeps the last visible message.
+  // Scroll only when the newest message identity actually changes.
   useEffect(() => {
-    const currentLength = messages?.length || 0;
-    const previousLength = previousMessagesLengthRef.current;
+    const lastMessageId = visibleMessages.at(-1)?.id ?? null;
+    if (!lastMessageId || lastMessageId === lastVisibleMessageIdRef.current) return;
 
-    if (currentLength > previousLength || previousLength === 0) {
-      const isFirstLoad = previousLength === 0;
-      if (isFirstLoad || !isUserScrollingRef.current) {
-        setTimeout(() => {
-          messagesEndRef.current?.scrollIntoView({
-            behavior: isFirstLoad ? "instant" : "smooth"
-          });
-          if (isFirstLoad) {
-            isUserScrollingRef.current = false;
-          }
-        }, 50);
-      }
+    const isFirstLoad = lastVisibleMessageIdRef.current === null;
+    lastVisibleMessageIdRef.current = lastMessageId;
+    if (isFirstLoad || !isUserScrollingRef.current) {
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({
+          behavior: isFirstLoad ? "instant" : "smooth"
+        });
+        if (isFirstLoad) isUserScrollingRef.current = false;
+      }, 50);
     }
-
-    previousMessagesLengthRef.current = currentLength;
-  }, [messages?.length]);
+  }, [visibleMessages]);
 
   // Reset scroll state when changing conversations
   useEffect(() => {
-    previousMessagesLengthRef.current = 0;
+    lastVisibleMessageIdRef.current = null;
     isUserScrollingRef.current = false;
-    queueMicrotask(() => {
-      setMessageLimit(50);
-    });
     setTimeout(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
     }, 80);
@@ -613,16 +642,16 @@ export default function Conversations() {
               <div className="flex-1 overflow-hidden min-h-0">
                 <ScrollArea className="h-full">
                   <div className="p-3 space-y-2 bg-[var(--app-background)] min-h-full">
-                    {messages && messages.length >= messageLimit && (
+                    {activePlatform === 'whatsapp' && hasOlderMessages && (
                       <div className="flex justify-center py-2">
                         <Button
                           variant="ghost"
                           size="sm"
                           className="text-xs text-muted-foreground"
-                          onClick={() => setMessageLimit(prev => prev + 50)}
-                          disabled={fetchingMessages}
+                          onClick={() => void loadOlderMessages()}
+                          disabled={isLoadingOlder}
                         >
-                          {fetchingMessages ? <Loader2 className="w-3 h-3 animate-spin mr-2" /> : null}
+                          {isLoadingOlder ? <Loader2 className="w-3 h-3 animate-spin mr-2" /> : null}
                           Carregar mensagens anteriores
                         </Button>
                       </div>
@@ -659,6 +688,14 @@ export default function Conversations() {
                               conversationRemoteJid={selectedConversation.remote_jid}
                               conversationSessionId={selectedConversation.session_id}
                               reactions={(msg.message_id ? reactionsByMessageId.get(msg.message_id) : undefined) || reactionsByMessageId.get(msg.id) || []}
+                              onReact={activePlatform === 'whatsapp'
+                                ? (emoji) => reactToMessage.mutateAsync({
+                                    conversation: selectedConversation,
+                                    targetMessage: msg as WhatsAppMessage,
+                                    emoji,
+                                  })
+                                : undefined}
+                              isReacting={reactToMessage.isPending}
                             />
                           </MessageErrorBoundary>
                         );
@@ -1192,6 +1229,20 @@ export default function Conversations() {
                   }
                 }}>
                   <div className="space-y-2 bg-white/[0.025] p-4">
+                    {activePlatform === 'whatsapp' && hasOlderMessages && (
+                      <div className="flex justify-center py-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-xs text-muted-foreground"
+                          onClick={() => void loadOlderMessages()}
+                          disabled={isLoadingOlder}
+                        >
+                          {isLoadingOlder ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : null}
+                          Carregar mensagens anteriores
+                        </Button>
+                      </div>
+                    )}
                     {(loadingMessages || (fetchingMessages && visibleMessages.length === 0)) ? <div className="flex flex-col items-center justify-center gap-2 py-12">
                         <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
                         <span className="text-xs text-muted-foreground">Carregando mensagens...</span>
@@ -1224,6 +1275,14 @@ export default function Conversations() {
                               conversationRemoteJid={selectedConversation.remote_jid}
                               conversationSessionId={selectedConversation.session_id}
                               reactions={(msg.message_id ? reactionsByMessageId.get(msg.message_id) : undefined) || reactionsByMessageId.get(msg.id) || []}
+                              onReact={activePlatform === 'whatsapp'
+                                ? (emoji) => reactToMessage.mutateAsync({
+                                    conversation: selectedConversation,
+                                    targetMessage: msg as WhatsAppMessage,
+                                    emoji,
+                                  })
+                                : undefined}
+                              isReacting={reactToMessage.isPending}
                             />
                           </MessageErrorBoundary>
                         );

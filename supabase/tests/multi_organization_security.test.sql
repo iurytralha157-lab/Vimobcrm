@@ -133,14 +133,13 @@ insert into public.whatsapp_sessions (
   id,
   organization_id,
   owner_user_id,
-  name,
   instance_name,
   status,
   is_active
 )
 values
-  ('60000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'Session A', 'security-test-org-a', 'connected', true),
-  ('60000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'Session B', 'security-test-org-b', 'connected', true);
+  ('60000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'security-test-org-a', 'connected', true),
+  ('60000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'security-test-org-b', 'connected', true);
 
 insert into public.whatsapp_conversations (
   id,
@@ -211,10 +210,10 @@ select results_eq(
   array[1::bigint],
   'Org A user sees only Org A pipelines'
 );
-select results_eq(
-  $$select count(*)::bigint from public.whatsapp_conversations$$,
-  array[1::bigint],
-  'Org A user sees only authorized WhatsApp conversations'
+select ok(
+  public.can_view_whatsapp_conversation('70000000-0000-0000-0000-000000000001')
+  and not public.can_view_whatsapp_conversation('70000000-0000-0000-0000-000000000002'),
+  'Org A user authorizes only its linked WhatsApp conversation through the backend helper'
 );
 select results_eq(
   $$select count(*)::bigint from public.audit_logs$$,

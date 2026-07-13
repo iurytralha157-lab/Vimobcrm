@@ -79,7 +79,13 @@ function MessageBubbleWrapper({ msg, leadName, leadId }: { msg: LeadMessage; lea
 }
 
 export function LeadMessagesTab({ leadId, leadName }: LeadMessagesTabProps) {
-  const { data: messages = [], isLoading } = useLeadMessages(leadId);
+  const {
+    data: messages = [],
+    isLoading,
+    hasOlderMessages,
+    loadOlderMessages,
+    isLoadingOlder,
+  } = useLeadMessages(leadId);
 
   if (isLoading) {
     return (
@@ -137,6 +143,19 @@ export function LeadMessagesTab({ leadId, leadName }: LeadMessagesTabProps) {
   return (
     <ScrollArea className="h-[400px]">
       <div className="space-y-0 px-2 py-3">
+        {hasOlderMessages && (
+          <div className="flex justify-center pb-3">
+            <button
+              type="button"
+              className="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => void loadOlderMessages()}
+              disabled={isLoadingOlder}
+            >
+              {isLoadingOlder && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {isLoadingOlder ? 'Carregando...' : 'Carregar mensagens anteriores'}
+            </button>
+          </div>
+        )}
         {elements}
       </div>
     </ScrollArea>

@@ -2,12 +2,11 @@ import { useState, useEffect } from 'react';
 import NextImage from 'next/image';
 import { X, Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useWebPush } from '@/hooks/use-web-push';
+import { WEB_PUSH_PROMPT_DISMISS_KEY, useWebPush } from '@/hooks/use-web-push';
 import { useAuth } from '@/contexts/AuthContext';
 import { Capacitor } from '@capacitor/core';
 import { toast } from 'sonner';
 
-const DISMISS_KEY = 'web-push-prompt-dismissed';
 const DISMISS_DURATION_DAYS = 7;
 
 type StandaloneNavigator = Navigator & {
@@ -94,7 +93,7 @@ export function WebPushPrompt() {
       return;
     }
 
-    const dismissedAt = localStorage.getItem(DISMISS_KEY);
+    const dismissedAt = localStorage.getItem(WEB_PUSH_PROMPT_DISMISS_KEY);
     if (dismissedAt) {
       const dismissedDate = new Date(parseInt(dismissedAt, 10));
       const now = new Date();
@@ -134,7 +133,7 @@ export function WebPushPrompt() {
   };
 
   const handleDismiss = () => {
-    localStorage.setItem(DISMISS_KEY, Date.now().toString());
+    localStorage.setItem(WEB_PUSH_PROMPT_DISMISS_KEY, Date.now().toString());
     setShowPrompt(false);
   };
 

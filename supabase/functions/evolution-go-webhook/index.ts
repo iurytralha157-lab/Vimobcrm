@@ -1074,6 +1074,7 @@ function normalizeMessage(message: any) {
     null,
   );
   const isReaction = isRecord(reaction) || isRecord(encryptedReaction);
+  const reactionPayload = isRecord(reaction) ? reaction : (isRecord(encryptedReaction) ? encryptedReaction : null);
   const deletedMessageId = extractDeletedMessageId(messageNode, message);
   const referral = extractWhatsAppReferral(messageNode, message, mediaBlock);
 
@@ -1095,13 +1096,20 @@ function normalizeMessage(message: any) {
     isGroup,
     sentAt: timestamp,
     messageType: deletedMessageId ? "deleted_event" : (isReaction ? "reaction" : messageType),
-    content: deletedMessageId ? null : (isReaction ? normalizeText(firstPresent(reaction?.text, reaction?.emoji)) : content),
+    content: deletedMessageId ? null : (isReaction ? normalizeText(firstPresent(reactionPayload?.text, reactionPayload?.emoji)) : content),
     mediaUrl,
     mediaMimeType: mimeType || null,
     mediaBase64: base64,
     mediaSize: Number(firstPresent(mediaBlock.fileLength, mediaBlock.FileLength, message.mediaSize, message.fileSize)) || null,
-    reactionToMessageId: isReaction ? normalizeText(firstPresent(reaction?.key?.id, reaction?.Key?.ID, reaction?.messageId)) : null,
-    reactionEmoji: isReaction ? normalizeText(firstPresent(reaction?.text, reaction?.emoji)) : null,
+    reactionToMessageId: isReaction ? normalizeText(firstPresent(
+      reactionPayload?.key?.id,
+      reactionPayload?.key?.ID,
+      reactionPayload?.Key?.id,
+      reactionPayload?.Key?.ID,
+      reactionPayload?.messageId,
+      reactionPayload?.messageID,
+    )) : null,
+    reactionEmoji: isReaction ? normalizeText(firstPresent(reactionPayload?.text, reactionPayload?.emoji)) : null,
     deletedMessageId,
     avatarUrl: normalizeText(firstPresent(message.profilePicture, message.profilePicUrl, message.avatar, message.pictureUrl)) || null,
     referral,
@@ -1131,7 +1139,7 @@ function detectCampaign(content: string | null) {
 
 function detectPropertyCode(message: ReturnType<typeof normalizeMessage>) {
   if (!message) return null;
-  const referral = message.referral || {};
+  const referral: JsonRecord = isRecord(message.referral) ? message.referral : {};
   const text = [
     message.content,
     referral.headline,
@@ -1195,13 +1203,32 @@ function whatsappAttribution(message: ReturnType<typeof normalizeMessage>) {
   );
 }
 
-function hasWhatsAppLeadCreationContext(message: ReturnType<typeof normalizeMessage>) {
+async function hasVerifiedWhatsAppLeadCreationContext(organizationId: string, message: ReturnType<typeof normalizeMessage>) {
   const referral = message?.referral;
   if (!referral) return false;
-  if (cleanText(referral.ctwa_clid) || cleanText(referral.source_id)) return true;
-
   const explicitSourceType = cleanText(referral.explicit_source_type)?.toLowerCase() || "";
-  return /\b(ad|ads|ctwa|click_to_whatsapp|click_to_message|whatsapp_click_to_message)\b/.test(explicitSourceType);
+  const sourceId = cleanText(referral.source_id) || "";
+  if (explicitSourceType !== "ad" || !/^\d{5,40}$/.test(sourceId)) return false;
+
+  const [{ data: insight, error: insightError }, { data: creative, error: creativeError }] = await Promise.all([
+    supabase
+      .from("meta_campaign_insights")
+      .select("id")
+      .eq("organization_id", organizationId)
+      .eq("ad_id", sourceId)
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("meta_creative_assets")
+      .select("id")
+      .eq("organization_id", organizationId)
+      .eq("ad_id", sourceId)
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  if (insightError) throw insightError;
+  if (creativeError) throw creativeError;
+  return Boolean(insight?.id || creative?.id);
 }
 
 function ruleMatches(rule: JsonRecord, message: ReturnType<typeof normalizeMessage>) {
@@ -1365,7 +1392,7 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
     return { ...existing, ...update, is_new_lead: false };
   }
 
-  if (!hasWhatsAppLeadCreationContext(message)) {
+  if (!(await hasVerifiedWhatsAppLeadCreationContext(session.organization_id, message))) {
     console.debug("[evolution-go-webhook] plain WhatsApp conversation stored without lead auto-creation", {
       session_id: session.id,
       organization_id: session.organization_id,
@@ -1965,7 +1992,7 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
 
   const { data: existing, error: existingError } = await supabase
     .from("whatsapp_messages")
-    .select("id, conversation_id, media_storage_path, media_status, media_error")
+    .select("id, conversation_id, media_storage_path, media_status, media_error, status, delivered_at, read_at")
     .eq("organization_id", session.organization_id)
     .eq("session_id", session.id)
     .eq("message_id", message.messageId)
@@ -2016,7 +2043,9 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
       source: "evolution_go_webhook",
       whatsapp_attribution: whatsappAttribution(message),
       whatsapp_referral: message.referral,
-      raw: message.raw,
+      // The durable Go inbox owns raw webhook retention. Keep the raw message
+      // only while a media retry still needs provider download fields.
+      ...(isMedia && !mediaStoragePath ? { raw: message.raw } : {}),
     },
   };
 
@@ -2029,6 +2058,9 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
         media_storage_path: mediaStoragePath || existing.media_storage_path || null,
         media_status: mediaStatus || existing.media_status || null,
         media_error: mediaStoragePath ? null : (mediaError || existing.media_error || null),
+        status: monotonicMessageStatus(existing.status, row.status),
+        delivered_at: existing.delivered_at || undefined,
+        read_at: existing.read_at || undefined,
         updated_at: undefined,
       })
       .eq("id", existing.id)
@@ -2119,7 +2151,7 @@ async function updateConversationAfterMessage(conversation: JsonRecord, normaliz
 }
 
 async function logInbound(session: JsonRecord, conversation: JsonRecord, lead: JsonRecord | null, rule: JsonRecord | null, message: ReturnType<typeof normalizeMessage>) {
-  if (!message || message.fromMe || message.isGroup) return;
+  if (!message || message.fromMe || message.isGroup || message.messageType === "reaction") return;
   await supabase.from("whatsapp_inbound_logs").insert({
     organization_id: session.organization_id,
     session_id: session.id,
@@ -2149,7 +2181,7 @@ async function triggerAutoReply(
     console.warn("AI auto-reply skipped: missing VIMOB_API_URL or AI_AUTOREPLY_TOKEN");
     return;
   }
-  if (!message || message.fromMe || message.isGroup || !storedMessage?.id) return;
+  if (!message || message.fromMe || message.isGroup || message.messageType === "reaction" || !storedMessage?.id) return;
   if (!message.content || !String(message.content).trim()) return;
 
   const controller = new AbortController();
@@ -2222,7 +2254,8 @@ async function handleMessages(session: JsonRecord, payload: any) {
     let rule: JsonRecord | null = null;
     let lead: JsonRecord | null = null;
 
-    if (!message.fromMe && !message.isGroup) {
+    const isReactionEvent = message.messageType === "reaction";
+    if (!message.fromMe && !message.isGroup && !isReactionEvent) {
       try {
         rule = await findInboundRule(session, message);
       } catch (error) {
@@ -2249,7 +2282,7 @@ async function handleMessages(session: JsonRecord, payload: any) {
     const result = await insertMessage(session, conversation, attachedLead, message);
     await updateConversationAfterMessage(conversation, message, result.inserted);
     await logInbound(session, conversation, attachedLead, rule, message);
-    if (result.inserted) {
+    if (result.inserted && !isReactionEvent) {
       await upsertLeadMetaAttribution(session, conversation, attachedLead, message);
       await logLeadEntryAttribution(session, conversation, attachedLead, message);
       await logCreativeActivity(session, conversation, attachedLead, message);
@@ -2263,11 +2296,25 @@ async function handleMessages(session: JsonRecord, payload: any) {
 
 function statusFromProvider(value: unknown) {
   const raw = normalizeText(value).toLowerCase();
-  if (["read", "played"].includes(raw)) return "read";
-  if (["delivered", "delivery"].includes(raw)) return "delivered";
-  if (["sent", "server_ack", "serverack"].includes(raw)) return "sent";
-  if (["failed", "error"].includes(raw)) return "failed";
-  return raw || null;
+  if (["3", "4", "read", "played"].includes(raw)) return "read";
+  if (["2", "delivered", "delivery", "device_ack", "deviceack"].includes(raw)) return "delivered";
+  if (["1", "sent", "server_ack", "serverack"].includes(raw)) return "sent";
+  if (["0", "queued", "pending"].includes(raw)) return "pending";
+  if (["-1", "failed", "error"].includes(raw)) return "failed";
+  return null;
+}
+
+function monotonicMessageStatus(currentValue: unknown, incomingValue: unknown) {
+  const current = normalizeText(currentValue).toLowerCase();
+  const incoming = normalizeText(incomingValue).toLowerCase();
+  if (!current) return incoming || "received";
+  if (!incoming || current === incoming) return current;
+  if (current === "read") return current;
+  if (incoming === "read") return incoming;
+  if (current === "delivered" && ["queued", "pending", "sent", "received"].includes(incoming)) return current;
+  if (current === "failed" && ["queued", "pending", "sent", "received"].includes(incoming)) return current;
+  if (incoming === "failed" && ["delivered", "read"].includes(current)) return current;
+  return incoming;
 }
 
 async function handleMessageStatus(session: JsonRecord, payload: any) {
@@ -2299,18 +2346,78 @@ async function handleMessageStatus(session: JsonRecord, payload: any) {
     ));
     if (messageIds.length === 0 || !status) continue;
 
-    const update: JsonRecord = { status };
-    if (status === "delivered") update.delivered_at = new Date().toISOString();
-    if (status === "read") update.read_at = new Date().toISOString();
-    if (status === "failed") update.error_message = firstPresent(entry.error, entry.message, "Falha no envio");
-
-    const { error } = await supabase
+    const { data: targets, error: targetError } = await supabase
       .from("whatsapp_messages")
-      .update(update)
+      .select("id, message_id, status, delivered_at, read_at")
+      .eq("organization_id", session.organization_id)
       .eq("session_id", session.id)
       .in("message_id", messageIds);
-    if (error) throw error;
-    updated += messageIds.length;
+    if (targetError) throw targetError;
+
+    const targetIds = targets
+      ?.filter((target: JsonRecord) => (
+        normalizeText(target.status).toLowerCase() !== status
+        && monotonicMessageStatus(target.status, status) === status
+      ))
+      .map((target: JsonRecord) => target.id);
+    const receiptAt = new Date().toISOString();
+    const failureReason = normalizeText(firstPresent(entry.error, entry.message, "Falha no envio"));
+
+    const update: JsonRecord = { status };
+    if (status === "delivered") update.delivered_at = receiptAt;
+    if (status === "read") update.read_at = receiptAt;
+
+    if (targetIds?.length) {
+      const { error } = await supabase
+        .from("whatsapp_messages")
+        .update(update)
+        .eq("organization_id", session.organization_id)
+        .eq("session_id", session.id)
+        .in("id", targetIds);
+      if (error) throw error;
+    }
+
+    const { data: outboxTargets, error: outboxTargetError } = await supabase
+      .from("whatsapp_outbox")
+      .select("id, provider_message_id, status")
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .in("provider_message_id", messageIds);
+    if (outboxTargetError) throw outboxTargetError;
+
+    const outboxTargetIds = outboxTargets
+      ?.filter((target: JsonRecord) => (
+        normalizeText(target.status).toLowerCase() !== status
+        && monotonicMessageStatus(target.status, status) === status
+      ))
+      .map((target: JsonRecord) => target.id);
+
+    if (outboxTargetIds?.length) {
+      const outboxUpdate: JsonRecord = { status };
+      if (status === "delivered") outboxUpdate.delivered_at = receiptAt;
+      if (status === "read") outboxUpdate.read_at = receiptAt;
+      if (status === "failed") {
+        outboxUpdate.failed_at = receiptAt;
+        outboxUpdate.last_error = failureReason;
+      }
+      const { error: outboxError } = await supabase
+        .from("whatsapp_outbox")
+        .update(outboxUpdate)
+        .eq("organization_id", session.organization_id)
+        .eq("session_id", session.id)
+        .in("id", outboxTargetIds);
+      if (outboxError) throw outboxError;
+    }
+
+    const matchedMessageIds = new Set([
+      ...(targets || []).map((target: JsonRecord) => normalizeText(target.message_id)),
+      ...(outboxTargets || []).map((target: JsonRecord) => normalizeText(target.provider_message_id)),
+    ].filter(Boolean));
+    const missingMessageIds = messageIds.filter((messageId) => !matchedMessageIds.has(messageId));
+    if (missingMessageIds.length > 0) {
+      throw new Error(`MESSAGE_STATUS_TARGET_NOT_FOUND:${missingMessageIds.join(",")}`);
+    }
+    updated += targetIds?.length || 0;
   }
   return updated;
 }
@@ -2339,11 +2446,13 @@ async function handleQr(session: JsonRecord, payload: any) {
 async function handleConnection(session: JsonRecord, payload: any) {
   const normalizedStatus = normalizeStatus(payload);
   const raw = payload?.data || payload?.Data || payload;
+  const rawState = normalizeText(firstPresent(raw.state, raw.State, raw.connectionStatus, raw.status)).toLowerCase();
+  const isErrorState = ["error", "failed", "failure"].includes(rawState);
   const jid = firstPresent(raw.jid, raw.JID, raw.phone, raw.Phone, raw.user?.id);
   const update: JsonRecord = {
     status: normalizedStatus,
     updated_at: new Date().toISOString(),
-    last_error: normalizedStatus === "error" ? firstPresent(raw.error, raw.message) : null,
+    last_error: isErrorState ? firstPresent(raw.error, raw.message, "Falha na conexao") : null,
   };
 
   if (normalizedStatus === "connected") {
@@ -2493,10 +2602,13 @@ Deno.serve(async (req) => {
 
     const labelsProcessed = event.includes("label") ? await upsertLabels(resolved.session, payload) : 0;
     const groupsProcessed = event.includes("group") ? await upsertGroups(resolved.session, payload) : 0;
-    const statusUpdated = event.includes("status") || event.includes("receipt") || event.includes("ack")
+    const isMessageStatusEvent = event.includes("status") || event.includes("receipt") || event.includes("ack");
+    const statusUpdated = isMessageStatusEvent
       ? await handleMessageStatus(resolved.session, payload)
       : 0;
-    const messagesProcessed = await handleMessages(resolved.session, payload);
+    // Receipt payloads commonly carry a message key/remoteJid but no message
+    // body. Treating those as normal messages creates empty ghost rows.
+    const messagesProcessed = isMessageStatusEvent ? 0 : await handleMessages(resolved.session, payload);
 
     return json({
       ok: true,

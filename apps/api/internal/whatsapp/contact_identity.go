@@ -140,6 +140,14 @@ func phoneFromIdentityValue(value string) (string, bool) {
 	return formatPhoneForWhatsApp(digits), true
 }
 
+func canonicalWhatsAppSelfJID(value string) (string, bool) {
+	phone, ok := phoneFromIdentityValue(value)
+	if !ok || phone == "" {
+		return "", false
+	}
+	return phone + "@s.whatsapp.net", true
+}
+
 func uniqueStrings(values ...string) []string {
 	seen := map[string]struct{}{}
 	result := []string{}

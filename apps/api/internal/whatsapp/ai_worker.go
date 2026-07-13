@@ -209,13 +209,6 @@ func (handler Handler) processAIFollowUp(ctx context.Context, candidate aiFollow
 		return err
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.ai_followup.sent", sendResponse.ConversationID, &candidate.LeadID, map[string]any{
-		"conversationId":  sendResponse.ConversationID,
-		"clientMessageId": sendResponse.ClientMessageID,
-		"leadId":          candidate.LeadID,
-		"agentId":         response.Agent.ID,
-		"template":        candidate.Template,
-	})
 	handler.repo.saveAIJobEvent(ctx, candidate.OrganizationID, autoFollowUpEventType, map[string]any{
 		"leadId":          candidate.LeadID,
 		"conversationId":  candidate.ConversationID,

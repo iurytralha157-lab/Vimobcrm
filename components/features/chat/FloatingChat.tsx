@@ -11,7 +11,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Archive, MessageCircle, X, Minus, ArrowLeft, Search, Loader2, Phone, Users, Paperclip, ExternalLink, ArrowRight, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, isToday, isYesterday } from "date-fns";
-import { useWhatsAppConversations, useWhatsAppMessages, useSendWhatsAppMessage, useMarkConversationAsRead, useWhatsAppRealtimeConversations, WhatsAppConversation } from "@/hooks/use-whatsapp-conversations";
+import { useWhatsAppConversations, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppRealtimeConversations, WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
+import { useWhatsAppMessagesPaginated } from "@/hooks/use-whatsapp-messages-paginated";
 import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
 import { WhatsAppSession } from "@/hooks/use-whatsapp-sessions";
 import { getWhatsAppStartErrorMessage, useStartConversation, useFindConversationByPhone } from "@/hooks/use-start-conversation";
@@ -217,7 +218,7 @@ export function FloatingChat() {
   } = state;
   const isMobile = useIsMobile();
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
-  const { profile } = useAuth();
+  const { profile, organization } = useAuth();
   const { data: canStartAutomations = false } = useHasPermission("automations_edit");
   const [searchTerm, setSearchTerm] = useState("");
   const [messageText, setMessageText] = useState("");
@@ -234,10 +235,25 @@ export function FloatingChat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
-  const previousMessagesLengthRef = useRef<number>(0);
+  const lastVisibleMessageIdRef = useRef<string | null>(null);
   const isUserScrollingRef = useRef<boolean>(false);
   const navigationNonceRef = useRef(0);
   const pendingStartKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let isActive = true;
+    queueMicrotask(() => {
+      if (!isActive) return;
+      setSelectedSessionId("");
+      setSearchTerm("");
+      setMessageText("");
+      setPendingStartData(null);
+      pendingStartKeyRef.current = null;
+    });
+    return () => {
+      isActive = false;
+    };
+  }, [profile?.id, organization?.id, profile?.organization_id]);
   const activeConversationId = activeConversation?.id;
   const activeConversationLead = activeConversation?.lead;
   const activeConversationUnreadCount = activeConversation?.unread_count ?? 0;
@@ -276,18 +292,15 @@ export function FloatingChat() {
     showArchived,
   }, shouldSyncFloatingChat ? (loadingSessions ? undefined : sessions?.map(s => s.id)) : []);
   const {
-    data: messages,
+    messages,
     isLoading: loadingMessages,
-    isFetching: fetchingMessages
-  } = useWhatsAppMessages(
+    isFetching: fetchingMessages,
+    hasOlderMessages,
+    loadOlderMessages,
+    isLoadingOlder,
+  } = useWhatsAppMessagesPaginated(
     shouldSyncFloatingChat ? activeConversationId || null : null,
-    shouldSyncFloatingChat ? activeConversation?.lead_id || activeConversation?.lead?.id || null : null,
-    50,
-    {
-      includeLeadHistory: false,
-      refetchIntervalMs: 15_000,
-      refetchOnWindowFocus: false,
-    }
+    { pageSize: 50 },
   );
   const reactionMessages = useMemo(() => {
     return (messages || []).filter((message) => message.message_type === "reaction");
@@ -299,6 +312,7 @@ export function FloatingChat() {
     return (messages || []).filter((message) => message.message_type !== "reaction");
   }, [messages]);
   const sendMessage = useSendWhatsAppMessage();
+  const reactToMessage = useReactToWhatsAppMessage();
   const { mutate: markConversationAsRead } = useMarkConversationAsRead();
   const startConversation = useStartConversation();
   const findConversation = useFindConversationByPhone();
@@ -308,6 +322,7 @@ export function FloatingChat() {
   useWhatsAppRealtimeConversations(
     shouldSyncFloatingChat,
     loadingSessions ? undefined : sessions?.map((session) => session.id) || [],
+    (conversations || []).map((conversation) => conversation.lead_id || conversation.lead?.id || ""),
   );
 
   const getLeadPipelineUrl = (leadId: string) => {
@@ -401,28 +416,23 @@ export function FloatingChat() {
   /* eslint-enable react-hooks/immutability */
 
   useEffect(() => {
-    const currentLength = messages?.length || 0;
-    const previousLength = previousMessagesLengthRef.current;
+    const lastMessageId = visibleMessages.at(-1)?.id ?? null;
+    if (!lastMessageId || lastMessageId === lastVisibleMessageIdRef.current) return;
 
-    if (currentLength > previousLength || previousLength === 0) {
-      const isFirstLoad = previousLength === 0;
-      if (isFirstLoad || !isUserScrollingRef.current) {
-        setTimeout(() => {
-          messagesEndRef.current?.scrollIntoView({
-            behavior: isFirstLoad ? "instant" : "smooth"
-          });
-          if (isFirstLoad) {
-            isUserScrollingRef.current = false;
-          }
-        }, 50);
-      }
-      }
-
-    previousMessagesLengthRef.current = currentLength;
-  }, [messages?.length]);
+    const isFirstLoad = lastVisibleMessageIdRef.current === null;
+    lastVisibleMessageIdRef.current = lastMessageId;
+    if (isFirstLoad || !isUserScrollingRef.current) {
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({
+          behavior: isFirstLoad ? "instant" : "smooth"
+        });
+        if (isFirstLoad) isUserScrollingRef.current = false;
+      }, 50);
+    }
+  }, [visibleMessages]);
 
   useEffect(() => {
-    previousMessagesLengthRef.current = 0;
+    lastVisibleMessageIdRef.current = null;
     isUserScrollingRef.current = false;
     setTimeout(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
@@ -1033,6 +1043,20 @@ export function FloatingChat() {
     <div className="flex-1 overflow-hidden min-h-0 flex flex-col bg-[var(--app-surface-solid)]">
       <ScrollArea className="flex-1" onScrollCapture={handleScrollArea}>
         <div className="px-3 py-3 w-full max-w-full min-w-0 overflow-hidden overflow-x-hidden">
+          {hasOlderMessages && (
+            <div className="flex justify-center pb-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-xs text-muted-foreground"
+                onClick={() => void loadOlderMessages()}
+                disabled={isLoadingOlder}
+              >
+                {isLoadingOlder ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : null}
+                Carregar mensagens anteriores
+              </Button>
+            </div>
+          )}
           {(loadingMessages || (fetchingMessages && visibleMessages.length === 0)) ? <div className="flex flex-col items-center justify-center gap-2 py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Carregando mensagens...</span>
@@ -1072,6 +1096,12 @@ export function FloatingChat() {
                         senderName: reaction.senderName ?? null,
                         fromMe: reaction.fromMe ?? false,
                       }))}
+                      onReact={(emoji) => reactToMessage.mutateAsync({
+                        conversation: activeConversation!,
+                        targetMessage: msg as WhatsAppMessage,
+                        emoji,
+                      })}
+                      isReacting={reactToMessage.isPending}
                     />
                   </MessageErrorBoundary>
                 );

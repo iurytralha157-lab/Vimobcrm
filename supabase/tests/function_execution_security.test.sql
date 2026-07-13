@@ -46,6 +46,7 @@ select is(
         'user_has_organization',
         'user_has_permission',
         'vimob_can_access_whatsapp_session',
+        'vimob_can_view_whatsapp_lead',
         'vimob_user_has_active_org_membership',
         'vimob_users_share_active_org',
         'whatsapp_message_conversation_session_matches'
@@ -136,6 +137,7 @@ select is(
         'user_has_organization',
         'user_has_permission',
         'vimob_can_access_whatsapp_session',
+        'vimob_can_view_whatsapp_lead',
         'vimob_user_has_active_org_membership',
         'vimob_users_share_active_org',
         'whatsapp_message_conversation_session_matches'

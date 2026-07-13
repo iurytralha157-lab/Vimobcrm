@@ -2,11 +2,14 @@ package whatsapp
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"mime"
+	"net/url"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -68,6 +71,11 @@ func createSecretToken() string {
 
 func createClientMessageID() string {
 	return randomHex(16)
+}
+
+func deterministicProviderMessageID(clientMessageID string) string {
+	hash := sha256.Sum256([]byte(strings.TrimSpace(clientMessageID)))
+	return strings.ToUpper(hex.EncodeToString(hash[:16]))
 }
 
 func createInstanceName(displayName string, organizationID string) string {
@@ -366,14 +374,41 @@ func mediaExtension(mimetype string) string {
 	return "bin"
 }
 
-func storagePathFromPublicURL(value string) string {
-	const marker = "/storage/v1/object/public/whatsapp-media/"
-	index := strings.Index(value, marker)
-	if index < 0 {
+func storagePathFromPublicURL(value string, projectURL string) string {
+	mediaURL, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || mediaURL.Scheme == "" || mediaURL.Host == "" {
+		return ""
+	}
+	project, err := url.Parse(strings.TrimSpace(projectURL))
+	if err != nil || !strings.EqualFold(mediaURL.Scheme, project.Scheme) || !strings.EqualFold(mediaURL.Host, project.Host) {
 		return ""
 	}
 
-	path := value[index+len(marker):]
-	path = strings.Split(path, "?")[0]
-	return strings.Trim(path, "/")
+	for _, marker := range []string{
+		"/storage/v1/object/public/whatsapp-media/",
+		"/storage/v1/object/sign/whatsapp-media/",
+	} {
+		if index := strings.Index(mediaURL.Path, marker); index >= 0 {
+			return strings.Trim(mediaURL.Path[index+len(marker):], "/")
+		}
+	}
+	return ""
+}
+
+func whatsappMediaPathBelongsToOrganization(objectPath string, organizationID string) bool {
+	objectPath = strings.TrimSpace(objectPath)
+	organizationID = strings.TrimSpace(organizationID)
+	if objectPath == "" || organizationID == "" || strings.Contains(objectPath, `\`) || strings.Contains(objectPath, "%") {
+		return false
+	}
+
+	// Refuse traversal and ambiguous path forms before the service-role client
+	// signs the object. Otherwise a caller who knows another tenant's object path
+	// could ask the backend to re-sign and resend that media.
+	cleaned := strings.TrimPrefix(path.Clean("/"+objectPath), "/")
+	if cleaned != objectPath {
+		return false
+	}
+	return strings.HasPrefix(cleaned, "orgs/"+organizationID+"/") ||
+		strings.HasPrefix(cleaned, organizationID+"/")
 }

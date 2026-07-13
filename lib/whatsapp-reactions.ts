@@ -6,6 +6,7 @@ type ReactionMessage = {
   content?: string | null;
   sender_jid?: string | null;
   sender_name?: string | null;
+  status?: string | null;
   reaction_to_message_id?: string | null;
   reaction_emoji?: string | null;
   reaction_sender_jid?: string | null;
@@ -32,6 +33,7 @@ export function groupLatestWhatsAppReactions(messages: ReactionMessage[]) {
   });
 
   for (const message of orderedMessages) {
+    if (message.status === "failed" || message.status === "error") continue;
     const targetId =
       message.reaction_to_message_id ||
       metadataString(message.metadata, "reaction_to_message_id") ||

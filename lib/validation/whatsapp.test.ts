@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   createWhatsAppSessionInputSchema,
+  reactWhatsAppMessageInputSchema,
+  reactWhatsAppMessageResponseSchema,
+  sendWhatsAppMessageResponseSchema,
   sendWhatsAppMessageInputSchema,
+  whatsAppHistoryResponseSchema,
   whatsAppMessagesResponseSchema,
   whatsAppSessionsResponseSchema,
 } from './whatsapp'
@@ -79,4 +83,126 @@ test('rejeita pagina de mensagens com contador negativo', () => {
   })
 
   assert.equal(result.success, false)
+})
+
+test('aceita cursor composto de mensagens e rejeita desempate invalido', () => {
+  const base = {
+    data: {
+      messages: [],
+      nextCursor: `2026-07-12T12:00:00.123456Z|${ID}`,
+    },
+  }
+
+  assert.equal(whatsAppMessagesResponseSchema.safeParse(base).success, true)
+  assert.equal(whatsAppMessagesResponseSchema.safeParse({
+    data: { messages: [], nextCursor: '2026-07-12T12:00:00Z|not-a-uuid' },
+  }).success, false)
+})
+
+test('valida cursor composto no historico paginado do lead', () => {
+  assert.equal(whatsAppHistoryResponseSchema.safeParse({
+    data: {
+      messages: [],
+      nextCursor: `2026-07-12T12:00:00.123456Z|${ID}`,
+    },
+  }).success, true)
+  assert.equal(whatsAppHistoryResponseSchema.safeParse({
+    data: {
+      messages: [],
+      nextCursor: '2026-07-12T12:00:00Z|not-a-uuid',
+    },
+  }).success, false)
+
+  assert.equal(whatsAppHistoryResponseSchema.safeParse({
+    data: {
+      messages: [{
+        id: ID,
+        conversation_id: ORG_ID,
+        session_id: null,
+        message_id: 'legacy-message-without-trusted-session',
+        from_me: false,
+        content: 'Historico legado',
+        message_type: 'text',
+        media_url: null,
+        media_mime_type: null,
+        status: 'received',
+        sent_at: '2026-07-12T12:00:00Z',
+        delivered_at: null,
+        read_at: null,
+        sender_jid: null,
+        sender_name: null,
+      }],
+      nextCursor: null,
+    },
+  }).success, true)
+})
+
+test('valida resposta de envio com mensagem canonica na fila', () => {
+  const result = sendWhatsAppMessageResponseSchema.safeParse({
+    clientMessageId: 'client-message-id',
+    conversationId: ORG_ID,
+    status: 'queued',
+    message: {
+      id: ID,
+      conversation_id: ORG_ID,
+      session_id: USER_ID,
+      message_id: 'client-message-id',
+      client_message_id: 'client-message-id',
+      from_me: true,
+      content: 'Ola',
+      message_type: 'text',
+      media_url: null,
+      media_mime_type: null,
+      status: 'queued',
+      sent_at: '2026-07-12T12:00:00Z',
+      delivered_at: null,
+      read_at: null,
+      sender_jid: null,
+      sender_name: 'Corretor',
+    },
+  })
+
+  assert.equal(result.success, true)
+})
+
+test('reacao exige chave idempotente e aceita remocao com emoji vazio', () => {
+  assert.equal(reactWhatsAppMessageInputSchema.safeParse({
+    emoji: '',
+    clientReactionId: 'reaction-client-1',
+  }).success, true)
+  assert.equal(reactWhatsAppMessageInputSchema.safeParse({ emoji: '👍' }).success, false)
+  assert.equal(reactWhatsAppMessageInputSchema.safeParse({
+    emoji: '👍'.repeat(65),
+    clientReactionId: 'reaction-client-2',
+  }).success, false)
+})
+
+test('valida resposta canonica da reacao enfileirada', () => {
+  assert.equal(reactWhatsAppMessageResponseSchema.safeParse({
+    clientReactionId: 'reaction-client-1',
+    conversationId: ORG_ID,
+    targetMessageId: ID,
+    targetProviderMessageId: 'provider-target-1',
+    status: 'queued',
+    reaction: {
+      id: ID,
+      conversation_id: ORG_ID,
+      session_id: USER_ID,
+      message_id: 'reaction-provider-id',
+      client_message_id: 'reaction-client-1',
+      from_me: true,
+      content: '👍',
+      message_type: 'reaction',
+      media_url: null,
+      media_mime_type: null,
+      reaction_to_message_id: 'provider-target-1',
+      reaction_emoji: '👍',
+      status: 'queued',
+      sent_at: '2026-07-12T12:00:00Z',
+      delivered_at: null,
+      read_at: null,
+      sender_jid: null,
+      sender_name: 'Corretor',
+    },
+  }).success, true)
 })

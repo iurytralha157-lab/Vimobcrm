@@ -1,7 +1,10 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useAuth } from "@/contexts/AuthContext";
 import type { WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
+import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
+import {
+  whatsappQueryKeys,
+} from "@/lib/whatsapp-query-cache";
 
 type LocalWhatsAppMessage = WhatsAppMessage & {
   created_at?: string | null;
@@ -23,17 +26,17 @@ const MESSAGE_EVENTS = [
  */
 export function WhatsAppRealtimeBus() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const scope = useWhatsAppQueryScope();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!profile?.organization_id) return;
+    if (!scope.organizationId || !scope.userId) return;
 
     const debouncedInvalidateConversations = () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
         queryClient.invalidateQueries({
-          queryKey: ["whatsapp-conversations"],
+          queryKey: whatsappQueryKeys.conversationsScope(scope),
           refetchType: "active",
         });
         debounceRef.current = null;
@@ -45,17 +48,17 @@ export function WhatsAppRealtimeBus() {
       if (!msg?.conversation_id) return;
 
       queryClient.invalidateQueries({
-        queryKey: ["whatsapp-messages", msg.conversation_id],
+        queryKey: whatsappQueryKeys.messagesForConversation(scope, msg.conversation_id),
         refetchType: "active",
       });
       queryClient.invalidateQueries({
-        queryKey: ["whatsapp-messages-paginated", msg.conversation_id],
+        queryKey: whatsappQueryKeys.paginatedMessagesForConversation(scope, msg.conversation_id),
         refetchType: "active",
       });
 
       if (msg.lead_id) {
         queryClient.invalidateQueries({
-          queryKey: ["lead-messages", msg.lead_id],
+          queryKey: whatsappQueryKeys.leadMessagesScope(scope, msg.lead_id),
           refetchType: "active",
         });
       }
@@ -79,7 +82,7 @@ export function WhatsAppRealtimeBus() {
       });
       window.removeEventListener("vimob:whatsapp-conversation-change", handleConversationChange);
     };
-  }, [profile?.organization_id, queryClient]);
+  }, [scope, queryClient]);
 
   return null;
 }

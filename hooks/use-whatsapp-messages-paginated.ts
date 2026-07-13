@@ -1,8 +1,13 @@
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query'
 import { useCallback, useMemo } from 'react'
-import { useAuth } from '@/contexts/AuthContext'
 import { whatsappAPI } from '@/lib/api/whatsapp'
+import {
+  flattenWhatsAppMessagePages,
+  mergeWhatsAppMessagesWithLocalState,
+  whatsappQueryKeys,
+} from '@/lib/whatsapp-query-cache'
 import type { WhatsAppMessage } from './use-whatsapp-conversations'
+import { useWhatsAppQueryScope } from './use-whatsapp-query-scope'
 
 interface PaginatedMessagesResult {
   messages: WhatsAppMessage[]
@@ -11,45 +16,61 @@ interface PaginatedMessagesResult {
 
 export function useWhatsAppMessagesPaginated(
   conversationId: string | null,
-  options?: { pageSize?: number },
+  options?: { pageSize?: number; refetchIntervalMs?: number | false },
 ) {
   const queryClient = useQueryClient()
-  const { profile } = useAuth()
+  const scope = useWhatsAppQueryScope()
   const pageSize = options?.pageSize || 30
+  const refreshInterval = options?.refetchIntervalMs ?? 15_000
+  const queryKey = whatsappQueryKeys.paginatedMessages(scope, conversationId, pageSize)
 
   const query = useInfiniteQuery({
-    queryKey: ['whatsapp-messages-paginated', conversationId],
+    queryKey,
     queryFn: async ({ pageParam }): Promise<PaginatedMessagesResult> => {
       if (!conversationId) {
         return { messages: [], nextCursor: null }
       }
 
-      return whatsappAPI.getMessages({
+      const page = await whatsappAPI.getMessages({
         conversationId,
-        organizationId: profile?.organization_id,
+        organizationId: scope.organizationId,
         limit: pageSize,
         cursor: pageParam,
       })
+      if (pageParam !== null) return page
+
+      const cached = queryClient.getQueryData<InfiniteData<PaginatedMessagesResult>>(queryKey)
+      const cachedMessages = cached?.pages[0]?.messages
+      return {
+        ...page,
+        messages: mergeWhatsAppMessagesWithLocalState(page.messages, cachedMessages),
+      }
     },
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     initialPageParam: null as string | null,
-    enabled: !!conversationId && !!profile?.organization_id,
+    enabled: !!conversationId && !!scope.organizationId && !!scope.userId,
     staleTime: 5 * 60 * 1000,
+    refetchInterval: (currentQuery) => {
+      if (refreshInterval === false) return false
+      const data = currentQuery.state.data as InfiniteData<PaginatedMessagesResult> | undefined
+      return (data?.pages.length ?? 0) <= 1 ? refreshInterval : false
+    },
+    refetchIntervalInBackground: false,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
   })
 
   const allMessages = useMemo(
-    () => query.data?.pages.flatMap((page) => page.messages) || [],
+    () => flattenWhatsAppMessagePages(query.data?.pages ?? []),
     [query.data?.pages],
   )
 
   const retryMediaDownload = useCallback(async () => {
     queryClient.invalidateQueries({
-      queryKey: ['whatsapp-messages-paginated', conversationId],
+      queryKey,
     })
-  }, [conversationId, queryClient])
+  }, [queryClient, queryKey])
 
   return {
     ...query,

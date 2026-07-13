@@ -1,0 +1,25 @@
+{
+  "event": "messages.upsert",
+  "data": {
+    "message": {
+      "key": {
+        "id": "provider-inbound-image-download-1",
+        "remoteJid": "5511999991111@s.whatsapp.net",
+        "fromMe": false
+      },
+      "pushName": "Lead Teste",
+      "messageTimestamp": 1783814412,
+      "message": {
+        "imageMessage": {
+          "caption": "Foto recuperada pelo provedor",
+          "mimetype": "image/png",
+          "directPath": "/v/t62.7118-24/provider-media-path",
+          "mediaKey": "bWVkaWEta2V5LWZpeHR1cmU=",
+          "fileSha256": "ZmlsZS1zaGEyNTYtZml4dHVyZQ==",
+          "fileEncSha256": "ZW5jLXNoYTI1Ni1maXh0dXJl",
+          "fileLength": 68
+        }
+      }
+    }
+  }
+}

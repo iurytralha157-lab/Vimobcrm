@@ -154,6 +154,11 @@ export const apiLeadSchema = z.object({
   stageId: uuidSchema.optional(),
   assignedUserId: uuidSchema.optional(),
   interestValue: z.string().optional(),
+  commissionPercentage: z.string().optional(),
+  feedback: z.string().optional(),
+  finalidadeCompra: z.string().optional(),
+  trabalha: z.boolean().optional(),
+  procuraFinanciamento: z.boolean().optional(),
   isOwnResource: z.boolean().optional(),
   reentryCount: nonNegativeIntegerSchema,
   stage: z.object({

@@ -514,7 +514,7 @@ function mediaFolder(actionType: string): string {
   return ({ send_image: "images", send_audio: "audios", send_video: "videos" } as Record<string, string>)[actionType] || "";
 }
 
-type PreparedMedia = { signedUrl: string; storagePath: string; mimeType: string; size: number };
+type PreparedMedia = { storagePath: string; mimeType: string; size: number };
 
 async function prepareAutomationMedia(
   client: SupabaseClient,
@@ -544,9 +544,10 @@ async function prepareAutomationMedia(
     upsert: true,
   });
   if (uploadError) throw uploadError;
-  const { data: signed, error: signError } = await client.storage.from(WHATSAPP_MEDIA_BUCKET).createSignedUrl(destinationPath, 15 * 60);
-  if (signError || !signed?.signedUrl) throw signError || new Error("media_sign_failed");
-  return { signedUrl: signed.signedUrl, storagePath: destinationPath, mimeType, size: blob.size };
+  // The durable outbox worker creates a fresh short-lived URL immediately
+  // before each provider attempt. Persisting an URL here would make retries
+  // depend on an already-expired credential.
+  return { storagePath: destinationPath, mimeType, size: blob.size };
 }
 
 async function resolveConversation(client: SupabaseClient, execution: ClaimedExecution, sessionID: string): Promise<Record<string, any>> {
@@ -578,6 +579,40 @@ async function reserveExternalEffect(client: SupabaseClient, execution: ClaimedE
   return data || {};
 }
 
+async function reserveDurableWhatsAppEffect(
+  client: SupabaseClient,
+  execution: ClaimedExecution,
+  node: FlowNode,
+  effectKey: string,
+): Promise<Record<string, any>> {
+  const { data, error } = await client.rpc("reserve_automation_external_effect", {
+    p_organization_id: execution.organization_id,
+    p_execution_id: execution.id,
+    p_node_key: node.id,
+    p_lease_token: execution.locked_by,
+    p_effect_key: effectKey,
+    p_effect_type: node.action_type,
+    p_request: {
+      ...(node.config || {}),
+      delivery_contract: "canonical_whatsapp_outbox_v1",
+    },
+  });
+  if (error) throw error;
+  return normalizeDurableWhatsAppReservation(data || {});
+}
+
+export function normalizeDurableWhatsAppReservation(data: Record<string, any>): Record<string, any> {
+  if (data?.status === "succeeded") return data || {};
+  // A DB-first effect can be retried safely while it is still `sending`: the
+  // enqueue RPC below is atomic and idempotent. The RPC also requires the
+  // delivery_contract marker, so an old provider-first effect fails closed.
+  if (data?.status === "sending") return { ...data, execute: true };
+  if (!data?.execute) {
+    throw new Error(`effect_fail_closed:${data?.status || "unknown"}`);
+  }
+  return data || {};
+}
+
 async function finishExternalEffect(client: SupabaseClient, effectKey: string, status: "succeeded" | "failed" | "unknown", response: unknown, providerID?: string, errorMessage?: string): Promise<void> {
   const { data, error } = await client.rpc("finish_automation_external_effect", {
     p_effect_key: effectKey,
@@ -596,7 +631,6 @@ async function invokeEvolution(client: SupabaseClient, execution: ClaimedExecuti
   if (!UUID_RE.test(sessionID)) throw new Error("invalid_whatsapp_session");
   const conversation = await resolveConversation(client, execution, sessionID);
 
-  let action = "send.text";
   const remoteJID = String(conversation.remote_jid || "");
   const destination = conversation.is_group === true
     ? remoteJID
@@ -604,88 +638,46 @@ async function invokeEvolution(client: SupabaseClient, execution: ClaimedExecuti
   if (conversation.is_group !== true && (destination.length < 10 || destination.length > 15)) {
     throw new Error("conversation_has_no_canonical_whatsapp_destination");
   }
-  const body: Record<string, any> = { number: destination };
   let storedContent = "";
   let preparedMedia: PreparedMedia | null = null;
   if (node.action_type === "send_whatsapp") {
     storedContent = renderTemplate(String(config.message || ""), context);
-    body.text = storedContent;
   } else {
-    action = node.action_type === "send_audio" ? "send.audio" : "send.media";
     preparedMedia = await prepareAutomationMedia(client, execution, node, sessionID);
-    const type = String(node.action_type).replace("send_", "");
     storedContent = renderTemplate(String(config.caption || ""), context);
-    Object.assign(body, {
-      url: preparedMedia.signedUrl,
-      media: preparedMedia.signedUrl,
-      type,
-      mediatype: type,
-      mediaType: type,
-      caption: storedContent,
-      mimetype: preparedMedia.mimeType,
-      filename: config.filename,
-    });
   }
 
   // Every failure above is preflight-only. Reserve the idempotency ledger only
   // after conversation and private media persistence are ready.
-  const reservation = await reserveExternalEffect(client, execution, node, effectKey);
+  const reservation = await reserveDurableWhatsAppEffect(client, execution, node, effectKey);
   if (!reservation.execute) return { deduplicated: true };
-  if (!(await moduleEnabled(client, execution.organization_id))) {
-    await finishExternalEffect(client, effectKey, "failed", {}, undefined, "module_disabled");
-    throw new Error("module_disabled");
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20_000);
-  let responseStatus = 0;
-  let raw = "";
-  try {
-    const response = await fetch(`${SUPABASE_URL}/functions/v1/evolution-go-proxy`, {
-      method: "POST",
-      signal: controller.signal,
-      redirect: "manual",
-      headers: { authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY, "content-type": "application/json" },
-      body: JSON.stringify({ action, session_id: sessionID, body }),
-    });
-    responseStatus = response.status;
-    raw = await readLimitedText(response, 1024 * 1024);
-  } catch (providerError) {
-    await finishExternalEffect(client, effectKey, "unknown", {}, undefined, sanitizeError(providerError));
-    throw new Error("provider_outcome_unknown");
-  } finally {
-    clearTimeout(timeout);
-  }
-  let providerData: any = {};
-  try { providerData = raw ? JSON.parse(raw) : {}; } catch { providerData = { raw: raw.slice(0, 4000) }; }
-  if (responseStatus < 200 || responseStatus >= 300 || providerData?.ok === false) {
-    await finishExternalEffect(client, effectKey, "failed", providerData, undefined, `provider_http_${responseStatus}`);
-    throw new Error(`provider_http_${responseStatus}`);
-  }
-  const providerID = String(providerData?.data?.messageId || providerData?.data?.sentMessageId || providerData?.messageId || effectKey);
   const messageType = node.action_type === "send_whatsapp" ? "text" : String(node.action_type).replace("send_", "");
-  const { data: history, error: historyError } = await client.rpc("record_automation_whatsapp_message", {
+  const { data: queued, error: queueError } = await client.rpc("enqueue_automation_whatsapp_outbox", {
     p_organization_id: execution.organization_id,
     p_execution_id: execution.id,
     p_node_key: node.id,
+    p_lease_token: execution.locked_by,
     p_effect_key: effectKey,
     p_conversation_id: conversation.id,
     p_session_id: sessionID,
-    p_provider_message_id: providerID,
     p_client_message_id: effectKey,
     p_message_type: messageType,
     p_content: storedContent || null,
     p_media_mime_type: preparedMedia?.mimeType || null,
     p_media_storage_path: preparedMedia?.storagePath || null,
     p_media_size: preparedMedia?.size || null,
-    p_remote_jid: conversation.remote_jid,
-    p_provider_response: providerData,
+    p_filename: config.filename || null,
   });
-  if (historyError || !history?.ok) {
-    await finishExternalEffect(client, effectKey, "unknown", providerData, providerID, "provider_sent_history_write_failed");
-    throw new Error("provider_sent_history_write_failed");
+  if (queueError) throw queueError;
+  if (!queued?.ok || !queued?.outbox_id || !queued?.message_id) {
+    throw new Error(`whatsapp_outbox_enqueue_failed:${queued?.status || "unknown"}`);
   }
-  return { provider_id: providerID };
+  return {
+    delivery: "outbox",
+    status: "queued",
+    outbox_id: queued.outbox_id,
+    message_id: queued.message_id,
+  };
 }
 
 async function executeAction(client: SupabaseClient, execution: ClaimedExecution, node: FlowNode, context: Record<string, any>): Promise<Record<string, any>> {

@@ -45,7 +45,7 @@ export default function Settings() {
         memberRole: activeMemberRole,
       }));
   const legacyIntegrationTabs = !accessReady || canManageOrganization
-    ? ['webhooks', 'meta', 'whatsapp', 'api', 'ai']
+    ? ['webhooks', 'meta', 'grupo-olx', 'whatsapp', 'api', 'ai']
     : ['webhooks', 'meta', 'whatsapp', 'api'];
   const isUnauthorizedAIRequest = accessReady && normalizedRequestedTab === 'ai' && !canManageOrganization;
   const initialIntegration =
@@ -103,6 +103,7 @@ export default function Settings() {
   const hasAIModule = canManageOrganization && hasModule('ai_agent');
   const hasWebhooksModule = hasModule('webhooks');
   const hasAPIModule = hasModule('api');
+  const hasPortalsModule = hasModule('portals');
 
   return (
     <AppLayout title={t.settings.title}>
@@ -131,6 +132,7 @@ export default function Settings() {
               hasAIModule={hasAIModule}
               hasWebhooksModule={hasWebhooksModule}
               hasAPIModule={hasAPIModule}
+              hasPortalsModule={hasPortalsModule}
             />
           </TabsContent>
 

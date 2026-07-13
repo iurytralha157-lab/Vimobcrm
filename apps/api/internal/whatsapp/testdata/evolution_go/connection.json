@@ -1,0 +1,9 @@
+{
+  "event": "connection.update",
+  "data": {
+    "state": "connected",
+    "loggedIn": true,
+    "jid": "5511988887777:18@s.whatsapp.net",
+    "pushName": "Instância Nativa"
+  }
+}

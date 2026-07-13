@@ -184,6 +184,7 @@ export interface AutomationExecutionSummary {
 export type AutomationRuntimeIssueKind =
   | 'dead_letter'
   | 'failed_event'
+  | 'failed_effect'
   | 'circuit_decision'
   | 'duplicate_decision'
   | 'ambiguous_effect'
@@ -208,6 +209,7 @@ export interface AutomationRuntimeIssuesResult {
   summary: {
     deadLetters: number;
     failedEvents: number;
+    failedEffects: number;
     openCircuits: number;
     duplicateDecisions: number;
     unknownEffects: number;

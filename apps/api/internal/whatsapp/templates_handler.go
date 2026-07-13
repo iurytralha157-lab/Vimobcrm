@@ -43,9 +43,6 @@ func (handler Handler) CreateMessageTemplate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.template.created", "", nil, map[string]any{
-		"templateId": template.ID,
-	})
 	httpserver.WriteJSON(w, http.StatusCreated, Envelope[MessageTemplate]{Data: template})
 }
 
@@ -71,9 +68,6 @@ func (handler Handler) UpdateMessageTemplate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.template.updated", "", nil, map[string]any{
-		"templateId": template.ID,
-	})
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[MessageTemplate]{Data: template})
 }
 
@@ -88,8 +82,5 @@ func (handler Handler) DeleteMessageTemplate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.template.deleted", "", nil, map[string]any{
-		"templateId": r.PathValue("id"),
-	})
 	w.WriteHeader(http.StatusNoContent)
 }

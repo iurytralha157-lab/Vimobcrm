@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, ReactNode, useCallback } from "react";
+import { createContext, useContext, useState, ReactNode, useCallback, useEffect } from "react";
 import { WhatsAppConversation } from "@/hooks/use-whatsapp-conversations";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface FloatingChatState {
   isOpen: boolean;
@@ -27,16 +28,36 @@ interface FloatingChatContextType {
 
 const FloatingChatContext = createContext<FloatingChatContextType | undefined>(undefined);
 
+const initialFloatingChatState = (): FloatingChatState => ({
+  isOpen: false,
+  isMinimized: false,
+  activeConversation: null,
+  pendingPhone: null,
+  pendingLeadName: null,
+  pendingMessage: null,
+  pendingLeadId: null,
+});
+
 export function FloatingChatProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<FloatingChatState>({
-    isOpen: false,
-    isMinimized: false,
-    activeConversation: null,
-    pendingPhone: null,
-    pendingLeadName: null,
-    pendingMessage: null,
-    pendingLeadId: null,
-  });
+  const { user, profile, organization } = useAuth();
+  const activeTenantKey = `${user?.id || profile?.id || "anonymous"}:${organization?.id || profile?.organization_id || "none"}`;
+  const [state, setState] = useState<FloatingChatState>(initialFloatingChatState);
+  const [stateTenantKey, setStateTenantKey] = useState(activeTenantKey);
+  const visibleState = stateTenantKey === activeTenantKey
+    ? state
+    : initialFloatingChatState();
+
+  useEffect(() => {
+    let isActive = true;
+    queueMicrotask(() => {
+      if (!isActive) return;
+      setState(initialFloatingChatState());
+      setStateTenantKey(activeTenantKey);
+    });
+    return () => {
+      isActive = false;
+    };
+  }, [activeTenantKey]);
 
   const openChat = useCallback(() => {
     setState((prev) => ({ ...prev, isOpen: true, isMinimized: false }));
@@ -133,7 +154,7 @@ export function FloatingChatProvider({ children }: { children: ReactNode }) {
   return (
     <FloatingChatContext.Provider
       value={{
-        state,
+        state: visibleState,
         openChat,
         closeChat,
         toggleChat,

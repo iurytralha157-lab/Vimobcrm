@@ -83,6 +83,8 @@ export function usePushNotifications() {
 
   // Save token to database
   const saveToken = useCallback(async (token: string) => {
+    currentToken.current = token;
+
     if (!profileId || !profileOrganizationId) {
       console.log('[Push] No user profile, skipping token save');
       return;
@@ -96,7 +98,6 @@ export function usePushNotifications() {
         userAgent: `${navigator.userAgent} | platform=${platform}`,
       }, profileOrganizationId);
       console.log('[Push] Token saved successfully');
-      currentToken.current = token;
     } catch (error) {
       console.error('[Push] Error saving token:', error);
     }
@@ -193,6 +194,12 @@ export function usePushNotifications() {
       console.error('[Push] Error deactivating token:', error);
     }
   }, [profileId]);
+
+  // Keep the native token bound to the currently selected organization.
+  useEffect(() => {
+    if (!isCapacitorNative() || !currentToken.current) return;
+    void saveToken(currentToken.current);
+  }, [profileId, profileOrganizationId, saveToken]);
 
   // Initialize on mount
   useEffect(() => {

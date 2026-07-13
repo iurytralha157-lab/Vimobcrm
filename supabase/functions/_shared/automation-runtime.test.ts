@@ -1,4 +1,8 @@
-import { isPrivateIP, replyWinsDelayWindow } from "./automation-runtime.ts";
+import {
+  isPrivateIP,
+  normalizeDurableWhatsAppReservation,
+  replyWinsDelayWindow,
+} from "./automation-runtime.ts";
 
 Deno.test("reply inside the closed wait window wins the timeout race", () => {
   if (!replyWinsDelayWindow(1_000, 2_000, 2_000)) throw new Error("reply at deadline must win");
@@ -32,5 +36,16 @@ Deno.test("webhook network guard blocks private, reserved and mapped addresses",
   }
   for (const address of ["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"]) {
     if (isPrivateIP(address)) throw new Error(`expected ${address} to be public`);
+  }
+});
+
+Deno.test("DB-first WhatsApp replay continues from an existing sending reservation", () => {
+  const normalized = normalizeDurableWhatsAppReservation({
+    ok: false,
+    execute: false,
+    status: "sending",
+  });
+  if (normalized.execute !== true) {
+    throw new Error("an idempotent DB-first replay must reach the enqueue RPC");
   }
 });

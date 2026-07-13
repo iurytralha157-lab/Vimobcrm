@@ -1,0 +1,6 @@
+{
+  "event": "qrcode.updated",
+  "data": {
+    "qrcode": "data:image/png;base64,qr-native-fixture"
+  }
+}

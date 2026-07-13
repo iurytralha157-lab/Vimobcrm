@@ -324,6 +324,9 @@ func (repo Repository) dispatchPendingPushNotification(ctx context.Context, noti
 			aggregate.Sent++
 			continue
 		}
+		if isPermanentPushDeliveryFailure(item) {
+			_ = repo.deactivateDeadPushSubscription(ctx, notification.OrganizationID, notification.UserID, subscription)
+		}
 		aggregate.Skipped++
 		if item.Error != "" {
 			aggregate.Error = firstNotificationText(aggregate.Error, item.Error)
@@ -336,6 +339,44 @@ func (repo Repository) dispatchPendingPushNotification(ctx context.Context, noti
 		aggregate.OK = false
 	}
 	return aggregate
+}
+
+func isPermanentPushDeliveryFailure(result DispatchChannelResult) bool {
+	switch result.Status {
+	case 404, 410:
+		return true
+	}
+
+	errorText := strings.ToLower(strings.TrimSpace(result.Error))
+	return strings.Contains(errorText, "unregistered") ||
+		strings.Contains(errorText, "notregistered") ||
+		strings.Contains(errorText, "registration-token-not-registered") ||
+		strings.Contains(errorText, "requested entity was not found") ||
+		strings.Contains(errorText, "push subscription has unsubscribed or expired")
+}
+
+func (repo Repository) deactivateDeadPushSubscription(ctx context.Context, organizationID string, userID string, subscription pushSubscription) error {
+	endpoint := strings.TrimSpace(subscription.Endpoint)
+	token := nativePushToken(subscription)
+	if endpoint == "" && token == "" {
+		return nil
+	}
+
+	_, err := repo.db.Pool().Exec(ctx, `
+		update public.push_tokens
+		set is_active = false,
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and user_id = $2::uuid
+		  and (
+		    ($3 <> '' and endpoint = $3)
+		    or ($4 <> '' and token = $4)
+		  )
+	`, organizationID, userID, endpoint, token)
+	if isUndefinedTableError(err) || isUndefinedColumnError(err) {
+		return nil
+	}
+	return err
 }
 
 func (repo Repository) dispatchPendingEmailNotification(ctx context.Context, notification pendingNotification) DispatchChannelResult {

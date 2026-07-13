@@ -29,6 +29,7 @@ export function FloatingChatButton() {
   useWhatsAppRealtimeConversations(
     shouldLoadFloatingChatData && !isOnConversationsPage,
     loadingSessions ? undefined : accessibleSessionIds,
+    (conversations || []).map((conversation) => conversation.lead_id || conversation.lead?.id || ""),
   );
 
   const [side, setSide] = useState<'right' | 'left'>('right');

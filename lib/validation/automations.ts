@@ -494,6 +494,7 @@ export const apiAutomationExecutionSummarySchema = z.object({
 export const automationRuntimeIssueKindSchema = z.enum([
   'dead_letter',
   'failed_event',
+  'failed_effect',
   'circuit_decision',
   'duplicate_decision',
   'ambiguous_effect',
@@ -542,6 +543,7 @@ export const apiAutomationRuntimeIssuesResponseSchema = apiEnvelopeSchema(z.obje
   summary: z.object({
     deadLetters: nonNegativeIntegerSchema,
     failedEvents: nonNegativeIntegerSchema,
+    failedEffects: nonNegativeIntegerSchema,
     openCircuits: nonNegativeIntegerSchema,
     duplicateDecisions: nonNegativeIntegerSchema,
     unknownEffects: nonNegativeIntegerSchema,

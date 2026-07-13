@@ -4,6 +4,8 @@ import { toast } from "@/hooks/use-toast";
 import { useState, useEffect, useCallback } from "react";
 import type { Json } from "@/integrations/supabase/types";
 import { whatsappAPI, type AIAutoReplySessionInput, type WhatsAppSessionQuota } from "@/lib/api/whatsapp";
+import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
+import { whatsappQueryKeys } from "@/lib/whatsapp-query-cache";
 
 export const EVOLUTION_GO_CREATION_ENABLED = true;
 export const WHATSAPP_LEGACY_EVOLUTION_ENABLED = false;
@@ -73,49 +75,52 @@ function removeSessionFromCache(old: WhatsAppSession[] | undefined, sessionId: s
 }
 
 export function useWhatsAppSessions() {
-  const { profile } = useAuth();
+  const scope = useWhatsAppQueryScope();
 
   return useQuery({
-    queryKey: ["whatsapp-sessions", profile?.organization_id, profile?.id],
+    queryKey: whatsappQueryKeys.sessions(scope),
     queryFn: async () => {
-      if (!profile?.id || !profile?.organization_id) return [] as WhatsAppSessionList;
-      const response = await whatsappAPI.getSessions(profile.organization_id);
+      if (!scope.userId || !scope.organizationId) return [] as WhatsAppSessionList;
+      const response = await whatsappAPI.getSessions(scope.organizationId);
       const sessions = (response.data || []).map((session) => normalizeSession(session as WhatsAppSession)) as WhatsAppSessionList;
       sessions.meta = response.meta;
       return sessions;
     },
-    enabled: !!profile?.organization_id && !!profile?.id,
+    enabled: !!scope.organizationId && !!scope.userId,
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
     staleTime: 60_000,
     gcTime: 1000 * 60 * 10,
+    refetchOnReconnect: true,
   });
 }
 
 export function useWhatsAppSession(sessionId: string | null) {
-  const { profile } = useAuth();
+  const scope = useWhatsAppQueryScope();
 
   return useQuery({
-    queryKey: ["whatsapp-session", sessionId],
+    queryKey: whatsappQueryKeys.session(scope, sessionId),
     queryFn: async () => {
       if (!sessionId) return null;
-      const data = await whatsappAPI.getSession(sessionId, profile?.organization_id);
+      const data = await whatsappAPI.getSession(sessionId, scope.organizationId);
       return normalizeSession(data as WhatsAppSession);
     },
-    enabled: !!sessionId && !!profile?.organization_id,
+    enabled: !!sessionId && !!scope.organizationId && !!scope.userId,
+    refetchOnReconnect: true,
   });
 }
 
 export function useSessionAccess(sessionId: string | null) {
-  const { profile } = useAuth();
+  const scope = useWhatsAppQueryScope();
 
   return useQuery({
-    queryKey: ["whatsapp-session-access", sessionId],
+    queryKey: whatsappQueryKeys.sessionAccess(scope, sessionId),
     queryFn: async () => {
       if (!sessionId) return [];
-      return whatsappAPI.getSessionAccess(sessionId, profile?.organization_id) as Promise<WhatsAppSessionAccess[]>;
+      return whatsappAPI.getSessionAccess(sessionId, scope.organizationId) as Promise<WhatsAppSessionAccess[]>;
     },
-    enabled: !!sessionId && !!profile?.organization_id,
+    enabled: !!sessionId && !!scope.organizationId && !!scope.userId,
+    refetchOnReconnect: true,
   });
 }
 
@@ -290,8 +295,8 @@ export function useGrantSessionAccess() {
         profile?.organization_id,
       );
     },
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["whatsapp-session-access", variables.sessionId] });
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-session-access"] });
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
       queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] });
       toast({
@@ -310,8 +315,8 @@ export function useRevokeSessionAccess() {
     mutationFn: async ({ sessionId, userId }: { sessionId: string; userId: string }) => {
       await whatsappAPI.revokeSessionAccess(sessionId, userId, profile?.organization_id);
     },
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["whatsapp-session-access", variables.sessionId] });
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-session-access"] });
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
       queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] });
       toast({

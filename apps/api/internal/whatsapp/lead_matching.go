@@ -20,13 +20,112 @@ type leadPhoneMatch struct {
 	AssigneeAvatar   *string
 }
 
+type whatsappQueryRower interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+type accessibleLeadContact struct {
+	Identity       whatsappContactIdentity
+	AssignedUserID string
+}
+
+// resolveAccessibleLeadContact validates the requested number against an
+// authorized lead, but deliberately returns the number stored on that lead.
+// Brazilian 10/11 digit variants are useful for matching legacy data; they
+// must never become the outbound destination because inserting/removing the
+// ninth digit can address a different WhatsApp account.
+func resolveAccessibleLeadContact(
+	ctx context.Context,
+	queryer whatsappQueryRower,
+	tenantContext tenant.Context,
+	leadID string,
+	requested whatsappContactIdentity,
+) (accessibleLeadContact, error) {
+	candidates := phoneMatchCandidates(requested.LeadMatchValues()...)
+	if len(candidates) == 0 || requested.IsGroup {
+		return accessibleLeadContact{}, ErrInvalidReference
+	}
+
+	args := append(baseConversationArgs(tenantContext), leadID, candidates)
+	var storedPhone, assignedUserID string
+	err := queryer.QueryRow(ctx, `
+		select
+		  case
+		    when nullif(l.phone, '') is not null
+		     and exists (
+		       select 1 from unnest($6::text[]) candidate(value)
+		       where normalize_phone(candidate.value) <> ''
+		         and normalize_phone(l.phone) = normalize_phone(candidate.value)
+		     ) then l.phone
+		    when nullif(to_jsonb(l)->>'whatsapp', '') is not null
+		     and exists (
+		       select 1 from unnest($6::text[]) candidate(value)
+		       where normalize_phone(candidate.value) <> ''
+		         and normalize_phone(to_jsonb(l)->>'whatsapp') = normalize_phone(candidate.value)
+		     ) then to_jsonb(l)->>'whatsapp'
+		    else ''
+		  end,
+		  coalesce(l.assigned_user_id::text, '')
+		from public.leads l
+		where l.organization_id = $1::uuid
+		  and `+leadVisibilitySQL()+`
+		  and l.id = $5::uuid
+		  and (
+		    (
+		      nullif(l.phone, '') is not null
+		      and exists (
+		        select 1 from unnest($6::text[]) candidate(value)
+		        where normalize_phone(candidate.value) <> ''
+		          and normalize_phone(l.phone) = normalize_phone(candidate.value)
+		      )
+		    )
+		    or (
+		      nullif(to_jsonb(l)->>'whatsapp', '') is not null
+		      and exists (
+		        select 1 from unnest($6::text[]) candidate(value)
+		        where normalize_phone(candidate.value) <> ''
+		          and normalize_phone(to_jsonb(l)->>'whatsapp') = normalize_phone(candidate.value)
+		      )
+		    )
+		  )
+		for share of l
+	`, args...).Scan(&storedPhone, &assignedUserID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return accessibleLeadContact{}, ErrInvalidReference
+	}
+	if err != nil {
+		return accessibleLeadContact{}, err
+	}
+
+	identity := newWhatsAppContactIdentity(storedPhone, storedPhone, false)
+	if identity.IsGroup || identity.ContactPhone == "" || identity.RemoteJID == "" {
+		return accessibleLeadContact{}, ErrInvalidReference
+	}
+
+	return accessibleLeadContact{Identity: identity, AssignedUserID: assignedUserID}, nil
+}
+
+// ensureAccessibleLeadMatchesIdentity prevents a conversation/JID from being
+// attached to an unrelated lead. Authorization alone is not enough: the
+// lead's canonical phone must also match the WhatsApp contact identity.
+func ensureAccessibleLeadMatchesIdentity(
+	ctx context.Context,
+	queryer whatsappQueryRower,
+	tenantContext tenant.Context,
+	leadID string,
+	identity whatsappContactIdentity,
+) error {
+	_, err := resolveAccessibleLeadContact(ctx, queryer, tenantContext, leadID, identity)
+	return err
+}
+
 func (repo Repository) resolveConversationLead(ctx context.Context, tenantContext tenant.Context, conversation Conversation) (Conversation, error) {
 	if conversation.LeadID != nil || conversation.IsGroup {
 		return conversation, nil
 	}
 
 	identity := newWhatsAppContactIdentity(pointerValue(conversation.ContactPhone), conversation.RemoteJID, conversation.IsGroup)
-	match, err := repo.findLeadByPhone(ctx, tenantContext.OrganizationID, identity.LeadMatchValues()...)
+	match, err := repo.findLeadByPhone(ctx, tenantContext, identity.LeadMatchValues()...)
 	if err != nil || match == nil {
 		return conversation, err
 	}
@@ -44,7 +143,7 @@ func (repo Repository) resolveConversationLead(ctx context.Context, tenantContex
 	return conversation, nil
 }
 
-func (repo Repository) findLeadByPhone(ctx context.Context, organizationID string, values ...string) (*leadPhoneMatch, error) {
+func (repo Repository) findLeadByPhone(ctx context.Context, tenantContext tenant.Context, values ...string) (*leadPhoneMatch, error) {
 	candidates := phoneMatchCandidates(values...)
 	if len(candidates) == 0 {
 		return nil, nil
@@ -65,9 +164,10 @@ func (repo Repository) findLeadByPhone(ctx context.Context, organizationID strin
 		from public.leads l
 		left join public.users u on u.id = l.assigned_user_id
 		where l.organization_id = $1::uuid
+		  and `+leadVisibilitySQL()+`
 		  and exists (
 			select 1
-			from unnest($2::text[]) as candidate(value)
+			from unnest($5::text[]) as candidate(value)
 			where normalize_phone(candidate.value) <> ''
 			  and (
 				(l.phone is not null and normalize_phone(l.phone) = normalize_phone(candidate.value))
@@ -82,7 +182,7 @@ func (repo Repository) findLeadByPhone(ctx context.Context, organizationID strin
 			l.last_contact_at desc nulls last,
 			l.created_at desc
 		limit 1
-	`, organizationID, candidates).Scan(
+	`, append(baseConversationArgs(tenantContext), candidates)...).Scan(
 		&match.ID,
 		&leadName,
 		&leadAvatar,

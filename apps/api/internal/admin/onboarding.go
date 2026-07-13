@@ -32,6 +32,7 @@ var planControlledModules = []string{
 	"site",
 	"campaigns",
 	"api",
+	"portals",
 	"performance",
 }
 

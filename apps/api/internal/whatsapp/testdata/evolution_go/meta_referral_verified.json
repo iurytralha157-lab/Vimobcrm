@@ -1,0 +1,27 @@
+{
+  "event": "messages.upsert",
+  "data": {
+    "message": {
+      "key": {
+        "id": "provider-meta-verified-1",
+        "remoteJid": "5511555554444@s.whatsapp.net",
+        "fromMe": false
+      },
+      "pushName": "Lead Meta Verificado",
+      "messageTimestamp": 1783814410,
+      "message": {
+        "extendedTextMessage": {
+          "text": "Tenho interesse no anúncio",
+          "contextInfo": {
+            "externalAdReply": {
+              "source_type": "ad",
+              "source_id": "123456789012345",
+              "source_url": "https://example.invalid/imovel?property_code=PROP-META-1",
+              "headline": "Campanha Meta Importada"
+            }
+          }
+        }
+      }
+    }
+  }
+}

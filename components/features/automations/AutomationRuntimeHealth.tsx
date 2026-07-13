@@ -16,6 +16,7 @@ const PAGE_SIZE = 50;
 const ISSUE_LABELS: Record<AutomationRuntimeIssueKind, string> = {
   dead_letter: 'Gatilho esgotado',
   failed_event: 'Gatilho com falha',
+  failed_effect: 'Mensagem automatica nao entregue',
   circuit_decision: 'Circuito interrompido',
   duplicate_decision: 'Execução duplicada evitada',
   ambiguous_effect: 'Efeito externo ambíguo',
@@ -84,6 +85,7 @@ export function AutomationRuntimeHealth({ canManage }: { canManage: boolean }) {
 
   const criticalCount = (summary?.deadLetters ?? 0)
     + (summary?.failedEvents ?? 0)
+    + (summary?.failedEffects ?? 0)
     + (summary?.unknownEffects ?? 0)
     + (summary?.staleSendingEffects ?? 0);
 

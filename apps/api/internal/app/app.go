@@ -22,6 +22,7 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/me"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/meta"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pipelines"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/portals"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/properties"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/roundrobin"
@@ -161,12 +162,17 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 		EvolutionGo: whatsapp.EvolutionGoConfig{
-			APIURL:     cfg.EvolutionGo.APIURL,
-			APIKey:     cfg.EvolutionGo.APIKey,
-			WebhookURL: cfg.EvolutionGo.WebhookURL,
+			APIURL:                   cfg.EvolutionGo.APIURL,
+			APIKey:                   cfg.EvolutionGo.APIKey,
+			WebhookURL:               cfg.EvolutionGo.WebhookURL,
+			BackendWebhookURL:        cfg.EvolutionGo.BackendWebhookURL,
+			WebhookProcessorMode:     cfg.EvolutionGo.WebhookProcessorMode,
+			WebhookRolloutSessionIDs: cfg.EvolutionGo.WebhookRolloutSessionIDs,
 		},
-	}), realtimeHub).WithAutoReply(aiService, cfg.AI.AutoReplyToken)
+	})).WithAutoReply(aiService, cfg.AI.AutoReplyToken)
 	whatsappHandler.StartAIWorker(ctx, logger)
+	whatsappHandler.StartOutboxWorker(ctx, logger)
+	whatsappHandler.StartWebhookWorker(ctx, logger)
 	whatsappHandler.StartSessionSupervisor(ctx, logger)
 	webhooksHandler := webhooks.NewHandler(webhooks.NewRepository(postgres), realtimeHub)
 	metaHandler := meta.NewHandler(meta.NewRepository(postgres, meta.Config{
@@ -180,6 +186,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 	}))
+	portalsHandler := portals.NewHandler(portals.NewRepository(postgres))
 
 	withAuthTenant := func(handler http.Handler) http.Handler {
 		return httpserver.RequireAuth(
@@ -394,6 +401,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("POST /v1/public/webhooks/generic", http.HandlerFunc(webhooksHandler.ReceiveLead))
 	mux.HandleFunc("GET /v1/public/integrations/meta/webhook", metaHandler.Webhook)
 	mux.HandleFunc("POST /v1/public/integrations/meta/webhook", metaHandler.Webhook)
+	mux.HandleFunc("GET /v1/public/integrations/portals/grupo-olx/feed/{token}", portalsHandler.GrupoOLXFeed)
+	mux.HandleFunc("POST /v1/public/integrations/portals/grupo-olx/leads/{token}", portalsHandler.GrupoOLXLeadWebhook)
+	mux.HandleFunc("POST /v1/public/integrations/portals/grupo-olx/import-reports/{token}", portalsHandler.GrupoOLXImportReportWebhook)
 	mux.HandleFunc("GET /v1/public/onboarding/plans", adminHandler.PublicSubscriptionPlans)
 	mux.HandleFunc("POST /v1/public/onboarding/signup", adminHandler.PublicOnboardingSignup)
 	mux.HandleFunc("POST /v1/public/onboarding/checkout-plan", adminHandler.PublicCheckoutPlan)
@@ -431,6 +441,12 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("GET /v1/integrations/meta/webhook-health", withOrganization(http.HandlerFunc(integrationsHandler.MetaWebhookHealth)))
 	mux.Handle("GET /v1/integrations/meta/conversations", withOrganization(http.HandlerFunc(integrationsHandler.ListMetaConversations)))
 	mux.Handle("GET /v1/integrations/meta/conversations/{id}/messages", withOrganization(http.HandlerFunc(integrationsHandler.ListMetaMessages)))
+	mux.Handle("GET /v1/integrations/portals/grupo-olx", withModule("portals", http.HandlerFunc(portalsHandler.GetGrupoOLX)))
+	mux.Handle("PUT /v1/integrations/portals/grupo-olx", withModule("portals", http.HandlerFunc(portalsHandler.SaveGrupoOLX)))
+	mux.Handle("POST /v1/integrations/portals/grupo-olx/activate", withModule("portals", http.HandlerFunc(portalsHandler.ActivateGrupoOLX)))
+	mux.Handle("POST /v1/integrations/portals/grupo-olx/regenerate-feed-token", withModule("portals", http.HandlerFunc(portalsHandler.RegenerateGrupoOLXFeedToken)))
+	mux.Handle("GET /v1/integrations/portals/grupo-olx/publications", withModule("portals", http.HandlerFunc(portalsHandler.ListGrupoOLXPublications)))
+	mux.Handle("PUT /v1/integrations/portals/grupo-olx/publications", withModule("portals", http.HandlerFunc(portalsHandler.UpsertGrupoOLXPublications)))
 	mux.Handle("PATCH /v1/settings/profile", withAuthTenant(http.HandlerFunc(settingsHandler.UpdateProfile)))
 	mux.Handle("POST /v1/settings/profile/avatar", withAuthTenant(http.HandlerFunc(settingsHandler.UploadProfileAvatar)))
 	mux.Handle("PATCH /v1/settings/organization", withOrganization(http.HandlerFunc(settingsHandler.UpdateOrganization)))
@@ -509,6 +525,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("GET /v1/whatsapp/conversations/{id}", withOrganization(http.HandlerFunc(whatsappHandler.ShowConversation)))
 	mux.Handle("GET /v1/whatsapp/conversations/{id}/messages", withOrganization(http.HandlerFunc(whatsappHandler.ListMessages)))
 	mux.Handle("POST /v1/whatsapp/conversations/{id}/send-message", withOrganization(http.HandlerFunc(whatsappHandler.SendMessage)))
+	mux.Handle("POST /v1/whatsapp/conversations/{id}/messages/{messageId}/reaction", withOrganization(http.HandlerFunc(whatsappHandler.ReactToMessage)))
 	mux.Handle("POST /v1/whatsapp/conversations/{id}/mark-read", withOrganization(http.HandlerFunc(whatsappHandler.MarkConversationAsRead)))
 	mux.Handle("POST /v1/whatsapp/conversations/{id}/mark-seen", withOrganization(http.HandlerFunc(whatsappHandler.MarkAsSeenOnWhatsApp)))
 	mux.Handle("POST /v1/whatsapp/conversations/{id}/archive", withOrganization(http.HandlerFunc(whatsappHandler.ArchiveConversation)))

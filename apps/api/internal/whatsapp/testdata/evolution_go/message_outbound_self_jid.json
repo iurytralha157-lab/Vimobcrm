@@ -1,0 +1,21 @@
+{
+  "event": "messages.upsert",
+  "data": {
+    "messages": [
+      {
+        "Info": {
+          "ID": "provider-outbound-self-jid-1",
+          "Chat": "5511999991111@s.whatsapp.net",
+          "RecipientPN": "5511999991111@s.whatsapp.net",
+          "SenderPN": "551188887777@s.whatsapp.net",
+          "IsFromMe": true,
+          "PushName": "Corretor Teste",
+          "Timestamp": 1783814403
+        },
+        "Message": {
+          "conversation": "Mensagem enviada pelo celular"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "event": "messages.upsert",
+  "data": {
+    "messages": [
+      {
+        "Info": {
+          "ID": "provider-inbound-text-1",
+          "Chat": "5511999991111@s.whatsapp.net",
+          "SenderPN": "5511999991111@s.whatsapp.net",
+          "IsFromMe": false,
+          "PushName": "Lead Teste",
+          "Timestamp": 1783814400
+        },
+        "Message": {
+          "conversation": "Mensagem recebida pelo backend"
+        }
+      }
+    ]
+  }
+}

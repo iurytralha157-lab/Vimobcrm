@@ -2732,7 +2732,12 @@ func leadSelectFields() string {
 		l.stage_id::text,
 		l.assigned_user_id::text,
 		l.valor_interesse::text,
+		l.commission_percentage::text,
 		l.lost_reason,
+		l.feedback,
+		l.finalidade_compra,
+		l.trabalha,
+		l.procura_financiamento,
 		l.is_own_resource,
 		l.reentry_count,
 		l.cargo,
@@ -2799,9 +2804,10 @@ func scanLead(row scanner) (Lead, error) {
 func scanLeadFields(row scanner, total *int64) (Lead, error) {
 	var lead Lead
 	var email, phone, priority, message, propertyCode, propertyID, interestPropertyID pgtype.Text
-	var pipelineID, stageID, assignedUserID, interestValue pgtype.Text
-	var lostReason pgtype.Text
+	var pipelineID, stageID, assignedUserID, interestValue, commissionPercentage pgtype.Text
+	var lostReason, feedback, finalidadeCompra pgtype.Text
 	var isOwnResource pgtype.Bool
+	var trabalha, procuraFinanciamento pgtype.Bool
 	var cargo, empresa, profissao, endereco, bairro, numero, cep, cidade, uf, rendaFamiliar, faixaValorImovel pgtype.Text
 	var stageEnteredAt, boardOrderAt, lastContactAt, nextFollowUpAt pgtype.Timestamptz
 	var stageIDValue, stageName, stageColor, stageKey pgtype.Text
@@ -2825,7 +2831,12 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 		&stageID,
 		&assignedUserID,
 		&interestValue,
+		&commissionPercentage,
 		&lostReason,
+		&feedback,
+		&finalidadeCompra,
+		&trabalha,
+		&procuraFinanciamento,
 		&isOwnResource,
 		&lead.ReentryCount,
 		&cargo,
@@ -2873,7 +2884,12 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 	lead.StageID = textValue(stageID)
 	lead.AssignedUserID = textValue(assignedUserID)
 	lead.InterestValue = textValue(interestValue)
+	lead.CommissionPercentage = textValue(commissionPercentage)
 	lead.LostReason = textValue(lostReason)
+	lead.Feedback = textValue(feedback)
+	lead.FinalidadeCompra = textValue(finalidadeCompra)
+	lead.Trabalha = boolPtr(trabalha)
+	lead.ProcuraFinanciamento = boolPtr(procuraFinanciamento)
 	lead.IsOwnResource = boolPtr(isOwnResource)
 	lead.StageEnteredAt = timePtr(stageEnteredAt)
 	lead.BoardOrderAt = timePtr(boardOrderAt)

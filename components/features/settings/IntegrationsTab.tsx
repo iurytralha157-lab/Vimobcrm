@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Key, Lock, MessageCircle, Search, Settings2, Webhook } from "lucide-react";
+import { Bot, Building2, Key, Lock, MessageCircle, Search, Settings2, Webhook } from "lucide-react";
 import NextImage from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,6 +11,7 @@ import { WebhooksTab } from "@/components/features/settings/WebhooksTab";
 import { APITab } from "@/components/features/settings/APITab";
 import { AIAssistantTab } from "@/components/features/settings/AIAssistantTab";
 import { MetaIntegrationSettings } from "@/components/features/integrations/MetaIntegrationSettings";
+import { GrupoOLXIntegrationSettings } from "@/components/features/integrations/GrupoOLXIntegrationSettings";
 import { GoogleCalendarConnect } from "@/components/features/schedule/GoogleCalendarConnect";
 import { VistaImportDialog } from "@/components/features/properties/VistaImportDialog";
 import { ImoviewImportDialog } from "@/components/features/properties/ImoviewImportDialog";
@@ -19,11 +20,12 @@ import { useWhatsAppSessions } from "@/hooks/use-whatsapp-sessions";
 import { useVistaIntegration } from "@/hooks/use-vista-integration";
 import { useImoviewIntegration } from "@/hooks/use-imoview-integration";
 import { useGoogleCalendarStatus } from "@/hooks/use-google-calendar";
+import { useGrupoOLXIntegration } from "@/hooks/use-grupo-olx-integration";
 import { useAuth } from "@/contexts/AuthContext";
 import { canManageOrganization } from "@/lib/access/organization";
 
-type IntegrationKey = "whatsapp" | "ai" | "meta" | "google-calendar" | "vista" | "imoview" | "webhooks" | "api";
-const ADMIN_ONLY_INTEGRATIONS = new Set<IntegrationKey>(["meta", "vista", "imoview"]);
+type IntegrationKey = "whatsapp" | "ai" | "meta" | "grupo-olx" | "google-calendar" | "vista" | "imoview" | "webhooks" | "api";
+const ADMIN_ONLY_INTEGRATIONS = new Set<IntegrationKey>(["meta", "grupo-olx", "vista", "imoview"]);
 
 interface MetaOAuthPayload {
   pages?: MetaPage[];
@@ -93,6 +95,7 @@ interface IntegrationsTabProps {
   hasAIModule: boolean;
   hasWebhooksModule: boolean;
   hasAPIModule: boolean;
+  hasPortalsModule: boolean;
 }
 
 export function IntegrationsTab({
@@ -101,6 +104,7 @@ export function IntegrationsTab({
   hasAIModule,
   hasWebhooksModule,
   hasAPIModule,
+  hasPortalsModule,
 }: IntegrationsTabProps) {
   const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
   const activeOrganizationId = organization?.id || profile?.organization_id;
@@ -116,8 +120,9 @@ export function IntegrationsTab({
     if (key === "ai") return hasAIModule;
     if (key === "webhooks") return hasWebhooksModule;
     if (key === "api") return hasAPIModule;
+    if (key === "grupo-olx") return hasPortalsModule;
     return true;
-  }, [hasAIModule, hasAPIModule, hasWebhooksModule, hasWhatsAppModule]);
+  }, [hasAIModule, hasAPIModule, hasPortalsModule, hasWebhooksModule, hasWhatsAppModule]);
   const defaultIntegrationUnavailable =
     defaultIntegrationKey !== null && !isIntegrationEnabled(defaultIntegrationKey);
   const defaultIntegrationLocked =
@@ -136,6 +141,7 @@ export function IntegrationsTab({
   const { data: vistaIntegration } = useVistaIntegration();
   const { data: imoviewIntegration } = useImoviewIntegration();
   const { data: googleCalendarStatus } = useGoogleCalendarStatus();
+  const { data: grupoOLXIntegration } = useGrupoOLXIntegration({ enabled: hasPortalsModule });
   const disabledIntegrations = new Set<IntegrationKey>();
 
   useEffect(() => {
@@ -278,6 +284,7 @@ export function IntegrationsTab({
     const metaConnected = metaIntegrations.some((item) => item.is_connected);
     const whatsappConnected = whatsappSessions.some((item) => item.status === "connected");
     const googleCalendarConnected = !!googleCalendarStatus;
+    const grupoOLXConnected = grupoOLXIntegration?.status === "connected" || !!grupoOLXIntegration?.last_feed_accessed_at;
 
     return [
       {
@@ -310,6 +317,16 @@ export function IntegrationsTab({
         connected: metaConnected,
         detail: `${metaIntegrations.length} página${metaIntegrations.length === 1 ? "" : "s"}`,
         icon: <LogoImage src="https://cdn.simpleicons.org/facebook/1877F2" alt="Facebook" />,
+      },
+      {
+        key: "grupo-olx" as const,
+        title: "Grupo OLX / Canal Pro",
+        description: "Publique imoveis no ZAP, Viva Real e OLX e receba leads no CRM.",
+        enabled: hasPortalsModule,
+        requiresAdmin: true,
+        connected: grupoOLXConnected,
+        detail: grupoOLXIntegration?.status === "pending_setup" ? "Aguardando Canal Pro" : "Portais imobiliarios",
+        icon: <Building2 className="h-7 w-7 text-primary" />,
       },
       {
         key: "google-calendar" as const,
@@ -359,7 +376,7 @@ export function IntegrationsTab({
         icon: <Key className="h-7 w-7 text-primary" />,
       },
     ].filter((item) => item.enabled);
-  }, [googleCalendarStatus, hasAIModule, hasAPIModule, hasWebhooksModule, hasWhatsAppModule, imoviewIntegration, metaIntegrations, vistaIntegration, whatsappSessions]);
+  }, [googleCalendarStatus, grupoOLXIntegration, hasAIModule, hasAPIModule, hasPortalsModule, hasWebhooksModule, hasWhatsAppModule, imoviewIntegration, metaIntegrations, vistaIntegration, whatsappSessions]);
 
   const filteredIntegrations = integrations.filter((item) => {
     const query = search.trim().toLowerCase();
@@ -486,6 +503,7 @@ export function IntegrationsTab({
             />
           )}
           {effectiveActiveIntegration === "google-calendar" && <GoogleCalendarConnect />}
+          {effectiveActiveIntegration === "grupo-olx" && <GrupoOLXIntegrationSettings />}
           {effectiveActiveIntegration === "webhooks" && <WebhooksTab />}
           {effectiveActiveIntegration === "api" && <APITab />}
         </DialogContent>
@@ -497,7 +515,7 @@ export function IntegrationsTab({
 }
 
 function isIntegrationKey(value?: string): value is IntegrationKey {
-  return value === "whatsapp" || value === "ai" || value === "meta" || value === "google-calendar" || value === "vista" || value === "imoview" || value === "webhooks" || value === "api";
+  return value === "whatsapp" || value === "ai" || value === "meta" || value === "grupo-olx" || value === "google-calendar" || value === "vista" || value === "imoview" || value === "webhooks" || value === "api";
 }
 
 function LogoImage({ src, alt }: { src: string; alt: string }) {

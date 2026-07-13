@@ -1,0 +1,12 @@
+{
+  "event": "messages.status",
+  "data": {
+    "statuses": [
+      {
+        "messageIds": ["provider-outbound-status"],
+        "status": "read",
+        "timestamp": 1783814403
+      }
+    ]
+  }
+}

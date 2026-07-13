@@ -157,8 +157,12 @@ func (repo Repository) AssignLabel(ctx context.Context, tenantContext tenant.Con
 	if !ok {
 		return nil, ErrConversationNotFound
 	}
-	if err := repo.ensureCanEditConversation(ctx, tenantContext, conversationID); err != nil {
+	conversation, err := repo.GetConversation(ctx, tenantContext, conversationID)
+	if err != nil {
 		return nil, err
+	}
+	if conversation.SessionID != session.ID {
+		return nil, ErrConversationNotFound
 	}
 
 	labelID, remoteLabelID, err := repo.resolveLabel(ctx, session.ID, strings.TrimSpace(request.LabelID))
@@ -173,7 +177,7 @@ func (repo Repository) AssignLabel(ctx context.Context, tenantContext tenant.Con
 		"session_id": session.ID,
 		"body": map[string]any{
 			"labelId": remoteLabelID,
-			"jid":     request.RemoteJID,
+			"jid":     conversation.RemoteJID,
 		},
 	})
 	if err != nil {
@@ -341,18 +345,28 @@ func (repo Repository) HistorySync(ctx context.Context, tenantContext tenant.Con
 		return nil, err
 	}
 
-	body := map[string]any{}
-	if strings.TrimSpace(jid) != "" {
-		body["jid"] = strings.TrimSpace(jid)
+	if strings.TrimSpace(jid) == "" {
+		return nil, fmt.Errorf("%w: jid de uma conversa vinculada a lead e obrigatorio", ErrInvalidInput)
+	}
+	conversation, err := repo.findConversationByExactSessionJID(ctx, tenantContext, session.ID, jid)
+	if err != nil {
+		return nil, err
+	}
+	if conversation == nil || conversation.LeadID == nil {
+		return nil, ErrConversationNotFound
 	}
 
 	return repo.functions.invokeEvolution(ctx, "chat.historySync", map[string]any{
 		"session_id": session.ID,
-		"body":       body,
+		"body":       map[string]any{"jid": conversation.RemoteJID},
 	})
 }
 
 func (repo Repository) RunProviderAction(ctx context.Context, tenantContext tenant.Context, request ProviderActionRequest) (ProviderActionResponse, error) {
+	if !canManageWhatsApp(tenantContext) {
+		return ProviderActionResponse{}, tenant.ErrOrganizationAccessDenied
+	}
+
 	action := strings.TrimSpace(request.Action)
 	requireSend, allowed := providerActionAllowed(action)
 	if !allowed {
@@ -511,41 +525,15 @@ func normalizeLabelColor(value any) *int {
 
 func providerActionAllowed(action string) (requireSend bool, allowed bool) {
 	viewActions := map[string]struct{}{
-		"instance.status":  {},
-		"instance.qr":      {},
-		"label.list":       {},
-		"group.myAll":      {},
-		"group.info":       {},
-		"group.inviteLink": {},
-		"user.check":       {},
-		"user.avatar":      {},
-		"user.contacts":    {},
-		"chat.historySync": {},
-	}
-	sendActions := map[string]struct{}{
-		"send.text":            {},
-		"send.media":           {},
-		"send.audio":           {},
-		"chat.archive":         {},
-		"chat.mute":            {},
-		"chat.pin":             {},
-		"label.addChat":        {},
-		"label.removeChat":     {},
-		"group.setName":        {},
-		"group.setDescription": {},
-		"group.setPhoto":       {},
-		"message.markread":     {},
-		"message.delete":       {},
-		"message.edit":         {},
-		"message.react":        {},
+		"instance.status": {},
+		"instance.qr":     {},
+		"label.list":      {},
+		"user.check":      {},
+		"user.avatar":     {},
 	}
 	if _, ok := viewActions[action]; ok {
 		return false, true
 	}
-	if _, ok := sendActions[action]; ok {
-		return true, true
-	}
-
 	return false, false
 }
 

@@ -177,12 +177,6 @@ function handleWhatsAppEvent(event: BackendRealtimeEvent, queryClient: QueryClie
 
   if (event.type === "whatsapp.session_access.changed") {
     void queryClient.invalidateQueries({ queryKey: ["whatsapp-session-access"], refetchType: "active" });
-    if (sessionId) {
-      void queryClient.invalidateQueries({
-        queryKey: ["whatsapp-session-access", sessionId],
-        refetchType: "active",
-      });
-    }
   }
 
   if (event.type.startsWith("whatsapp.template")) {

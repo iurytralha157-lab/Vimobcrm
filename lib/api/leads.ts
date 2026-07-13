@@ -37,6 +37,11 @@ type APILead = {
   stageId?: string
   assignedUserId?: string
   interestValue?: string
+  commissionPercentage?: string
+  feedback?: string
+  finalidadeCompra?: string
+  trabalha?: boolean
+  procuraFinanciamento?: boolean
   isOwnResource?: boolean
   reentryCount: number
   stage?: {
@@ -430,7 +435,7 @@ export function toLegacyLead(lead: APILead): LeadRow & {
     cargo: lead.additionalFields?.cargo || null,
     cep: lead.additionalFields?.cep || null,
     cidade: lead.additionalFields?.cidade || null,
-    commission_percentage: null,
+    commission_percentage: lead.commissionPercentage ? Number(lead.commissionPercentage) : null,
     complemento: null,
     created_at: lead.createdAt,
     deal_status: lead.dealStatus,
@@ -438,8 +443,8 @@ export function toLegacyLead(lead: APILead): LeadRow & {
     empresa: lead.additionalFields?.empresa || null,
     endereco: lead.additionalFields?.endereco || null,
     faixa_valor_imovel: lead.additionalFields?.faixaValorImovel || null,
-    feedback: null,
-    finalidade_compra: null,
+    feedback: lead.feedback || null,
+    finalidade_compra: lead.finalidadeCompra || null,
     first_response_actor_user_id: null,
     first_response_at: null,
     first_response_channel: null,
@@ -469,7 +474,7 @@ export function toLegacyLead(lead: APILead): LeadRow & {
     organization_id: lead.organizationId,
     phone: lead.phone || null,
     pipeline_id: lead.pipelineId || null,
-    procura_financiamento: null,
+    procura_financiamento: lead.procuraFinanciamento ?? null,
     profissao: lead.additionalFields?.profissao || null,
     property_code: lead.propertyCode || null,
     property_id: lead.propertyId || null,
@@ -482,7 +487,7 @@ export function toLegacyLead(lead: APILead): LeadRow & {
     board_order_at: lead.boardOrderAt || null,
     stage_entered_at: lead.stageEnteredAt || null,
     stage_id: lead.stageId || null,
-    trabalha: null,
+    trabalha: lead.trabalha ?? null,
     uf: lead.additionalFields?.uf || null,
     updated_at: lead.updatedAt,
     utm_campaign: null,

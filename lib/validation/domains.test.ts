@@ -191,6 +191,7 @@ test('saude das automacoes distingue retry seguro de efeito ambiguo', () => {
       summary: {
         deadLetters: 1,
         failedEvents: 0,
+        failedEffects: 0,
         openCircuits: 0,
         duplicateDecisions: 0,
         unknownEffects: 1,

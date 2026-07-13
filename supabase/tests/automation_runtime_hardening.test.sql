@@ -1,10 +1,39 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(29);
+select plan(32);
+
+do $compat_local_whatsapp_session_name$
+begin
+  if exists (
+    select 1 from pg_catalog.pg_attribute
+    where attrelid = 'public.whatsapp_sessions'::regclass
+      and attname = 'name' and not attisdropped
+  ) then
+    execute $sql$alter table public.whatsapp_sessions alter column name set default 'pgTAP compatibility'$sql$;
+  end if;
+end;
+$compat_local_whatsapp_session_name$;
+
+insert into auth.users (
+  instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+  raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+  confirmation_token, email_change, email_change_token_new, recovery_token
+) values (
+  '00000000-0000-0000-0000-000000000000', 'b1000000-0000-4000-8000-000000000001',
+  'authenticated', 'authenticated', 'automation-owner@example.test',
+  crypt('test-password', gen_salt('bf')), now(),
+  '{"provider":"email","providers":["email"]}', '{}', now(), now(), '', '', '', ''
+);
 
 insert into public.organizations (id, name, slug, is_active)
 values ('b2000000-0000-4000-8000-000000000001', 'Automation Runtime Test', 'automation-runtime-test', true);
+
+insert into public.users (id, organization_id, name, email, role, is_active)
+values ('b1000000-0000-4000-8000-000000000001', 'b2000000-0000-4000-8000-000000000001', 'Automation Owner', 'automation-owner@example.test', 'admin', true);
+
+insert into public.organization_members (organization_id, user_id, role, is_active)
+values ('b2000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000001', 'admin', true);
 
 insert into public.organization_modules (organization_id, module_name, is_enabled)
 values ('b2000000-0000-4000-8000-000000000001', 'automations', true);
@@ -18,11 +47,11 @@ values
 update public.leads set phone = '(11) 99999-9999' where id = 'b3000000-0000-4000-8000-000000000004';
 
 insert into public.whatsapp_sessions (
-  id, organization_id, name, instance_name, provider, status, is_active
+  id, organization_id, owner_user_id, instance_name, provider, status, is_active
 ) values (
   'b9000000-0000-4000-8000-000000000001',
   'b2000000-0000-4000-8000-000000000001',
-  'Automation Session',
+  'b1000000-0000-4000-8000-000000000001',
   'automation-session',
   'evolution_go',
   'connected',
@@ -55,7 +84,8 @@ insert into public.automation_flow_versions (
     "nodes": [
       {"id":"delay","type":"delay","config":{"delay_value":1,"delay_type":"minutes","stop_on_reply":true}},
       {"id":"replied","type":"action","action_type":"send_whatsapp","config":{}},
-      {"id":"no_reply","type":"action","action_type":"send_whatsapp","config":{}}
+      {"id":"no_reply","type":"action","action_type":"send_whatsapp","config":{}},
+      {"id":"send","type":"action","action_type":"send_whatsapp","config":{}}
     ],
     "connections": [
       {"source":"delay","target":"replied","condition_branch":"replied"},
@@ -227,25 +257,29 @@ insert into public.automation_effect_dispatches (
   'b2000000-0000-4000-8000-000000000001',
   'b6000000-0000-4000-8000-000000000004',
   'send', 'automation:b6000000-0000-4000-8000-000000000004:send:send_whatsapp',
-  'send_whatsapp', 'sending', '{}'::jsonb
+  'send_whatsapp', 'sending', '{"delivery_contract":"canonical_whatsapp_outbox_v1"}'::jsonb
 );
 
 select ok(
-  coalesce((public.record_automation_whatsapp_message(
+  coalesce((public.enqueue_automation_whatsapp_outbox(
     'b2000000-0000-4000-8000-000000000001',
     'b6000000-0000-4000-8000-000000000004',
-    'send', 'automation:b6000000-0000-4000-8000-000000000004:send:send_whatsapp',
+    'send', 'lease-send',
+    'automation:b6000000-0000-4000-8000-000000000004:send:send_whatsapp',
     (select conversation_id from public.automation_executions where id = 'b6000000-0000-4000-8000-000000000004'),
     'b9000000-0000-4000-8000-000000000001',
-    'provider-message-1', 'client-message-1', 'text', 'Ola',
-    null, null, null, '5511999999999@s.whatsapp.net', '{"ok":true}'::jsonb
+    'automation:b6000000-0000-4000-8000-000000000004:send:send_whatsapp',
+    'text', 'Ola', null, null, null, null
   )->>'ok')::boolean, false),
-  'provider success is persisted atomically'
+  'automation delivery is accepted atomically by the canonical outbox'
 );
-select is((select count(*)::integer from public.whatsapp_messages where client_message_id = 'client-message-1'), 1, 'outbound history contains one message');
+select is((select count(*)::integer from public.whatsapp_messages where client_message_id = 'automation:b6000000-0000-4000-8000-000000000004:send:send_whatsapp'), 1, 'outbound history contains one queued message');
+select is((select count(*)::integer from public.whatsapp_outbox where client_message_id = 'automation:b6000000-0000-4000-8000-000000000004:send:send_whatsapp'), 1, 'durable outbox contains one delivery');
+select is((select status from public.whatsapp_outbox where client_message_id = 'automation:b6000000-0000-4000-8000-000000000004:send:send_whatsapp'), 'pending', 'delivery starts pending for the backend worker');
+select is((select payload->>'action' from public.whatsapp_outbox where client_message_id = 'automation:b6000000-0000-4000-8000-000000000004:send:send_whatsapp'), 'send.text', 'outbox payload matches the Go worker contract');
 select is((select count(*)::integer from public.lead_timeline_events where metadata->>'automation_effect_key' = 'automation:b6000000-0000-4000-8000-000000000004:send:send_whatsapp'), 1, 'timeline contains one automation event');
-select is((select status from public.automation_effect_dispatches where effect_key = 'automation:b6000000-0000-4000-8000-000000000004:send:send_whatsapp'), 'succeeded', 'history commit closes effect ledger atomically');
-select ok((select last_contact_at is not null from public.leads where id = 'b3000000-0000-4000-8000-000000000004') and (select last_message = 'Ola' from public.whatsapp_conversations where lead_id = 'b3000000-0000-4000-8000-000000000004'), 'lead activity and conversation preview update in the same transaction');
+select is((select status from public.automation_effect_dispatches where effect_key = 'automation:b6000000-0000-4000-8000-000000000004:send:send_whatsapp'), 'succeeded', 'durable queue acceptance closes the effect ledger atomically');
+select ok((select last_contact_at is null and first_response_at is null from public.leads where id = 'b3000000-0000-4000-8000-000000000004') and (select last_message = 'Ola' from public.whatsapp_conversations where lead_id = 'b3000000-0000-4000-8000-000000000004'), 'queue activity updates the preview without claiming provider delivery');
 select is((select count(*)::integer from public.whatsapp_contact_identity_aliases where lead_id = 'b3000000-0000-4000-8000-000000000004'), 1, 'canonical identity alias is persisted');
 
 select * from finish();

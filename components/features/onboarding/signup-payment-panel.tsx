@@ -193,6 +193,10 @@ function getPlanFeatures(plan: SignupPaymentPlan) {
     features.push("Automacoes");
   }
 
+  if (modules.has("portals") || slug.includes("master")) {
+    features.push("Portais");
+  }
+
   return features;
 }
 

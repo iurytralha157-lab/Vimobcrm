@@ -8,6 +8,28 @@ export const vistaIntegrationInputSchema = z.object({
 export const imoviewIntegrationInputSchema = z.object({
   api_key: z.string().trim().min(1).max(2_000),
 }).strict()
+const optionalUUID = z.union([uuidSchema, z.literal(''), z.null()]).optional()
+
+export const grupoOLXIntegrationInputSchema = z.object({
+  isActive: z.boolean().optional(),
+  leadWebhookSecret: z.string().trim().max(2_000).optional(),
+  defaultPipelineId: optionalUUID,
+  defaultStageId: optionalUUID,
+  defaultAssignedUserId: optionalUUID,
+  defaultRoundRobinId: optionalUUID,
+  settings: z.record(z.unknown()).optional(),
+}).strict()
+
+export const grupoOLXPublicationInputSchema = z.object({
+  propertyId: uuidSchema,
+  clientListingId: z.string().trim().min(1).max(50).optional(),
+  publicationType: z.string().trim().min(1).max(80).optional(),
+  isEnabled: z.boolean().optional(),
+}).strict()
+
+export const grupoOLXPublicationsInputSchema = z.object({
+  publications: z.array(grupoOLXPublicationInputSchema).max(1000),
+}).strict()
 export const metaFormConfigInputSchema = z.object({
   integrationId: uuidSchema,
   formId: z.string().trim().min(1).max(255),

@@ -142,7 +142,7 @@ export const whatsAppConversationSchema = z.object({
 export const whatsAppMessageSchema = z.object({
   id: uuidSchema,
   conversation_id: uuidSchema,
-  session_id: uuidSchema,
+  session_id: uuidSchema.nullable(),
   message_id: z.string().min(1),
   client_message_id: z.string().nullable().optional(),
   from_me: z.boolean(),
@@ -186,19 +186,43 @@ export const whatsAppSessionAccessResponseSchema = apiEnvelopeSchema(z.array(wha
 export const whatsAppConversationsResponseSchema = apiEnvelopeSchema(z.array(whatsAppConversationSchema))
 export const whatsAppConversationResponseSchema = apiEnvelopeSchema(whatsAppConversationSchema)
 export const whatsAppOptionalConversationResponseSchema = apiEnvelopeSchema(whatsAppConversationSchema.nullable())
+const whatsAppMessageCursorSchema = z.string().refine((cursor) => {
+  const [timestamp, id, ...extra] = cursor.split('|')
+  if (extra.length > 0 || Number.isNaN(Date.parse(timestamp))) return false
+  return id === undefined || uuidSchema.safeParse(id).success
+}, 'Cursor de mensagens invalido')
 export const whatsAppMessagesPageSchema = z.object({
   messages: z.array(whatsAppMessageSchema),
-  nextCursor: timestampSchema.nullable(),
+  nextCursor: whatsAppMessageCursorSchema.nullable(),
 }).passthrough()
 export const whatsAppMessagesResponseSchema = apiEnvelopeSchema(whatsAppMessagesPageSchema)
 export const whatsAppHistoryResponseSchema = apiEnvelopeSchema(z.object({
   conversation: whatsAppConversationSchema.optional(),
   conversations: z.array(whatsAppConversationSchema).optional(),
   messages: z.array(whatsAppMessageSchema),
+  nextCursor: whatsAppMessageCursorSchema.nullable(),
 }).passthrough())
 
 export const sendWhatsAppMessageResponseSchema = z.object({
   clientMessageId: z.string().min(1),
   conversationId: uuidSchema,
+  status: z.string().min(1).optional(),
+  message: whatsAppMessageSchema.optional(),
   providerData: z.record(z.unknown()).optional(),
+}).passthrough()
+
+export const reactWhatsAppMessageInputSchema = z.object({
+  emoji: z.string()
+    .transform((value) => value.trim())
+    .refine((value) => [...value].length <= 64, 'Reacao invalida'),
+  clientReactionId: z.string().trim().min(1).max(200),
+}).strict()
+
+export const reactWhatsAppMessageResponseSchema = z.object({
+  clientReactionId: z.string().min(1),
+  conversationId: uuidSchema,
+  targetMessageId: uuidSchema,
+  targetProviderMessageId: z.string().min(1),
+  status: z.string().min(1),
+  reaction: whatsAppMessageSchema,
 }).passthrough()

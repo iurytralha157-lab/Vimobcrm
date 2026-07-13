@@ -1497,20 +1497,13 @@ export function LeadDetailDialog({
       reopenStatusConfirmationRef.current = null;
     }
 
+    const currentLead = localLead || lead;
+
     // Validation when marking as "won"
     if (newStatus === 'won') {
-      const valorInteresse = localLead?.valor_interesse || 0;
-
-      if (!lead.is_own_resource) {
+      if (currentLead?.is_own_resource !== true) {
         toast.warning('Confirme se o cliente possui recurso próprio', {
           description: 'A regra de fechamento exige a verificação de recurso próprio para finalizar o contrato.',
-          duration: 6000,
-        });
-      }
-
-      if (valorInteresse <= 0) {
-        toast.warning('Valor de interesse não preenchido', {
-          description: 'Recomendamos preencher o valor antes de marcar como ganho para gerar comissões automaticamente.',
           duration: 6000,
         });
       }
@@ -1525,8 +1518,8 @@ export function LeadDetailDialog({
 
     try {
       const currentInterestPropertyId =
-        localLead?.interest_property_id ||
-        localLead?.property_id ||
+        currentLead?.interest_property_id ||
+        currentLead?.property_id ||
         lead.interest_property_id ||
         lead.property_id ||
         null;
@@ -1536,11 +1529,11 @@ export function LeadDetailDialog({
         newStatus: newStatus as 'open' | 'won' | 'lost',
         organizationId: profile?.organization_id || organization?.id || '',
         organizationName: organization?.name || null,
-        userId: lead.assigned_user_id ?? null,
+        userId: currentLead?.assigned_user_id ?? null,
         propertyId: currentInterestPropertyId,
-        valorInteresse: lead.valor_interesse ?? null,
-        commissionPercentage: lead.commission_percentage ?? null,
-        leadName: lead.name || 'Lead',
+        valorInteresse: currentLead?.valor_interesse ?? null,
+        commissionPercentage: currentLead?.commission_percentage ?? null,
+        leadName: currentLead?.name || lead.name || 'Lead',
       });
       refetchStages();
     } catch {
@@ -1556,6 +1549,7 @@ export function LeadDetailDialog({
   // Confirm lost with reason from dialog
   const handleConfirmLostReason = async (reason: string) => {
     const previousStatus = localLead?.deal_status || 'open';
+    const currentLead = localLead || lead;
     if (localLead) {
       setLocalLead({
         ...localLead,
@@ -1570,11 +1564,11 @@ export function LeadDetailDialog({
         newStatus: 'lost',
         organizationId: profile?.organization_id || organization?.id || '',
         organizationName: organization?.name || null,
-        userId: lead.assigned_user_id ?? null,
-        propertyId: lead.property_id ?? null,
-        valorInteresse: lead.valor_interesse ?? null,
-        commissionPercentage: lead.commission_percentage ?? null,
-        leadName: lead.name || 'Lead',
+        userId: currentLead?.assigned_user_id ?? null,
+        propertyId: currentLead?.interest_property_id || currentLead?.property_id || null,
+        valorInteresse: currentLead?.valor_interesse ?? null,
+        commissionPercentage: currentLead?.commission_percentage ?? null,
+        leadName: currentLead?.name || lead.name || 'Lead',
         lostReason: reason,
       });
       setLostReasonLocal(reason);

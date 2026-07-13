@@ -22,9 +22,12 @@ type StorageConfig struct {
 }
 
 type EvolutionGoConfig struct {
-	APIURL     string
-	APIKey     string
-	WebhookURL string
+	APIURL                   string
+	APIKey                   string
+	WebhookURL               string
+	BackendWebhookURL        string
+	WebhookProcessorMode     string
+	WebhookRolloutSessionIDs []string
 }
 
 type storageClient struct {

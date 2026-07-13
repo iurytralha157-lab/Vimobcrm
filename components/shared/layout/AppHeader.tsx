@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
-import { Bell, Loader2, LogOut, ChevronDown, UserPlus, CheckSquare, FileText, DollarSign, Info, Settings, Shield, Building2, Check, Key, AlertTriangle } from 'lucide-react';
+import { Bell, Loader2, LogOut, ChevronDown, UserPlus, CheckSquare, FileText, DollarSign, Info, Settings, Shield, Building2, Check, Key, AlertTriangle, Sparkles } from 'lucide-react';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
@@ -16,6 +16,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { getNotificationRoute } from '@/lib/notification-routing';
+import { ProductUpdatesDialog } from '@/components/features/news';
 
 const notificationIcons: Record<string, typeof Bell> = {
   lead: UserPlus,
@@ -44,6 +45,7 @@ export const AppHeader = React.memo(function AppHeader({
     userOrganizations: rawUserOrganizations = [],
   } = useAuth();
   const [isSwitching, setIsSwitching] = useState(false);
+  const [updatesOpen, setUpdatesOpen] = useState(false);
   const queryClient = useQueryClient();
   const { hasModule } = useOrganizationModules();
   const router = useRouter();
@@ -309,6 +311,10 @@ export const AppHeader = React.memo(function AppHeader({
                 <FileText className="h-4 w-4 text-muted-foreground" />
                 Documentação da API
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setUpdatesOpen(true)} className="cursor-pointer rounded-xl m-1 px-3 py-2 text-sm gap-2">
+                <Sparkles className="h-4 w-4 text-muted-foreground" />
+                Novidades
+              </DropdownMenuItem>
               {hasModule('api') && (
                   <DropdownMenuItem onClick={() => router.push('/settings?tab=api')} className="cursor-pointer rounded-xl m-1 px-3 py-2 text-sm gap-2">
                     <Key className="h-4 w-4 text-muted-foreground" />
@@ -345,6 +351,7 @@ export const AppHeader = React.memo(function AppHeader({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      <ProductUpdatesDialog open={updatesOpen} onOpenChange={setUpdatesOpen} />
     </header>
   );
 });

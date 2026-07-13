@@ -21,6 +21,8 @@
     "lib/access/navigation.ts",
     "lib/access/navigation.test.ts",
     "lib/access/tenant-navigation.ts",
-    "lib/access/tenant-navigation.test.ts"
+    "lib/access/tenant-navigation.test.ts",
+    "lib/whatsapp-query-cache.ts",
+    "lib/whatsapp-query-cache.test.ts"
   ]
 }

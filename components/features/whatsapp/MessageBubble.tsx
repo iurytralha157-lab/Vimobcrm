@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, SyntheticEvent } from "react";
 import NextImage from "next/image";
-import { Check, CheckCheck, Clock, Mic, Play, Pause, FileText, Download, AlertCircle, RefreshCw, Loader2, Image as ImageIcon, Video, Link2, MessageCircleOff } from "lucide-react";
+import { Check, CheckCheck, Clock, Mic, Play, Pause, FileText, Download, AlertCircle, RefreshCw, Loader2, Image as ImageIcon, Video, Link2, MessageCircleOff, SmilePlus } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,8 @@ interface MessageBubbleProps {
     senderName: string | null;
     fromMe: boolean;
   }>;
+  onReact?: (emoji: string) => unknown | Promise<unknown>;
+  isReacting?: boolean;
 }
 
 type MediaKind = "text" | "image" | "video" | "audio" | "document" | "sticker" | "reaction" | "deleted";
@@ -194,10 +196,13 @@ export function MessageBubble({
   conversationSessionId,
   compact = false,
   reactions = [],
+  onReact,
+  isReacting = false,
 }: MessageBubbleProps) {
   const createAttachment = useCreateLeadAttachment();
   const safeContent = toSafeText(content);
   const [attachConfirmOpen, setAttachConfirmOpen] = useState(false);
+  const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -337,8 +342,15 @@ export function MessageBubble({
         return <CheckCheck className="w-[16px] h-[16px] opacity-60" />;
       case "sent":
         return <Check className="w-[16px] h-[16px] opacity-60" />;
+      case "queued":
       case "pending":
-        return <Clock className="w-[16px] h-[16px] opacity-60 animate-pulse" />;
+        return <Clock className="w-[16px] h-[16px] opacity-60 animate-pulse" aria-label="Mensagem na fila" />;
+      case "sending":
+      case "confirming":
+        return <Clock className="w-[16px] h-[16px] text-amber-300 animate-pulse" aria-label="Confirmando envio" />;
+      case "failed":
+      case "error":
+        return <AlertCircle className="w-[16px] h-[16px] text-red-300" aria-label="Falha no envio" />;
       default:
         return <Check className="w-[16px] h-[16px] opacity-60" />;
     }
@@ -1002,6 +1014,18 @@ export function MessageBubble({
   const isMediaWithOverlayTimestamp = (mediaKind === "image" || mediaKind === "video") && isValidMediaUrl(mediaUrl) && !imageError;
   const isAudioMessage = mediaKind === "audio";
   const hasReactions = reactions.length > 0;
+  const ownReactionEmoji = reactions.find((reaction) => reaction.fromMe)?.emoji || null;
+  const reactionOptions = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+
+  const handleReaction = async (emoji: string) => {
+    if (!onReact || isReacting) return;
+    setReactionPickerOpen(false);
+    try {
+      await onReact(ownReactionEmoji === emoji ? '' : emoji);
+    } catch {
+      // The mutation owns the user-facing error and cache reconciliation.
+    }
+  };
 
   const renderReactions = () => {
     if (!hasReactions) return null;
@@ -1048,6 +1072,45 @@ export function MessageBubble({
             : "bg-[#242424] text-white rounded-tl-none",
           (mediaKind === "image" || mediaKind === "video") && !content ? "p-[3px]" : "px-3 py-2"
         )}>
+          {onReact && !isDeletedMessage && (
+            <div className={cn(
+              "absolute top-1/2 z-20 -translate-y-1/2",
+              fromMe ? "-left-9" : "-right-9",
+            )}>
+              <button
+                type="button"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border/70 bg-background/95 text-muted-foreground shadow-sm transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => setReactionPickerOpen((open) => !open)}
+                disabled={isReacting}
+                aria-label="Reagir a mensagem"
+                aria-expanded={reactionPickerOpen}
+              >
+                {isReacting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SmilePlus className="h-3.5 w-3.5" />}
+              </button>
+              {reactionPickerOpen && (
+                <div className={cn(
+                  "absolute top-8 flex items-center gap-0.5 rounded-full border border-border bg-background p-1 shadow-lg",
+                  fromMe ? "right-0" : "left-0",
+                )}>
+                  {reactionOptions.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      className={cn(
+                        "flex h-7 w-7 items-center justify-center rounded-full text-base transition-transform hover:scale-110 hover:bg-muted",
+                        ownReactionEmoji === emoji && "bg-muted ring-1 ring-primary/40",
+                      )}
+                      onClick={() => void handleReaction(emoji)}
+                      aria-label={ownReactionEmoji === emoji ? `Remover reacao ${emoji}` : `Reagir com ${emoji}`}
+                      aria-pressed={ownReactionEmoji === emoji}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {/* Sender name for groups or sent messages with sender info */}
           {!fromMe && displaySenderName && (
             <p className={cn(compact ? "text-[11px]" : "text-xs", "font-semibold text-primary mb-0.5")}>{displaySenderName}</p>

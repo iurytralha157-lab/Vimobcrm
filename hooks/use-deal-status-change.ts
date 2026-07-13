@@ -62,12 +62,6 @@ export function useDealStatusChange() {
           queryClient.invalidateQueries({ queryKey: ['property', variables.organizationId, variables.propertyId] });
         }
 
-        if (!variables.valorInteresse || variables.valorInteresse <= 0) {
-          toast.warning('Lead marcado como ganho sem valor de interesse', {
-            description: 'Preencha o valor para gerar comissao e conta a receber',
-          });
-        }
-
         toast.success('Negocio fechado!', {
           description: variables.valorInteresse
             ? `R$ ${variables.valorInteresse.toLocaleString('pt-BR')}`

@@ -12,17 +12,19 @@ import { useLeadHistory, type UnifiedHistoryEvent } from '@/hooks/use-lead-histo
 import { useAccessibleSessions } from '@/hooks/use-accessible-sessions';
 import {
   useSendWhatsAppMessage,
+  useReactToWhatsAppMessage,
   useWhatsAppConversations,
-  useWhatsAppMessages,
   useWhatsAppRealtimeConversations,
   type WhatsAppConversation,
   type WhatsAppMessage,
 } from '@/hooks/use-whatsapp-conversations';
+import { useLeadMessages } from '@/hooks/use-lead-messages';
 import { useStartConversation } from '@/hooks/use-start-conversation';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { whatsappAPI } from '@/lib/api/whatsapp';
 import { getWhatsAppMessageInputState } from '@/lib/whatsapp-message-input';
+import { groupLatestWhatsAppReactions } from '@/lib/whatsapp-reactions';
 
 const MAX_IMAGE_DIMENSION = 1600;
 const IMAGE_QUALITY = 0.82;
@@ -773,8 +775,9 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastHandledComposerRequestRef = useRef<number | null>(null);
-
+  const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const lastThreadItemIdRef = useRef<string | null>(null);
   const { profile } = useAuth();
   const { data: history = [], isLoading: loadingHistory } = useLeadHistory(leadId);
   const { data: sessions = [], isLoading: loadingSessions } = useAccessibleSessions();
@@ -784,7 +787,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
     { hideGroups: true },
     loadingSessions ? undefined : accessibleSessionIds,
   );
-  useWhatsAppRealtimeConversations(true, loadingSessions ? undefined : accessibleSessionIds);
+  useWhatsAppRealtimeConversations(true, loadingSessions ? undefined : accessibleSessionIds, [leadId]);
 
   const conversation = useMemo<WhatsAppConversation | null>(() => {
     return conversations.find((item) => item.lead_id === leadId || item.lead?.id === leadId) || null;
@@ -794,13 +797,26 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
     data: messages = [],
     isLoading: loadingMessages,
     refetch: refetchMessages,
-  } = useWhatsAppMessages(conversation?.id ?? null, leadId, 80, {
-    includeLeadHistory: true,
-    refetchIntervalMs: false,
-    refetchOnWindowFocus: false,
-  });
+    hasOlderMessages,
+    loadOlderMessages,
+    isLoadingOlder,
+  } = useLeadMessages(leadId, { pageSize: 40 });
   const sendMessage = useSendWhatsAppMessage();
+  const reactToMessage = useReactToWhatsAppMessage();
   const startConversation = useStartConversation();
+
+  const reactionMessages = useMemo(
+    () => messages.filter((message) => message.message_type === 'reaction'),
+    [messages],
+  );
+  const reactionsByMessageId = useMemo(
+    () => groupLatestWhatsAppReactions(reactionMessages),
+    [reactionMessages],
+  );
+  const visibleMessages = useMemo(
+    () => messages.filter((message) => message.message_type !== 'reaction'),
+    [messages],
+  );
 
   const hasLeadPhone = Boolean(leadPhone?.replace(/\D/g, ''));
   const leadHasNoWhatsApp = whatsappVerified === false;
@@ -905,7 +921,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
       });
     }
 
-    const messageItems: ThreadItem[] = messages
+    const messageItems: ThreadItem[] = visibleMessages
       .filter((message) => !isInternalNotificationMessage(message))
       .map((message) => ({
         id: `message-${message.id}`,
@@ -930,11 +946,19 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
     }
 
     return sorted;
-  }, [history, messages, leadCreatedAt]);
+  }, [history, visibleMessages, leadCreatedAt]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [items.length]);
+    const lastItemId = items.at(-1)?.id ?? null;
+    if (!lastItemId || lastItemId === lastThreadItemIdRef.current) return;
+
+    const isInitialPosition = lastThreadItemIdRef.current === null;
+    lastThreadItemIdRef.current = lastItemId;
+    bottomRef.current?.scrollIntoView({
+      behavior: isInitialPosition ? 'auto' : 'smooth',
+      block: 'end',
+    });
+  }, [items]);
 
   const ensureConversationForSend = async () => {
     if (!canSendMessage) {
@@ -1040,16 +1064,43 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
     }
   };
 
+  const handleLoadOlderMessages = async () => {
+    const scrollElement = threadScrollRef.current;
+    const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
+    const previousScrollTop = scrollElement?.scrollTop ?? 0;
+
+    await loadOlderMessages();
+
+    window.requestAnimationFrame(() => {
+      if (!scrollElement) return;
+      scrollElement.scrollTop = previousScrollTop + scrollElement.scrollHeight - previousScrollHeight;
+    });
+  };
+
   const isLoading = (loadingHistory && history.length === 0) || (loadingMessages && messages.length === 0);
 
   return (
     <section className="lead-thread-panel flex h-full min-h-0 flex-col bg-transparent p-3">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-soft)]">
-        <div className="lead-thread-scroll flex-1 space-y-3 overflow-y-auto px-1 pb-3 pt-3">
+        <div ref={threadScrollRef} className="lead-thread-scroll flex-1 space-y-3 overflow-y-auto px-1 pb-3 pt-3">
           {isLoading && (
             <div className="flex h-full flex-col items-center justify-center gap-2">
               <Loader2 className="h-5 w-5 animate-spin text-[var(--app-text-tertiary)]" />
               <span className="text-[11px] text-[var(--app-text-tertiary)]">Carregando histórico e mensagens...</span>
+            </div>
+          )}
+
+          {!isLoading && hasOlderMessages && (
+            <div className="flex justify-center px-2 pb-1">
+              <button
+                type="button"
+                className="inline-flex h-8 items-center gap-2 rounded-md border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-[11px] font-medium text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => void handleLoadOlderMessages()}
+                disabled={isLoadingOlder}
+              >
+                {isLoadingOlder && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {isLoadingOlder ? 'Carregando...' : 'Carregar mensagens anteriores'}
+              </button>
             </div>
           )}
 
@@ -1095,7 +1146,23 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
                       conversationRemoteJid={conversation?.remote_jid ?? item.message.remote_jid ?? null}
                       conversationSessionId={conversation?.session_id ?? item.message.session_id ?? null}
                       compact
-                      reactions={[]}
+                      reactions={(item.message.message_id
+                        ? reactionsByMessageId.get(item.message.message_id)
+                        : undefined)
+                        || reactionsByMessageId.get(item.message.id)
+                        || []}
+                      onReact={(emoji) => reactToMessage.mutateAsync({
+                        conversation: {
+                          ...(conversation || {}),
+                          id: item.message.conversation_id,
+                          session_id: item.message.session_id,
+                          lead_id: leadId,
+                          remote_jid: item.message.remote_jid || conversation?.remote_jid || '',
+                        } as WhatsAppConversation,
+                        targetMessage: item.message as WhatsAppMessage,
+                        emoji,
+                      })}
+                      isReacting={reactToMessage.isPending}
                     />
                   </MessageErrorBoundary>
                 )}

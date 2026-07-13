@@ -152,8 +152,8 @@ const fallbackPlanOptions: PlanOption[] = [
     trialDays: null,
     maxUsers: 20,
     maxWhatsappSessions: 20,
-    modules: ["crm", "agenda", "whatsapp", "meta", "properties", "site", "automations", "webhooks", "api"],
-    features: ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integracao Meta", "Imoveis", "Site", "Automacoes"],
+    modules: ["crm", "agenda", "whatsapp", "meta", "properties", "site", "automations", "webhooks", "api", "portals"],
+    features: ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integracao Meta", "Imoveis", "Site", "Automacoes", "Portais"],
   },
 ];
 
@@ -189,6 +189,10 @@ function getPlanFeatures(slug: string, modules: string[]) {
 
   if (moduleSet.has("automations") || normalizedSlug.includes("master")) {
     features.push("Automacoes");
+  }
+
+  if (moduleSet.has("portals") || normalizedSlug.includes("master")) {
+    features.push("Portais");
   }
 
   return features;

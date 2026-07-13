@@ -2,6 +2,8 @@ import type { Json } from '@/integrations/supabase/types'
 import {
   createWhatsAppSessionInputSchema,
   parseDomainInput,
+  reactWhatsAppMessageInputSchema,
+  reactWhatsAppMessageResponseSchema,
   sendWhatsAppMessageInputSchema,
   sendWhatsAppMessageResponseSchema,
   startWhatsAppConversationInputSchema,
@@ -191,7 +193,23 @@ export type SendWhatsAppMessageInput = {
 export type SendWhatsAppMessageResult = Record<string, unknown> & {
   clientMessageId: string
   conversationId: string
+  status?: string
+  message?: WhatsAppMessage
   providerData?: Record<string, unknown>
+}
+
+export type ReactWhatsAppMessageInput = {
+  emoji: string
+  clientReactionId: string
+}
+
+export type ReactWhatsAppMessageResult = {
+  clientReactionId: string
+  conversationId: string
+  targetMessageId: string
+  targetProviderMessageId: string
+  status: string
+  reaction: WhatsAppMessage
 }
 
 export type AIAutoReplySessionInput = {
@@ -426,12 +444,15 @@ export const whatsappAPI = {
     conversationId?: string | null
     leadId?: string | null
     allMessages?: boolean
+    limit?: number
+    cursor?: string | null
     organizationId?: string | null
   }) {
     const response = await vimobAPIRequest<Envelope<{
       conversation?: WhatsAppConversation
       conversations?: WhatsAppConversation[]
       messages: WhatsAppMessage[]
+      nextCursor: string | null
     }>>(
       '/v1/whatsapp/history',
       {
@@ -440,6 +461,8 @@ export const whatsappAPI = {
           conversationId: params.conversationId || undefined,
           leadId: params.leadId || undefined,
           allMessages: params.allMessages,
+          limit: params.limit,
+          cursor: params.cursor || undefined,
         },
       },
     )
@@ -492,6 +515,26 @@ export const whatsappAPI = {
       timeoutMs: 30_000,
     })
     validateDomainResponse(sendWhatsAppMessageResponseSchema, response, 'whatsapp.messages.send')
+    return response
+  },
+
+  async reactToMessage(
+    conversationId: string,
+    messageId: string,
+    input: ReactWhatsAppMessageInput,
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(reactWhatsAppMessageInputSchema, input, 'whatsapp.messages.react')
+    const response = await vimobAPIRequest<ReactWhatsAppMessageResult>(
+      `/v1/whatsapp/conversations/${conversationId}/messages/${messageId}/reaction`,
+      {
+        method: 'POST',
+        organizationId,
+        body,
+        timeoutMs: 30_000,
+      },
+    )
+    validateDomainResponse(reactWhatsAppMessageResponseSchema, response, 'whatsapp.messages.react')
     return response
   },
 

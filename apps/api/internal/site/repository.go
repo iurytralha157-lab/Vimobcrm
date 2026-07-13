@@ -33,6 +33,15 @@ type execer interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 }
 
+type siteQueryer interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+type publicLeadDestination struct {
+	PipelineID *string
+	StageID    *string
+}
+
 func NewRepository(db *dbpkg.Postgres, storageConfig StorageConfig) Repository {
 	return Repository{
 		db:      db,
@@ -695,11 +704,18 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 		return nil, err
 	}
 
+	destination, err := repo.resolvePublicLeadDestination(ctx, tx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+
 	var leadID string
 	var reentry bool
 	err = tx.QueryRow(ctx, `
 		insert into public.leads (
 			organization_id,
+			pipeline_id,
+			stage_id,
 			property_id,
 			interest_property_id,
 			name,
@@ -714,29 +730,35 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 			status,
 			deal_status,
 			first_touch_at,
+			stage_entered_at,
+			board_order_at,
 			metadata
 		)
 		values (
 			$1::uuid,
 			$2::uuid,
-			$2::uuid,
-			$3,
-			$4,
+			$3::uuid,
+			$4::uuid,
+			$4::uuid,
 			$5,
 			$6,
 			$7,
-			$7,
+			$8,
+			$9,
+			$9,
 			'site',
 			'public_site',
-			$8,
+			$10,
 			'new',
 			'open',
 			now(),
+			case when $3::uuid is null then null else now() end,
+			case when $3::uuid is null then null else now() end,
 			jsonb_build_object(
-				'property_code', $6,
-				'best_time', $9,
-				'privacy_accepted', $10,
-				'privacy_url', $11
+				'property_code', $8,
+				'best_time', $11,
+				'privacy_accepted', $12,
+				'privacy_url', $13
 			)
 		)
 		on conflict (organization_id, normalize_phone(phone))
@@ -745,6 +767,13 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 		  and normalize_phone(phone) is not null
 		  and normalize_phone(phone) <> ''
 		do update set
+			pipeline_id = coalesce(excluded.pipeline_id, leads.pipeline_id),
+			stage_entered_at = case
+				when excluded.stage_id is null or leads.stage_id is not distinct from excluded.stage_id then leads.stage_entered_at
+				else now()
+			end,
+			board_order_at = now(),
+			stage_id = coalesce(excluded.stage_id, leads.stage_id),
 			property_id = coalesce(excluded.property_id, leads.property_id),
 			interest_property_id = coalesce(excluded.interest_property_id, leads.interest_property_id),
 			name = excluded.name,
@@ -768,18 +797,17 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 				|| excluded.metadata
 				|| jsonb_build_object('reentry', true)
 		returning id::text, (xmax <> 0)
-	`, organizationID, propertyID, name, optionalText(request.Email), phone, optionalText(request.PropertyCode), message, optionalText(request.SessionID), optionalText(request.BestTime), request.PrivacyAccepted, optionalText(request.PrivacyURL)).Scan(&leadID, &reentry)
+	`, organizationID, optionalText(destination.PipelineID), optionalText(destination.StageID), propertyID, name, optionalText(request.Email), phone, optionalText(request.PropertyCode), message, optionalText(request.SessionID), optionalText(request.BestTime), request.PrivacyAccepted, optionalText(request.PrivacyURL)).Scan(&leadID, &reentry)
 	if err != nil {
 		return nil, err
 	}
 
-	// INSERT already invokes the intake trigger. An existing unassigned lead
-	// needs an explicit retry so a new site entry can join the active queue.
-	if reentry {
-		var distributionResult []byte
-		if err := tx.QueryRow(ctx, `select public.handle_lead_intake($1::uuid)`, leadID).Scan(&distributionResult); err != nil {
-			return nil, err
-		}
+	// Public site submissions should be visible in the board even when no queue
+	// assigns them immediately, and intake is explicit because older schemas do
+	// not always have an insert trigger for this path.
+	var distributionResult []byte
+	if err := tx.QueryRow(ctx, `select public.handle_lead_intake($1::uuid)`, leadID).Scan(&distributionResult); err != nil {
+		return nil, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -791,6 +819,43 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 		"lead_id": leadID,
 		"reentry": reentry,
 	}, nil
+}
+
+func (repo Repository) resolvePublicLeadDestination(ctx context.Context, q siteQueryer, organizationID string) (publicLeadDestination, error) {
+	var pipelineID pgtype.Text
+	var stageID pgtype.Text
+
+	err := q.QueryRow(ctx, `
+		select p.id::text, (
+			select s.id::text
+			from public.stages s
+			where s.pipeline_id = p.id
+			  and s.organization_id = p.organization_id
+			  and coalesce(s.is_active, true) = true
+			order by s.position asc, s.created_at asc
+			limit 1
+		)
+		from public.pipelines p
+		where p.organization_id = $1::uuid
+		  and coalesce(p.is_active, true) = true
+		order by coalesce(p.is_default, false) desc, coalesce(p.position, 0) asc, p.created_at asc
+		limit 1
+	`, organizationID).Scan(&pipelineID, &stageID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return publicLeadDestination{}, nil
+	}
+	if err != nil {
+		return publicLeadDestination{}, err
+	}
+
+	destination := publicLeadDestination{}
+	if pipelineID.Valid {
+		destination.PipelineID = &pipelineID.String
+	}
+	if stageID.Valid {
+		destination.StageID = &stageID.String
+	}
+	return destination, nil
 }
 
 func (repo Repository) CreatePublicTrackingEvent(ctx context.Context, request PublicTrackingRequest) error {

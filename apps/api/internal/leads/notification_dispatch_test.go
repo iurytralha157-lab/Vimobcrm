@@ -50,6 +50,20 @@ func TestApplyNotificationDispatchMetadata(t *testing.T) {
 	}
 }
 
+func TestPermanentPushDeliveryFailure(t *testing.T) {
+	t.Parallel()
+
+	if !isPermanentPushDeliveryFailure(DispatchChannelResult{Status: 410}) {
+		t.Fatal("410 must deactivate an expired Web Push subscription")
+	}
+	if !isPermanentPushDeliveryFailure(DispatchChannelResult{Error: "UNREGISTERED"}) {
+		t.Fatal("unregistered FCM token must be treated as permanent")
+	}
+	if isPermanentPushDeliveryFailure(DispatchChannelResult{Status: 503, Error: "temporary provider failure"}) {
+		t.Fatal("temporary provider failure must remain retryable")
+	}
+}
+
 func TestBuildWhatsAppNotificationTextNewLeadTemplate(t *testing.T) {
 	t.Parallel()
 
