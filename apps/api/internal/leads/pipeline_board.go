@@ -41,12 +41,17 @@ func (repo Repository) GetPipelineBoard(ctx context.Context, tenantContext tenan
 	if err != nil {
 		return nil, err
 	}
+	valueTotals, err := repo.listPipelineBoardStageValueTotals(ctx, tenantContext, boardFilter)
+	if err != nil {
+		return nil, err
+	}
 
 	allLeads := []*PipelineBoardLead{}
 	for index := range stages {
 		total := counts[stages[index].ID]
 		stages[index].Leads = leadsByStage[stages[index].ID]
 		stages[index].TotalLeadCount = total
+		stages[index].TotalValue = valueTotals[stages[index].ID]
 		stages[index].HasMore = total > int64(len(stages[index].Leads))
 		for leadIndex := range stages[index].Leads {
 			allLeads = append(allLeads, &stages[index].Leads[leadIndex])
@@ -473,6 +478,57 @@ func (repo Repository) listPipelineBoardLeadsByStage(ctx context.Context, tenant
 	}
 
 	return leadsByStage, counts, nil
+}
+
+func (repo Repository) listPipelineBoardStageValueTotals(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) (map[string]float64, error) {
+	totals := map[string]float64{}
+	for _, stageID := range filter.StageIDs {
+		totals[stageID] = 0
+	}
+	if strings.TrimSpace(filter.PipelineID) == "" || len(filter.StageIDs) == 0 {
+		return totals, nil
+	}
+
+	where, args, err := buildPipelineLeadWhere(tenantContext, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := repo.db.Pool().Query(ctx, `
+		select
+			l.stage_id::text,
+			coalesce(sum(
+				coalesce(
+					nullif(l.valor_interesse::double precision, 0),
+					nullif(p.preco::double precision, 0),
+					0
+				)
+			), 0)::double precision as total_value
+		from public.leads l
+		left join public.properties p
+		  on p.id = l.interest_property_id
+		 and p.organization_id = l.organization_id
+		where `+strings.Join(where, " and ")+`
+		group by l.stage_id
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var stageID string
+		var total float64
+		if err := rows.Scan(&stageID, &total); err != nil {
+			return nil, err
+		}
+		totals[stageID] = total
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return totals, nil
 }
 
 func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFilter) ([]string, []any, error) {

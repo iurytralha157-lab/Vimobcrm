@@ -98,6 +98,52 @@ func TestCanUpdateAssignedLeadStatusRejectsNonStatusFields(t *testing.T) {
 	}
 }
 
+func TestCanUpdateAssignedLeadOperationalPatchAllowsFeedbackOnOwnLead(t *testing.T) {
+	userID := "10000000-0000-0000-0000-000000000001"
+	feedback := "Nao atendeu, tentar novamente amanha"
+
+	current := leadSnapshot{
+		AssignedUserID: userID,
+		DealStatus:     "open",
+	}
+	input := updateInput{
+		Feedback: patchString{Set: true, Value: &feedback},
+	}
+	tenantContext := tenant.Context{
+		UserID:         userID,
+		OrganizationID: "30000000-0000-0000-0000-000000000001",
+		MemberRole:     "user",
+	}
+
+	if !canUpdateAssignedLeadOperationalPatch(tenantContext, current, input) {
+		t.Fatal("expected assigned user to register feedback on own lead")
+	}
+}
+
+func TestCanUpdateAssignedLeadOperationalPatchRejectsFeedbackWithDataEdit(t *testing.T) {
+	userID := "10000000-0000-0000-0000-000000000001"
+	feedback := "Nao atendeu"
+	phone := "+55 11 99999-0000"
+
+	current := leadSnapshot{
+		AssignedUserID: userID,
+		DealStatus:     "open",
+	}
+	input := updateInput{
+		Feedback: patchString{Set: true, Value: &feedback},
+		Phone:    patchString{Set: true, Value: &phone},
+	}
+	tenantContext := tenant.Context{
+		UserID:         userID,
+		OrganizationID: "30000000-0000-0000-0000-000000000001",
+		MemberRole:     "user",
+	}
+
+	if canUpdateAssignedLeadOperationalPatch(tenantContext, current, input) {
+		t.Fatal("expected feedback permission to reject lead data edits")
+	}
+}
+
 func TestCanUpdateAssignedLeadStatusRejectsLostReasonOnOpenLeadWithoutStatusChange(t *testing.T) {
 	userID := "10000000-0000-0000-0000-000000000001"
 	reason := "Sem interesse no momento"

@@ -994,20 +994,32 @@ export default function Pipelines() {
     };
   }, [settingsStage]);
 
-  const stageVGVMap = useMemo(() => {
-    const map = new Map<string, { openVGV: number }>();
+  const stageValueMap = useMemo(() => {
+    const map = new Map<string, { totalValue: number }>();
     for (const stage of filteredStages) {
-      let openVGV = 0;
+      const apiTotalValue = Number(stage.total_value || 0);
+      if (Number.isFinite(apiTotalValue) && apiTotalValue > 0) {
+        map.set(stage.id, { totalValue: apiTotalValue });
+        continue;
+      }
+
+      let totalValue = 0;
       for (const lead of stage.leads || []) {
-        if (!lead || lead.deal_status === 'won' || lead.deal_status === 'lost') {
+        if (!lead) {
           continue;
         }
+        const interestValue = Number(lead.valor_interesse || 0);
         const propertyPrice = lead.interest_property && typeof lead.interest_property === 'object'
           ? Number(lead.interest_property.preco || 0)
           : 0;
-        openVGV += Number(lead.valor_interesse || 0) || propertyPrice || 0;
+        const leadValue = Number.isFinite(interestValue) && interestValue > 0
+          ? interestValue
+          : Number.isFinite(propertyPrice) && propertyPrice > 0
+            ? propertyPrice
+            : 0;
+        totalValue += leadValue;
       }
-      if (openVGV > 0) map.set(stage.id, { openVGV });
+      if (totalValue > 0) map.set(stage.id, { totalValue });
     }
     return map;
   }, [filteredStages]);
@@ -1311,11 +1323,11 @@ export default function Pipelines() {
                   )}
                 >
                   <div
-                    className="flex items-center justify-between border-b border-[var(--app-border)] p-3"
+                    className="flex items-center justify-between border-b border-[var(--app-border)] px-3 py-2"
                   >
-                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
                       <div
-                        className="w-3 h-3 rounded-full shrink-0 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.1)]"
+                        className="h-2.5 w-2.5 rounded-full shrink-0 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.1)]"
                         style={{ backgroundColor: stage.color || '#6b7280' }}
                       />
                       {editingStageId === stage.id && canEditPipeline ? (
@@ -1324,13 +1336,13 @@ export default function Pipelines() {
                           onChange={(e) => setEditingStageName(e.target.value)}
                           onBlur={() => handleStageName(stage.id)}
                           onKeyDown={(e) => e.key === 'Enter' && handleStageName(stage.id)}
-                          className="h-7 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 text-sm font-extralight text-foreground focus:border-[#FF4529]"
+                          className="h-7 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 !text-[13px] font-extralight text-foreground focus:border-[#FF4529]"
                           autoFocus
                         />
                       ) : (
                         <h3
                           className={cn(
-                            "font-extralight tracking-wide text-sm truncate transition-colors text-foreground",
+                            "truncate !text-[13px] font-extralight tracking-wide text-foreground transition-colors",
                             canEditPipeline && "cursor-pointer hover:text-[#FF4529]"
                           )}
                           onClick={() => {
@@ -1345,23 +1357,23 @@ export default function Pipelines() {
                       )}
                       <Badge
                         variant="secondary"
-                        className="shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-1.5 py-0 text-[10px] font-extralight text-muted-foreground"
+                        className="flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-[4px] border-0 bg-[var(--app-surface-soft)] px-1.5 py-0 !text-[11px] font-extralight text-muted-foreground"
                       >
                         {stageCountMetaMap.get(stage.id)?.total ?? stage.total_lead_count ?? stage.leads.length ?? 0}
                       </Badge>
-                      {(stageVGVMap.get(stage.id)?.openVGV || 0) > 0 ? (
+                      {(stageValueMap.get(stage.id)?.totalValue || 0) > 0 ? (
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Badge
-                                variant="outline"
-                                className="text-[10px] shrink-0 bg-[#FF4529]/10 text-[#FF4529] border-[#FF4529]/20 font-extralight rounded-[6px]"
+                                variant="secondary"
+                                className="flex h-[18px] shrink-0 items-center rounded-[4px] border-0 bg-[#FF4529] px-1.5 py-0 !text-[11px] font-extralight text-white shadow-none"
                               >
-                                {formatCompactCurrency(stageVGVMap.get(stage.id)?.openVGV || 0)}
+                                {formatCompactCurrency(stageValueMap.get(stage.id)?.totalValue || 0)}
                               </Badge>
                             </TooltipTrigger>
                             <TooltipContent className="app-card rounded-[6px] text-foreground">
-                              <p className="text-xs font-extralight">VGV em aberto neste estágio</p>
+                              <p className="text-xs font-extralight">Valor total dos leads neste estágio</p>
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>

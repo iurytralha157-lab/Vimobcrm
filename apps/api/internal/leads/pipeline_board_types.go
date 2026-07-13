@@ -52,6 +52,7 @@ type PipelineBoardStage struct {
 	UpdatedAt      time.Time           `json:"updated_at"`
 	Leads          []PipelineBoardLead `json:"leads"`
 	TotalLeadCount int64               `json:"total_lead_count"`
+	TotalValue     float64             `json:"total_value"`
 	HasMore        bool                `json:"has_more"`
 }
 

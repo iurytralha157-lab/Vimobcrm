@@ -51,6 +51,7 @@ export type PipelineLead = Partial<Tables<'leads'>> & {
 export type StageWithLeads = Stage & {
   leads: PipelineLead[];
   total_lead_count: number;
+  total_value?: number;
   has_more: boolean;
 };
 

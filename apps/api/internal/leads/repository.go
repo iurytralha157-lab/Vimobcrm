@@ -280,7 +280,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err != nil {
 		return Lead{}, err
 	}
-	if !canEdit && !canUpdateAssignedLeadStatus(tenantContext, current, input) {
+	if !canEdit && !canUpdateAssignedLeadOperationalPatch(tenantContext, current, input) {
 		return Lead{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -3109,6 +3109,13 @@ func canMoveLead(tenantContext tenant.Context, assignedUserID string) bool {
 		(assignedUserID != "" && assignedUserID == tenantContext.UserID)
 }
 
+func canUpdateAssignedLeadOperationalPatch(tenantContext tenant.Context, current leadSnapshot, input updateInput) bool {
+	if !canMoveLead(tenantContext, current.AssignedUserID) {
+		return false
+	}
+	return isLeadStatusPatch(current, input) || isLeadFeedbackPatch(input)
+}
+
 func canUpdateAssignedLeadStatus(tenantContext tenant.Context, current leadSnapshot, input updateInput) bool {
 	if !canMoveLead(tenantContext, current.AssignedUserID) {
 		return false
@@ -3161,6 +3168,51 @@ func isLeadStatusPatch(current leadSnapshot, input updateInput) bool {
 		input.LostReason.Set &&
 		!input.PropertyID.Set &&
 		!input.InterestPropertyID.Set &&
+		!input.IsOwnResource.Set
+}
+
+func isLeadFeedbackPatch(input updateInput) bool {
+	if !input.Feedback.Set {
+		return false
+	}
+
+	for _, field := range []patchString{
+		input.Name,
+		input.Email,
+		input.Phone,
+		input.Source,
+		input.Message,
+		input.PropertyCode,
+		input.PropertyID,
+		input.InterestPropertyID,
+		input.PipelineID,
+		input.StageID,
+		input.AssignedUserID,
+		input.InterestValue,
+		input.CommissionPercentage,
+		input.DealStatus,
+		input.LostReason,
+		input.Cargo,
+		input.Empresa,
+		input.Profissao,
+		input.Endereco,
+		input.Numero,
+		input.Complemento,
+		input.Bairro,
+		input.CEP,
+		input.Cidade,
+		input.UF,
+		input.RendaFamiliar,
+		input.FaixaValorImovel,
+		input.FinalidadeCompra,
+	} {
+		if field.Set {
+			return false
+		}
+	}
+
+	return !input.Trabalha.Set &&
+		!input.ProcuraFinanciamento.Set &&
 		!input.IsOwnResource.Set
 }
 

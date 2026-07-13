@@ -2183,10 +2183,20 @@ export function LeadDetailDialog({
                       <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                     </button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-[calc(100vw-2rem)] max-w-[380px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1 shadow-2xl" align="start" collisionPadding={12}>
+                  <PopoverContent
+                    className="w-[calc(100vw-2rem)] max-w-[380px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1 shadow-2xl"
+                    align="start"
+                    collisionPadding={12}
+                    onWheelCapture={(event) => event.stopPropagation()}
+                    onTouchMoveCapture={(event) => event.stopPropagation()}
+                  >
                     <Command className="max-h-[min(72vh,460px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
                       <CommandInput placeholder="Buscar responsável..." className="h-10 border-none focus:ring-0" />
-                      <CommandList className="max-h-[min(58vh,360px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin">
+                      <CommandList
+                        className="max-h-[min(58vh,360px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin [-webkit-overflow-scrolling:touch]"
+                        onWheelCapture={(event) => event.stopPropagation()}
+                        onTouchMoveCapture={(event) => event.stopPropagation()}
+                      >
                         <CommandEmpty className="py-6 text-center text-sm text-muted-foreground">
                           Nenhum usuário encontrado.
                         </CommandEmpty>
@@ -2595,10 +2605,20 @@ export function LeadDetailDialog({
                   {isUpdatingAssignee ? <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" /> : <ChevronDown className="ml-auto h-3.5 w-3.5" />}
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-[calc(100vw-2rem)] max-w-[380px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1 shadow-2xl" align="start" collisionPadding={12}>
+              <PopoverContent
+                className="w-[calc(100vw-2rem)] max-w-[380px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1 shadow-2xl"
+                align="start"
+                collisionPadding={12}
+                onWheelCapture={(event) => event.stopPropagation()}
+                onTouchMoveCapture={(event) => event.stopPropagation()}
+              >
                 <Command className="max-h-[min(72vh,430px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
                   <CommandInput placeholder="Buscar responsável..." className="h-10 border-none focus:ring-0" />
-                  <CommandList className="max-h-[min(58vh,340px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin">
+                  <CommandList
+                    className="max-h-[min(58vh,340px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin [-webkit-overflow-scrolling:touch]"
+                    onWheelCapture={(event) => event.stopPropagation()}
+                    onTouchMoveCapture={(event) => event.stopPropagation()}
+                  >
                     <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">Nenhum encontrado.</CommandEmpty>
                     <CommandGroup>
                       <CommandItem onSelect={() => handleAssignUser(null)} className="cursor-pointer rounded-[6px] px-3 py-2">
@@ -2997,10 +3017,20 @@ export function LeadDetailDialog({
                         {isUpdatingAssignee ? <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" /> : <ChevronDown className="ml-auto h-3.5 w-3.5" />}
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-[300px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1 shadow-[0_18px_50px_rgba(0,0,0,0.16)]" align="start" collisionPadding={12}>
+                    <PopoverContent
+                      className="w-[300px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1 shadow-[0_18px_50px_rgba(0,0,0,0.16)]"
+                      align="start"
+                      collisionPadding={12}
+                      onWheelCapture={(event) => event.stopPropagation()}
+                      onTouchMoveCapture={(event) => event.stopPropagation()}
+                    >
                       <Command className="max-h-[min(72vh,420px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
                         <CommandInput placeholder="Buscar..." className="h-9 border-none focus:ring-0" />
-                        <CommandList className="max-h-[min(56vh,320px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin">
+                        <CommandList
+                          className="max-h-[min(56vh,320px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin [-webkit-overflow-scrolling:touch]"
+                          onWheelCapture={(event) => event.stopPropagation()}
+                          onTouchMoveCapture={(event) => event.stopPropagation()}
+                        >
                           <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">Nenhum encontrado.</CommandEmpty>
                           <CommandGroup>
                             <CommandItem onSelect={() => handleAssignUser(null)} className="cursor-pointer rounded-[6px] px-3 py-2">
@@ -3385,10 +3415,20 @@ export function LeadDetailDialog({
                       )}
                     </button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-[300px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1 shadow-[0_18px_50px_rgba(0,0,0,0.16)]" align="start" collisionPadding={12}>
+                  <PopoverContent
+                    className="w-[300px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1 shadow-[0_18px_50px_rgba(0,0,0,0.16)]"
+                    align="start"
+                    collisionPadding={12}
+                    onWheelCapture={(event) => event.stopPropagation()}
+                    onTouchMoveCapture={(event) => event.stopPropagation()}
+                  >
                     <Command className="max-h-[min(70vh,430px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
                       <CommandInput placeholder="Buscar..." className="h-10 border-none focus:ring-0" />
-                      <CommandList className="max-h-[min(58vh,350px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin">
+                      <CommandList
+                        className="max-h-[min(58vh,350px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin [-webkit-overflow-scrolling:touch]"
+                        onWheelCapture={(event) => event.stopPropagation()}
+                        onTouchMoveCapture={(event) => event.stopPropagation()}
+                      >
                         <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">
                           Nenhum encontrado.
                         </CommandEmpty>

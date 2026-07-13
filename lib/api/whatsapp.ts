@@ -172,6 +172,7 @@ export interface WhatsAppMessage {
 export interface ConversationFilters {
   hideGroups?: boolean
   showArchived?: boolean
+  search?: string
 }
 
 export type WhatsAppMessagesPage = {
@@ -398,6 +399,7 @@ export const whatsappAPI = {
         sessionId: params.sessionId,
         hideGroups: params.filters?.hideGroups,
         showArchived: params.filters?.showArchived,
+        search: params.filters?.search,
         sessionIds: params.accessibleSessionIds?.join(','),
         limit: params.limit,
       },

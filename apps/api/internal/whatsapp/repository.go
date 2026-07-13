@@ -206,8 +206,26 @@ func (repo Repository) ListConversations(ctx context.Context, tenantContext tena
 	if filter.HideGroups {
 		where = append(where, "wc.is_group = false")
 	}
-	if !filter.ShowArchived {
+	search := strings.TrimSpace(filter.Search)
+	if search == "" && filter.ShowArchived {
+		where = append(where, "wc.archived_at is not null")
+	} else if search == "" {
 		where = append(where, "wc.archived_at is null")
+	}
+	if search != "" {
+		args = append(args, "%"+search+"%")
+		textArg := len(args)
+		searchClauses := []string{
+			fmt.Sprintf("coalesce(wc.contact_name, '') ilike $%d", textArg),
+			fmt.Sprintf("coalesce(l.name, '') ilike $%d", textArg),
+			fmt.Sprintf("coalesce(wc.last_message, '') ilike $%d", textArg),
+		}
+		if digits := onlyDigits(search); digits != "" {
+			args = append(args, "%"+digits+"%")
+			phoneArg := len(args)
+			searchClauses = append(searchClauses, fmt.Sprintf("regexp_replace(coalesce(wc.contact_phone, ''), '\\D', '', 'g') like $%d", phoneArg))
+		}
+		where = append(where, "("+strings.Join(searchClauses, " or ")+")")
 	}
 	args = append(args, filter.Limit)
 	limitArg := len(args)
@@ -241,6 +259,16 @@ func (repo Repository) ListConversations(ctx context.Context, tenantContext tena
 	}
 
 	return conversations, nil
+}
+
+func onlyDigits(value string) string {
+	var builder strings.Builder
+	for _, char := range value {
+		if char >= '0' && char <= '9' {
+			builder.WriteRune(char)
+		}
+	}
+	return builder.String()
 }
 
 func (repo Repository) GetConversation(ctx context.Context, tenantContext tenant.Context, conversationID string) (Conversation, error) {

@@ -1244,7 +1244,7 @@ function MessageText({
   };
 
   return (
-    <p className={cn(compact ? "text-[12.5px] leading-[17px]" : "text-[14.2px] leading-[19px]", "whitespace-pre-wrap break-words")}>
+    <p className={cn(compact ? "text-[12px] leading-[16px]" : "text-[13px] leading-[18px]", "whitespace-pre-wrap break-words")}>
       {parts.length === 1
         ? renderTextWithLinks(content)
         : parts.map((part, index) => {

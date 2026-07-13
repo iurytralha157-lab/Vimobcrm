@@ -304,14 +304,18 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
         className,
       )}
     >
-      <div className="shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-4 pb-3 pt-4">
-        <div className="mb-3 flex justify-end">
-          <Button type="button" variant="ghost" size="icon" className="h-7 w-7 rounded-[6px]" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
+      <div className="relative shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-4 pb-3 pt-4">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="absolute right-3 top-3 h-7 w-7 rounded-[6px]"
+          onClick={onClose}
+        >
+          <X className="h-4 w-4" />
+        </Button>
 
-        <div className="flex items-start gap-2.5">
+        <div className="flex items-start gap-2.5 pr-8">
           <Avatar className="h-12 w-12 shrink-0 border-0">
             <AvatarImage src={contactPicture || undefined} alt={lead.name || "Lead"} />
             <AvatarFallback className="bg-primary text-base font-semibold text-white">

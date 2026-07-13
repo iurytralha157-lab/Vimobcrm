@@ -18,6 +18,7 @@ export type PipelineBoardStage = {
   id: string
   leads: PipelineBoardLead[]
   total_lead_count: number
+  total_value?: number
   has_more: boolean
   [key: string]: unknown
 }

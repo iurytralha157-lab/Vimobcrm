@@ -232,6 +232,7 @@ type ConversationListFilter struct {
 	SessionIDs         []string
 	HideGroups         bool
 	ShowArchived       bool
+	Search             string
 	AccessibleProvided bool
 	Limit              int
 }
@@ -453,6 +454,7 @@ func ParseConversationListFilter(values url.Values) (ConversationListFilter, err
 	filter := ConversationListFilter{
 		HideGroups:   parseBool(values.Get("hideGroups")),
 		ShowArchived: parseBool(values.Get("showArchived")),
+		Search:       strings.TrimSpace(values.Get("search")),
 		Limit:        80,
 	}
 	if raw := strings.TrimSpace(values.Get("sessionId")); raw != "" {

@@ -75,6 +75,38 @@ const getConversationAvatarUrl = (conversation?: WhatsAppConversation | null) =>
 const hasConversationLead = (conversation: ScreenConversation) =>
   Boolean(conversation.lead_id || conversation.lead?.id);
 
+const getSearchDigits = (value: string) => value.replace(/\D/g, "");
+
+const matchesConversationSearch = (conversation: ScreenConversation, rawSearch: string) => {
+  const search = rawSearch.trim().toLowerCase();
+  if (!search) return true;
+
+  const searchDigits = getSearchDigits(search);
+  const searchableText = [
+    conversation.contact_name,
+    conversation.contact_phone,
+    conversation.lead?.name,
+    conversation.last_message,
+    conversation.remote_jid,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (searchableText.includes(search)) return true;
+  if (!searchDigits) return false;
+
+  const searchableDigits = getSearchDigits([
+    conversation.contact_phone,
+    conversation.remote_jid,
+    conversation.last_message,
+  ]
+    .filter(Boolean)
+    .join(" "));
+
+  return searchableDigits.includes(searchDigits);
+};
+
 type ScreenConversation = WhatsAppConversation & {
   external_id?: string;
   platform?: MetaConversation["platform"];
@@ -225,7 +257,15 @@ export default function Conversations() {
 
   // Extract accessible session IDs for filtering
   const accessibleSessionIds = useMemo(() => sessions?.map(s => s.id) || [], [sessions]);
-  const conversationFilters = useMemo(() => ({ hideGroups, showArchived }), [hideGroups, showArchived]);
+  const trimmedSearchTerm = searchTerm.trim();
+  const conversationFilters = useMemo(
+    () => ({
+      hideGroups,
+      showArchived,
+      search: activePlatform === 'whatsapp' ? trimmedSearchTerm : '',
+    }),
+    [activePlatform, hideGroups, showArchived, trimmedSearchTerm],
+  );
   const conversationSessionFilter = useMemo(
     () => resolveWhatsAppConversationSessionFilter(
       selectedSessionId,
@@ -415,14 +455,9 @@ export default function Conversations() {
         .map(toScreenConversation);
     }
 
-    if (!searchTerm) return source;
-    const search = searchTerm.toLowerCase();
-    return source.filter(conv =>
-      conv.contact_name?.toLowerCase().includes(search) ||
-      conv.contact_phone?.includes(search) ||
-      conv.lead?.name?.toLowerCase().includes(search)
-    );
-  }, [conversations, metaConversations, activePlatform, searchTerm, onlyLeads, withoutLeadOnly, pendingReplyOnly]);
+    if (!trimmedSearchTerm) return source;
+    return source.filter(conv => matchesConversationSearch(conv, trimmedSearchTerm));
+  }, [conversations, metaConversations, activePlatform, trimmedSearchTerm, onlyLeads, withoutLeadOnly, pendingReplyOnly]);
 
   const whatsappMessageInputState = useMemo(
     () => getWhatsAppMessageInputState(selectedConversation, selectedSessionId, sessions),
@@ -857,12 +892,12 @@ export default function Conversations() {
                 </div>
 
                 <div data-tour="conversations-search" className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     placeholder={activePlatform === 'whatsapp' ? "Buscar conversas..." : "Buscar no Instagram/Meta..."}
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
-                    className="h-9 border-white/[0.055] bg-white/[0.035] pl-8"
+                    className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] py-0 pl-8 pr-3 text-xs shadow-none focus-visible:ring-1 focus-visible:ring-white/[0.09] focus-visible:ring-offset-0"
                   />
                 </div>
 
@@ -1105,12 +1140,12 @@ export default function Conversations() {
             </div>
 
             <div data-tour="conversations-search" className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder={activePlatform === 'whatsapp' ? "Buscar conversas..." : "Buscar no Instagram/Meta..."}
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
-                className="h-9 border-white/[0.055] bg-white/[0.035] pl-8"
+                className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] py-0 pl-8 pr-3 text-xs shadow-none focus-visible:ring-1 focus-visible:ring-white/[0.09] focus-visible:ring-offset-0"
               />
             </div>
 
@@ -1492,7 +1527,7 @@ function ConversationItem({
                 {displayName}
               </span>
               {hasLead && (
-                <Badge className="h-4 shrink-0 border-0 bg-emerald-500/15 px-1.5 text-[9px] font-medium text-emerald-700 shadow-none dark:text-emerald-300">
+                <Badge className="h-4 shrink-0 rounded-[4px] border-0 bg-emerald-500 px-1.5 text-[9px] font-medium text-white shadow-none">
                   Lead
                 </Badge>
               )}

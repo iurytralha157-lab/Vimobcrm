@@ -109,6 +109,7 @@ export interface WhatsAppMessage {
 export interface ConversationFilters {
   hideGroups?: boolean;
   showArchived?: boolean;
+  search?: string;
 }
 
 type WhatsAppMessagePage = {
@@ -182,6 +183,7 @@ export function useWhatsAppConversations(
       sessionId,
       hideGroups: filters?.hideGroups ?? false,
       showArchived: filters?.showArchived ?? false,
+      search: filters?.search?.trim() ?? "",
       accessibleSessionKey,
       limit,
     }),

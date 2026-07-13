@@ -103,6 +103,7 @@ export const pipelineBoardStageSchema = z.object({
   id: uuidSchema,
   leads: z.array(pipelineBoardLeadSchema),
   total_lead_count: nonNegativeIntegerSchema,
+  total_value: z.number().finite().min(0).optional(),
   has_more: z.boolean(),
 }).passthrough()
 

@@ -97,6 +97,7 @@ export const whatsappQueryKeys = {
       sessionId?: string
       hideGroups: boolean
       showArchived: boolean
+      search?: string
       accessibleSessionKey: string
       limit: number
     },
@@ -105,6 +106,7 @@ export const whatsappQueryKeys = {
     params.sessionId ?? 'all',
     params.hideGroups,
     params.showArchived,
+    params.search ?? '',
     params.accessibleSessionKey,
     params.limit,
   ] as const,
