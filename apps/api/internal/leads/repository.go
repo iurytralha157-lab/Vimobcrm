@@ -1113,6 +1113,10 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 		return CreateResult{}, err
 	}
 
+	if err := repo.insertInitialFeedbackActivity(ctx, tx, tenantContext.OrganizationID, leadID, tenantContext.UserID, input.Message, "lead_create"); err != nil {
+		return CreateResult{}, err
+	}
+
 	if input.AssignedUserID != nil {
 		if err := repo.insertNotification(ctx, tx, tenantContext.OrganizationID, *input.AssignedUserID, leadID, "Novo lead recebido", fmt.Sprintf("%s foi atribuido a voce", input.Name), "new_lead_received", map[string]any{
 			"lead_name":  input.Name,
@@ -1249,6 +1253,10 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 		"property_code":      nullable(input.PropertyCode),
 		"deal_status":        input.DealStatus,
 	}); err != nil {
+		return CreateResult{}, err
+	}
+
+	if err := repo.insertInitialFeedbackActivity(ctx, tx, tenantContext.OrganizationID, existingLead.ID, tenantContext.UserID, input.Message, "lead_reentry"); err != nil {
 		return CreateResult{}, err
 	}
 
@@ -2616,6 +2624,22 @@ func (repo Repository) insertActivity(ctx context.Context, tx pgx.Tx, organizati
 		)
 	`, organizationID, leadID, nullableString(userID), activityType, content, jsonb(metadata))
 	return err
+}
+
+func (repo Repository) insertInitialFeedbackActivity(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, userID string, message *string, origin string) error {
+	if message == nil {
+		return nil
+	}
+
+	feedback := strings.TrimSpace(*message)
+	if feedback == "" {
+		return nil
+	}
+
+	return repo.insertActivity(ctx, tx, organizationID, leadID, userID, "note", feedback, map[string]any{
+		"kind":   "feedback",
+		"origin": origin,
+	})
 }
 
 func (repo Repository) insertNotification(ctx context.Context, tx pgx.Tx, organizationID string, userID string, leadID string, title string, content string, eventKey string, metadata map[string]any) error {
