@@ -22,6 +22,7 @@ type Config struct {
 	HTTP        HTTPConfig
 	Auth        authpkg.Config
 	Database    dbpkg.Config
+	Automations AutomationConfig
 	Storage     StorageConfig
 	Email       EmailConfig
 	Push        PushConfig
@@ -52,6 +53,14 @@ type EvolutionGoConfig struct {
 	BackendWebhookURL        string
 	WebhookProcessorMode     string
 	WebhookRolloutSessionIDs []string
+}
+
+type AutomationConfig struct {
+	RuntimeWorkerEnabled     bool
+	RuntimeWorkerInterval    time.Duration
+	InactivityWorkerInterval time.Duration
+	WorkerRunTimeout         time.Duration
+	WorkerLockTimeout        time.Duration
 }
 
 type MetaConfig struct {
@@ -122,6 +131,13 @@ func Load() (Config, error) {
 			HealthTimeout:        parseDuration("DATABASE_HEALTH_TIMEOUT", 10*time.Second),
 			StartupRetryTimeout:  parseDuration("DATABASE_STARTUP_RETRY_TIMEOUT", 5*time.Minute),
 			StartupRetryInterval: parseDuration("DATABASE_STARTUP_RETRY_INTERVAL", 5*time.Second),
+		},
+		Automations: AutomationConfig{
+			RuntimeWorkerEnabled:     parseBool("AUTOMATION_RUNTIME_WORKER_ENABLED", true),
+			RuntimeWorkerInterval:    parseDuration("AUTOMATION_RUNTIME_WORKER_INTERVAL", 30*time.Second),
+			InactivityWorkerInterval: parseDuration("AUTOMATION_INACTIVITY_WORKER_INTERVAL", 5*time.Minute),
+			WorkerRunTimeout:         parseDuration("AUTOMATION_WORKER_RUN_TIMEOUT", 25*time.Second),
+			WorkerLockTimeout:        parseDuration("AUTOMATION_WORKER_LOCK_TIMEOUT", 2*time.Second),
 		},
 		Storage: StorageConfig{
 			ProjectURL: getEnv("SUPABASE_PROJECT_URL", getEnv("NEXT_PUBLIC_SUPABASE_URL", getEnv("SUPABASE_URL", ""))),
@@ -392,6 +408,21 @@ func parseInt(key string, fallback int32) int32 {
 	}
 
 	return int32(value)
+}
+
+func parseBool(key string, fallback bool) bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	if raw == "" {
+		return fallback
+	}
+	switch raw {
+	case "1", "true", "t", "yes", "y", "on", "enabled":
+		return true
+	case "0", "false", "f", "no", "n", "off", "disabled":
+		return false
+	default:
+		return fallback
+	}
 }
 
 func parseLogLevel(value string) slog.Level {

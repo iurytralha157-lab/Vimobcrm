@@ -156,7 +156,13 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 	})
-	automationsRepository.StartRuntimeWorker(ctx, logger)
+	automationsRepository.StartRuntimeWorker(ctx, logger, automations.WorkerConfig{
+		Enabled:            cfg.Automations.RuntimeWorkerEnabled,
+		RuntimeInterval:    cfg.Automations.RuntimeWorkerInterval,
+		InactivityInterval: cfg.Automations.InactivityWorkerInterval,
+		RunTimeout:         cfg.Automations.WorkerRunTimeout,
+		LockTimeout:        cfg.Automations.WorkerLockTimeout,
+	})
 	automationsHandler := automations.NewHandler(automationsRepository)
 	whatsappHandler := whatsapp.NewHandler(whatsapp.NewRepository(postgres, gamificationRepository, whatsapp.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,

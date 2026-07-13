@@ -72,6 +72,14 @@ Backend principal do Vimob CRM.
 - `SUPABASE_SERVICE_ROLE_KEY` ou `SUPABASE_SECRET_KEY` para uploads no Storage
 - `DATABASE_URL`
 
+## Variaveis operacionais opcionais
+
+- `AUTOMATION_RUNTIME_WORKER_ENABLED` - liga/desliga o coordenador backend de automacoes. Padrao: `true`.
+- `AUTOMATION_RUNTIME_WORKER_INTERVAL` - intervalo do runner de eventos/execucoes. Padrao: `30s`.
+- `AUTOMATION_INACTIVITY_WORKER_INTERVAL` - intervalo do scanner de inatividade. Padrao: `5m`.
+- `AUTOMATION_WORKER_RUN_TIMEOUT` - timeout maximo de cada ciclo. Padrao: `25s`.
+- `AUTOMATION_WORKER_LOCK_TIMEOUT` - timeout para obter a trava distribuida no Postgres. Padrao: `2s`.
+
 ## Meta Lead Ads
 
 O webhook backend da Meta usa:
