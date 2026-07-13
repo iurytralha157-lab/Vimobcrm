@@ -81,6 +81,9 @@ ASAAS_BASE_URL=https://api.asaas.com/v3
 EVOLUTION_GO_API_URL=https://seu-evolution-go
 EVOLUTION_GO_API_KEY=sua-chave-evolution-go
 EVOLUTION_GO_WEBHOOK_URL=https://seu-webhook-publico/evolution-go-webhook
+EVOLUTION_GO_BACKEND_WEBHOOK_URL=https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go
+WHATSAPP_WEBHOOK_PROCESSOR_MODE=edge
+WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS=
 
 META_APP_SECRET=segredo-do-app-meta
 META_WEBHOOK_VERIFY_TOKEN=token-igual-ao-configurado-no-meta-webhooks
@@ -89,6 +92,8 @@ META_GRAPH_BASE_URL=https://graph.facebook.com
 ```
 
 `EVOLUTION_GO_API_URL` e `EVOLUTION_GO_API_KEY` fazem a API Go criar instancias, consultar QR Code, status e enviar mensagens diretamente no Evo Go. `EVOLUTION_GO_WEBHOOK_URL` e opcional; enquanto o webhook de entrada nao for portado para Go, ele pode apontar para a Function `evolution-go-webhook` existente.
+
+Para um canario reversivel do webhook no backend, mantenha `EVOLUTION_GO_WEBHOOK_URL` apontando para a Edge Function, use `WHATSAPP_WEBHOOK_PROCESSOR_MODE=native_fallback` e informe em `WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS` somente os UUIDs das sessoes autorizadas. Nao use `*` antes de comprovar envio, recebimento, historico e rollback no canario.
 
 No Portainer:
 
