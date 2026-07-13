@@ -372,7 +372,7 @@ func writeLeadError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, ErrTagAlreadyExists):
 		httpserver.WriteError(w, r, http.StatusConflict, "tag_already_exists", "Tag is already attached to this lead.")
 	case errors.Is(err, ErrLeadAlreadyExists):
-		httpserver.WriteError(w, r, http.StatusConflict, "lead_already_exists", "Lead already exists in this organization and is assigned to another user.")
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_already_exists", "Atencao: lead nao criado, pois ja esta cadastrado e atribuido a outro responsavel. Entre em contato com o administrador.")
 	case errors.Is(err, ErrLeadPropertyUnavailable):
 		httpserver.WriteError(w, r, http.StatusConflict, "lead_property_unavailable", leadErrorMessage(err, ErrLeadPropertyUnavailable))
 	case errors.Is(err, ErrInvalidReference):

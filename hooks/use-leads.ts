@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import type { Tables, TablesUpdate } from '@/integrations/supabase/types';
 import { enforceClientActionRateLimit, getClientRateLimitMessage } from '@/lib/client-action-rate-limit';
+import { VimobAPIError } from '@/lib/api/vimob-client';
 type LeadTag = Pick<Tables<'tags'>, 'id' | 'name' | 'color'>;
 type CreateLeadInput = {
   name: string;
@@ -159,7 +160,11 @@ export function useCreateLead() {
         toast.error(rateLimitMessage);
         return;
       }
-      toast.error('Erro ao criar lead: ' + error.message);
+      if (error instanceof VimobAPIError && error.code === 'lead_already_exists') {
+        toast.warning('Atenção: lead não criado, pois já está cadastrado e atribuído a outro responsável. Entre em contato com o administrador.');
+        return;
+      }
+      toast.error('Erro ao criar lead: ' + getErrorMessage(error));
     },
   });
 }
