@@ -1,0 +1,22 @@
+{
+  "event": "messages.upsert",
+  "data": {
+    "message": {
+      "key": {
+        "id": "provider-meta-referral-1",
+        "remoteJid": "5511777776666@s.whatsapp.net",
+        "fromMe": false
+      },
+      "message": {
+        "extendedTextMessage": {
+          "text": "Tenho interesse",
+          "contextInfo": {
+            "externalAdReply": {
+              "sourceUrl": "https://facebook.com/ads/example"
+            }
+          }
+        }
+      }
+    }
+  }
+}

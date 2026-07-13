@@ -22,11 +22,12 @@ type evolutionSessionConfig struct {
 }
 
 type evolutionFetchOptions struct {
-	Body            any
-	Query           map[string]any
-	InstanceID      string
-	Token           string
-	UseGlobalAPIKey bool
+	Body             any
+	Query            map[string]any
+	InstanceID       string
+	Token            string
+	UseGlobalAPIKey  bool
+	MaxResponseBytes int64
 }
 
 type evolutionFetchResult struct {
@@ -124,11 +125,12 @@ func (client functionsClient) invokeEvolutionDirect(ctx context.Context, action 
 	}
 
 	result, err := client.evolutionFetch(ctx, endpoint.Method, endpoint.Path, evolutionFetchOptions{
-		Body:            endpoint.Body,
-		Query:           endpoint.Query,
-		InstanceID:      evolutionInstanceHeader(action, instanceKey),
-		Token:           token,
-		UseGlobalAPIKey: evolutionUsesGlobalAPIKey(action),
+		Body:             endpoint.Body,
+		Query:            endpoint.Query,
+		InstanceID:       evolutionInstanceHeader(action, instanceKey),
+		Token:            token,
+		UseGlobalAPIKey:  evolutionUsesGlobalAPIKey(action),
+		MaxResponseBytes: evolutionResponseMaxBytes(action),
 	})
 	if err != nil {
 		return nil, err
@@ -196,6 +198,15 @@ func evolutionAuthScope(action string) string {
 	}
 
 	return "instance"
+}
+
+func evolutionResponseMaxBytes(action string) int64 {
+	if stringIn(action, "message.downloadMedia", "message.downloadImage") {
+		// Base64 expands the 26 MiB binary ceiling by roughly 4/3. The extra
+		// MiB accounts for the provider's small JSON envelope.
+		return int64(whatsappMediaMaxBytes*4/3 + 1<<20)
+	}
+	return 1 << 20
 }
 
 func (client functionsClient) resolveEvolutionSession(ctx context.Context, payload map[string]any) (evolutionSessionConfig, error) {
@@ -305,13 +316,20 @@ func (client functionsClient) evolutionFetch(ctx context.Context, method string,
 
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return evolutionFetchResult{}, fmt.Errorf("%w: %v", ErrProviderFailed, err)
+		return evolutionFetchResult{}, fmt.Errorf("%w: %w: %v", ErrProviderFailed, ErrProviderOutcomeUnknown, err)
 	}
 	defer response.Body.Close()
 
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	responseLimit := options.MaxResponseBytes
+	if responseLimit <= 0 {
+		responseLimit = 1 << 20
+	}
+	raw, err := io.ReadAll(io.LimitReader(response.Body, responseLimit+1))
 	if err != nil {
-		return evolutionFetchResult{}, err
+		return evolutionFetchResult{}, fmt.Errorf("%w: %w: response read failed: %v", ErrProviderFailed, ErrProviderOutcomeUnknown, err)
+	}
+	if int64(len(raw)) > responseLimit {
+		return evolutionFetchResult{}, fmt.Errorf("%w: %w: Evolution Go response exceeds the allowed size", ErrProviderFailed, ErrProviderOutcomeUnknown)
 	}
 
 	var data any = map[string]any{}
@@ -348,16 +366,22 @@ func evolutionEndpointFor(action string, body map[string]any, instanceKey string
 				"events":       body["events"],
 				"advancedSettings": mergeMaps(map[string]any{
 					"rejectCall":      false,
-					"groupsIgnore":    false,
-					"alwaysOnline":    true,
+					"ignoreGroups":    false,
+					"alwaysOnline":    false,
 					"readMessages":    false,
-					"readStatus":      false,
+					"ignoreStatus":    false,
 					"syncFullHistory": false,
 				}, mapFromAny(body["advancedSettings"])),
 			}),
 		}, nil
 	case "instance.connect":
 		return evolutionEndpoint{Method: http.MethodPost, Path: "/instance/connect", Query: map[string]any{"instanceId": instanceKey}, Body: body}, nil
+	case "instance.advancedSettings":
+		return evolutionEndpoint{
+			Method: http.MethodPut,
+			Path:   fmt.Sprintf("/instance/%s/advanced-settings", url.PathEscape(instanceKey)),
+			Body:   evolutionNotificationSafeSettingsBody(),
+		}, nil
 	case "instance.delete":
 		return evolutionEndpoint{Method: http.MethodDelete, Path: fmt.Sprintf("/instance/delete/%s", url.PathEscape(instanceKey))}, nil
 	case "instance.disconnect":
@@ -378,6 +402,13 @@ func evolutionEndpointFor(action string, body map[string]any, instanceKey string
 		return evolutionEndpoint{Method: http.MethodPost, Path: "/message/edit", Body: body}, nil
 	case "message.react":
 		return evolutionEndpoint{Method: http.MethodPost, Path: "/message/react", Body: body}, nil
+	case "message.downloadMedia":
+		// Evolution Go mainline exposes this route. Keep the action allowlisted
+		// here so provider media recovery can never turn into an arbitrary fetch.
+		return evolutionEndpoint{Method: http.MethodPost, Path: "/message/downloadmedia", Body: body}, nil
+	case "message.downloadImage":
+		// Compatibility route used by the currently deployed Evolution Go build.
+		return evolutionEndpoint{Method: http.MethodPost, Path: "/message/downloadimage", Body: body}, nil
 	case "message.markread":
 		if body["allowWhatsAppReadReceipt"] != true {
 			return evolutionEndpoint{Skipped: true, Reason: "read_receipts_disabled"}, nil
@@ -421,6 +452,16 @@ func evolutionEndpointFor(action string, body map[string]any, instanceKey string
 		return evolutionEndpoint{Method: http.MethodGet, Path: "/user/contacts"}, nil
 	default:
 		return evolutionEndpoint{}, fmt.Errorf("%w: unsupported Evolution Go action: %s", ErrProviderFailed, action)
+	}
+}
+
+func evolutionNotificationSafeSettingsBody() map[string]any {
+	return map[string]any{
+		"alwaysOnline": false,
+		"readMessages": false,
+		"rejectCall":   false,
+		"ignoreGroups": false,
+		"ignoreStatus": false,
 	}
 }
 
@@ -474,6 +515,7 @@ func evolutionSendMediaBody(body map[string]any, forcedType string) map[string]a
 
 func evolutionSendCommonBody(body map[string]any) map[string]any {
 	return withoutEmptyMap(map[string]any{
+		"id":           firstPresentAny(body["id"], body["messageId"], body["clientMessageId"]),
 		"number":       firstPresentAny(body["number"], body["phone"], body["jid"], body["remoteJid"]),
 		"delay":        body["delay"],
 		"quoted":       body["quoted"],

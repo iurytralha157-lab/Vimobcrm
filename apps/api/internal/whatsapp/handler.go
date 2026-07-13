@@ -1,32 +1,24 @@
 package whatsapp
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
-	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 type Handler struct {
 	repo           Repository
-	publisher      realtime.Publisher
 	aiRunner       aiRunner
 	autoReplyToken string
 }
 
-func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
-	publisher := realtime.Publisher(realtime.NoopPublisher{})
-	if len(publishers) > 0 && publishers[0] != nil {
-		publisher = publishers[0]
-	}
-	return Handler{repo: repo, publisher: publisher}
+func NewHandler(repo Repository) Handler {
+	return Handler{repo: repo}
 }
 
 func (handler Handler) EvolutionGoWebhook(w http.ResponseWriter, r *http.Request) {
@@ -41,19 +33,14 @@ func (handler Handler) EvolutionGoWebhook(w http.ResponseWriter, r *http.Request
 		httpserver.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not allowed.")
 		return
 	}
-
-	target := handler.repo.functions.webhookURL("evolution-go-webhook")
-	if target == "" || handler.repo.functions.apiKey == "" {
-		httpserver.WriteError(w, r, http.StatusInternalServerError, "whatsapp_webhook_not_configured", "WhatsApp webhook receiver is not configured.")
+	if err := handler.repo.AuthorizeEvolutionWebhookRoute(r.Context(), r.URL.Query(), r.Header); err != nil {
+		if errors.Is(err, errWebhookSessionMismatch) {
+			httpserver.WriteError(w, r, http.StatusForbidden, "whatsapp_webhook_session_mismatch", "WhatsApp webhook instance does not match the configured session.")
+		} else {
+			httpserver.WriteError(w, r, http.StatusForbidden, "invalid_whatsapp_webhook_token", "WhatsApp webhook authentication failed.")
+		}
 		return
 	}
-
-	endpoint, err := url.Parse(target)
-	if err != nil {
-		httpserver.WriteError(w, r, http.StatusInternalServerError, "whatsapp_webhook_not_configured", "WhatsApp webhook receiver is invalid.")
-		return
-	}
-	endpoint.RawQuery = r.URL.RawQuery
 
 	defer r.Body.Close()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 32<<20))
@@ -61,48 +48,27 @@ func (handler Handler) EvolutionGoWebhook(w http.ResponseWriter, r *http.Request
 		httpserver.WriteError(w, r, http.StatusRequestEntityTooLarge, "whatsapp_webhook_body_too_large", "Webhook body is too large.")
 		return
 	}
-
-	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint.String(), bytes.NewReader(body))
+	envelope, err := parseEvolutionWebhookEnvelope(r.URL.Query(), r.Header, body)
 	if err != nil {
-		httpserver.WriteError(w, r, http.StatusInternalServerError, "whatsapp_webhook_proxy_failed", "Unable to proxy WhatsApp webhook.")
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_whatsapp_webhook", "WhatsApp webhook payload is invalid.")
 		return
 	}
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Content-Type", r.Header.Get("Content-Type"))
-	if request.Header.Get("Content-Type") == "" {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	request.Header.Set("apikey", handler.repo.functions.apiKey)
-	request.Header.Set("Authorization", "Bearer "+handler.repo.functions.apiKey)
-	copyOptionalHeader(request.Header, r.Header, "x-webhook-token")
-	copyOptionalHeader(request.Header, r.Header, "x-evolution-webhook-token")
-
-	response, err := handler.repo.functions.httpClient.Do(request)
+	receipt, err := handler.repo.AcceptEvolutionWebhook(r.Context(), envelope)
 	if err != nil {
-		httpserver.WriteError(w, r, http.StatusBadGateway, "whatsapp_webhook_proxy_failed", "Unable to reach WhatsApp webhook receiver.")
+		switch {
+		case errors.Is(err, errWebhookUnauthorized):
+			httpserver.WriteError(w, r, http.StatusForbidden, "invalid_whatsapp_webhook_token", "WhatsApp webhook token is invalid.")
+		case errors.Is(err, errWebhookSessionMismatch):
+			httpserver.WriteError(w, r, http.StatusForbidden, "whatsapp_webhook_session_mismatch", "WhatsApp webhook instance does not match the configured session.")
+		case errors.Is(err, ErrSessionNotFound):
+			httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_webhook_session_not_found", "WhatsApp webhook session was not found.")
+		default:
+			httpserver.WriteError(w, r, http.StatusInternalServerError, "whatsapp_webhook_enqueue_failed", "Unable to persist WhatsApp webhook.")
+		}
 		return
 	}
-	defer response.Body.Close()
-
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
-	if err != nil {
-		httpserver.WriteError(w, r, http.StatusBadGateway, "whatsapp_webhook_proxy_failed", "Unable to read WhatsApp webhook response.")
-		return
-	}
-
-	if contentType := response.Header.Get("Content-Type"); contentType != "" {
-		w.Header().Set("Content-Type", contentType)
-	} else {
-		w.Header().Set("Content-Type", "application/json")
-	}
-	w.WriteHeader(response.StatusCode)
-	_, _ = w.Write(responseBody)
-}
-
-func copyOptionalHeader(target http.Header, source http.Header, key string) {
-	if value := source.Get(key); value != "" {
-		target.Set(key, value)
-	}
+	wakeWhatsAppWebhookWorker()
+	httpserver.WriteJSON(w, http.StatusAccepted, map[string]any{"ok": true, "receipt": receipt})
 }
 
 func (handler Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
@@ -147,9 +113,6 @@ func (handler Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.session.created", "", nil, map[string]any{
-		"session": response,
-	})
 	httpserver.WriteJSON(w, http.StatusCreated, response)
 }
 
@@ -179,9 +142,6 @@ func (handler Handler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.session.deleted", "", nil, map[string]any{
-		"sessionId": r.PathValue("id"),
-	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -197,10 +157,6 @@ func (handler Handler) GetQRCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.session.recreated", "", nil, map[string]any{
-		"sessionId": r.PathValue("id"),
-		"data":      response,
-	})
 	httpserver.WriteJSON(w, http.StatusOK, response)
 }
 
@@ -246,9 +202,6 @@ func (handler Handler) LogoutSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.session.logged_out", "", nil, map[string]any{
-		"sessionId": r.PathValue("id"),
-	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "data": data})
 }
 
@@ -268,10 +221,6 @@ func (handler Handler) ToggleNotificationSession(w http.ResponseWriter, r *http.
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.session.updated", "", nil, map[string]any{
-		"sessionId":             r.PathValue("id"),
-		"notificationSessionOn": request.Enabled,
-	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -291,11 +240,6 @@ func (handler Handler) ToggleAutoReplySession(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.session.updated", "", nil, map[string]any{
-		"sessionId":     r.PathValue("id"),
-		"autoReplyOn":   request.Enabled,
-		"autoReplyType": "ai",
-	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -339,10 +283,6 @@ func (handler Handler) GrantSessionAccess(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.session_access.changed", "", nil, map[string]any{
-		"sessionId": r.PathValue("id"),
-		"userId":    input.UserID,
-	})
 	httpserver.WriteJSON(w, http.StatusCreated, map[string]bool{"ok": true})
 }
 
@@ -357,10 +297,6 @@ func (handler Handler) RevokeSessionAccess(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.session_access.changed", "", nil, map[string]any{
-		"sessionId": r.PathValue("id"),
-		"userId":    r.PathValue("userId"),
-	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -402,10 +338,6 @@ func (handler Handler) StartConversation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.conversation.started", conversation.ID, conversation.LeadID, map[string]any{
-		"conversationId": conversation.ID,
-		"sessionId":      conversation.SessionID,
-	})
 	httpserver.WriteJSON(w, http.StatusCreated, Envelope[Conversation]{Data: conversation})
 }
 
@@ -508,11 +440,38 @@ func (handler Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		writeWhatsAppError(w, r, err)
 		return
 	}
+	wakeWhatsAppOutboxWorker()
+	httpserver.WriteJSON(w, http.StatusOK, response)
+}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.message.sent", response.ConversationID, nil, map[string]any{
-		"conversationId":  response.ConversationID,
-		"clientMessageId": response.ClientMessageID,
-	})
+func (handler Handler) ReactToMessage(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := requireTenant(w, r)
+	if !ok {
+		return
+	}
+
+	var request ReactToMessageRequest
+	if !decodeWhatsAppJSON(w, r, &request, 1<<16) {
+		return
+	}
+	input, err := request.Validate()
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+
+	response, err := handler.repo.ReactToMessage(
+		r.Context(),
+		tenantContext,
+		r.PathValue("id"),
+		r.PathValue("messageId"),
+		input,
+	)
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+	wakeWhatsAppOutboxWorker()
 	httpserver.WriteJSON(w, http.StatusOK, response)
 }
 
@@ -527,9 +486,6 @@ func (handler Handler) MarkConversationAsRead(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.conversation.read", r.PathValue("id"), nil, map[string]any{
-		"conversationId": r.PathValue("id"),
-	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -544,9 +500,6 @@ func (handler Handler) MarkAsSeenOnWhatsApp(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.conversation.seen", r.PathValue("id"), nil, map[string]any{
-		"conversationId": r.PathValue("id"),
-	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -570,10 +523,6 @@ func (handler Handler) ArchiveConversation(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.conversation.archived", r.PathValue("id"), nil, map[string]any{
-		"conversationId": r.PathValue("id"),
-		"archived":       request.Archive,
-	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -588,9 +537,6 @@ func (handler Handler) DeleteConversation(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.conversation.deleted", r.PathValue("id"), nil, map[string]any{
-		"conversationId": r.PathValue("id"),
-	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -619,10 +565,6 @@ func (handler Handler) LinkConversationToLead(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.conversation.linked", r.PathValue("id"), &leadID, map[string]any{
-		"conversationId": r.PathValue("id"),
-		"leadId":         leadID,
-	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -638,9 +580,6 @@ func (handler Handler) RetryMediaDownload(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.media.retried", "", nil, map[string]any{
-		"messageId": r.PathValue("id"),
-	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "data": data})
 }
 
@@ -686,10 +625,6 @@ func (handler Handler) SyncLabels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.labels.synced", "", nil, map[string]any{
-		"sessionId": r.PathValue("id"),
-		"synced":    response.Synced,
-	})
 	httpserver.WriteJSON(w, http.StatusOK, response)
 }
 
@@ -709,12 +644,6 @@ func (handler Handler) AssignLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.labels.changed", request.ConversationID, nil, map[string]any{
-		"sessionId":      r.PathValue("id"),
-		"conversationId": request.ConversationID,
-		"labelId":        request.LabelID,
-		"added":          request.Add,
-	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "data": data})
 }
 
@@ -745,9 +674,6 @@ func (handler Handler) SyncGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.groups.synced", "", nil, map[string]any{
-		"sessionId": r.PathValue("id"),
-	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "data": data})
 }
 
@@ -805,11 +731,6 @@ func (handler Handler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.group.updated", "", nil, map[string]any{
-		"sessionId": r.PathValue("id"),
-		"jid":       request.JID,
-		"field":     request.Field,
-	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "data": data})
 }
 
@@ -829,9 +750,6 @@ func (handler Handler) CheckNumbers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.contacts.synced", "", nil, map[string]any{
-		"sessionId": r.PathValue("id"),
-	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "data": data})
 }
 
@@ -851,10 +769,6 @@ func (handler Handler) FetchAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.history.synced", "", nil, map[string]any{
-		"sessionId": r.PathValue("id"),
-		"jid":       request.JID,
-	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "data": data})
 }
 
@@ -908,25 +822,7 @@ func (handler Handler) ProviderAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handler.publishWhatsAppEvent(tenantContext, "whatsapp.provider_action.completed", "", nil, map[string]any{
-		"sessionId": request.SessionID,
-		"action":    request.Action,
-		"ok":        response.OK,
-	})
 	httpserver.WriteJSON(w, http.StatusOK, response)
-}
-
-func (handler Handler) publishWhatsAppEvent(tenantContext tenant.Context, eventType string, conversationID string, leadID *string, data map[string]any) {
-	if data == nil {
-		data = map[string]any{}
-	}
-	if conversationID != "" {
-		data["conversationId"] = conversationID
-	}
-	if leadID != nil && *leadID != "" {
-		data["leadId"] = *leadID
-	}
-	handler.publisher.Publish(realtime.NewEvent(eventType, tenantContext.OrganizationID, tenantContext.UserID, data))
 }
 
 func requireTenant(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {
@@ -964,7 +860,7 @@ func writeWhatsAppError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, ErrMessageNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_message_not_found", "WhatsApp message was not found.")
 	case errors.Is(err, ErrProviderFailed):
-		httpserver.WriteError(w, r, http.StatusBadGateway, "whatsapp_provider_failed", err.Error())
+		httpserver.WriteError(w, r, http.StatusBadGateway, "whatsapp_provider_failed", "WhatsApp provider request failed. Please try again.")
 	case errors.Is(err, ErrFeatureUnavailable):
 		httpserver.WriteError(w, r, http.StatusForbidden, "whatsapp_feature_unavailable", err.Error())
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):

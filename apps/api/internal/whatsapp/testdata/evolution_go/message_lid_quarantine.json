@@ -1,0 +1,17 @@
+{
+  "event": "messages.upsert",
+  "data": {
+    "message": {
+      "key": {
+        "id": "provider-lid-quarantine-1",
+        "remoteJid": "987654321012345@lid",
+        "fromMe": false
+      },
+      "pushName": "Contato LID",
+      "messageTimestamp": 1783814411,
+      "message": {
+        "conversation": "Mensagem sem PN"
+      }
+    }
+  }
+}

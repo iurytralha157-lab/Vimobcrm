@@ -42,18 +42,18 @@ func (repo Repository) retryStoredMediaDownload(ctx context.Context, tenantConte
 		return nil, ErrMessageNotFound
 	}
 
-	message, err := repo.loadRetryMediaMessage(ctx, tenantContext.OrganizationID, messageID)
+	message, err := repo.loadRetryMediaMessage(ctx, tenantContext, messageID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrMessageNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	if err := repo.ensureCanViewConversation(ctx, tenantContext, message.ConversationID); err != nil {
-		return nil, err
-	}
 
 	if strings.TrimSpace(message.MediaStoragePath) != "" {
+		if !whatsappMediaPathBelongsToOrganization(message.MediaStoragePath, tenantContext.OrganizationID) {
+			return nil, fmt.Errorf("%w: caminho da midia armazenada fora do escopo da organizacao", ErrProviderFailed)
+		}
 		signedURL, _ := repo.storage.signedURL(ctx, whatsappMediaBucket, message.MediaStoragePath, whatsappMediaSignedURLTTLSeconds)
 		return map[string]any{
 			"ok":                 true,
@@ -112,9 +112,10 @@ func (repo Repository) retryStoredMediaDownload(ctx context.Context, tenantConte
 	}, nil
 }
 
-func (repo Repository) loadRetryMediaMessage(ctx context.Context, organizationID string, messageID string) (retryMediaMessage, error) {
+func (repo Repository) loadRetryMediaMessage(ctx context.Context, tenantContext tenant.Context, messageID string) (retryMediaMessage, error) {
 	var message retryMediaMessage
 	var metadata string
+	args := append(baseConversationArgs(tenantContext), messageID)
 	err := repo.db.Pool().QueryRow(ctx, `
 		select
 			wm.id::text,
@@ -128,10 +129,17 @@ func (repo Repository) loadRetryMediaMessage(ctx context.Context, organizationID
 			coalesce(wm.media_storage_path, ''),
 			coalesce(wm.metadata, '{}'::jsonb)::text
 		from public.whatsapp_messages wm
+		join public.whatsapp_conversations wc on wc.id = wm.conversation_id
+		left join public.whatsapp_sessions ws on ws.id = wc.session_id
+		left join public.leads l on l.id = wc.lead_id
 		where wm.organization_id = $1::uuid
-		  and wm.id = $2::uuid
+		  and wc.organization_id = $1::uuid
+		  and wc.deleted_at is null
+		  and `+conversationVisibilitySQL()+`
+		  and `+conversationMessageLeadMatchSQL()+`
+		  and wm.id = $5::uuid
 		limit 1
-	`, organizationID, messageID).Scan(
+	`, args...).Scan(
 		&message.ID,
 		&message.OrganizationID,
 		&message.ConversationID,
@@ -180,16 +188,37 @@ func (repo Repository) recoverWhatsAppMedia(ctx context.Context, message retryMe
 func (repo Repository) downloadWhatsAppMediaURL(ctx context.Context, sourceURL string) (recoveredWhatsAppMedia, error) {
 	sourceURL = strings.TrimSpace(sourceURL)
 	parsed, err := url.Parse(sourceURL)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+	allowed, providerHost := allowedWhatsAppMediaURL(parsed, repo.functions.evolutionGoAPIURL, repo.storage.projectURL)
+	if err != nil || !allowed {
 		return recoveredWhatsAppMedia{}, fmt.Errorf("%w: URL da midia invalida", ErrProviderFailed)
 	}
 
 	headers := []map[string]string{{}}
-	if repo.functions.evolutionGoAPIKey != "" {
+	if providerHost && repo.functions.evolutionGoAPIKey != "" {
 		headers = append(headers, map[string]string{
 			"apikey":        repo.functions.evolutionGoAPIKey,
 			"Authorization": "Bearer " + repo.functions.evolutionGoAPIKey,
 		})
+	}
+
+	client := *repo.functions.httpClient
+	client.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return fmt.Errorf("too many media redirects")
+		}
+		redirectAllowed, redirectProviderHost := allowedWhatsAppMediaURL(
+			request.URL,
+			repo.functions.evolutionGoAPIURL,
+			repo.storage.projectURL,
+		)
+		if !redirectAllowed {
+			return fmt.Errorf("media redirect host is not allowed")
+		}
+		if !redirectProviderHost {
+			request.Header.Del("apikey")
+			request.Header.Del("Authorization")
+		}
+		return nil
 	}
 
 	for _, headerSet := range headers {
@@ -201,7 +230,7 @@ func (repo Repository) downloadWhatsAppMediaURL(ctx context.Context, sourceURL s
 			request.Header.Set(key, value)
 		}
 
-		response, err := repo.functions.httpClient.Do(request)
+		response, err := client.Do(request)
 		if err != nil {
 			continue
 		}
@@ -219,6 +248,82 @@ func (repo Repository) downloadWhatsAppMediaURL(ctx context.Context, sourceURL s
 	}
 
 	return recoveredWhatsAppMedia{}, fmt.Errorf("%w: nao foi possivel baixar a midia no provedor", ErrProviderFailed)
+}
+
+func allowedWhatsAppMediaURL(candidate *url.URL, evolutionURL string, projectURL string) (allowed bool, providerHost bool) {
+	if !validWhatsAppMediaOriginURL(candidate) {
+		return false, false
+	}
+
+	configuredHosts := []struct {
+		raw      string
+		provider bool
+	}{
+		{raw: evolutionURL, provider: true},
+		{raw: projectURL, provider: false},
+	}
+	for _, configured := range configuredHosts {
+		parsed, err := url.Parse(strings.TrimSpace(configured.raw))
+		if err == nil && sameWhatsAppMediaOrigin(candidate, parsed) {
+			return true, configured.provider
+		}
+	}
+
+	// Provider CDN media is public and never receives Evolution credentials.
+	// It is accepted only over the standard HTTPS origin.
+	if !strings.EqualFold(candidate.Scheme, "https") || effectiveWhatsAppMediaPort(candidate) != "443" {
+		return false, false
+	}
+	host := normalizedWhatsAppMediaHost(candidate)
+	for _, domain := range []string{"whatsapp.net", "fbcdn.net", "fbsbx.com"} {
+		if host == domain || strings.HasSuffix(host, "."+domain) {
+			return true, false
+		}
+	}
+	return false, false
+}
+
+func validWhatsAppMediaOriginURL(candidate *url.URL) bool {
+	if candidate == nil || candidate.User != nil || candidate.Opaque != "" || candidate.Hostname() == "" {
+		return false
+	}
+	if !strings.EqualFold(candidate.Scheme, "http") && !strings.EqualFold(candidate.Scheme, "https") {
+		return false
+	}
+	return effectiveWhatsAppMediaPort(candidate) != ""
+}
+
+func sameWhatsAppMediaOrigin(candidate *url.URL, configured *url.URL) bool {
+	if !validWhatsAppMediaOriginURL(candidate) || !validWhatsAppMediaOriginURL(configured) {
+		return false
+	}
+	return strings.EqualFold(candidate.Scheme, configured.Scheme) &&
+		normalizedWhatsAppMediaHost(candidate) == normalizedWhatsAppMediaHost(configured) &&
+		effectiveWhatsAppMediaPort(candidate) == effectiveWhatsAppMediaPort(configured)
+}
+
+func normalizedWhatsAppMediaHost(candidate *url.URL) string {
+	if candidate == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSuffix(candidate.Hostname(), "."))
+}
+
+func effectiveWhatsAppMediaPort(candidate *url.URL) string {
+	if candidate == nil {
+		return ""
+	}
+	if port := candidate.Port(); port != "" {
+		return port
+	}
+	switch strings.ToLower(candidate.Scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
 }
 
 func readLimitedWhatsAppMedia(response *http.Response) ([]byte, error) {

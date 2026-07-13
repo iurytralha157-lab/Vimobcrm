@@ -1134,6 +1134,15 @@ func (repo Repository) ListRuntimeIssues(ctx context.Context, tenantContext tena
 		select
 		  (select count(*) from public.automation_event_outbox o where o.organization_id = $1::uuid and o.status = 'dead_letter'),
 		  (select count(*) from public.automation_event_outbox o where o.organization_id = $1::uuid and o.status = 'failed'),
+		  (select count(*)
+		   from public.automation_effect_dispatches d
+		   join public.whatsapp_outbox outbox
+		     on outbox.organization_id = d.organization_id
+		    and d.response->>'outbox_id' = outbox.id::text
+		   where d.organization_id = $1::uuid
+		     and d.status = 'failed'
+		     and d.request->>'delivery_contract' = 'canonical_whatsapp_outbox_v1'
+		     and outbox.status = 'failed'),
 		  (select count(*) from public.automation_circuit_breakers c where c.organization_id = $1::uuid and c.open_until > now()),
 		  (select count(*)
 		   from public.automation_event_outbox o
@@ -1144,6 +1153,7 @@ func (repo Repository) ListRuntimeIssues(ctx context.Context, tenantContext tena
 	`, tenantContext.OrganizationID).Scan(
 		&result.Summary.DeadLetters,
 		&result.Summary.FailedEvents,
+		&result.Summary.FailedEffects,
 		&result.Summary.OpenCircuits,
 		&result.Summary.DuplicateDecisions,
 		&result.Summary.UnknownEffects,
@@ -1174,6 +1184,46 @@ func (repo Repository) ListRuntimeIssues(ctx context.Context, tenantContext tena
 		    coalesce(o.dead_lettered_at, o.updated_at, o.created_at) as occurred_at
 		  from public.automation_event_outbox o
 		  where o.organization_id = $1::uuid and o.status in ('dead_letter', 'failed')
+
+		  union all
+
+		  select
+		    d.id::text,
+		    'failed_effect',
+		    'error',
+		    outbox.status,
+		    e.automation_id::text,
+		    a.name,
+		    d.execution_id::text,
+		    e.lead_id::text,
+		    left(coalesce(d.error_message, outbox.last_error, 'WhatsApp delivery failed'), 500),
+		    jsonb_build_object(
+		      'effectType', d.effect_type,
+		      'nodeKey', d.node_key,
+		      'effectKey', d.effect_key,
+		      'outboxId', outbox.id,
+		      'outboxStatus', outbox.status,
+		      'attempts', outbox.attempts,
+		      'maxAttempts', outbox.max_attempts
+		    ),
+		    outbox.status = 'failed'
+		      and session.provider = 'evolution_go'
+		      and session.status = 'connected'
+		      and coalesce(session.is_active, true),
+		    coalesce(outbox.dead_lettered_at, outbox.failed_at, outbox.updated_at)
+		  from public.automation_effect_dispatches d
+		  join public.automation_executions e on e.id = d.execution_id and e.organization_id = d.organization_id
+		  left join public.automations a on a.id = e.automation_id and a.organization_id = e.organization_id
+		  join public.whatsapp_outbox outbox
+		    on outbox.organization_id = d.organization_id
+		   and d.response->>'outbox_id' = outbox.id::text
+		  join public.whatsapp_sessions session
+		    on session.id = outbox.session_id
+		   and session.organization_id = outbox.organization_id
+		  where d.organization_id = $1::uuid
+		    and d.status = 'failed'
+		    and d.request->>'delivery_contract' = 'canonical_whatsapp_outbox_v1'
+		    and outbox.status = 'failed'
 
 		  union all
 
@@ -1283,8 +1333,84 @@ func (repo Repository) RetryRuntimeIssue(ctx context.Context, tenantContext tena
 		return ErrInvalidInput
 	}
 	kind = strings.TrimSpace(kind)
-	if kind != "dead_letter" && kind != "failed_event" && kind != "circuit_decision" {
+	if kind != "dead_letter" && kind != "failed_event" && kind != "failed_effect" && kind != "circuit_decision" {
 		return ErrRuntimeIssueNotRetryable
+	}
+	if kind == "failed_effect" {
+		var resetCount int
+		err := repo.db.Pool().QueryRow(ctx, `
+			with target as materialized (
+			  select dispatch.id as dispatch_id, outbox.id, outbox.message_id, outbox.organization_id
+			  from public.automation_effect_dispatches dispatch
+			  join public.whatsapp_outbox outbox
+			    on outbox.organization_id = dispatch.organization_id
+			   and dispatch.response->>'outbox_id' = outbox.id::text
+			  join public.whatsapp_sessions session
+			    on session.id = outbox.session_id
+			   and session.organization_id = outbox.organization_id
+			  where dispatch.id = $1::uuid
+			    and dispatch.organization_id = $2::uuid
+			    and dispatch.status = 'failed'
+			    and dispatch.request->>'delivery_contract' = 'canonical_whatsapp_outbox_v1'
+			    and outbox.status = 'failed'
+			    and session.provider = 'evolution_go'
+			    and session.status = 'connected'
+			    and coalesce(session.is_active, true)
+			    and exists (
+			      select 1 from public.organization_modules module
+			      where module.organization_id = dispatch.organization_id
+			        and lower(trim(module.module_name)) = 'automations'
+			        and coalesce(module.is_enabled, false)
+			    )
+			  for update of dispatch, outbox
+			), reset_outbox as (
+			  update public.whatsapp_outbox outbox
+			  set status = 'pending', attempts = 0, next_attempt_at = now(),
+			      locked_at = null, locked_by = null, last_error = null,
+			      failed_at = null, dead_lettered_at = null, updated_at = now()
+			  from target
+			  where outbox.id = target.id and outbox.organization_id = target.organization_id
+			  returning outbox.id, outbox.message_id, outbox.organization_id
+			), reset_dispatch as (
+			  update public.automation_effect_dispatches dispatch
+			  set status = 'succeeded',
+			      response = (coalesce(dispatch.response, '{}'::jsonb) - 'last_error')
+			        || jsonb_build_object('status', 'queued', 'delivery_status', 'queued'),
+			      provider_id = null,
+			      error_message = null,
+			      attempted_at = now(),
+			      completed_at = now()
+			  from target
+			  where dispatch.id = target.dispatch_id
+			    and dispatch.organization_id = target.organization_id
+			  returning dispatch.id
+			), reset_message as (
+			  update public.whatsapp_messages message
+			  set status = 'queued', updated_at = now()
+			  from reset_outbox
+			  where message.id = reset_outbox.message_id
+			    and message.organization_id = reset_outbox.organization_id
+			  returning message.id
+			), reset_timeline as (
+			  update public.lead_timeline_events timeline
+			  set event_type = 'whatsapp_message_queued',
+			      title = 'Mensagem WhatsApp reenfileirada',
+			      metadata = (coalesce(timeline.metadata, '{}'::jsonb) - 'last_error')
+			        || jsonb_build_object('delivery_status', 'queued')
+			  from reset_outbox
+			  where timeline.organization_id = reset_outbox.organization_id
+			    and timeline.metadata->>'outbox_id' = reset_outbox.id::text
+			  returning timeline.id
+			)
+			select count(*)::integer from reset_outbox
+		`, issueID, tenantContext.OrganizationID).Scan(&resetCount)
+		if err != nil {
+			return err
+		}
+		if resetCount != 1 {
+			return ErrRuntimeIssueNotRetryable
+		}
+		return nil
 	}
 
 	tag, err := repo.db.Pool().Exec(ctx, `

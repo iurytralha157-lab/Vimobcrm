@@ -1,0 +1,21 @@
+{
+  "event": "messages.upsert",
+  "data": {
+    "message": {
+      "key": {
+        "id": "provider-inbound-image-1",
+        "remoteJid": "5511999991111@s.whatsapp.net",
+        "fromMe": false
+      },
+      "pushName": "Lead Teste",
+      "messageTimestamp": 1783814401,
+      "message": {
+        "imageMessage": {
+          "caption": "Foto do imóvel",
+          "mimetype": "image/png",
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+        }
+      }
+    }
+  }
+}

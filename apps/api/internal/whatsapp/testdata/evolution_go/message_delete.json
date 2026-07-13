@@ -1,0 +1,20 @@
+{
+  "event": "messages.upsert",
+  "data": {
+    "message": {
+      "Info": {
+        "ID": "provider-delete-event-1",
+        "Chat": "5511999991111@s.whatsapp.net",
+        "SenderPN": "5511999991111@s.whatsapp.net",
+        "IsFromMe": false,
+        "Timestamp": 1783814412
+      },
+      "Message": {
+        "protocolMessage": {
+          "key": { "id": "provider-delete-target" },
+          "type": "REVOKE"
+        }
+      }
+    }
+  }
+}

@@ -140,6 +140,7 @@ type AutomationExecutionSummary struct {
 type RuntimeIssueSummary struct {
 	DeadLetters         int `json:"deadLetters"`
 	FailedEvents        int `json:"failedEvents"`
+	FailedEffects       int `json:"failedEffects"`
 	OpenCircuits        int `json:"openCircuits"`
 	DuplicateDecisions  int `json:"duplicateDecisions"`
 	UnknownEffects      int `json:"unknownEffects"`

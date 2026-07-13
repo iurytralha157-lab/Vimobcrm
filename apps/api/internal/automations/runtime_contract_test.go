@@ -60,7 +60,7 @@ func TestAutomationEdgeRuntimeSecurityContract(t *testing.T) {
 		"constantTimeEqual",
 		"reserve_automation_external_effect",
 		"finish_automation_external_effect",
-		"createSignedUrl",
+		"canonical_whatsapp_outbox_v1",
 		"cross_tenant_or_invalid_media_path",
 		"Deno.resolveDns",
 		"redirect: \"manual\"",
@@ -72,7 +72,7 @@ func TestAutomationEdgeRuntimeSecurityContract(t *testing.T) {
 		"AbortController",
 		"enter_automation_delay_wait",
 		"resume_automation_delay",
-		"record_automation_whatsapp_message",
+		"enqueue_automation_whatsapp_outbox",
 	} {
 		if !strings.Contains(runtime, required) {
 			t.Fatalf("edge runtime is missing contract fragment %q", required)
@@ -80,6 +80,9 @@ func TestAutomationEdgeRuntimeSecurityContract(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(runtime), "override_node") {
 		t.Fatal("edge runtime must not accept arbitrary node overrides")
+	}
+	if strings.Contains(runtime, "evolution-go-proxy") {
+		t.Fatal("automation WhatsApp delivery must use the canonical DB-first outbox, not the legacy provider proxy")
 	}
 
 	for _, functionName := range []string{"automation-executor", "automation-trigger", "automation-delay-processor", "automation-runner", "automation-inactivity"} {

@@ -15,24 +15,30 @@ import (
 )
 
 type functionsClient struct {
-	projectURL          string
-	apiKey              string
-	evolutionGoAPIURL   string
-	evolutionGoAPIKey   string
-	evolutionWebhookURL string
-	db                  *dbpkg.Postgres
-	httpClient          *http.Client
+	projectURL                 string
+	apiKey                     string
+	evolutionGoAPIURL          string
+	evolutionGoAPIKey          string
+	evolutionWebhookURL        string
+	evolutionBackendWebhookURL string
+	webhookProcessorMode       string
+	webhookRolloutSessionIDs   []string
+	db                         *dbpkg.Postgres
+	httpClient                 *http.Client
 }
 
 func newFunctionsClient(config StorageConfig, db *dbpkg.Postgres) functionsClient {
 	return functionsClient{
-		projectURL:          strings.TrimRight(strings.TrimSpace(config.ProjectURL), "/"),
-		apiKey:              strings.TrimSpace(config.APIKey),
-		evolutionGoAPIURL:   strings.TrimRight(strings.TrimSpace(config.EvolutionGo.APIURL), "/"),
-		evolutionGoAPIKey:   strings.TrimSpace(config.EvolutionGo.APIKey),
-		evolutionWebhookURL: strings.TrimRight(strings.TrimSpace(config.EvolutionGo.WebhookURL), "/"),
-		db:                  db,
-		httpClient:          &http.Client{Timeout: 45 * time.Second},
+		projectURL:                 strings.TrimRight(strings.TrimSpace(config.ProjectURL), "/"),
+		apiKey:                     strings.TrimSpace(config.APIKey),
+		evolutionGoAPIURL:          strings.TrimRight(strings.TrimSpace(config.EvolutionGo.APIURL), "/"),
+		evolutionGoAPIKey:          strings.TrimSpace(config.EvolutionGo.APIKey),
+		evolutionWebhookURL:        strings.TrimRight(strings.TrimSpace(config.EvolutionGo.WebhookURL), "/"),
+		evolutionBackendWebhookURL: strings.TrimRight(strings.TrimSpace(config.EvolutionGo.BackendWebhookURL), "/"),
+		webhookProcessorMode:       strings.TrimSpace(config.EvolutionGo.WebhookProcessorMode),
+		webhookRolloutSessionIDs:   append([]string(nil), config.EvolutionGo.WebhookRolloutSessionIDs...),
+		db:                         db,
+		httpClient:                 &http.Client{Timeout: 45 * time.Second},
 	}
 }
 
@@ -45,7 +51,8 @@ func (client functionsClient) webhookURL(functionName string) string {
 }
 
 func (client functionsClient) configuredEvolutionWebhookURL(sessionID string, instanceID string, webhookToken string) string {
-	baseURL := client.validEvolutionWebhookBaseURL()
+	backendRollout := webhookRolloutAllowsSession(client.webhookRolloutSessionIDs, sessionID)
+	baseURL := client.validEvolutionWebhookBaseURL(sessionID)
 	if baseURL == "" {
 		return ""
 	}
@@ -57,13 +64,31 @@ func (client functionsClient) configuredEvolutionWebhookURL(sessionID string, in
 	query := endpoint.Query()
 	query.Set("session_id", sessionID)
 	query.Set("instance_id", instanceID)
-	query.Set("webhook_token", webhookToken)
+	if backendRollout {
+		// The backend authenticates the provider's instanceToken from the JSON
+		// body. Never place a secret in its URL, where proxies, access logs and
+		// browser history can retain it. The legacy Edge receiver still needs
+		// its temporary per-session query token during rollback-safe migration.
+		query.Del("webhook_token")
+	} else {
+		query.Set("webhook_token", webhookToken)
+	}
 	endpoint.RawQuery = query.Encode()
 
 	return endpoint.String()
 }
 
-func (client functionsClient) validEvolutionWebhookBaseURL() string {
+func (client functionsClient) validEvolutionWebhookBaseURL(sessionID string) string {
+	if webhookRolloutAllowsSession(client.webhookRolloutSessionIDs, sessionID) {
+		if isDeadEvolutionWebhookURL(client.evolutionBackendWebhookURL) {
+			return ""
+		}
+		return client.evolutionBackendWebhookURL
+	}
+	return client.validLegacyEvolutionWebhookBaseURL()
+}
+
+func (client functionsClient) validLegacyEvolutionWebhookBaseURL() string {
 	if isDeadEvolutionWebhookURL(client.evolutionWebhookURL) {
 		return client.webhookURL("evolution-go-webhook")
 	}
@@ -86,8 +111,7 @@ func isDeadEvolutionWebhookURL(value string) bool {
 		return true
 	}
 
-	return strings.EqualFold(endpoint.Host, "api.vimobcrm.com.br") &&
-		strings.TrimRight(endpoint.Path, "/") == "/v1/whatsapp/webhook/evolution-go"
+	return endpoint.Host == "" || (endpoint.Scheme != "https" && endpoint.Scheme != "http")
 }
 
 func (client functionsClient) invoke(ctx context.Context, functionName string, body map[string]any) (map[string]any, error) {
@@ -140,26 +164,14 @@ func (client functionsClient) invoke(ctx context.Context, functionName string, b
 }
 
 func (client functionsClient) invokeEvolution(ctx context.Context, action string, payload map[string]any) (map[string]any, error) {
-	if client.evolutionGoAPIURL != "" && client.evolutionGoAPIKey != "" {
-		result, err := client.invokeEvolutionDirect(ctx, action, payload)
-		if err != nil {
-			return nil, err
-		}
-		if !providerResultOK(result) {
-			if evolutionAllowsProviderFailure(action) {
-				return result, nil
-			}
-			return result, fmt.Errorf("%w: %s", ErrProviderFailed, providerErrorMessage(result, "Falha na Evolution Go."))
-		}
-		return result, nil
+	if client.evolutionGoAPIURL == "" || client.evolutionGoAPIKey == "" {
+		return nil, fmt.Errorf("%w: Evolution Go direta nao configurada", ErrProviderFailed)
 	}
 
-	body := map[string]any{"action": action}
-	for key, value := range payload {
-		body[key] = value
-	}
-
-	result, err := client.invoke(ctx, "evolution-go-proxy", body)
+	// Provider operations are backend-owned. Never fall back to the legacy
+	// Edge proxy: doing so would reintroduce a second authorization and history
+	// path whenever the direct provider configuration is missing.
+	result, err := client.invokeEvolutionDirect(ctx, action, payload)
 	if err != nil {
 		return nil, err
 	}

@@ -57,6 +57,15 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 	if err != nil {
 		return SessionOperationResponse{}, err
 	}
+	if webhookRolloutAllowsSession(repo.functions.webhookRolloutSessionIDs, session.ID) {
+		// Store the rollout intent before the provider can receive the backend
+		// webhook. This keeps rollback recoverable even across a partial failure.
+		setWebhookRolloutManaged(settings, true)
+		if err := repo.updateSessionSettings(ctx, tenantContext.OrganizationID, session.ID, settings); err != nil {
+			_ = repo.deleteSessionRow(ctx, tenantContext.OrganizationID, session.ID)
+			return SessionOperationResponse{}, err
+		}
+	}
 
 	initialWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, instanceName, webhookToken)
 	createBody := evolutionWebhookConnectBody(initialWebhookURL)
@@ -76,9 +85,6 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 	if evoID != "" {
 		settings["token"] = token
 		settings["evolution_go_resolved_instance_key"] = evoID
-		if providerNotificationSafeApplied(createResult) {
-			settings["notification_safe_settings_applied_at"] = time.Now().UTC().Format(time.RFC3339)
-		}
 		if err := repo.updateSessionInstance(ctx, tenantContext.OrganizationID, session.ID, evoID, settings); err != nil {
 			_ = repo.deleteSessionRow(ctx, tenantContext.OrganizationID, session.ID)
 			return SessionOperationResponse{}, err
@@ -90,7 +96,7 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 		webhookInstanceID = instanceName
 	}
 	configuredWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, webhookInstanceID, webhookToken)
-	connectResult, err := repo.functions.invokeEvolution(ctx, "instance.connect", map[string]any{
+	_, err = repo.functions.invokeEvolution(ctx, "instance.connect", map[string]any{
 		"session_id":  session.ID,
 		"instance_id": evoID,
 		"token":       token,
@@ -107,9 +113,7 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 	settings["webhook_url"] = configuredWebhookURL
 	settings["webhook_last_configured_at"] = time.Now().UTC().Format(time.RFC3339)
 	settings["webhook_subscription_version"] = whatsappWebhookSubscriptionVersion
-	if providerNotificationSafeApplied(connectResult) {
-		settings["notification_safe_settings_applied_at"] = time.Now().UTC().Format(time.RFC3339)
-	}
+	setWebhookRolloutManaged(settings, webhookRolloutAllowsSession(repo.functions.webhookRolloutSessionIDs, session.ID))
 	if err := repo.updateSessionInstance(ctx, tenantContext.OrganizationID, session.ID, evoID, settings); err != nil {
 		_ = repo.deleteSessionRow(ctx, tenantContext.OrganizationID, session.ID)
 		return SessionOperationResponse{}, err
@@ -120,7 +124,7 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 		return SessionOperationResponse{}, err
 	}
 
-	return SessionOperationResponse{Session: session, EvolutionData: createResult["data"]}, nil
+	return SessionOperationResponse{Session: session}, nil
 }
 
 func (repo Repository) DeleteSession(ctx context.Context, tenantContext tenant.Context, sessionID string) error {
@@ -220,8 +224,8 @@ func (repo Repository) GetConnectionStatus(ctx context.Context, tenantContext te
 			Status:           "disconnected",
 			State:            "close",
 			InstanceNotFound: statusText == "404" || isProviderMissingInstanceMessage(message),
-			RawResponse:      result["rawResponse"],
-			RawStatus:        result["status"],
+			RawResponse:      nil,
+			RawStatus:        nil,
 		}, nil
 	}
 
@@ -238,13 +242,16 @@ func (repo Repository) GetConnectionStatus(ctx context.Context, tenantContext te
 	}
 
 	rawData := firstMap(result, "data.data", "data.instance", "data.session", "data", "instance", "session")
-	wuid := firstString(rawData, "jid", "Jid", "wuid", "ownerJid", "phone", "number", "Name", "name")
+	wuid := firstString(rawData, "jid", "Jid", "wuid", "ownerJid", "phone", "number", "user.id")
 	if connected {
-		phone := strings.Split(wuid, "@")[0]
+		phone, validPhone := phoneFromIdentityValue(wuid)
+		if !validPhone {
+			phone = ""
+		}
 		_, _ = repo.db.Pool().Exec(ctx, `
 			update public.whatsapp_sessions
 			set status = 'connected',
-			    phone_number = nullif($3, ''),
+			    phone_number = coalesce(nullif($3, ''), phone_number),
 			    last_connected_at = now(),
 			    updated_at = now()
 			where organization_id = $1::uuid
@@ -267,8 +274,8 @@ func (repo Repository) GetConnectionStatus(ctx context.Context, tenantContext te
 		Instance: map[string]any{
 			"wuid": wuid,
 		},
-		RawResponse: result["rawResponse"],
-		RawStatus:   result["status"],
+		RawResponse: nil,
+		RawStatus:   nil,
 	}, nil
 }
 
@@ -290,6 +297,14 @@ func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant
 	if webhookToken == "" {
 		webhookToken = createSecretToken()
 	}
+	if webhookRolloutAllowsSession(repo.functions.webhookRolloutSessionIDs, session.ID) {
+		setWebhookRolloutManaged(settings, true)
+		delete(settings, "notification_safe_settings_applied_at")
+		delete(settings, "notification_safe_settings_version")
+		if err := repo.updateSessionSettings(ctx, tenantContext.OrganizationID, session.ID, settings); err != nil {
+			return SessionOperationResponse{}, err
+		}
+	}
 
 	initialWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, session.InstanceName, webhookToken)
 	createBody := evolutionWebhookConnectBody(initialWebhookURL)
@@ -310,7 +325,7 @@ func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant
 		webhookInstanceID = session.InstanceName
 	}
 	configuredWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, webhookInstanceID, webhookToken)
-	connectResult, err := repo.functions.invokeEvolution(ctx, "instance.connect", map[string]any{
+	_, err = repo.functions.invokeEvolution(ctx, "instance.connect", map[string]any{
 		"session_id":  session.ID,
 		"instance_id": evoID,
 		"token":       token,
@@ -326,9 +341,7 @@ func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant
 	settings["webhook_url"] = configuredWebhookURL
 	settings["webhook_last_configured_at"] = time.Now().UTC().Format(time.RFC3339)
 	settings["webhook_subscription_version"] = whatsappWebhookSubscriptionVersion
-	if providerNotificationSafeApplied(createResult) || providerNotificationSafeApplied(connectResult) {
-		settings["notification_safe_settings_applied_at"] = time.Now().UTC().Format(time.RFC3339)
-	}
+	setWebhookRolloutManaged(settings, webhookRolloutAllowsSession(repo.functions.webhookRolloutSessionIDs, session.ID))
 
 	_, err = repo.db.Pool().Exec(ctx, `
 		update public.whatsapp_sessions
@@ -348,7 +361,7 @@ func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant
 		return SessionOperationResponse{}, err
 	}
 
-	return SessionOperationResponse{Session: session, EvolutionData: createResult["data"]}, nil
+	return SessionOperationResponse{Session: session}, nil
 }
 
 func (repo Repository) LogoutSession(ctx context.Context, tenantContext tenant.Context, sessionID string) (map[string]any, error) {
@@ -679,12 +692,6 @@ func (repo Repository) deleteSessionRow(ctx context.Context, organizationID stri
 		  and id = $2::uuid
 	`, organizationID, sessionID)
 	return err
-}
-
-func providerNotificationSafeApplied(result map[string]any) bool {
-	settings := firstMap(result, "notificationSafeSettings")
-	value, _ := settings["ok"].(bool)
-	return value
 }
 
 func stringFromMap(values map[string]any, key string) string {

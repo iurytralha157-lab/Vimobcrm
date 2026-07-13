@@ -65,6 +65,15 @@ func TestWhatsAppContactIdentityIgnoresOpaqueJIDsAsPhoneSource(t *testing.T) {
 	}
 }
 
+func TestCanonicalWhatsAppSelfJIDRejectsProfileNames(t *testing.T) {
+	if jid, ok := canonicalWhatsAppSelfJID("Andr? Rocha"); ok || jid != "" {
+		t.Fatalf("profile name became WhatsApp actor JID: %q / %v", jid, ok)
+	}
+	if jid, ok := canonicalWhatsAppSelfJID("5511999991111:18@s.whatsapp.net"); !ok || jid != "5511999991111@s.whatsapp.net" {
+		t.Fatalf("canonical self JID = %q / %v", jid, ok)
+	}
+}
+
 func containsString(values []string, expected string) bool {
 	for _, value := range values {
 		if value == expected {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	authpkg "github.com/vimob-crm/vimob-crm/packages/auth"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -45,9 +46,12 @@ type StorageConfig struct {
 }
 
 type EvolutionGoConfig struct {
-	APIURL     string
-	APIKey     string
-	WebhookURL string
+	APIURL                   string
+	APIKey                   string
+	WebhookURL               string
+	BackendWebhookURL        string
+	WebhookProcessorMode     string
+	WebhookRolloutSessionIDs []string
 }
 
 type MetaConfig struct {
@@ -148,9 +152,12 @@ func Load() (Config, error) {
 			AutoReplyToken: getEnv("AI_AUTOREPLY_TOKEN", os.Getenv("INTERNAL_WEBHOOK_TOKEN")),
 		},
 		EvolutionGo: EvolutionGoConfig{
-			APIURL:     strings.TrimRight(getEnv("EVOLUTION_GO_API_URL", ""), "/"),
-			APIKey:     os.Getenv("EVOLUTION_GO_API_KEY"),
-			WebhookURL: strings.TrimRight(getEnv("EVOLUTION_GO_WEBHOOK_URL", ""), "/"),
+			APIURL:                   strings.TrimRight(getEnv("EVOLUTION_GO_API_URL", ""), "/"),
+			APIKey:                   os.Getenv("EVOLUTION_GO_API_KEY"),
+			WebhookURL:               strings.TrimRight(getEnv("EVOLUTION_GO_WEBHOOK_URL", ""), "/"),
+			BackendWebhookURL:        strings.TrimRight(getEnv("EVOLUTION_GO_BACKEND_WEBHOOK_URL", ""), "/"),
+			WebhookProcessorMode:     strings.ToLower(getEnv("WHATSAPP_WEBHOOK_PROCESSOR_MODE", "edge")),
+			WebhookRolloutSessionIDs: parseCSV(getEnv("WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS", "")),
 		},
 		Meta: MetaConfig{
 			AppSecret:          os.Getenv("META_APP_SECRET"),
@@ -265,6 +272,22 @@ func (cfg Config) Validate() error {
 			validationErrors = append(validationErrors, fmt.Errorf("EVOLUTION_GO_WEBHOOK_URL is invalid: %w", err))
 		}
 	}
+	if cfg.EvolutionGo.BackendWebhookURL != "" {
+		if _, err := url.ParseRequestURI(cfg.EvolutionGo.BackendWebhookURL); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("EVOLUTION_GO_BACKEND_WEBHOOK_URL is invalid: %w", err))
+		}
+	}
+	switch cfg.EvolutionGo.WebhookProcessorMode {
+	case "edge", "native", "native_fallback":
+	default:
+		validationErrors = append(validationErrors, errors.New("WHATSAPP_WEBHOOK_PROCESSOR_MODE must be edge, native_fallback, or native"))
+	}
+	if err := validateWebhookRolloutSessionIDs(cfg.EvolutionGo.WebhookRolloutSessionIDs); err != nil {
+		validationErrors = append(validationErrors, err)
+	}
+	if len(cfg.EvolutionGo.WebhookRolloutSessionIDs) > 0 && strings.TrimSpace(cfg.EvolutionGo.BackendWebhookURL) == "" {
+		validationErrors = append(validationErrors, errors.New("EVOLUTION_GO_BACKEND_WEBHOOK_URL is required when WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS is enabled"))
+	}
 	if cfg.Meta.GraphBaseURL != "" {
 		if _, err := url.ParseRequestURI(cfg.Meta.GraphBaseURL); err != nil {
 			validationErrors = append(validationErrors, fmt.Errorf("META_GRAPH_BASE_URL is invalid: %w", err))
@@ -280,6 +303,36 @@ func (cfg Config) Validate() error {
 	}
 
 	return errors.Join(validationErrors...)
+}
+
+func validateWebhookRolloutSessionIDs(values []string) error {
+	if len(values) == 0 {
+		return nil
+	}
+	if len(values) == 1 && values[0] == "*" {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "*" {
+			return errors.New("WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS must be either * or a comma-separated UUID allowlist")
+		}
+
+		var uuid pgtype.UUID
+		if err := uuid.Scan(value); err != nil || !uuid.Valid {
+			return fmt.Errorf("WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS contains invalid UUID %q", value)
+		}
+
+		normalized := uuid.String()
+		if _, exists := seen[normalized]; exists {
+			return fmt.Errorf("WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS contains duplicate UUID %q", normalized)
+		}
+		seen[normalized] = struct{}{}
+	}
+
+	return nil
 }
 
 func getEnv(key string, fallback string) string {

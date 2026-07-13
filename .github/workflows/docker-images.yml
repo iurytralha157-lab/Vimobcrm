@@ -58,15 +58,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compute immutable API image tags
+        id: api-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.API_IMAGE }}
+          tags: |
+            type=raw,value=${{ github.sha }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+      - name: Compute immutable Web image tags
+        id: web-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.WEB_IMAGE }}
+          tags: |
+            type=raw,value=${{ github.sha }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
       - name: Build and push API
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.api
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.API_IMAGE }}:latest
-            ${{ env.REGISTRY }}/${{ env.API_IMAGE }}:${{ github.sha }}
+          tags: ${{ steps.api-meta.outputs.tags }}
 
       - name: Build and push Web
         uses: docker/build-push-action@v6
@@ -80,6 +96,4 @@ jobs:
             NEXT_PUBLIC_VIMOB_API_URL=${{ env.WEB_NEXT_PUBLIC_VIMOB_API_URL }}
             NEXT_PUBLIC_SITE_URL=${{ env.WEB_NEXT_PUBLIC_SITE_URL }}
             NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ env.WEB_NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.WEB_IMAGE }}:latest
-            ${{ env.REGISTRY }}/${{ env.WEB_IMAGE }}:${{ github.sha }}
+          tags: ${{ steps.web-meta.outputs.tags }}

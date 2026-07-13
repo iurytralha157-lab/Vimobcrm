@@ -1,24 +1,27 @@
 package whatsapp
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var (
-	ErrInvalidInput         = errors.New("invalid whatsapp input")
-	ErrInvalidReference     = errors.New("invalid whatsapp reference")
-	ErrSessionNotFound      = errors.New("whatsapp session not found")
-	ErrConversationNotFound = errors.New("whatsapp conversation not found")
-	ErrMessageNotFound      = errors.New("whatsapp message not found")
-	ErrProviderFailed       = errors.New("whatsapp provider operation failed")
-	ErrFeatureUnavailable   = errors.New("whatsapp feature unavailable")
+	ErrInvalidInput           = errors.New("invalid whatsapp input")
+	ErrInvalidReference       = errors.New("invalid whatsapp reference")
+	ErrSessionNotFound        = errors.New("whatsapp session not found")
+	ErrConversationNotFound   = errors.New("whatsapp conversation not found")
+	ErrMessageNotFound        = errors.New("whatsapp message not found")
+	ErrProviderFailed         = errors.New("whatsapp provider operation failed")
+	ErrProviderOutcomeUnknown = errors.New("whatsapp provider outcome is unknown")
+	ErrFeatureUnavailable     = errors.New("whatsapp feature unavailable")
 )
 
 type Session struct {
@@ -40,6 +43,40 @@ type Session struct {
 	UpdatedAt             time.Time      `json:"updated_at"`
 	LastConnectedAt       *time.Time     `json:"last_connected_at"`
 	Owner                 *OwnerRef      `json:"owner,omitempty"`
+}
+
+func (session Session) MarshalJSON() ([]byte, error) {
+	type sessionJSON Session
+	safe := sessionJSON(session)
+	safe.AdvancedSettings = redactWhatsAppSessionSettings(session.AdvancedSettings)
+	return json.Marshal(safe)
+}
+
+func redactWhatsAppSessionSettings(settings map[string]any) map[string]any {
+	if len(settings) == 0 {
+		return settings
+	}
+	safe := make(map[string]any, len(settings))
+	for key, value := range settings {
+		normalized := strings.ToLower(strings.TrimSpace(key))
+		if normalized == "token" ||
+			strings.Contains(normalized, "webhook_url") ||
+			strings.Contains(normalized, "token") ||
+			strings.Contains(normalized, "secret") ||
+			strings.Contains(normalized, "password") ||
+			strings.Contains(normalized, "api_key") ||
+			strings.Contains(normalized, "apikey") ||
+			strings.Contains(normalized, "qr_code") {
+			continue
+		}
+		switch typed := value.(type) {
+		case map[string]any:
+			safe[key] = redactWhatsAppSessionSettings(typed)
+		default:
+			safe[key] = value
+		}
+	}
+	return safe
 }
 
 type OwnerRef struct {
@@ -141,7 +178,7 @@ type TagRef struct {
 type Message struct {
 	ID                  string         `json:"id"`
 	ConversationID      string         `json:"conversation_id"`
-	SessionID           string         `json:"session_id"`
+	SessionID           *string        `json:"session_id"`
 	MessageID           string         `json:"message_id"`
 	ClientMessageID     *string        `json:"client_message_id,omitempty"`
 	FromMe              bool           `json:"from_me"`
@@ -168,14 +205,15 @@ type Message struct {
 }
 
 type MessagePage struct {
-	Messages   []Message  `json:"messages"`
-	NextCursor *time.Time `json:"nextCursor"`
+	Messages   []Message `json:"messages"`
+	NextCursor *string   `json:"nextCursor"`
 }
 
 type HistoryAccessResponse struct {
 	Conversation  *Conversation  `json:"conversation,omitempty"`
 	Conversations []Conversation `json:"conversations,omitempty"`
 	Messages      []Message      `json:"messages"`
+	NextCursor    *string        `json:"nextCursor"`
 }
 
 type Envelope[T any] struct {
@@ -199,8 +237,9 @@ type ConversationListFilter struct {
 }
 
 type MessageFilter struct {
-	Limit  int
-	Cursor *time.Time
+	Limit    int
+	CursorAt *time.Time
+	CursorID string
 }
 
 type FindConversationFilter struct {
@@ -213,6 +252,7 @@ type HistoryAccessFilter struct {
 	ConversationID string
 	LeadID         string
 	AllMessages    bool
+	MessageFilter
 }
 
 type GrantAccessRequest struct {
@@ -304,7 +344,29 @@ type sendMessageInput struct {
 type SendMessageResponse struct {
 	ClientMessageID string         `json:"clientMessageId"`
 	ConversationID  string         `json:"conversationId"`
+	Status          string         `json:"status"`
+	Message         *Message       `json:"message,omitempty"`
 	ProviderData    map[string]any `json:"providerData,omitempty"`
+}
+
+type ReactToMessageRequest struct {
+	Emoji            string `json:"emoji"`
+	ClientReactionID string `json:"clientReactionId"`
+}
+
+type reactToMessageInput struct {
+	Emoji            string
+	ClientReactionID string
+}
+
+type ReactToMessageResponse struct {
+	ClientReactionID        string   `json:"clientReactionId"`
+	ConversationID          string   `json:"conversationId"`
+	TargetMessageID         string   `json:"targetMessageId"`
+	TargetProviderMessageID string   `json:"targetProviderMessageId"`
+	Status                  string   `json:"status"`
+	Reaction                *Message `json:"reaction,omitempty"`
+	LeadID                  string   `json:"-"`
 }
 
 type ProviderActionRequest struct {
@@ -440,11 +502,22 @@ func ParseMessageFilter(values url.Values) (MessageFilter, error) {
 
 	filter := MessageFilter{Limit: limit}
 	if raw := strings.TrimSpace(values.Get("cursor")); raw != "" {
-		value, err := time.Parse(time.RFC3339, raw)
+		parts := strings.Split(raw, "|")
+		if len(parts) > 2 {
+			return MessageFilter{}, fmt.Errorf("%w: cursor is invalid", ErrInvalidInput)
+		}
+		value, err := time.Parse(time.RFC3339Nano, parts[0])
 		if err != nil {
 			return MessageFilter{}, fmt.Errorf("%w: cursor is invalid", ErrInvalidInput)
 		}
-		filter.Cursor = &value
+		filter.CursorAt = &value
+		if len(parts) == 2 {
+			cursorID, ok := normalizeUUID(parts[1])
+			if !ok {
+				return MessageFilter{}, fmt.Errorf("%w: cursor is invalid", ErrInvalidInput)
+			}
+			filter.CursorID = cursorID
+		}
 	}
 
 	return filter, nil
@@ -473,7 +546,14 @@ func ParseFindConversationFilter(values url.Values) (FindConversationFilter, err
 }
 
 func ParseHistoryAccessFilter(values url.Values) (HistoryAccessFilter, error) {
-	filter := HistoryAccessFilter{AllMessages: parseBool(values.Get("allMessages"))}
+	messageFilter, err := ParseMessageFilter(values)
+	if err != nil {
+		return HistoryAccessFilter{}, err
+	}
+	filter := HistoryAccessFilter{
+		AllMessages:   parseBool(values.Get("allMessages")),
+		MessageFilter: messageFilter,
+	}
 	if raw := strings.TrimSpace(values.Get("conversationId")); raw != "" {
 		value, ok := normalizeUUID(raw)
 		if !ok {
@@ -552,6 +632,17 @@ func (request SendMessageRequest) Validate() (sendMessageInput, error) {
 	if input.Text == "" && input.MediaURL == "" && input.Base64 == "" {
 		return sendMessageInput{}, fmt.Errorf("%w: text or media is required", ErrInvalidInput)
 	}
+	if len(input.Text) > 10000 || len(input.MediaURL) > 4000 || len(input.Mimetype) > 255 || len(input.Filename) > 255 {
+		return sendMessageInput{}, fmt.Errorf("%w: message field exceeds the allowed size", ErrInvalidInput)
+	}
+	if len(input.ClientMessageID) > 200 {
+		return sendMessageInput{}, fmt.Errorf("%w: clientMessageId is too long", ErrInvalidInput)
+	}
+	// Keep the encoded media below the handler's 8 MiB request ceiling after
+	// accounting for JSON fields and a possible data-URL prefix.
+	if len(input.Base64) > 7*1024*1024 {
+		return sendMessageInput{}, fmt.Errorf("%w: media is too large", ErrInvalidInput)
+	}
 	if input.MediaType != "" && !validEnum(input.MediaType, "text", "image", "video", "document", "audio", "sticker") {
 		return sendMessageInput{}, fmt.Errorf("%w: mediaType is invalid", ErrInvalidInput)
 	}
@@ -574,6 +665,22 @@ func (request SendMessageRequest) Validate() (sendMessageInput, error) {
 	}
 
 	return input, nil
+}
+
+func (request ReactToMessageRequest) Validate() (reactToMessageInput, error) {
+	emoji := strings.TrimSpace(request.Emoji)
+	clientReactionID := strings.TrimSpace(request.ClientReactionID)
+	if clientReactionID == "" || len(clientReactionID) > 200 {
+		return reactToMessageInput{}, fmt.Errorf("%w: clientReactionId is required and must have at most 200 characters", ErrInvalidInput)
+	}
+	if !utf8.ValidString(emoji) || utf8.RuneCountInString(emoji) > 64 {
+		return reactToMessageInput{}, fmt.Errorf("%w: emoji is invalid", ErrInvalidInput)
+	}
+
+	return reactToMessageInput{
+		Emoji:            emoji,
+		ClientReactionID: clientReactionID,
+	}, nil
 }
 
 func (request LinkLeadRequest) Validate() (string, error) {

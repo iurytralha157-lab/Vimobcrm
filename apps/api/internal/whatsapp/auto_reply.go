@@ -172,14 +172,6 @@ func (handler Handler) runAutoReplyNow(ctx context.Context, input autoReplyInput
 		return AutoReplyResponse{}, err
 	}
 
-	handler.publishWhatsAppEvent(replyContext.Tenant, "whatsapp.ai_autoreply.sent", sendResponse.ConversationID, replyContext.Conversation.LeadID, map[string]any{
-		"conversationId":   sendResponse.ConversationID,
-		"clientMessageId":  sendResponse.ClientMessageID,
-		"inboundMessageId": replyContext.Message.ID,
-		"agentId":          aiResponse.Agent.ID,
-		"agentType":        aiResponse.Agent.Type,
-	})
-
 	return AutoReplyResponse{
 		OK:              true,
 		ConversationID:  sendResponse.ConversationID,

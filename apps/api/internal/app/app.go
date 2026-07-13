@@ -161,12 +161,17 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 		EvolutionGo: whatsapp.EvolutionGoConfig{
-			APIURL:     cfg.EvolutionGo.APIURL,
-			APIKey:     cfg.EvolutionGo.APIKey,
-			WebhookURL: cfg.EvolutionGo.WebhookURL,
+			APIURL:                   cfg.EvolutionGo.APIURL,
+			APIKey:                   cfg.EvolutionGo.APIKey,
+			WebhookURL:               cfg.EvolutionGo.WebhookURL,
+			BackendWebhookURL:        cfg.EvolutionGo.BackendWebhookURL,
+			WebhookProcessorMode:     cfg.EvolutionGo.WebhookProcessorMode,
+			WebhookRolloutSessionIDs: cfg.EvolutionGo.WebhookRolloutSessionIDs,
 		},
-	}), realtimeHub).WithAutoReply(aiService, cfg.AI.AutoReplyToken)
+	})).WithAutoReply(aiService, cfg.AI.AutoReplyToken)
 	whatsappHandler.StartAIWorker(ctx, logger)
+	whatsappHandler.StartOutboxWorker(ctx, logger)
+	whatsappHandler.StartWebhookWorker(ctx, logger)
 	whatsappHandler.StartSessionSupervisor(ctx, logger)
 	webhooksHandler := webhooks.NewHandler(webhooks.NewRepository(postgres), realtimeHub)
 	metaHandler := meta.NewHandler(meta.NewRepository(postgres, meta.Config{
@@ -509,6 +514,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("GET /v1/whatsapp/conversations/{id}", withOrganization(http.HandlerFunc(whatsappHandler.ShowConversation)))
 	mux.Handle("GET /v1/whatsapp/conversations/{id}/messages", withOrganization(http.HandlerFunc(whatsappHandler.ListMessages)))
 	mux.Handle("POST /v1/whatsapp/conversations/{id}/send-message", withOrganization(http.HandlerFunc(whatsappHandler.SendMessage)))
+	mux.Handle("POST /v1/whatsapp/conversations/{id}/messages/{messageId}/reaction", withOrganization(http.HandlerFunc(whatsappHandler.ReactToMessage)))
 	mux.Handle("POST /v1/whatsapp/conversations/{id}/mark-read", withOrganization(http.HandlerFunc(whatsappHandler.MarkConversationAsRead)))
 	mux.Handle("POST /v1/whatsapp/conversations/{id}/mark-seen", withOrganization(http.HandlerFunc(whatsappHandler.MarkAsSeenOnWhatsApp)))
 	mux.Handle("POST /v1/whatsapp/conversations/{id}/archive", withOrganization(http.HandlerFunc(whatsappHandler.ArchiveConversation)))

@@ -1,0 +1,25 @@
+{
+  "event": "messages.upsert",
+  "data": {
+    "message": {
+      "Info": {
+        "ID": "provider-lid-promote-2",
+        "Chat": "987654321012345@lid",
+        "SenderPN": "5511666665555@s.whatsapp.net",
+        "IsFromMe": false,
+        "IsGroup": false,
+        "PushName": "Contato LID"
+      },
+      "key": {
+        "id": "provider-lid-promote-2",
+        "remoteJid": "987654321012345@lid",
+        "fromMe": false
+      },
+      "pushName": "Contato LID",
+      "messageTimestamp": 1783814413,
+      "message": {
+        "conversation": "Mensagem com PN revelado"
+      }
+    }
+  }
+}
