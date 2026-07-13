@@ -262,7 +262,7 @@ export default function Agenda() {
               <button
                 className="flex h-8 w-8 items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)]"
                 onClick={() => setPivotDate((d) => addDays(d, navigationStep))}
-                aria-label="Proximo periodo"
+                aria-label="Próximo período"
               >
                 <ChevronRight size={14} />
               </button>

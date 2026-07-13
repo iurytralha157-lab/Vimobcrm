@@ -612,7 +612,7 @@ export function FloatingChat() {
     if (whatsappMessageInputState.disabled || isReadOnlyMode) {
       toast({
         title: "Mensagem nao enviada",
-        description: isReadOnlyMode ? "Voce tem acesso somente leitura a esta conversa." : whatsappMessageInputState.placeholder,
+        description: isReadOnlyMode ? "Você tem acesso somente leitura a esta conversa." : whatsappMessageInputState.placeholder,
         variant: "destructive",
       });
       return;
@@ -640,7 +640,7 @@ export function FloatingChat() {
     if (whatsappMessageInputState.disabled || isReadOnlyMode) {
       toast({
         title: "Audio nao enviado",
-        description: isReadOnlyMode ? "Voce tem acesso somente leitura a esta conversa." : whatsappMessageInputState.placeholder,
+        description: isReadOnlyMode ? "Você tem acesso somente leitura a esta conversa." : whatsappMessageInputState.placeholder,
         variant: "destructive",
       });
       return;
@@ -669,7 +669,7 @@ export function FloatingChat() {
     if (whatsappMessageInputState.disabled || isReadOnlyMode) {
       toast({
         title: "Arquivo nao enviado",
-        description: isReadOnlyMode ? "Voce tem acesso somente leitura a esta conversa." : whatsappMessageInputState.placeholder,
+        description: isReadOnlyMode ? "Você tem acesso somente leitura a esta conversa." : whatsappMessageInputState.placeholder,
         variant: "destructive",
       });
       if (fileInputRef.current) {

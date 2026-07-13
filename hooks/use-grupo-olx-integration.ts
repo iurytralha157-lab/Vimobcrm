@@ -98,12 +98,12 @@ export function useSaveGrupoOLXIntegration() {
 
   return useMutation({
     mutationFn: (input: GrupoOLXIntegrationInput) => {
-      if (!organizationId) throw new Error('Organizacao nao encontrada')
+      if (!organizationId) throw new Error('Organização não encontrada')
       return integrationsAPI.saveGrupoOLX(input, organizationId) as Promise<GrupoOLXIntegration>
     },
     onSuccess: () => {
       invalidateGrupoOLX(queryClient)
-      toast.success('Integracao Grupo OLX salva.')
+      toast.success('Integração Grupo OLX salva.')
     },
     onError: (error) => toast.error(`Erro ao salvar Grupo OLX: ${getErrorMessage(error)}`),
   })
@@ -115,12 +115,12 @@ export function useActivateGrupoOLXIntegration() {
 
   return useMutation({
     mutationFn: () => {
-      if (!organizationId) throw new Error('Organizacao nao encontrada')
+      if (!organizationId) throw new Error('Organização não encontrada')
       return integrationsAPI.activateGrupoOLX(organizationId) as Promise<GrupoOLXIntegration>
     },
     onSuccess: () => {
       invalidateGrupoOLX(queryClient)
-      toast.success('Integracao Grupo OLX ativada.')
+      toast.success('Integração Grupo OLX ativada.')
     },
     onError: (error) => toast.error(`Erro ao ativar Grupo OLX: ${getErrorMessage(error)}`),
   })
@@ -132,7 +132,7 @@ export function useRegenerateGrupoOLXFeedToken() {
 
   return useMutation({
     mutationFn: () => {
-      if (!organizationId) throw new Error('Organizacao nao encontrada')
+      if (!organizationId) throw new Error('Organização não encontrada')
       return integrationsAPI.regenerateGrupoOLXFeedToken(organizationId) as Promise<GrupoOLXIntegration>
     },
     onSuccess: () => {
@@ -149,14 +149,14 @@ export function useSaveGrupoOLXPublications() {
 
   return useMutation({
     mutationFn: (publications: GrupoOLXPublicationInput[]) => {
-      if (!organizationId) throw new Error('Organizacao nao encontrada')
+      if (!organizationId) throw new Error('Organização não encontrada')
       return integrationsAPI.saveGrupoOLXPublications({ publications }, organizationId) as Promise<GrupoOLXPublication[]>
     },
     onSuccess: () => {
       invalidateGrupoOLX(queryClient)
-      toast.success('Imoveis do Grupo OLX atualizados.')
+      toast.success('Imóveis do Grupo OLX atualizados.')
     },
-    onError: (error) => toast.error(`Erro ao salvar imoveis: ${getErrorMessage(error)}`),
+    onError: (error) => toast.error(`Erro ao salvar imóveis: ${getErrorMessage(error)}`),
   })
 }
 

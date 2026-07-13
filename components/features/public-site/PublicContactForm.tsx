@@ -35,7 +35,7 @@ export function PublicContactForm({
   privacyHref,
   propertyCode,
   propertyId,
-  siteTitle = "imobiliaria",
+  siteTitle = "imobiliária",
 }: Readonly<{
   className?: string;
   defaultMessage?: string;
@@ -48,7 +48,11 @@ export function PublicContactForm({
 }>) {
   const [formData, setFormData] = useState(() => buildInitialState(defaultMessage));
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const fieldClass = "w-full rounded-[10px] border-0 bg-[#282828] px-3 text-sm font-normal text-white outline-none transition placeholder:text-zinc-400 focus:bg-[#303030]";
+  const fieldClass = "w-full rounded-[10px] border-0 px-3 text-sm font-normal outline-none transition placeholder:text-current placeholder:opacity-55 focus:brightness-95";
+  const fieldStyle = {
+    backgroundColor: "color-mix(in srgb, var(--site-fg) 8%, var(--site-card))",
+    color: "var(--site-fg)",
+  };
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -68,7 +72,7 @@ export function PublicContactForm({
 
     const parsed = publicSiteContactSchema.safeParse(payload);
     if (!parsed.success) {
-      toast.error(parsed.error.issues[0]?.message || "Revise os dados do formulario.");
+      toast.error(parsed.error.issues[0]?.message || "Revise os dados do formulário.");
       return;
     }
 
@@ -80,7 +84,7 @@ export function PublicContactForm({
     } catch (error) {
       const message = error instanceof z.ZodError
         ? error.issues[0]?.message
-        : "Nao foi possivel enviar agora. Tente novamente em instantes.";
+        : "Não foi possível enviar agora. Tente novamente em instantes.";
       toast.error(message);
     } finally {
       setIsSubmitting(false);
@@ -98,6 +102,7 @@ export function PublicContactForm({
             onChange={(event) => setFormData((current) => ({ ...current, name: event.target.value }))}
             className={`${fieldClass} h-11`}
             placeholder="Seu nome"
+            style={fieldStyle}
           />
         </label>
 
@@ -109,6 +114,7 @@ export function PublicContactForm({
             onChange={(event) => setFormData((current) => ({ ...current, phone: event.target.value }))}
             className={`${fieldClass} h-11`}
             placeholder="(00) 00000-0000"
+            style={fieldStyle}
           />
         </label>
       </div>
@@ -121,27 +127,29 @@ export function PublicContactForm({
           onChange={(event) => setFormData((current) => ({ ...current, email: event.target.value }))}
           className={`${fieldClass} h-11`}
           placeholder="voce@email.com"
+          style={fieldStyle}
         />
       </label>
 
       <label className="block">
-        <span className="sr-only">Melhor horario para ligar</span>
+        <span className="sr-only">Melhor horário para ligar</span>
         <select
           value={formData.bestTime}
           onChange={(event) => setFormData((current) => ({ ...current, bestTime: event.target.value }))}
           className={`${fieldClass} h-11 appearance-none`}
+          style={fieldStyle}
         >
-          <option value="">Selecione um horario</option>
-          <option value="08h as 09h">08h as 09h</option>
-          <option value="09h as 10h">09h as 10h</option>
-          <option value="10h as 11h">10h as 11h</option>
-          <option value="11h as 12h">11h as 12h</option>
-          <option value="12h as 13h">12h as 13h</option>
-          <option value="13h as 14h">13h as 14h</option>
-          <option value="14h as 15h">14h as 15h</option>
-          <option value="15h as 16h">15h as 16h</option>
-          <option value="16h as 17h">16h as 17h</option>
-          <option value="17h as 18h">17h as 18h</option>
+          <option value="">Selecione um horário</option>
+          <option value="08h as 09h">08h às 09h</option>
+          <option value="09h as 10h">09h às 10h</option>
+          <option value="10h as 11h">10h às 11h</option>
+          <option value="11h as 12h">11h às 12h</option>
+          <option value="12h as 13h">12h às 13h</option>
+          <option value="13h as 14h">13h às 14h</option>
+          <option value="14h as 15h">14h às 15h</option>
+          <option value="15h as 16h">15h às 16h</option>
+          <option value="16h as 17h">16h às 17h</option>
+          <option value="17h as 18h">17h às 18h</option>
         </select>
       </label>
 
@@ -153,7 +161,8 @@ export function PublicContactForm({
           value={formData.message}
           onChange={(event) => setFormData((current) => ({ ...current, message: event.target.value }))}
           className={`${fieldClass} min-h-32 py-3`}
-          placeholder="Conte o que voce procura"
+          placeholder="Conte o que você procura"
+          style={fieldStyle}
         />
       </label>
 
@@ -168,7 +177,7 @@ export function PublicContactForm({
         <span>
           Li e concordo com a{" "}
           <a href={privacyHref || "/politica-de-privacidade"} className="font-medium underline underline-offset-4" style={{ color: primaryColor }} target="_blank" rel="noreferrer">
-            Politica de Privacidade
+            Política de Privacidade
           </a>{" "}
           da {siteTitle}.
         </span>

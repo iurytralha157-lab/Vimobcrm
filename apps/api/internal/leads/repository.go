@@ -280,7 +280,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err != nil {
 		return Lead{}, err
 	}
-	if !canEdit {
+	if !canEdit && !canUpdateAssignedLeadStatus(tenantContext, current, input) {
 		return Lead{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -3107,6 +3107,61 @@ func canAssignLeads(tenantContext tenant.Context) bool {
 func canMoveLead(tenantContext tenant.Context, assignedUserID string) bool {
 	return canManageLeads(tenantContext) ||
 		(assignedUserID != "" && assignedUserID == tenantContext.UserID)
+}
+
+func canUpdateAssignedLeadStatus(tenantContext tenant.Context, current leadSnapshot, input updateInput) bool {
+	if !canMoveLead(tenantContext, current.AssignedUserID) {
+		return false
+	}
+	return isLeadStatusPatch(current, input)
+}
+
+func isLeadStatusPatch(current leadSnapshot, input updateInput) bool {
+	for _, field := range []patchString{
+		input.Name,
+		input.Email,
+		input.Phone,
+		input.Source,
+		input.Message,
+		input.PropertyCode,
+		input.PipelineID,
+		input.StageID,
+		input.AssignedUserID,
+		input.InterestValue,
+		input.CommissionPercentage,
+		input.Feedback,
+		input.Cargo,
+		input.Empresa,
+		input.Profissao,
+		input.Endereco,
+		input.Numero,
+		input.Complemento,
+		input.Bairro,
+		input.CEP,
+		input.Cidade,
+		input.UF,
+		input.RendaFamiliar,
+		input.FaixaValorImovel,
+		input.FinalidadeCompra,
+	} {
+		if field.Set {
+			return false
+		}
+	}
+
+	if input.Trabalha.Set || input.ProcuraFinanciamento.Set {
+		return false
+	}
+
+	if input.DealStatus.Set {
+		return true
+	}
+
+	return current.DealStatus == "lost" &&
+		input.LostReason.Set &&
+		!input.PropertyID.Set &&
+		!input.InterestPropertyID.Set &&
+		!input.IsOwnResource.Set
 }
 
 func canTransferLead(tenantContext tenant.Context, assignedUserID string) bool {

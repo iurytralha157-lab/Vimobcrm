@@ -180,7 +180,7 @@ const CONDITION_TYPES = [
   { value: 'campaign_contains', label: 'Nome da campanha contem' },
   { value: 'tag', label: 'Tag' },
   { value: 'city', label: 'Cidade' },
-  { value: 'interest_property', label: 'Interesse em imovel' },
+  { value: 'interest_property', label: 'Interesse em imóvel' },
 ];
 
 const WEBSITE_CATEGORY_OPTIONS = [
@@ -591,7 +591,7 @@ export function DistributionQueueEditor({
       return;
     }
     if (hasPipelineRestriction && !effectiveAllowedPipelineIds.includes(formData.target_pipeline_id)) {
-      toast.error('Voce so pode criar filas para pipelines da sua equipe');
+      toast.error('Você só pode criar filas para pipelines da sua equipe');
       return;
     }
     if (hasTeamRestriction || hasUserRestriction) {
@@ -601,7 +601,7 @@ export function DistributionQueueEditor({
           : !effectiveAllowedUserIds.includes(member.entityId)
       );
       if (invalidMember) {
-        toast.error('Voce so pode distribuir para sua equipe ou membros dela');
+        toast.error('Você só pode distribuir para sua equipe ou membros dela');
         return;
       }
     }
@@ -706,7 +706,7 @@ export function DistributionQueueEditor({
             <div className="flex flex-wrap gap-1">
               {activeWhatsAppSessions.length === 0 && (
                 <span className="rounded-md bg-[var(--app-surface)] px-2 py-1 text-xs text-muted-foreground">
-                  Nenhuma conexao WhatsApp ativa.
+                  Nenhuma conexão WhatsApp ativa.
                 </span>
               )}
               {activeWhatsAppSessions.map(session => (
@@ -735,7 +735,7 @@ export function DistributionQueueEditor({
             <div className="flex flex-wrap gap-1">
               {metaFormConfigs.length === 0 && (
                 <span className="rounded-md bg-[var(--app-surface)] px-2 py-1 text-xs text-muted-foreground">
-                  Nenhum formulario Meta integrado.
+                  Nenhum formulário Meta integrado.
                 </span>
               )}
               {metaFormConfigs.map(form => (
@@ -856,7 +856,7 @@ export function DistributionQueueEditor({
                 <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
                   <div className="flex items-center gap-2">
                     <Settings2 className="h-4 w-4 text-primary" />
-                    <span className="font-medium">Informacoes basicas</span>
+                    <span className="font-medium">Informações básicas</span>
                   </div>
                   <ChevronDown className={cn('h-4 w-4 transition-transform', openSections.includes('basic') && 'rotate-180')} />
                 </CollapsibleTrigger>
@@ -920,7 +920,7 @@ export function DistributionQueueEditor({
                         disabled={!formData.target_pipeline_id}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Selecione um estagio..." />
+                          <SelectValue placeholder="Selecione um estágio..." />
                         </SelectTrigger>
                         <SelectContent>
                           {stages.map(s => (
@@ -949,7 +949,7 @@ export function DistributionQueueEditor({
                 </CollapsibleTrigger>
                 <CollapsibleContent className="space-y-4 px-1 pt-4">
                   <p className="rounded-lg bg-[var(--app-surface-soft)] px-3 py-2 text-xs text-muted-foreground">
-                    Defina quais leads entram nesta fila. Use canal para regras amplas e os campos especificos quando quiser travar uma origem exata.
+                    Defina quais leads entram nesta fila. Use canal para regras amplas e os campos específicos quando quiser travar uma origem exata.
                   </p>
                   {formData.conditions.map((condition) => (
                     <div key={condition.id} className="space-y-3 rounded-lg border-0 bg-[var(--app-surface-soft)] p-3">
@@ -1052,7 +1052,7 @@ export function DistributionQueueEditor({
                       <SelectContent>
                         {selectableUsers.length === 0 && (
                           <SelectItem value="__no_users" disabled>
-                            Nenhum corretor ativo disponivel.
+                            Nenhum corretor ativo disponível.
                           </SelectItem>
                         )}
                         {selectableUsers.map(user => (
@@ -1081,7 +1081,7 @@ export function DistributionQueueEditor({
                   </div>
                   {teams.length > 0 && activeTeams.length === 0 && (
                     <p className="text-xs text-muted-foreground">
-                      Ative uma equipe em Gestao &gt; Equipes para usa-la em uma fila.
+                      Ative uma equipe em Gestão &gt; Equipes para usá-la em uma fila.
                     </p>
                   )}
                   {formData.is_active && formData.members.length === 0 && (

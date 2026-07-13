@@ -68,7 +68,7 @@ type StatusFilter = 'all' | AttentionItemStatus
 
 const STATUS_LABELS: Record<AttentionItemStatus, string> = {
   monitoring: 'Monitorando',
-  warning: 'Proximo do limite',
+  warning: 'Próximo do limite',
   breached: 'Tempo excedido',
   escalated: 'Escalado',
   acknowledged: 'Assumido',
@@ -96,7 +96,7 @@ const CLOSED_ITEM_STATUSES = new Set<AttentionItemStatus>(['resolved', 'redistri
 
 const STATUS_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
   { value: 'all', label: 'Todos os alertas' },
-  { value: 'warning', label: 'Proximos do limite' },
+  { value: 'warning', label: 'Próximos do limite' },
   { value: 'breached', label: 'Tempo excedido' },
   { value: 'escalated', label: 'Escalados' },
   { value: 'acknowledged', label: 'Assumidos' },
@@ -156,7 +156,7 @@ function getSeverity(status: AttentionItemStatus) {
 
 function getDeadline(item: AttentionItem) {
   const due = new Date(item.dueAt)
-  if (!isValid(due)) return { label: 'Prazo indisponivel', overdue: false, detail: null }
+  if (!isValid(due)) return { label: 'Prazo indisponível', overdue: false, detail: null }
 
   if (CLOSED_ITEM_STATUSES.has(item.status)) {
     return {
@@ -197,7 +197,7 @@ function ScopeFilter({
     { value: 'mine', label: 'Minha fila', icon: UserRound },
   ]
   if (canViewTeam) options.push({ value: 'team', label: 'Minha equipe', icon: UsersRound })
-  if (canViewOrganization) options.push({ value: 'organization', label: 'Organizacao', icon: ShieldAlert })
+  if (canViewOrganization) options.push({ value: 'organization', label: 'Organização', icon: ShieldAlert })
 
   return (
     <div className="flex flex-wrap gap-2">
@@ -318,8 +318,8 @@ function AttentionItemCard({ item }: { item: AttentionItem }) {
 
             <div className="grid gap-x-5 gap-y-2 text-sm sm:grid-cols-2 xl:grid-cols-3">
               <Detail label="Corretor" value={item.assignedUserName || 'Sem responsavel'} />
-              <Detail label="Pipeline" value={item.pipelineName || 'Nao informada'} />
-              <Detail label="Etapa" value={item.stageName || 'Nao informada'} />
+              <Detail label="Pipeline" value={item.pipelineName || 'Não informada'} />
+              <Detail label="Etapa" value={item.stageName || 'Não informada'} />
             </div>
 
             <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
@@ -382,7 +382,7 @@ function AttentionItemCard({ item }: { item: AttentionItem }) {
 
         {isShadow && !isClosed && (
           <div className="mt-4 rounded-lg border border-blue-500/20 bg-blue-500/[0.06] px-3 py-2 text-xs text-blue-400">
-            Simulacao em modo de observacao: este item mede o SLA, mas nao exige acao do corretor nem dispara redistribuicao.
+            Simulação em modo de observação: este item mede o SLA, mas não exige ação do corretor nem dispara redistribuição.
           </div>
         )}
       </CardContent>
@@ -456,9 +456,9 @@ function AttentionQueue() {
       ) : itemsQuery.isError ? (
         <Alert variant="destructive">
           <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Nao foi possivel carregar o Centro de Atencao</AlertTitle>
+          <AlertTitle>Não foi possível carregar o Centro de Atenção</AlertTitle>
           <AlertDescription className="mt-2 flex flex-wrap items-center gap-3">
-            <span>Confira se a API local esta rodando e se sua sessao tem acesso a esta organizacao.</span>
+            <span>Confira se a API local está rodando e se sua sessão tem acesso a esta organização.</span>
             <Button variant="outline" size="sm" onClick={() => itemsQuery.refetch()}>Tentar novamente</Button>
           </AlertDescription>
         </Alert>
@@ -469,7 +469,7 @@ function AttentionQueue() {
             <div className="max-w-lg">
               <h3 className="font-semibold">Fila em dia</h3>
               <p className="mt-1 text-sm text-muted-foreground">
-                Nao ha alertas elegiveis para este escopo e filtro. O sistema continua observando apenas leads nao manuais criados depois da implantacao.
+                Não há alertas elegíveis para este escopo e filtro. O sistema continua observando apenas leads não manuais criados depois da implantação.
               </p>
             </div>
           </CardContent>
@@ -514,7 +514,7 @@ export function AttentionCenterScreen() {
             <TabsList>
               <TabsTrigger value="queue"><BellRing className="mr-2 h-4 w-4" />Fila de atencao</TabsTrigger>
               {access.isAdmin && (
-                <TabsTrigger value="policies"><Settings2 className="mr-2 h-4 w-4" />Politicas</TabsTrigger>
+                <TabsTrigger value="policies"><Settings2 className="mr-2 h-4 w-4" />Políticas</TabsTrigger>
               )}
             </TabsList>
           </Tabs>

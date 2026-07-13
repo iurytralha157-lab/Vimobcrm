@@ -1170,9 +1170,18 @@ func conversationVisibilitySQL() string {
 		and ws.provider = 'evolution_go'
 		and coalesce(ws.is_active, true) = true
 		and coalesce(ws.status, '') <> 'deleted'
-		and l.id is not null
-		and l.organization_id = wc.organization_id
-		and ` + leadVisibilitySQL() + `
+		and (
+			(
+				wc.lead_id is not null
+				and l.id is not null
+				and l.organization_id = wc.organization_id
+				and ` + leadVisibilitySQL() + `
+			)
+			or (
+				wc.lead_id is null
+				and ws.owner_user_id = $2::uuid
+			)
+		)
 	)`
 }
 

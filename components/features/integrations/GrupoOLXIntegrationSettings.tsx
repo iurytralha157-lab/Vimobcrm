@@ -121,7 +121,7 @@ function statusLabel(status?: string | null) {
     case "error":
       return "Com erro";
     default:
-      return "Nao configurado";
+      return "Não configurado";
   }
 }
 
@@ -141,7 +141,7 @@ async function copyToClipboard(value: string, label: string) {
     await navigator.clipboard.writeText(value);
     toast.success(`${label} copiado.`);
   } catch {
-    toast.error(`Nao foi possivel copiar ${label.toLowerCase()}.`);
+    toast.error(`Não foi possível copiar ${label.toLowerCase()}.`);
   }
 }
 
@@ -239,7 +239,7 @@ export function GrupoOLXIntegrationSettings() {
       }));
 
     if (payload.length === 0) {
-      toast.info("Nenhum imovel selecionado para publicar.");
+      toast.info("Nenhum imóvel selecionado para publicar.");
       return;
     }
 
@@ -320,11 +320,11 @@ export function GrupoOLXIntegrationSettings() {
           {!urls ? (
             <Alert>
               <AlertCircle className="h-4 w-4" />
-              <AlertDescription>Ative a integracao para gerar as URLs de XML e webhook.</AlertDescription>
+              <AlertDescription>Ative a integração para gerar as URLs de XML e webhook.</AlertDescription>
             </Alert>
           ) : (
             <div className="space-y-3">
-              <EndpointField label="XML de imoveis" value={urls.feedURL} external />
+              <EndpointField label="XML de imóveis" value={urls.feedURL} external />
               <EndpointField label="Webhook de leads" value={urls.leadWebhookURL} />
               <EndpointField label="Webhook de relatorios" value={urls.importReportURL} />
             </div>
@@ -346,7 +346,7 @@ export function GrupoOLXIntegrationSettings() {
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h4 className="font-medium">Dados enviados no XML</h4>
-            <p className="text-sm text-muted-foreground">Contato comercial, URL publica do imovel e segredo opcional do webhook.</p>
+            <p className="text-sm text-muted-foreground">Contato comercial, URL pública do imóvel e segredo opcional do webhook.</p>
           </div>
           <Button className="gap-2" onClick={saveSettings} disabled={saveIntegration.isPending}>
             {saveIntegration.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -357,7 +357,7 @@ export function GrupoOLXIntegrationSettings() {
           <Field label="Nome do contato" value={settingsDraft.contactName} onChange={(value) => updateSettingsDraft("contactName", value)} />
           <Field label="E-mail do contato" type="email" value={settingsDraft.contactEmail} onChange={(value) => updateSettingsDraft("contactEmail", value)} />
           <Field label="Telefone do contato" value={settingsDraft.contactPhone} onChange={(value) => updateSettingsDraft("contactPhone", value)} />
-          <Field label="Base URL do imovel" value={settingsDraft.detailBaseURL} onChange={(value) => updateSettingsDraft("detailBaseURL", value)} />
+          <Field label="Base URL do imóvel" value={settingsDraft.detailBaseURL} onChange={(value) => updateSettingsDraft("detailBaseURL", value)} />
           <Field label="Segredo webhook" type="password" value={settingsDraft.leadWebhookSecret} placeholder={integration?.lead_webhook_secret_configured ? "Ja configurado" : "Opcional"} onChange={(value) => updateSettingsDraft("leadWebhookSecret", value)} />
         </div>
       </section>
@@ -365,15 +365,15 @@ export function GrupoOLXIntegrationSettings() {
       <section className="space-y-4 rounded-[8px] border border-white/[0.055] p-4">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <h4 className="font-medium">Imoveis publicados</h4>
-            <p className="text-sm text-muted-foreground">Selecione os imoveis que entram no XML do Grupo OLX.</p>
+            <h4 className="font-medium">Imóveis publicados</h4>
+            <p className="text-sm text-muted-foreground">Selecione os imóveis que entram no XML do Grupo OLX.</p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <Button variant="outline" onClick={() => toggleAllVisible(true)}>Marcar busca</Button>
             <Button variant="outline" onClick={() => toggleAllVisible(false)}>Desmarcar busca</Button>
             <Button className="gap-2" onClick={saveSelectedPublications} disabled={savePublications.isPending}>
               {savePublications.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              Salvar imoveis
+              Salvar imóveis
             </Button>
           </div>
         </div>
@@ -383,7 +383,7 @@ export function GrupoOLXIntegrationSettings() {
           <Input
             value={propertySearch}
             onChange={(event) => setPropertySearch(event.target.value)}
-            placeholder="Buscar imovel por codigo, titulo, cidade ou bairro"
+            placeholder="Buscar imóvel por código, título, cidade ou bairro"
             className="pl-9"
           />
         </div>
@@ -412,7 +412,7 @@ export function GrupoOLXIntegrationSettings() {
                 ) : properties.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
-                      Nenhum imovel encontrado.
+                      Nenhum imóvel encontrado.
                     </TableCell>
                   </TableRow>
                 ) : (

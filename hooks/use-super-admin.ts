@@ -64,13 +64,13 @@ export function useSuperAdmin() {
       cpf?: string;
     }) => adminAPI.createOrganization(data),
     onSuccess: (data) => {
-      const orgName = String(data.organization?.name || 'Organizacao');
-      toast.success(`Organizacao "${orgName}" criada com sucesso!`);
+      const orgName = String(data.organization?.name || 'Organização');
+      toast.success(`Organização "${orgName}" criada com sucesso!`);
       queryClient.invalidateQueries({ queryKey: ['super-admin-organizations'] });
       queryClient.invalidateQueries({ queryKey: ['super-admin-users'] });
     },
     onError: (error) => {
-      toast.error('Erro ao criar organizacao: ' + getFriendlyErrorMessage(error));
+      toast.error('Erro ao criar organização: ' + getFriendlyErrorMessage(error));
     },
   });
 
@@ -90,7 +90,7 @@ export function useSuperAdmin() {
       max_whatsapp_sessions_override?: number | null;
     }) => adminAPI.updateOrganization(data),
     onSuccess: (_, variables) => {
-      toast.success('Organizacao atualizada!');
+      toast.success('Organização atualizada!');
       queryClient.invalidateQueries({ queryKey: ['super-admin-organizations'] });
       if (variables.id) {
         queryClient.invalidateQueries({ queryKey: ['org-details', variables.id] });
@@ -104,12 +104,12 @@ export function useSuperAdmin() {
   const deleteOrganization = useMutation({
     mutationFn: (organizationId: string) => adminAPI.deleteOrganization(organizationId),
     onSuccess: () => {
-      toast.success('Organizacao desativada com sucesso!');
+      toast.success('Organização desativada com sucesso!');
       queryClient.invalidateQueries({ queryKey: ['super-admin-organizations'] });
       queryClient.invalidateQueries({ queryKey: ['super-admin-users'] });
     },
     onError: (error) => {
-      toast.error('Erro ao desativar organizacao: ' + getFriendlyErrorMessage(error));
+      toast.error('Erro ao desativar organização: ' + getFriendlyErrorMessage(error));
     },
   });
 

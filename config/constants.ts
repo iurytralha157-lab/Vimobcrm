@@ -4,6 +4,7 @@ export const FEATURES = {
   ENABLE_PWA: true,
   ENABLE_NOTIFICATIONS: true,
   ENABLE_INTEGRATIONS: true,
+  ENABLE_GOOGLE_CALENDAR_INTEGRATION: false,
   ENABLE_ATTENTION_CENTER: false,
 } as const
 
@@ -61,7 +62,7 @@ export const ORG_SEGMENTS = {
 export const LOSS_REASON_OTHER_VALUE = 'outros'
 
 export const DEFAULT_LOSS_REASON_OPTIONS = [
-  { value: 'nao_respondeu', label: 'Nao respondeu' },
+  { value: 'nao_respondeu', label: 'Não respondeu' },
   { value: 'outra_regiao', label: 'Lead de outra regiao' },
   { value: 'contato_invalido', label: 'Contato invalido / sem telefone' },
   { value: 'sem_interesse', label: 'Sem interesse no momento' },

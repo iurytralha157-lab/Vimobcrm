@@ -179,9 +179,9 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 
 // claimExactQuarantinedConversationForLead promotes only the exact
 // organization/session/contact quarantine row. It intentionally does not use
-// conversationVisibilitySQL: unlinked rows are hidden from ordinary API reads,
-// but an authorized lead + owned session + exact stored lead phone is enough
-// to claim this single row safely.
+// conversationVisibilitySQL: unlinked rows can be browsed by the session owner,
+// but an authorized lead + owned session + exact stored lead phone is still
+// required to claim this single row safely.
 func (repo Repository) claimExactQuarantinedConversationForLead(
 	ctx context.Context,
 	tenantContext tenant.Context,

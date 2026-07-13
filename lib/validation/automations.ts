@@ -37,7 +37,7 @@ const automationNodeBaseSchema = z.object({
 
 const optionalConfigString = z.string().trim().max(10_000).nullish()
 const httpsConfigURLSchema = z.string().trim().url().max(4_000)
-  .refine((value) => new URL(value).protocol === 'https:', 'Use uma URL HTTPS publica')
+  .refine((value) => new URL(value).protocol === 'https:', 'Use uma URL HTTPS pública')
 const ianaTimezoneSchema = z.string().trim().min(1).max(100).refine((value) => {
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: value }).format()
@@ -45,7 +45,7 @@ const ianaTimezoneSchema = z.string().trim().min(1).max(100).refine((value) => {
   } catch {
     return false
   }
-}, 'Informe um fuso horario IANA valido')
+}, 'Informe um fuso horário IANA válido')
 const automationMediaPathSchema = z.string().trim().max(1_000).regex(
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/(images|audios|videos)\/[^/]+$/i,
   'Selecione um arquivo valido da galeria',
@@ -82,7 +82,7 @@ export const automationTriggerNodeConfigSchema = z.object({
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['scheduled_at'], message: 'Informe a data e hora do disparo' })
     }
     if (!config.timezone) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['timezone'], message: 'Informe o fuso horario do disparo' })
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['timezone'], message: 'Informe o fuso horário do disparo' })
     }
     if (config.target_type !== 'lead' || !config.target_lead_id) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['target_lead_id'], message: 'Selecione o lead que recebera o fluxo' })
@@ -93,7 +93,7 @@ export const automationTriggerNodeConfigSchema = z.object({
     if (!config.inactivity_value) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['inactivity_value'], message: 'Informe o tempo de inatividade' })
     } else if (config.inactivity_value > maxValue) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['inactivity_value'], message: 'O periodo de inatividade nao pode ultrapassar um ano' })
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['inactivity_value'], message: 'O período de inatividade não pode ultrapassar um ano' })
     }
   }
 })
@@ -149,7 +149,7 @@ const automationActionConfigSchemas = {
   set_variable: z.record(z.unknown()).superRefine((config, ctx) => {
     if (config.actionType === 'property_interest') {
       if (!uuidSchema.safeParse(config.property_id).success) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['property_id'], message: 'Selecione o imovel' })
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['property_id'], message: 'Selecione o imóvel' })
       }
       return
     }
@@ -205,7 +205,7 @@ export const automationFlowNodeSchema = z.discriminatedUnion('type', [
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['action_type'],
-      message: 'Esta acao depende do servico canonico do CRM e ainda nao pode ser publicada',
+      message: 'Esta ação depende do serviço canônico do CRM e ainda não pode ser publicada',
     })
     return
   }
@@ -267,7 +267,7 @@ export const automationFlowDefinitionSchema = z.object({
     const branch = connection.condition_branch || connection.source_handle || ''
     const key = `${connection.source}:${branch}:${connection.target}`
     if (connectionKeys.has(key)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['connections', index], message: 'A conexao esta duplicada' })
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['connections', index], message: 'A conexão está duplicada' })
     }
     connectionKeys.add(key)
     outgoing.set(connection.source, [...(outgoing.get(connection.source) ?? []), connection.target])
@@ -340,7 +340,7 @@ export const automationFlowDefinitionSchema = z.object({
 
   flow.nodes.forEach((node, index) => {
     if (!reachable.has(node.id)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['nodes', index], message: 'O no nao esta conectado ao gatilho' })
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['nodes', index], message: 'O nó não está conectado ao gatilho' })
     }
   })
   if (hasCycle) {

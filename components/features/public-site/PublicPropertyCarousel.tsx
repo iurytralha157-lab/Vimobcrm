@@ -94,7 +94,7 @@ export function PublicPropertyCarousel({ backgroundColor, images, title }: Publi
               type="button"
               onClick={goToNext}
               className="absolute right-5 top-1/2 inline-flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-white/92 text-zinc-900 transition hover:bg-white"
-              aria-label="Proxima foto"
+              aria-label="Próxima foto"
             >
               <ChevronRight className="h-5 w-5" />
             </button>

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { integrationsAPI } from "@/lib/api";
+import { FEATURES } from "@/config/constants";
 import { toast } from "sonner";
 
 export interface GoogleCalendarConnectionStatus {
@@ -27,6 +28,8 @@ type GoogleCalendarFunctionResponse<T = unknown> = {
   error?: string;
 } & T;
 
+const GOOGLE_CALENDAR_DISABLED_MESSAGE = "Integração com Google Agenda desativada temporariamente.";
+
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   if (typeof error === "object" && error && "message" in error) {
@@ -37,6 +40,10 @@ function getErrorMessage(error: unknown) {
 }
 
 async function invokeGoogleCalendar<T>(body: Record<string, unknown>) {
+  if (!FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION) {
+    throw new Error(GOOGLE_CALENDAR_DISABLED_MESSAGE);
+  }
+
   const data = await integrationsAPI.invokeFunction<GoogleCalendarFunctionResponse<T>>("google-calendar-oauth", body);
   if (!data?.success) throw new Error(data?.error || "Falha na integracao Google Calendar");
   return data;
@@ -49,10 +56,11 @@ export function useGoogleCalendarStatus() {
     queryKey: ["google-calendar-status", profile?.id],
     queryFn: async () => {
       if (!profile?.id) return null;
+      if (!FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION) return null;
       const data = await invokeGoogleCalendar<{ connection: GoogleCalendarConnectionStatus | null }>({ action: "status" });
       return data.connection;
     },
-    enabled: !!profile?.id,
+    enabled: !!profile?.id && FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION,
     staleTime: 1000 * 60,
   });
 }
@@ -112,7 +120,7 @@ export function useToggleGoogleCalendarSync() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["google-calendar-status"] });
-      toast.success("Sincronizacao atualizada");
+      toast.success("Sincronização atualizada");
     },
     onError: (error) => {
       console.error("Error toggling Google Calendar sync:", error);

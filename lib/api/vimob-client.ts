@@ -219,7 +219,7 @@ async function makeRequestOrThrow(path: string, options: RequestOptions, headers
       })
     }
 
-    throw new VimobAPIError(`A Vimob API nao esta acessivel em ${baseURL}. Inicie apps/api ou ajuste NEXT_PUBLIC_VIMOB_API_URL.`, {
+    throw new VimobAPIError(`A Vimob API não está acessível em ${baseURL}. Inicie apps/api ou ajuste NEXT_PUBLIC_VIMOB_API_URL.`, {
       code: 'api_unavailable',
       status: 0,
     })
@@ -264,7 +264,7 @@ async function makeRequestWithLocalFallback(path: string, options: RequestOption
     }
   }
 
-  throw lastError || new VimobAPIError('A Vimob API nao esta acessivel.', {
+  throw lastError || new VimobAPIError('A Vimob API não está acessível.', {
     code: 'api_unavailable',
     status: 0,
   })

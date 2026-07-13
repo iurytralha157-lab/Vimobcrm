@@ -53,8 +53,8 @@ export function useCreatePropertyType() {
 
   return useMutation({
     mutationFn: async (name: string) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado')
-      if (!organizationId) throw new Error('Usuario nao possui organizacao')
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
 
       const { data } = await propertyCatalogAPI.createType(organizationId, name)
       return data

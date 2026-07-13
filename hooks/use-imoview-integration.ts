@@ -51,7 +51,7 @@ export function useSaveImoviewIntegration() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['imoview-integration'] });
-      toast.success('Integracao Imoview salva!');
+      toast.success('Integração Imoview salva!');
     },
     onError: (e: unknown) => toast.error(`Erro ao salvar: ${getErrorMessage(e)}`),
   });
@@ -88,7 +88,7 @@ export function useSyncImoviewProperties() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['imoview-integration'] });
       queryClient.invalidateQueries({ queryKey: ['properties'] });
-      toast.success(`Sincronizacao concluida! ${data.synced} imoveis importados.`);
+      toast.success(`Sincronização concluída! ${data.synced} imóveis importados.`);
     },
     onError: (e: unknown) => toast.error(`Erro na sincronizacao: ${getErrorMessage(e)}`),
   });
@@ -105,7 +105,7 @@ export function useDeleteImoviewIntegration() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['imoview-integration'] });
-      toast.success('Integracao removida!');
+      toast.success('Integração removida!');
     },
   });
 }

@@ -47,19 +47,19 @@ import {
 import { PublicContactLeadDialog } from "./PublicContactLeadDialog";
 
 const defaultStats = [
-  { value: "500+", label: "Imoveis negociados" },
+  { value: "500+", label: "Imóveis negociados" },
   { value: "98%", label: "Clientes satisfeitos" },
-  { value: "15+", label: "Anos de experiencia" },
+  { value: "15+", label: "Anos de experiência" },
   { value: "50+", label: "Parceiros" },
 ];
 
-const defaultCheckmarks = ["Atendimento personalizado", "Imoveis verificados", "Suporte completo"];
+const defaultCheckmarks = ["Atendimento personalizado", "Imóveis verificados", "Suporte completo"];
 
 const defaultFeatures = [
   {
     icon: "building",
-    title: "Curadoria de imoveis",
-    description: "Opcoes selecionadas para quem quer comprar, vender ou alugar com tranquilidade.",
+    title: "Curadoria de imóveis",
+    description: "Opções selecionadas para quem quer comprar, vender ou alugar com tranquilidade.",
   },
   {
     icon: "users",
@@ -68,13 +68,13 @@ const defaultFeatures = [
   },
   {
     icon: "award",
-    title: "Experiencia de mercado",
-    description: "Processo claro desde o primeiro contato ate a conclusao da negociacao.",
+    title: "Experiência de mercado",
+    description: "Processo claro desde o primeiro contato até a conclusão da negociação.",
   },
   {
     icon: "shield",
-    title: "Seguranca no processo",
-    description: "Informacoes organizadas e acompanhamento proximo em cada etapa.",
+    title: "Segurança no processo",
+    description: "Informações organizadas e acompanhamento próximo em cada etapa.",
   },
 ];
 
@@ -126,7 +126,7 @@ export function PublicHomeScreen({
     ? searchFilters
     : [
         { filter_key: "search", label: "Buscar", position: 0 },
-        { filter_key: "tipo", label: "Tipo de imovel", position: 1 },
+        { filter_key: "tipo", label: "Tipo de imóvel", position: 1 },
         { filter_key: "finalidade", label: "Finalidade", position: 2 },
       ];
   const featuredPropertyIds = new Set(data.featured.map((property) => property.id));
@@ -233,7 +233,7 @@ export function PublicPropertiesScreen({
 
   return (
     <>
-      <PageHero backgroundImage={banner} eyebrow="Imoveis" title={getPropertiesHeroTitle(query)} />
+      <PageHero backgroundImage={banner} eyebrow="Imóveis" title={getPropertiesHeroTitle(query)} />
       <section className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-10 sm:px-6 lg:grid-cols-[290px_1fr] lg:px-8">
         <PublicPropertiesFilterSidebar basePath={basePath} data={data} query={query} site={site} />
 
@@ -241,7 +241,7 @@ export function PublicPropertiesScreen({
           <div className="mb-5 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
             <div>
               <p className="text-sm font-medium opacity-70" style={{ color: tokens.foreground }}>
-                {data.total} imoveis encontrados
+                {data.total} imóveis encontrados
               </p>
               <h2 className="text-2xl font-normal" style={{ color: tokens.foreground }}>
                 Resultado da busca
@@ -261,7 +261,7 @@ export function PublicPropertiesScreen({
               ))}
             </div>
           ) : (
-            <EmptyState site={site} title="Nenhum imovel encontrado" description="Tente ajustar os filtros ou fale com a equipe." />
+            <EmptyState site={site} title="Nenhum imóvel encontrado" description="Tente ajustar os filtros ou fale com a equipe." />
           )}
 
           {data.totalPages > 1 ? (
@@ -301,7 +301,7 @@ function PublicPropertiesFilterSidebar({
             <input
               name="search"
               defaultValue={stringQuery(query.search)}
-              placeholder="Codigo, condominio, bairro ou cidade"
+              placeholder="Código, condomínio, bairro ou cidade"
               className={`${inputClass} pl-9`}
             />
           </div>
@@ -309,12 +309,12 @@ function PublicPropertiesFilterSidebar({
 
         <FilterSelect className={selectClass} label="Cidade" name="cidade" options={data.cities} placeholder="Selecione sua cidade" value={stringQuery(query.cidade)} />
         <FilterSelect className={selectClass} label="Bairro" name="bairro" options={data.neighborhoods} placeholder="Selecione seu bairro" value={stringQuery(query.bairro)} />
-        <FilterSelect className={selectClass} label="Tipo de imovel" name="tipo" options={data.types} placeholder="Tipo de imovel" value={stringQuery(query.tipo)} />
+        <FilterSelect className={selectClass} label="Tipo de imóvel" name="tipo" options={data.types} placeholder="Tipo de imóvel" value={stringQuery(query.tipo)} />
         <FilterSelect className={selectClass} label="Finalidade" name="finalidade" options={buildPurposeOptions(data.purposes)} placeholder="Finalidade" value={stringQuery(query.finalidade)} />
 
         <div className="grid grid-cols-2 gap-3">
-          <input name="min_price" defaultValue={stringQuery(query.min_price)} placeholder="Valor minimo" className={inputClass} inputMode="numeric" />
-          <input name="max_price" defaultValue={stringQuery(query.max_price)} placeholder="Valor maximo" className={inputClass} inputMode="numeric" />
+          <input name="min_price" defaultValue={stringQuery(query.min_price)} placeholder="Valor mínimo" className={inputClass} inputMode="numeric" />
+          <input name="max_price" defaultValue={stringQuery(query.max_price)} placeholder="Valor máximo" className={inputClass} inputMode="numeric" />
         </div>
 
         <details className="group">
@@ -323,29 +323,29 @@ function PublicPropertiesFilterSidebar({
             <ChevronDown className="ml-auto h-4 w-4 opacity-55 transition group-open:rotate-180" />
           </summary>
           <div className="mt-3 space-y-3">
-            <FilterSelect className={selectClass} label="Condominio" name="condominio" options={data.condominiums || []} placeholder="Condominio" value={stringQuery(query.condominio)} />
+            <FilterSelect className={selectClass} label="Condomínio" name="condominio" options={data.condominiums || []} placeholder="Condomínio" value={stringQuery(query.condominio)} />
             <FilterSelect className={selectClass} label="Quartos" name="quartos" options={numericOptions} placeholder="Quartos" value={stringQuery(query.quartos)} />
             <FilterSelect className={selectClass} label="Suites" name="suites" options={numericOptions} placeholder="Suites" value={stringQuery(query.suites)} />
             <FilterSelect className={selectClass} label="Banheiros" name="banheiros" options={numericOptions} placeholder="Banheiros" value={stringQuery(query.banheiros)} />
             <FilterSelect className={selectClass} label="Vagas" name="vagas" options={numericOptions} placeholder="Vagas" value={stringQuery(query.vagas)} />
             <FilterSelect
               className={selectClass}
-              label="Mobilia"
+              label="Mobília"
               name="mobilia"
               options={[
                 { value: "mobiliado", label: "Mobiliado" },
-                { value: "nao", label: "Sem mobilia" },
+                { value: "nao", label: "Sem mobília" },
               ]}
-              placeholder="Mobilia"
+              placeholder="Mobília"
               value={stringQuery(query.mobilia)}
             />
             <div className="grid grid-cols-2 gap-3">
-              <input name="area_util_min" defaultValue={stringQuery(query.area_util_min)} placeholder="Area util min." className={inputClass} inputMode="numeric" />
-              <input name="area_util_max" defaultValue={stringQuery(query.area_util_max)} placeholder="Area util max." className={inputClass} inputMode="numeric" />
+              <input name="area_util_min" defaultValue={stringQuery(query.area_util_min)} placeholder="Área útil mín." className={inputClass} inputMode="numeric" />
+              <input name="area_util_max" defaultValue={stringQuery(query.area_util_max)} placeholder="Área útil máx." className={inputClass} inputMode="numeric" />
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <input name="area_total_min" defaultValue={stringQuery(query.area_total_min)} placeholder="Area total min." className={inputClass} inputMode="numeric" />
-              <input name="area_total_max" defaultValue={stringQuery(query.area_total_max)} placeholder="Area total max." className={inputClass} inputMode="numeric" />
+              <input name="area_total_min" defaultValue={stringQuery(query.area_total_min)} placeholder="Área total mín." className={inputClass} inputMode="numeric" />
+              <input name="area_total_max" defaultValue={stringQuery(query.area_total_max)} placeholder="Área total máx." className={inputClass} inputMode="numeric" />
             </div>
             <FilterSelect
               className={selectClass}
@@ -353,7 +353,7 @@ function PublicPropertiesFilterSidebar({
               name="aceita_financiamento"
               options={[
                 { value: "true", label: "Aceita financiamento" },
-                { value: "false", label: "Nao aceita financiamento" },
+                { value: "false", label: "Não aceita financiamento" },
               ]}
               placeholder="Financiamento"
               value={stringQuery(query.aceita_financiamento)}
@@ -364,7 +364,7 @@ function PublicPropertiesFilterSidebar({
               name="aceita_permuta"
               options={[
                 { value: "true", label: "Aceita permuta" },
-                { value: "false", label: "Nao aceita permuta" },
+                { value: "false", label: "Não aceita permuta" },
               ]}
               placeholder="Permuta"
               value={stringQuery(query.aceita_permuta)}
@@ -378,7 +378,7 @@ function PublicPropertiesFilterSidebar({
           style={{ backgroundColor: tokens.primary }}
         >
           <Search className="h-4 w-4" />
-          Buscar imoveis
+          Buscar imóveis
         </button>
       </form>
       <style>{`
@@ -507,7 +507,7 @@ export function PublicPropertyDetailScreen({
       ...(property.image_urls || []),
     ].filter(Boolean)),
   ) as string[];
-  const contactMessage = `Ola, vim pelo site e tenho interesse no imovel ${title}${code ? ` (ref. ${code})` : ""}. Gostaria de receber mais informacoes.`;
+  const contactMessage = `Olá, vim pelo site e tenho interesse no imóvel ${title}${code ? ` (ref. ${code})` : ""}. Gostaria de receber mais informações.`;
   const privacyHref = buildSiteHref(basePath, "/politica-de-privacidade");
 
   return (
@@ -520,7 +520,7 @@ export function PublicPropertyDetailScreen({
             <p className="inline-flex rounded-[8px] px-3 py-1 text-xs font-medium uppercase tracking-wide text-white" style={{ backgroundColor: tokens.primary }}>
               Ref: {code}
             </p>
-            <h1 className="mt-4 text-3xl font-normal leading-tight sm:text-4xl" style={{ color: tokens.foreground }}>
+            <h1 className="mt-4 text-2xl font-normal leading-snug sm:text-[28px] lg:text-[30px]" style={{ color: tokens.foreground }}>
               {title}
             </h1>
             {location ? (
@@ -533,7 +533,7 @@ export function PublicPropertyDetailScreen({
 
           <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card }}>
             <h2 className="text-xl font-normal" style={{ color: tokens.foreground }}>
-              Detalhes do imovel
+              Detalhes do imóvel
             </h2>
             <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
               {propertyStats.map((stat) => (
@@ -550,7 +550,7 @@ export function PublicPropertyDetailScreen({
             {extraDetails.length > 0 ? (
               <div className="mt-6">
                 <h3 className="text-sm font-normal opacity-70" style={{ color: tokens.foreground }}>
-                  Detalhes extras do imovel
+                  Detalhes extras do imóvel
                 </h3>
                 <TagList items={extraDetails} primaryColor={tokens.primary} />
               </div>
@@ -559,10 +559,10 @@ export function PublicPropertyDetailScreen({
 
           <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card }}>
             <h2 className="text-xl font-normal" style={{ color: tokens.foreground }}>
-              Descricao
+              Descrição
             </h2>
             <p className="mt-4 whitespace-pre-wrap leading-7 opacity-75" style={{ color: tokens.foreground }}>
-              {property.descricao || "Entre em contato para saber mais detalhes sobre este imovel."}
+              {property.descricao || "Entre em contato para saber mais detalhes sobre este imóvel."}
             </p>
           </div>
 
@@ -570,7 +570,7 @@ export function PublicPropertyDetailScreen({
             <div className="overflow-hidden rounded-[14px]" style={{ backgroundColor: tokens.card }}>
               <iframe
                 src={videoEmbedUrl}
-                title={`Video do imovel ${title}`}
+                title={`Vídeo do imóvel ${title}`}
                 className="aspect-video w-full border-0"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 allowFullScreen
@@ -583,7 +583,7 @@ export function PublicPropertyDetailScreen({
             <div className="overflow-hidden rounded-[14px]" style={{ backgroundColor: tokens.card }}>
               <div className="px-6 py-5">
                 <h2 className="text-xl font-normal" style={{ color: tokens.foreground }}>
-                  Localizacao
+                  Localização
                 </h2>
                 <p className="mt-2 flex items-center gap-2 text-sm opacity-68" style={{ color: tokens.foreground }}>
                   <MapPin className="h-4 w-4" />
@@ -647,7 +647,7 @@ export function PublicPropertyDetailScreen({
           eyebrow="Relacionados"
           properties={relatedProperties}
           site={site}
-          title="Voce tambem pode gostar"
+          title="Você também pode gostar"
         />
       ) : null}
 
@@ -717,9 +717,9 @@ function buildPropertyStats(property: PublicProperty) {
   addNumber(property.suites, "Suites", <KeyRound className="h-5 w-5" />);
   addNumber(property.banheiros, "Banheiros", <Bath className="h-5 w-5" />);
   addNumber(property.vagas, "Vagas", <Car className="h-5 w-5" />);
-  addArea(property.area_construida, "Area util", <Maximize2 className="h-5 w-5" />);
+  addArea(property.area_construida, "Área útil", <Maximize2 className="h-5 w-5" />);
   if (property.area_total && property.area_total !== property.area_construida) {
-    addArea(property.area_total, "Area total", <SquareStack className="h-5 w-5" />);
+    addArea(property.area_total, "Área total", <SquareStack className="h-5 w-5" />);
   }
   addNumber(property.andar, "Andar", <Building2 className="h-5 w-5" />);
 
@@ -729,7 +729,7 @@ function buildPropertyStats(property: PublicProperty) {
 function buildPropertyExtraDetails(property: PublicProperty) {
   const items = normalizeStringList(property.detalhes_extras);
 
-  if (property.condominio_nome) items.push(`Condominio: ${property.condominio_nome}`);
+  if (property.condominio_nome) items.push(`Condomínio: ${property.condominio_nome}`);
   if (property.mobiliado) items.push("Mobiliado");
   if (property.aceita_financiamento) items.push("Aceita financiamento");
   if (property.usou_fgts) items.push("Aceita FGTS");
@@ -742,13 +742,13 @@ function buildPropertyExtraDetails(property: PublicProperty) {
 
 function buildPropertyValueItems(property: PublicProperty) {
   const items = [
-    { label: "Condominio", value: property.valor_condominio },
+    { label: "Condomínio", value: property.valor_condominio },
     { label: "IPTU", value: property.iptu },
     { label: "ITR", value: property.valor_itr },
     { label: "Seguro incendio", value: property.seguro_incendio },
     { label: "Taxa de servico", value: property.taxa_de_servico },
     { label: "Venda avaliada", value: property.valor_venda_avaliado },
-    { label: "Locacao avaliada", value: property.valor_locacao_avaliado },
+    { label: "Locação avaliada", value: property.valor_locacao_avaliado },
   ];
 
   return items
@@ -763,7 +763,7 @@ function formatMetricNumber(value: number) {
 }
 
 function buildRelatedSearches(property: PublicProperty, basePath: string) {
-  const type = property.tipo_imovel || "Imovel";
+  const type = property.tipo_imovel || "Imóvel";
   const city = property.cidade || "";
   const neighborhood = property.bairro || "";
   const rooms = property.quartos ? `${property.quartos} quartos` : "";
@@ -846,7 +846,7 @@ export function PublicContactScreen({
       <section className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-12 sm:px-6 lg:grid-cols-[0.8fr_1.2fr] lg:px-8">
         <div className="space-y-4">
           <h2 className="text-3xl font-semibold" style={{ color: tokens.foreground }}>
-            Vamos encontrar o melhor caminho para voce.
+            Vamos encontrar o melhor caminho para você.
           </h2>
           <p className="leading-7 opacity-75" style={{ color: tokens.foreground }}>
             Envie seus dados e conte o que procura. A equipe recebe o lead no CRM e retorna pelo canal informado.
@@ -864,7 +864,7 @@ export function PublicContactScreen({
             />
           ) : null}
           <ContactLine icon={<Mail className="h-5 w-5" />} label="E-mail" site={site} value={site.email} href={site.email ? `mailto:${site.email}` : undefined} />
-          <ContactLine icon={<MapPin className="h-5 w-5" />} label="Endereco" site={site} value={[site.address, site.city, site.state].filter(Boolean).join(", ")} />
+          <ContactLine icon={<MapPin className="h-5 w-5" />} label="Endereço" site={site} value={[site.address, site.city, site.state].filter(Boolean).join(", ")} />
         </div>
 
         <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
@@ -888,44 +888,44 @@ export function PublicPrivacyPolicyScreen({
 
   return (
     <>
-      <PageHero backgroundImage={banner} eyebrow="Privacidade" title="Politica de privacidade" />
+      <PageHero backgroundImage={banner} eyebrow="Privacidade" title="Política de privacidade" />
       <section className="mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 lg:px-8">
         <div className="rounded-[14px] p-6 leading-7 sm:p-8" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
           <p className="text-sm opacity-70">
-            Esta politica explica como a {siteTitle} trata os dados enviados pelos formularios deste site.
+            Esta política explica como a {siteTitle} trata os dados enviados pelos formulários deste site.
           </p>
 
           <div className="mt-8 space-y-7">
             <PolicyBlock title="Dados coletados">
-              Podemos coletar nome, telefone, e-mail, mensagem enviada, imovel de interesse, melhor horario para contato e dados tecnicos de navegacao usados para atendimento e seguranca.
+              Podemos coletar nome, telefone, e-mail, mensagem enviada, imóvel de interesse, melhor horário para contato e dados técnicos de navegação usados para atendimento e segurança.
             </PolicyBlock>
             <PolicyBlock title="Finalidade do uso">
-              Usamos essas informacoes para responder solicitacoes, registrar leads no CRM, melhorar o atendimento, acompanhar interesses em imoveis e cumprir obrigacoes legais.
+              Usamos essas informações para responder solicitações, registrar leads no CRM, melhorar o atendimento, acompanhar interesses em imóveis e cumprir obrigações legais.
             </PolicyBlock>
             <PolicyBlock title="Compartilhamento">
-              Os dados podem ser acessados pela equipe autorizada da imobiliaria e por fornecedores essenciais de tecnologia, sempre com finalidade operacional e protecao adequada.
+              Os dados podem ser acessados pela equipe autorizada da imobiliária e por fornecedores essenciais de tecnologia, sempre com finalidade operacional e proteção adequada.
             </PolicyBlock>
-            <PolicyBlock title="Armazenamento e seguranca">
-              Mantemos os dados pelo tempo necessario para atendimento, relacionamento comercial e cumprimento legal. Aplicamos controles de acesso e medidas tecnicas para proteger as informacoes.
+            <PolicyBlock title="Armazenamento e segurança">
+              Mantemos os dados pelo tempo necessário para atendimento, relacionamento comercial e cumprimento legal. Aplicamos controles de acesso e medidas técnicas para proteger as informações.
             </PolicyBlock>
             <PolicyBlock title="Seus direitos">
-              Voce pode solicitar acesso, correcao, atualizacao ou exclusao dos seus dados pessoais pelos canais de contato da imobiliaria.
+              Você pode solicitar acesso, correção, atualização ou exclusão dos seus dados pessoais pelos canais de contato da imobiliária.
             </PolicyBlock>
             <PolicyBlock title="Contato">
               {contact || address ? (
                 <>
                   Para falar sobre privacidade, entre em contato com {siteTitle}
                   {contact ? ` pelo canal ${contact}` : ""}
-                  {address ? ` ou no endereco ${address}` : ""}.
+                  {address ? ` ou no endereço ${address}` : ""}.
                 </>
               ) : (
-                <>Entre em contato com a imobiliaria pelos canais informados neste site.</>
+                <>Entre em contato com a imobiliária pelos canais informados neste site.</>
               )}
             </PolicyBlock>
           </div>
 
           <p className="mt-8 text-xs opacity-55">
-            Ultima atualizacao: julho de 2026.
+            Última atualização: julho de 2026.
           </p>
         </div>
       </section>
@@ -951,7 +951,7 @@ export function PublicFavoritesScreen({
 }>) {
   return (
     <>
-      <PageHero backgroundImage={site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE} eyebrow="Favoritos" title="Seus imoveis salvos" />
+      <PageHero backgroundImage={site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE} eyebrow="Favoritos" title="Seus imóveis salvos" />
       <section className="mx-auto w-full max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
         <PublicFavoritesClient basePath={basePath} site={site} />
       </section>
@@ -979,14 +979,14 @@ export function PublicNotFoundScreen({
           404
         </h1>
         <p className="mx-auto mt-5 max-w-lg text-base font-light leading-7 text-white/76 sm:text-lg">
-          Nao encontramos essa pagina. O imovel pode ter sido atualizado, removido ou o link pode estar incompleto.
+          Não encontramos essa página. O imóvel pode ter sido atualizado, removido ou o link pode estar incompleto.
         </p>
         <Link
           href={buildSiteHref(basePath, "/")}
           className="mt-8 inline-flex h-11 items-center justify-center rounded-[10px] px-6 text-sm font-light text-white transition hover:brightness-110"
           style={{ backgroundColor: tokens.primary }}
         >
-          Voltar a pagina principal
+          Voltar à página principal
         </Link>
       </div>
     </section>
@@ -1023,7 +1023,7 @@ function PropertySection({
           </h2>
         </div>
         <Link href={buildSiteHref(basePath, "/imoveis")} className="text-sm font-semibold" style={{ color: tokens.primary }}>
-          Ver todos os imoveis
+          Ver todos os imóveis
         </Link>
       </div>
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
@@ -1200,13 +1200,13 @@ function AboutContent({
         </div>
         <div className="flex flex-col justify-center">
           <p className="text-sm font-semibold uppercase tracking-[0.18em]" style={{ color: tokens.primary }}>
-            Nossa historia
+            Nossa história
           </p>
           <h2 className="mt-3 text-3xl font-semibold leading-tight sm:text-4xl" style={{ color: tokens.foreground }}>
-            {site.about_subtitle || "Transformando planos em bons negocios imobiliarios"}
+            {site.about_subtitle || "Transformando planos em bons negócios imobiliários"}
           </h2>
           <p className="mt-5 whitespace-pre-wrap leading-7 opacity-75" style={{ color: tokens.foreground }}>
-            {site.about_text || `${getSiteTitle(site)} nasceu para simplificar a jornada imobiliaria com atendimento proximo, informacao clara e bons imoveis.`}
+            {site.about_text || `${getSiteTitle(site)} nasceu para simplificar a jornada imobiliária com atendimento próximo, informação clara e bons imóveis.`}
           </p>
           <div className="mt-6 space-y-3">
             {checkmarks.map((item) => (
@@ -1237,7 +1237,7 @@ function AboutContent({
         {compact ? (
           <div className="mt-8 text-center">
             <Link href={buildSiteHref(basePath, "/sobre")} className="text-sm font-semibold" style={{ color: tokens.primary }}>
-              Conheca nossa historia
+              Conheça nossa história
             </Link>
           </div>
         ) : null}
@@ -1313,18 +1313,18 @@ function Pagination({
   };
 
   return (
-    <nav className="mt-10 flex items-center justify-center gap-3" aria-label="Paginacao">
+    <nav className="mt-10 flex items-center justify-center gap-3" aria-label="Paginação">
       {currentPage > 1 ? (
         <Link href={makeHref(currentPage - 1)} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium text-slate-700">
           Anterior
         </Link>
       ) : null}
       <span className="text-sm opacity-70">
-        Pagina {currentPage} de {totalPages}
+        Página {currentPage} de {totalPages}
       </span>
       {currentPage < totalPages ? (
         <Link href={makeHref(currentPage + 1)} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium text-slate-700">
-          Proxima
+          Próxima
         </Link>
       ) : null}
     </nav>

@@ -130,7 +130,7 @@ export function InvitationScreen({ token }: { token: string }) {
 
       router.replace("/select-organization?redirectTo=/dashboard");
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Nao foi possivel aceitar o convite agora.");
+      setErrorMessage(error instanceof Error ? error.message : "Não foi possível aceitar o convite agora.");
     } finally {
       setIsSubmitting(false);
     }
@@ -192,7 +192,7 @@ export function InvitationScreen({ token }: { token: string }) {
               <div className="space-y-4 py-8 text-center">
                 <h1 className="text-xl font-extralight text-white">Convite expirado</h1>
                 <p className="text-sm font-extralight leading-6 text-white/60">
-                  Solicite um novo convite ao administrador da organizacao.
+                  Solicite um novo convite ao administrador da organização.
                 </p>
                 <Link
                   href="/login"
@@ -215,10 +215,10 @@ export function InvitationScreen({ token }: { token: string }) {
                       {checkingSession ? (
                         "Verificando sua sessao..."
                       ) : loggedEmailMatches ? (
-                        "Voce ja esta conectado com este e-mail. Confirme para entrar nesta organizacao."
+                        "Você já está conectado com este e-mail. Confirme para entrar nesta organização."
                       ) : currentUserEmail ? (
                         <>
-                          Voce esta conectado como <span className="text-white">{currentUserEmail}</span>. Saia e entre com{" "}
+                          Você está conectado como <span className="text-white">{currentUserEmail}</span>. Saia e entre com{" "}
                           <span className="text-white">{email}</span> para aceitar o convite.
                         </>
                       ) : (
@@ -297,7 +297,7 @@ export function InvitationScreen({ token }: { token: string }) {
                           className="mt-1"
                         />
                         <span>
-                          Li e aceito a <Link href="/politica-de-privacidade" className="text-[#FF4529]">Politica de Privacidade</Link>.
+                          Li e aceito a <Link href="/politica-de-privacidade" className="text-[#FF4529]">Política de Privacidade</Link>.
                         </span>
                       </label>
                     </div>

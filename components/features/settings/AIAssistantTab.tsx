@@ -103,7 +103,7 @@ const followUpIntervals = [
 ];
 
 const followUpTemplates = [
-  { key: "soft", label: "Leve", text: "Retoma sem pressao e pergunta se ainda faz sentido continuar." },
+  { key: "soft", label: "Leve", text: "Retoma sem pressão e pergunta se ainda faz sentido continuar." },
   { key: "property", label: "Imovel", text: "Usa interesse do lead para sugerir opcoes ou detalhes relevantes." },
   { key: "visit", label: "Visita", text: "Conduz para agendamento quando o lead demonstrou interesse claro." },
 ];
@@ -111,7 +111,7 @@ const followUpTemplates = [
 const agentTypeOptions = [
   { value: "triage", label: "Triagem" },
   { value: "mcmv", label: "MCMV" },
-  { value: "high_value", label: "Alto padrao" },
+  { value: "high_value", label: "Alto padrão" },
   { value: "launch", label: "Lancamentos" },
   { value: "rent", label: "Locacao" },
   { value: "custom", label: "Personalizado" },
@@ -157,7 +157,7 @@ function formatSessionName(session: WhatsAppSession) {
 }
 
 function normalizePhone(value?: string | null) {
-  if (!value) return "Numero nao informado";
+  if (!value) return "Número não informado";
   return value.replace(/:.*$/, "");
 }
 
@@ -284,8 +284,8 @@ export function AIAssistantTab() {
   return (
     <div data-tour="ai-overview" className="space-y-5">
       <section data-tour="ai-metrics" className="grid gap-3 md:grid-cols-4">
-        <MetricCard icon={MessageCircle} label="Leads recebidos" value={metricsLoading ? "..." : String(metrics?.leadsReceived ?? 0)} detail="ultimos 30 dias" />
-        <MetricCard icon={Bot} label="Atendidos pela IA" value={metricsLoading ? "..." : String(metrics?.leadsAttended ?? 0)} detail={`${activeSessions.length} conexao(oes) ligada(s)`} tone="success" />
+        <MetricCard icon={MessageCircle} label="Leads recebidos" value={metricsLoading ? "..." : String(metrics?.leadsReceived ?? 0)} detail="últimos 30 dias" />
+        <MetricCard icon={Bot} label="Atendidos pela IA" value={metricsLoading ? "..." : String(metrics?.leadsAttended ?? 0)} detail={`${activeSessions.length} conexão(ões) ligada(s)`} tone="success" />
         <MetricCard icon={RefreshCcw} label="Follow-up" value={metricsLoading ? "..." : String(metrics?.followUpsActive ?? 0)} detail="retornos programados" tone="warning" />
         <MetricCard icon={ShieldCheck} label="Limite de agentes" value={settings ? `${settings.agentCount}/${settings.maxAgents}` : "..."} detail="controle do Superadmin" />
       </section>
@@ -296,15 +296,15 @@ export function AIAssistantTab() {
             <WandSparkles className="h-5 w-5" />
           </div>
           <div>
-            <p className="text-sm font-semibold">Central de IA da organizacao</p>
-            <p className="text-xs text-muted-foreground">Modulo, conexao e regra precisam estar liberados para a IA responder.</p>
+            <p className="text-sm font-semibold">Central de IA da organização</p>
+            <p className="text-xs text-muted-foreground">Módulo, conexão e regra precisam estar liberados para a IA responder.</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
           <Badge className={aiModuleEnabled ? "border-0 bg-emerald-500/15 text-emerald-400" : "border-0 bg-muted text-muted-foreground"}>
-            {aiModuleEnabled ? "Modulo liberado" : "Modulo bloqueado"}
+            {aiModuleEnabled ? "Módulo liberado" : "Módulo bloqueado"}
           </Badge>
-          <span className="text-xs text-muted-foreground">{settings?.isEnabled ? "Operacao ligada" : "Operacao pausada"}</span>
+          <span className="text-xs text-muted-foreground">{settings?.isEnabled ? "Operação ligada" : "Operação pausada"}</span>
           <Switch
             checked={!!settings?.isEnabled}
             disabled={!aiModuleEnabled || updateSettings.isPending}
@@ -315,8 +315,8 @@ export function AIAssistantTab() {
 
       <Tabs defaultValue="overview" className="space-y-4">
         <TabsList data-tour="ai-tabs" className="grid h-auto w-full grid-cols-2 gap-1 bg-[var(--app-surface-soft)] p-1 md:grid-cols-6">
-          <TabsTrigger value="overview">Visao</TabsTrigger>
-          <TabsTrigger data-tour="ai-tab-connections" value="connections">Conexoes</TabsTrigger>
+          <TabsTrigger value="overview">Visão</TabsTrigger>
+          <TabsTrigger data-tour="ai-tab-connections" value="connections">Conexões</TabsTrigger>
           <TabsTrigger data-tour="ai-tab-agents" value="agents">Agentes</TabsTrigger>
           <TabsTrigger data-tour="ai-tab-routing" value="routing">Roteamento</TabsTrigger>
           <TabsTrigger data-tour="ai-tab-test" value="test">Teste</TabsTrigger>
@@ -328,12 +328,12 @@ export function AIAssistantTab() {
             <Panel title="Atendimento da IA" icon={BarChart3}>
               <AIMetricsChart series={metrics?.series || []} />
             </Panel>
-            <Panel title="Saude operacional" icon={Activity}>
+            <Panel title="Saúde operacional" icon={Activity}>
               <div className="space-y-3">
-                <HealthRow label="Modulo Superadmin" ok={aiModuleEnabled} detail={aiModuleEnabled ? "Liberado para esta organizacao" : "Bloqueado no plano"} />
-                <HealthRow label="Operacao da IA" ok={!!settings?.isEnabled} detail={settings?.isEnabled ? "Pode processar conexoes liberadas" : "Pausada para todos os canais"} />
-                <HealthRow label="WhatsApp delegado" ok={activeSessions.length > 0} detail={`${activeSessions.length}/${settings?.maxSessions ?? 0} conexoes atendidas`} />
-                <HealthRow label="Agente de triagem" ok={agents.some((agent) => agent.config.type === "triage" && agent.config.isDefault)} detail="Entrada padrao de qualquer conversa sem regra" />
+                <HealthRow label="Módulo Superadmin" ok={aiModuleEnabled} detail={aiModuleEnabled ? "Liberado para esta organização" : "Bloqueado no plano"} />
+                <HealthRow label="Operação da IA" ok={!!settings?.isEnabled} detail={settings?.isEnabled ? "Pode processar conexões liberadas" : "Pausada para todos os canais"} />
+                <HealthRow label="WhatsApp delegado" ok={activeSessions.length > 0} detail={`${activeSessions.length}/${settings?.maxSessions ?? 0} conexões atendidas`} />
+                <HealthRow label="Agente de triagem" ok={agents.some((agent) => agent.config.type === "triage" && agent.config.isDefault)} detail="Entrada padrão de qualquer conversa sem regra" />
               </div>
             </Panel>
           </div>
@@ -351,7 +351,7 @@ export function AIAssistantTab() {
               />
               <div className="space-y-3">
                 <p className="text-xs leading-5 text-muted-foreground">
-                  A triagem deve descobrir interesse, urgencia e contexto. Quando estiver claro, ela passa para o agente especialista.
+                  A triagem deve descobrir interesse, urgência e contexto. Quando estiver claro, ela passa para o agente especialista.
                 </p>
                 <Button className="w-full gap-2" onClick={saveTriagePrompt} disabled={updateSettings.isPending}>
                   <Save className="h-4 w-4" />
@@ -372,7 +372,7 @@ export function AIAssistantTab() {
                     onChange={(event) => setLimitDraft((draft) => ({ ...draft, maxAgents: event.target.value }))}
                   />
                 </Field>
-                <Field label="Conexoes IA">
+                <Field label="Conexões IA">
                   <Input
                     type="number"
                     min={0}
@@ -398,10 +398,10 @@ export function AIAssistantTab() {
         </TabsContent>
 
         <TabsContent data-tour="ai-connections" value="connections" className="space-y-4">
-          <Panel title="Conexoes que a IA pode atender" icon={PlugZap}>
+          <Panel title="Conexões que a IA pode atender" icon={PlugZap}>
             <div className="grid gap-3 lg:grid-cols-[1fr_0.9fr]">
               <div className="space-y-2">
-                {sessionsLoading && <p className="text-sm text-muted-foreground">Carregando conexoes...</p>}
+                {sessionsLoading && <p className="text-sm text-muted-foreground">Carregando conexões...</p>}
                 {!sessionsLoading && connectedSessions.length === 0 && <p className="text-sm text-muted-foreground">Nenhum WhatsApp conectado para delegar a IA.</p>}
                 {connectedSessions.map((session) => {
                   const sessionSettings = getSessionSettings(session);
@@ -444,7 +444,7 @@ export function AIAssistantTab() {
 
               <div className="space-y-4 rounded-[8px] bg-[var(--app-surface-soft)] p-4">
                 <div>
-                  <Label>Agente inicial desta conexao</Label>
+                  <Label>Agente inicial desta conexão</Label>
                   <Select
                     value={selectedSettings.ai_auto_reply_agent_id || "auto"}
                     disabled={!selectedSession || toggleAI.isPending}
@@ -477,7 +477,7 @@ export function AIAssistantTab() {
 
         <TabsContent data-tour="ai-agents" value="agents" className="space-y-4">
           <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-            <Panel title="Agentes da organizacao" icon={Bot}>
+            <Panel title="Agentes da organização" icon={Bot}>
               <div className="mb-3 flex items-center justify-between gap-3">
                 <p className="text-xs text-muted-foreground">{settings ? `${settings.agentCount} de ${settings.maxAgents} agentes usados` : "Carregando limite..."}</p>
                 <Button size="sm" variant="outline" className="gap-2" onClick={() => setAgentDraft(emptyAgentDraft())} disabled={!canCreateAgent}>
@@ -573,7 +573,7 @@ export function AIAssistantTab() {
             <Panel title="Ordem de roteamento" icon={Route}>
               <div className="space-y-2">
                 {rulesLoading && <p className="text-sm text-muted-foreground">Carregando regras...</p>}
-                {!rulesLoading && rules.length === 0 && <p className="text-sm text-muted-foreground">Nenhuma regra criada. Sem regra, a conversa cai na triagem padrao.</p>}
+                {!rulesLoading && rules.length === 0 && <p className="text-sm text-muted-foreground">Nenhuma regra criada. Sem regra, a conversa cai na triagem padrão.</p>}
                 {rules.map((rule) => (
                   <RuleListItem
                     key={rule.id}
@@ -626,7 +626,7 @@ export function AIAssistantTab() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="any">Qualquer conexao</SelectItem>
+                      <SelectItem value="any">Qualquer conexão</SelectItem>
                       {connectedSessions.map((session) => (
                         <SelectItem key={session.id} value={session.id}>
                           {formatSessionName(session)}
@@ -648,7 +648,7 @@ export function AIAssistantTab() {
               <div className="flex items-center justify-between rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                 <div>
                   <p className="text-sm font-semibold">Regra ativa</p>
-                  <p className="text-xs text-muted-foreground">Regras pausadas ficam salvas, mas nao decidem atendimento.</p>
+                  <p className="text-xs text-muted-foreground">Regras pausadas ficam salvas, mas não decidem atendimento.</p>
                 </div>
                 <Switch checked={ruleDraft.isEnabled} onCheckedChange={(checked) => setRuleDraft((draft) => ({ ...draft, isEnabled: checked }))} />
               </div>
@@ -675,7 +675,7 @@ export function AIAssistantTab() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">Sem conexao especifica</SelectItem>
+                      <SelectItem value="none">Sem conexão específica</SelectItem>
                       {connectedSessions.map((session) => (
                         <SelectItem key={session.id} value={session.id}>
                           {formatSessionName(session)}
@@ -724,7 +724,7 @@ export function AIAssistantTab() {
                       )}
                     </div>
                     <div className="rounded-[8px] bg-background/50 p-4 text-sm leading-6">
-                      {testRun.data.output || "Regra acionada sem resposta automatica."}
+                      {testRun.data.output || "Regra acionada sem resposta automática."}
                     </div>
                     <div className="space-y-2 text-xs text-muted-foreground">
                       {testRun.data.toolsUsed?.map((tool) => (
@@ -741,7 +741,7 @@ export function AIAssistantTab() {
         <TabsContent value="logs" className="space-y-4">
           <Panel title="Logs da IA" icon={Activity}>
             {eventsLoading && <p className="text-sm text-muted-foreground">Carregando logs...</p>}
-            {!eventsLoading && events.length === 0 && <p className="text-sm text-muted-foreground">Ainda nao ha eventos recentes da IA.</p>}
+            {!eventsLoading && events.length === 0 && <p className="text-sm text-muted-foreground">Ainda não há eventos recentes da IA.</p>}
             <div className="space-y-2">
               {events.map((event) => (
                 <AIEventRow key={event.id} event={event} />
@@ -769,8 +769,8 @@ function FollowUpControls({
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold">Follow-up automatico</p>
-          <p className="text-xs text-muted-foreground">Fica preso a conexao selecionada.</p>
+          <p className="text-sm font-semibold">Follow-up automático</p>
+          <p className="text-xs text-muted-foreground">Fica preso à conexão selecionada.</p>
         </div>
         <Switch
           checked={!!selectedSettings.ai_follow_up_enabled}
@@ -972,7 +972,7 @@ function RuleListItem({ rule, onEdit, onDelete }: { rule: AIRoutingRule; onEdit:
           </Badge>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
-          {chips.length === 0 && <span className="text-xs text-muted-foreground">Sem condicoes: aplica para tudo.</span>}
+          {chips.length === 0 && <span className="text-xs text-muted-foreground">Sem condições: aplica para tudo.</span>}
           {chips.map((chip) => (
             <Badge key={chip} variant="outline" className="border-transparent bg-background/50">
               {chip}
@@ -992,7 +992,7 @@ function RuleListItem({ rule, onEdit, onDelete }: { rule: AIRoutingRule; onEdit:
 function AIMetricsChart({ series }: { series: AIMetricPoint[] }) {
   const max = Math.max(1, ...series.flatMap((item) => [item.leadsReceived, item.leadsAttended, item.followUpsActive]));
   if (series.length === 0) {
-    return <p className="text-sm text-muted-foreground">Ainda nao ha dados da IA para este periodo.</p>;
+    return <p className="text-sm text-muted-foreground">Ainda não há dados da IA para este período.</p>;
   }
   return (
     <div className="space-y-4">

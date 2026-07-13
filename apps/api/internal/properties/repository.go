@@ -601,10 +601,14 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err != nil {
 		return nil, err
 	}
-	if !canEditProperty(tenantContext, current.CreatorID, current.ResponsibleUserID, editPolicy) {
+	if !canEditProperty(tenantContext, current.CreatorID, current.ResponsibleUserID, editPolicy) &&
+		!canUpdatePropertyAvailability(tenantContext, input) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 	if !canAssignProperties(tenantContext) {
+		if isPropertyAssignmentChange(input, current) {
+			return nil, tenant.ErrOrganizationAccessDenied
+		}
 		delete(input, "created_by")
 		delete(input, "responsible_user_id")
 		delete(input, "cadastrado_por")
@@ -1523,6 +1527,32 @@ func canAssignProperties(tenantContext tenant.Context) bool {
 	return canManageProperties(tenantContext) || tenantContext.HasPermission("property_assign")
 }
 
+func isPropertyAssignmentChange(input propertyRequest, current propertySnapshot) bool {
+	if value, ok := input["created_by"]; ok && !sameOptionalUUID(value, current.CreatorID) {
+		return true
+	}
+	if value, ok := input["responsible_user_id"]; ok && !sameOptionalUUID(value, current.ResponsibleUserID) {
+		return true
+	}
+	if value, ok := input["cadastrado_por"]; ok && !sameOptionalUUID(value, current.ResponsibleUserID) {
+		return true
+	}
+	return false
+}
+
+func sameOptionalUUID(value any, current string) bool {
+	var next string
+	switch typed := value.(type) {
+	case nil:
+		next = ""
+	case string:
+		next = strings.TrimSpace(typed)
+	default:
+		next = strings.TrimSpace(fmt.Sprint(typed))
+	}
+	return next == strings.TrimSpace(current)
+}
+
 func canEditProperty(tenantContext tenant.Context, creatorID string, responsibleUserID string, editPolicy ...string) bool {
 	if canManageProperties(tenantContext) {
 		return true
@@ -1532,6 +1562,40 @@ func canEditProperty(tenantContext tenant.Context, creatorID string, responsible
 	}
 	return (creatorID != "" && creatorID == tenantContext.UserID) ||
 		(responsibleUserID != "" && responsibleUserID == tenantContext.UserID)
+}
+
+func canUpdatePropertyAvailability(tenantContext tenant.Context, input propertyRequest) bool {
+	return tenantContext.IsOrganizationMember() && isPropertyAvailabilityUpdate(input)
+}
+
+func isPropertyAvailabilityUpdate(input propertyRequest) bool {
+	if len(input) == 0 {
+		return false
+	}
+
+	for key := range input {
+		switch key {
+		case "status":
+			status, ok := input[key].(string)
+			if !ok || !isQuickPropertyStatus(status) {
+				return false
+			}
+		case "published_on_site":
+		default:
+			return false
+		}
+	}
+
+	return true
+}
+
+func isQuickPropertyStatus(status string) bool {
+	switch status {
+	case "active", "reserved", "sold", "rented":
+		return true
+	default:
+		return false
+	}
 }
 
 func canDeleteProperties(tenantContext tenant.Context) bool {

@@ -612,13 +612,13 @@ export function useSendWhatsAppMessage() {
 
       if (isDisconnected) {
         title = "WhatsApp Desconectado";
-        description = "Va em Configuracoes > WhatsApp e escaneie o QR Code novamente.";
+        description = "Vá em Configurações > WhatsApp e escaneie o QR Code novamente.";
       } else if (isNumberNotExists) {
         title = "Contato sem WhatsApp";
-        description = "Este numero nao esta no WhatsApp. Tente ligar ou enviar SMS.";
+        description = "Este número não está no WhatsApp. Tente ligar ou enviar SMS.";
       } else if (isRateLimited) {
         title = "Aguarde um instante";
-        description = "Voce esta enviando mensagens muito rapido. Tente novamente em alguns segundos.";
+        description = "Você está enviando mensagens muito rápido. Tente novamente em alguns segundos.";
       } else if (failureStatus === "confirming") {
         title = "Confirmando envio";
         description = "Ainda nao recebemos a confirmacao. A mensagem continuara visivel; nao reenvie agora.";
@@ -815,7 +815,7 @@ export function useReactToWhatsAppMessage() {
       toast({
         title: isDefinitive ? 'Reacao nao enviada' : 'Confirmando reacao',
         description: isDefinitive
-          ? 'Nao foi possivel aplicar esta reacao.'
+          ? 'Não foi possível aplicar esta reação.'
           : 'A confirmacao ainda nao chegou. A reacao sera atualizada automaticamente.',
         variant: isDefinitive ? 'destructive' : 'default',
       });
@@ -857,7 +857,7 @@ export function useMarkAsSeenOnWhatsApp() {
     onError: () => {
       toast({
         title: "Erro",
-        description: "Nao foi possivel marcar como lida no WhatsApp",
+        description: "Não foi possível marcar como lida no WhatsApp",
         variant: "destructive",
       });
     },

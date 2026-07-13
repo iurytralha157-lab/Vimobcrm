@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
+import { FEATURES } from '@/config/constants'
 import { integrationsAPI } from '@/lib/api'
 import { getFriendlyErrorMessage } from '@/lib/error-handler'
 import {
@@ -43,6 +44,8 @@ function invalidateScheduleCaches(queryClient: ReturnType<typeof useQueryClient>
 type GoogleCalendarSyncAction = 'push_upsert' | 'push_delete'
 
 async function syncGoogleCalendarEvent(action: GoogleCalendarSyncAction, eventId: string, organizationId?: string | null) {
+  if (!FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION) return
+
   try {
     await integrationsAPI.invokeFunction('google-calendar-sync', { action, event_id: eventId }, organizationId)
   } catch (error) {
@@ -99,7 +102,7 @@ export function useCreateScheduleEvent() {
 
   return useMutation({
     mutationFn: async (event: CreateScheduleEventInput) => {
-      if (!profile?.organization_id) throw new Error('Organizacao nao encontrada')
+      if (!profile?.organization_id) throw new Error('Organização não encontrada')
       return scheduleAPI.createScheduleEvent(profile.organization_id, event)
     },
     onSuccess: (data) => {
@@ -131,7 +134,7 @@ export function useUpdateScheduleEvent() {
       id: string
       visibility?: ScheduleEventVisibility
     }) => {
-      if (!profile?.organization_id) throw new Error('Organizacao nao encontrada')
+      if (!profile?.organization_id) throw new Error('Organização não encontrada')
       return scheduleAPI.updateScheduleEvent(id, toScheduleUpdateBody(updates), profile.organization_id)
     },
     onSuccess: (data) => {
@@ -152,7 +155,7 @@ export function useCompleteScheduleEvent() {
 
   return useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
-      if (!profile?.organization_id) throw new Error('Organizacao nao encontrada')
+      if (!profile?.organization_id) throw new Error('Organização não encontrada')
       return scheduleAPI.completeScheduleEvent(id, status, profile.organization_id)
     },
     onSuccess: (data) => {
@@ -173,7 +176,7 @@ export function useDeleteScheduleEvent() {
 
   return useMutation({
     mutationFn: async ({ id }: { id: string }) => {
-      if (!profile?.organization_id) throw new Error('Organizacao nao encontrada')
+      if (!profile?.organization_id) throw new Error('Organização não encontrada')
       await syncGoogleCalendarEvent('push_delete', id, profile.organization_id)
       return scheduleAPI.deleteScheduleEvent(id, profile.organization_id)
     },

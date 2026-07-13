@@ -240,7 +240,7 @@ function getErrorMessage(error: unknown) {
       return message;
     }
   }
-  return "Estrutura ainda nao disponivel no Supabase conectado.";
+  return "Estrutura ainda não disponível no Supabase conectado.";
 }
 
 function formatCurrency(value: unknown) {
@@ -1960,12 +1960,12 @@ function NotificationDispatcherSettings({ rows, isLoading }: { rows: AdminRecord
       if (settingsRow?.id) {
         return adminAPI.updateTableRow("system_settings", String(settingsRow.id), {
           value,
-          description: getString(settingsRow, "description", "Configuracoes globais da plataforma"),
+          description: getString(settingsRow, "description", "Configurações globais da plataforma"),
         });
       }
       return adminAPI.createTableRow("system_settings", {
         key: "platform",
-        description: "Configuracoes globais da plataforma",
+        description: "Configurações globais da plataforma",
         value,
       });
     },
@@ -1974,7 +1974,7 @@ function NotificationDispatcherSettings({ rows, isLoading }: { rows: AdminRecord
       queryClient.invalidateQueries({ queryKey: ["admin-rows", "system_settings"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Nao foi possivel salvar o disparador.");
+      toast.error(error instanceof Error ? error.message : "Não foi possível salvar o disparador.");
     },
   });
 
@@ -2001,7 +2001,7 @@ function NotificationDispatcherSettings({ rows, isLoading }: { rows: AdminRecord
       toast.success("Teste enviado pelo backend");
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Nao foi possivel testar o dispatcher.");
+      toast.error(error instanceof Error ? error.message : "Não foi possível testar o dispatcher.");
     },
   });
 
@@ -2038,7 +2038,7 @@ function NotificationDispatcherSettings({ rows, isLoading }: { rows: AdminRecord
           />
         </label>
         <label className="space-y-1.5">
-          <span className="text-xs font-medium text-muted-foreground">Numero</span>
+          <span className="text-xs font-medium text-muted-foreground">Número</span>
           <Input
             value={form.senderNumber}
             onChange={(event) => updateForm("senderNumber", event.target.value)}

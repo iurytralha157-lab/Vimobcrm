@@ -41,23 +41,23 @@ func TestConversationAuthorizationScopeArguments(t *testing.T) {
 	}
 }
 
-func TestConversationVisibilityRequiresLeadAndTenantMatch(t *testing.T) {
+func TestConversationVisibilityAllowsLeadAccessOrOwnedUnlinkedConversation(t *testing.T) {
 	query := conversationVisibilitySQL()
 	required := []string{
 		"ws.organization_id = wc.organization_id",
+		"wc.lead_id is not null",
 		"l.id is not null",
 		"l.organization_id = wc.organization_id",
 		"l.assigned_user_id = $2::uuid",
 		"leader.organization_id = l.organization_id",
 		"member.user_id = l.assigned_user_id",
+		"wc.lead_id is null",
+		"ws.owner_user_id = $2::uuid",
 	}
 	for _, fragment := range required {
 		if !strings.Contains(query, fragment) {
 			t.Fatalf("conversation visibility is missing %q:\n%s", fragment, query)
 		}
-	}
-	if strings.Contains(query, "ws.owner_user_id = $2::uuid") {
-		t.Fatalf("session ownership must not bypass lead authorization:\n%s", query)
 	}
 }
 

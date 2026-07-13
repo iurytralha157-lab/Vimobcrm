@@ -64,7 +64,7 @@ export function PublicFavoritesClient({ basePath, site }: PublicFavoritesClientP
     return (
       <FavoriteEmptyState
         basePath={basePath}
-        description="Abra os imoveis e toque no coracao para montar sua lista neste navegador."
+        description="Abra os imóveis e toque no coração para montar sua lista neste navegador."
         iconColor={tokens.primary}
         title="Nenhum favorito salvo ainda"
       />
@@ -90,15 +90,15 @@ export function PublicFavoritesClient({ basePath, site }: PublicFavoritesClientP
       ) : (
         <FavoriteEmptyState
           basePath={basePath}
-          description="Os imoveis salvos podem ter sido removidos, vendidos ou retirados do site."
+          description="Os imóveis salvos podem ter sido removidos, vendidos ou retirados do site."
           iconColor={tokens.primary}
-          title="Favoritos indisponiveis"
+          title="Favoritos indisponíveis"
         />
       )}
 
       {missingCount > 0 ? (
         <p className="text-center text-sm font-light opacity-64">
-          {missingCount} favorito(s) nao estao mais disponiveis no site.
+          {missingCount} favorito(s) não estão mais disponíveis no site.
         </p>
       ) : null}
     </div>
@@ -137,7 +137,7 @@ function FavoriteEmptyState({
         className="mt-6 inline-flex h-11 items-center justify-center rounded-[10px] px-5 text-sm font-light text-white"
         style={{ backgroundColor: iconColor }}
       >
-        Ver imoveis
+        Ver imóveis
       </Link>
     </div>
   );

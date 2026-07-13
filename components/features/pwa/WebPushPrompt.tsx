@@ -125,7 +125,7 @@ export function WebPushPrompt() {
     setIsSubscribing(false);
 
     if (result.ok) {
-      toast.success('Notificacoes ativadas com sucesso!');
+      toast.success('Notificações ativadas com sucesso!');
       setShowPrompt(false);
     } else {
       toast.error(result.message);
@@ -137,7 +137,7 @@ export function WebPushPrompt() {
     setShowPrompt(false);
   };
 
-  const title = 'Ativar notificacoes';
+  const title = 'Ativar notificações';
   const description = 'Receba alertas de novos leads e mensagens';
 
   if (!user?.id || !showPrompt) {

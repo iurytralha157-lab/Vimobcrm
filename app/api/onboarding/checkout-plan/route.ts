@@ -111,7 +111,7 @@ export async function POST(request: Request) {
     return jsonResponse(
       {
         ok: false,
-        message: 'A API do Vimob nao esta acessivel para atualizar o plano.',
+        message: 'A API do Vimob não está acessível para atualizar o plano.',
       },
       503,
     )

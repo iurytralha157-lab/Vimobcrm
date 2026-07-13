@@ -37,13 +37,13 @@ export function MetaWebhookHealthBanner() {
   return (
     <Alert variant={variant}>
       <Icon className="h-4 w-4" />
-      <AlertTitle>Eventos Meta nos ultimos 7 dias</AlertTitle>
+      <AlertTitle>Eventos Meta nos últimos 7 dias</AlertTitle>
       <AlertDescription className="space-y-1">
         <p>
           {parts.join(" e ")} no webhook do Meta.
-          {skipped > 0 && " Leads ignorados normalmente significam formulario sem configuracao ativa."}
+          {skipped > 0 && " Leads ignorados normalmente significam formulário sem configuração ativa."}
         </p>
-        {data.lastError && <p className="text-xs opacity-80">Ultimo motivo: {data.lastError}</p>}
+        {data.lastError && <p className="text-xs opacity-80">Último motivo: {data.lastError}</p>}
       </AlertDescription>
     </Alert>
   );

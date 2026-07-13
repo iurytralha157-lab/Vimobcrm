@@ -191,7 +191,7 @@ export default function Checkout() {
         if (result.type !== 'PIX') throw new Error('Resposta Pix invalida');
         setPixResult(result);
       } else {
-        if (result.type !== 'CREDIT_CARD') throw new Error('Resposta de cartao invalida');
+        if (result.type !== 'CREDIT_CARD') throw new Error('Resposta de cartão inválida');
         setCardResult(result);
         setPaid(true);
         toast.success('Assinatura ativada! 🎉');

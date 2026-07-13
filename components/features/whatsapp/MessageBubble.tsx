@@ -1079,7 +1079,7 @@ export function MessageBubble({
             )}>
               <button
                 type="button"
-                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border/70 bg-background/95 text-muted-foreground shadow-sm transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border/70 bg-background/95 text-muted-foreground shadow-none transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => setReactionPickerOpen((open) => !open)}
                 disabled={isReacting}
                 aria-label="Reagir a mensagem"

@@ -158,7 +158,7 @@ export default function Automations() {
           <div
             data-tour="automations-tabs"
             role="tablist"
-            aria-label="Secoes de automacoes"
+            aria-label="Seções de automações"
             className="flex max-w-full items-center overflow-x-auto rounded-[8px] bg-[var(--app-surface)] p-1"
           >
             {([
@@ -193,7 +193,7 @@ export default function Automations() {
 
         {isMobile && activeTab === "templates" && (
           <div className="rounded-[8px] border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200" role="note">
-            Os modelos podem ser consultados no celular. Para montar ou editar o fluxo visual, abra esta pagina em um computador.
+            Os modelos podem ser consultados no celular. Para montar ou editar o fluxo visual, abra esta página em um computador.
           </div>
         )}
 

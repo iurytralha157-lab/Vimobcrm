@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { FEATURES } from "@/config/constants";
 import { cn } from "@/lib/utils";
 import {
   useConnectGoogleCalendar,
@@ -27,6 +28,62 @@ export function GoogleCalendarConnect({ compact = false }: GoogleCalendarConnect
   const isConnected = !!calendarStatus;
   const isSyncing = syncNow.isPending || calendarStatus?.sync_status === "syncing";
   const statusLabel = calendarStatus?.sync_status === "error" ? "Erro" : calendarStatus?.sync_enabled ? "Ativo" : "Pausado";
+
+  if (!FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION) {
+    if (compact) {
+      return (
+        <div className="flex flex-col gap-3 rounded-[8px] bg-[var(--app-surface-soft)] p-3 opacity-70 md:flex-row md:items-center md:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface)] text-muted-foreground">
+              <Calendar className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-[var(--color-text-primary)]">Google Agenda</span>
+                <Badge variant="outline" className="h-5 rounded-[6px] px-2 text-[11px] font-medium">
+                  Desativado
+                </Badge>
+              </div>
+              <p className="truncate text-xs text-[var(--color-text-secondary)]">
+                Integração indisponível temporariamente
+              </p>
+            </div>
+          </div>
+
+          <Button size="sm" className="h-8 shrink-0 rounded-[6px] px-3 text-xs shadow-none" disabled>
+            <Link2 className="h-4 w-4" />
+            Indisponível
+          </Button>
+        </div>
+      );
+    }
+
+    return (
+      <Card className="rounded-[8px] bg-[var(--app-surface)] opacity-70 shadow-none">
+        <CardHeader className="pb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-accent">
+              <Calendar className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div>
+              <CardTitle className="text-base">Google Agenda</CardTitle>
+              <CardDescription>Integração desativada temporariamente</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-start gap-2 rounded-lg border border-white/[0.055] bg-white/[0.025] p-3 text-sm text-muted-foreground">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>Esta integração está indisponível para todos os usuários por enquanto.</p>
+          </div>
+          <Button className="w-full" disabled>
+            <Link2 className="h-4 w-4 mr-2" />
+            Indisponível
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (isLoading) {
     if (compact) {
@@ -125,7 +182,7 @@ export function GoogleCalendarConnect({ compact = false }: GoogleCalendarConnect
           <div>
             <CardTitle className="text-base">Google Agenda</CardTitle>
             <CardDescription>
-              {isConnected ? calendarStatus.account_email || "Sua agenda esta conectada" : "Conecte para sincronizar suas atividades"}
+              {isConnected ? calendarStatus.account_email || "Sua agenda está conectada" : "Conecte para sincronizar suas atividades"}
             </CardDescription>
           </div>
         </div>
@@ -163,7 +220,7 @@ export function GoogleCalendarConnect({ compact = false }: GoogleCalendarConnect
 
             <div className="flex items-center justify-between gap-3">
               <Label htmlFor="sync-enabled" className="flex flex-col gap-1">
-                <span>Sincronizacao automatica</span>
+                <span>Sincronização automática</span>
                 <span className="text-xs text-muted-foreground font-normal">
                   Enviar e receber eventos automaticamente
                 </span>
@@ -184,7 +241,7 @@ export function GoogleCalendarConnect({ compact = false }: GoogleCalendarConnect
                   </Badge>
                   {calendarStatus.last_synced_at && (
                     <span className="text-xs text-muted-foreground">
-                      Ultimo sync: {new Date(calendarStatus.last_synced_at).toLocaleString("pt-BR")}
+                      Último sync: {new Date(calendarStatus.last_synced_at).toLocaleString("pt-BR")}
                     </span>
                   )}
                 </div>

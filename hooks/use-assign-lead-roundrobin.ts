@@ -21,7 +21,7 @@ export function useAssignLeadRoundRobin() {
   return useMutation({
     mutationFn: async (leadId: string): Promise<AssignLeadResult> => {
       if (!organizationId) {
-        throw new Error('Usuario nao possui organizacao');
+        throw new Error('Usuário não possui organização');
       }
 
       return leadsAPI.redistributeLeadRoundRobin(leadId, organizationId);
@@ -35,11 +35,11 @@ export function useAssignLeadRoundRobin() {
       queryClient.invalidateQueries({ queryKey: ['lead-history-v2', data.lead_id] });
 
       if (data.assigned_user_id) {
-        toast.success('Lead atribuido com sucesso via round-robin!');
+        toast.success('Lead atribuído com sucesso via round-robin!');
       } else if (data.round_robin_used === false) {
         toast.warning('Nenhum round-robin ativo encontrado. Configure um round-robin primeiro.');
       } else {
-        toast.info('Lead processado, mas nao foi possivel atribuir automaticamente.');
+        toast.info('Lead processado, mas não foi possível atribuir automaticamente.');
       }
     },
     onError: (error: Error) => {

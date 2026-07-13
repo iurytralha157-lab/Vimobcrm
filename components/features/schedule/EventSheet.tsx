@@ -499,7 +499,7 @@ export function EventSheet({
 
           {isMasked && (
             <AgendaRow icon={<Lock size={18} />} align="center">
-              <span className="inline-flex h-8 items-center rounded-[8px] bg-[var(--app-surface-soft)] px-3 text-sm font-semibold text-[var(--app-text-secondary)]">Informacoes privadas</span>
+              <span className="inline-flex h-8 items-center rounded-[8px] bg-[var(--app-surface-soft)] px-3 text-sm font-semibold text-[var(--app-text-secondary)]">Informações privadas</span>
             </AgendaRow>
           )}
 

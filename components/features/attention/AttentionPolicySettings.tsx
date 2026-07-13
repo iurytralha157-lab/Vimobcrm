@@ -184,7 +184,7 @@ function PolicyCard({ policy }: { policy: AttentionPolicy }) {
       <CardContent className="space-y-5">
         {isArchived ? (
           <div className="rounded-lg bg-white/[0.04] p-4 text-sm text-muted-foreground">
-            Esta versao foi arquivada e permanece disponivel apenas para auditoria dos ciclos historicos.
+            Esta versão foi arquivada e permanece disponível apenas para auditoria dos ciclos históricos.
           </div>
         ) : (
           <>
@@ -246,15 +246,15 @@ function PolicyCard({ policy }: { policy: AttentionPolicy }) {
             <div className="grid gap-3 rounded-xl bg-white/[0.035] p-4 md:grid-cols-2">
               <ToggleRow
                 icon={Clock3}
-                title="Contar somente horario comercial"
-                description="Pausa o relogio fora da jornada configurada para a organizacao."
+                title="Contar somente horário comercial"
+                description="Pausa o relógio fora da jornada configurada para a organização."
                 checked={draft.businessHoursOnly}
                 onCheckedChange={(value) => setField('businessHoursOnly', value)}
               />
               <ToggleRow
                 icon={Shuffle}
                 title="Redistribuicao por tempo"
-                description="Opcional; tambem depende da chave global de seguranca."
+                description="Opcional; também depende da chave global de segurança."
                 checked={draft.redistributionEnabled}
                 onCheckedChange={(value) => setField('redistributionEnabled', value)}
               />
@@ -431,7 +431,7 @@ function CreatePolicyDialog({ open, onOpenChange }: { open: boolean; onOpenChang
         <DialogHeader>
           <DialogTitle>Nova regra de cadencia</DialogTitle>
           <DialogDescription>
-            A regra nasce em observacao. Assim voce mede o impacto antes de ativar cobrancas ou redistribuicao.
+            A regra nasce em observação. Assim você mede o impacto antes de ativar cobranças ou redistribuição.
           </DialogDescription>
         </DialogHeader>
 
@@ -499,15 +499,15 @@ function CreatePolicyDialog({ open, onOpenChange }: { open: boolean; onOpenChang
         <div className="space-y-3 rounded-xl bg-white/[0.035] p-4">
           <ToggleRow
             icon={Clock3}
-            title="Somente horario comercial"
-            description="Usa o calendario e o fuso da organizacao."
+            title="Somente horário comercial"
+            description="Usa o calendário e o fuso da organização."
             checked={businessHoursOnly}
             onCheckedChange={setBusinessHoursOnly}
           />
           <ToggleRow
             icon={Shuffle}
             title="Permitir redistribuicao"
-            description="Continua bloqueada se a chave global de seguranca estiver desligada."
+            description="Continua bloqueada se a chave global de segurança estiver desligada."
             checked={redistributionEnabled}
             onCheckedChange={setRedistributionEnabled}
           />
@@ -530,7 +530,7 @@ function CreatePolicyDialog({ open, onOpenChange }: { open: boolean; onOpenChang
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={createPolicy.isPending}>Cancelar</Button>
           <Button onClick={handleCreate} disabled={!canSubmit || createPolicy.isPending}>
             {createPolicy.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-            Criar em observacao
+            Criar em observação
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -602,12 +602,12 @@ function GlobalSafetyCard({ settings }: { settings: AttentionSettings }) {
                 Seguranca global do motor
               </CardTitle>
               <CardDescription className="mt-1">
-                Travas da organizacao que prevalecem sobre todas as politicas individuais.
+                Travas da organização que prevalecem sobre todas as políticas individuais.
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
               <Badge variant={isEnabled ? 'default' : 'secondary'}>
-                Motor {draft.engineMode === 'disabled' ? 'desligado' : draft.engineMode === 'shadow' ? 'em observacao' : 'ativo'}
+                Motor {draft.engineMode === 'disabled' ? 'desligado' : draft.engineMode === 'shadow' ? 'em observação' : 'ativo'}
               </Badge>
               <Badge variant={draft.redistributionEnabled ? 'destructive' : 'outline'}>
                 Redistribuicao {draft.redistributionEnabled ? 'liberada' : 'bloqueada'}
@@ -623,11 +623,11 @@ function GlobalSafetyCard({ settings }: { settings: AttentionSettings }) {
               : 'border-emerald-500/20 bg-emerald-500/[0.06]',
           )}>
             {isEnabled ? <AlertTriangle className="h-4 w-4 text-amber-500" /> : <ShieldCheck className="h-4 w-4 text-emerald-500" />}
-            <AlertTitle>{isEnabled ? 'Ativacao operacional preparada' : 'Ambiente seguro para configuracao'}</AlertTitle>
+            <AlertTitle>{isEnabled ? 'Ativação operacional preparada' : 'Ambiente seguro para configuração'}</AlertTitle>
             <AlertDescription>
               {isEnabled
                 ? 'Ao salvar em modo ativo, politicas ativas iniciam cobrancas somente para leads futuros elegiveis: nao manuais e criados depois da implantacao. Leads antigos nunca entram.'
-                : 'Use o modo observacao para medir prazos sem cobrar corretores. O modo desligado interrompe a avaliacao global.'}
+                : 'Use o modo observação para medir prazos sem cobrar corretores. O modo desligado interrompe a avaliação global.'}
             </AlertDescription>
           </Alert>
 
@@ -644,7 +644,7 @@ function GlobalSafetyCard({ settings }: { settings: AttentionSettings }) {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="attention-timezone">Fuso horario</Label>
+              <Label htmlFor="attention-timezone">Fuso horário</Label>
               <Input
                 id="attention-timezone"
                 value={draft.timezone}
@@ -676,7 +676,7 @@ function GlobalSafetyCard({ settings }: { settings: AttentionSettings }) {
           <div className="grid gap-3 rounded-xl bg-white/[0.035] p-4 md:grid-cols-2">
             <ToggleRow
               icon={BellRing}
-              title="Notificacoes habilitadas"
+              title="Notificações habilitadas"
               description="Permite avisos ao corretor, lideranca e administradores quando o motor e a politica estiverem ativos."
               checked={draft.notificationsEnabled}
               onCheckedChange={(checked) => setField('notificationsEnabled', checked)}
@@ -696,7 +696,7 @@ function GlobalSafetyCard({ settings }: { settings: AttentionSettings }) {
             </p>
             <Button onClick={handleSave} disabled={isInvalid || updateSettings.isPending}>
               {updateSettings.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-              Salvar seguranca global
+              Salvar segurança global
             </Button>
           </div>
         </CardContent>
@@ -707,7 +707,7 @@ function GlobalSafetyCard({ settings }: { settings: AttentionSettings }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Liberar redistribuicao automatica por tempo?</AlertDialogTitle>
             <AlertDialogDescription>
-              Esta e a trava global da organizacao. Quando o motor e uma politica tambem estiverem ativos, leads futuros elegiveis poderao trocar de corretor apos o prazo configurado. A ativacao nao inclui leads antigos ou manuais.
+              Esta é a trava global da organização. Quando o motor e uma política também estiverem ativos, leads futuros elegíveis poderão trocar de corretor após o prazo configurado. A ativação não inclui leads antigos ou manuais.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -740,9 +740,9 @@ export function AttentionPolicySettings() {
       ) : settingsQuery.isError || !settingsQuery.data ? (
         <Alert variant="destructive">
           <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Seguranca global indisponivel</AlertTitle>
+          <AlertTitle>Segurança global indisponível</AlertTitle>
           <AlertDescription className="mt-2 flex flex-wrap items-center gap-3">
-            <span>Nao foi possivel confirmar o modo do motor. Nenhuma alteracao deve ser ativada sem esta leitura.</span>
+            <span>Não foi possível confirmar o modo do motor. Nenhuma alteração deve ser ativada sem esta leitura.</span>
             <Button variant="outline" size="sm" onClick={() => settingsQuery.refetch()}>Tentar novamente</Button>
           </AlertDescription>
         </Alert>
@@ -764,13 +764,13 @@ export function AttentionPolicySettings() {
         <ShieldCheck className="h-4 w-4 text-amber-500" />
         <AlertTitle>Seguranca em camadas</AlertTitle>
         <AlertDescription>
-          Uma regra ativa pode gerar cobrancas. Redistribuicao so acontece quando a regra permite e o kill switch global tambem esta ligado. Comece sempre em observacao. As regras valem somente para leads nao manuais criados depois da implantacao; nao ha inscricao de legado.
+          Uma regra ativa pode gerar cobranças. Redistribuição só acontece quando a regra permite e o kill switch global também está ligado. Comece sempre em observação. As regras valem somente para leads não manuais criados depois da implantação; não há inscrição de legado.
         </AlertDescription>
       </Alert>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Politicas de cadencia e SLA</h2>
+          <h2 className="text-lg font-semibold">Políticas de cadência e SLA</h2>
           <p className="text-sm text-muted-foreground">Configure cada relogio sem alterar ciclos que ja estao em andamento.</p>
         </div>
         <Button onClick={() => setCreateOpen(true)}>
@@ -788,8 +788,8 @@ export function AttentionPolicySettings() {
           <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
             <AlertTriangle className="h-10 w-10 text-destructive" />
             <div>
-              <p className="font-medium">Nao foi possivel carregar as regras.</p>
-              <p className="text-sm text-muted-foreground">Confira se a API local esta rodando e tente novamente.</p>
+              <p className="font-medium">Não foi possível carregar as regras.</p>
+              <p className="text-sm text-muted-foreground">Confira se a API local está rodando e tente novamente.</p>
             </div>
             <Button variant="outline" onClick={() => refetch()}>Tentar novamente</Button>
           </CardContent>
@@ -801,7 +801,7 @@ export function AttentionPolicySettings() {
             <div className="max-w-xl">
               <h3 className="font-semibold">Nenhuma regra configurada</h3>
               <p className="mt-1 text-sm text-muted-foreground">
-                Crie primeiro uma regra de contato ou de etapa em modo de observacao para validar o comportamento com dados reais.
+                Crie primeiro uma regra de contato ou de etapa em modo de observação para validar o comportamento com dados reais.
               </p>
             </div>
             <Button onClick={() => setCreateOpen(true)}><Plus className="mr-2 h-4 w-4" />Criar primeira regra</Button>

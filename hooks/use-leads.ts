@@ -117,8 +117,8 @@ export function useCreateLead() {
 
   return useMutation<CreateLeadResult, Error, CreateLeadInput>({
     mutationFn: async (lead) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado');
-      if (!organizationId) throw new Error('Usuario nao possui organizacao');
+      if (!user?.id) throw new Error('Usuário não autenticado');
+      if (!organizationId) throw new Error('Usuário não possui organização');
 
       enforceClientActionRateLimit(`lead:create:${user.id}`, [
         { limit: 1, windowMs: 1000 },
@@ -171,8 +171,8 @@ export function useUpdateLead() {
 
   return useMutation({
     mutationFn: async ({ id, ...updates }: Partial<Lead> & { id: string }) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado');
-      if (!organizationId) throw new Error('Usuario nao possui organizacao');
+      if (!user?.id) throw new Error('Usuário não autenticado');
+      if (!organizationId) throw new Error('Usuário não possui organização');
 
       enforceClientActionRateLimit(`lead:update:${user.id}:${id}`, [
         { limit: 2, windowMs: 1000 },
@@ -236,8 +236,8 @@ export function useDeleteLead() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado');
-      if (!organizationId) throw new Error('Usuario nao possui organizacao');
+      if (!user?.id) throw new Error('Usuário não autenticado');
+      if (!organizationId) throw new Error('Usuário não possui organização');
 
       enforceClientActionRateLimit(`lead:delete:${user.id}:${id}`, [
         { limit: 1, windowMs: 1000 },
@@ -272,8 +272,8 @@ export function useAddLeadTag() {
 
   return useMutation({
     mutationFn: async ({ leadId, tagId }: { leadId: string; tagId: string }) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado');
-      if (!organizationId) throw new Error('Usuario nao possui organizacao');
+      if (!user?.id) throw new Error('Usuário não autenticado');
+      if (!organizationId) throw new Error('Usuário não possui organização');
 
       enforceClientActionRateLimit(`lead:tag:add:${user.id}:${leadId}`, [
         { limit: 2, windowMs: 1000 },
@@ -318,8 +318,8 @@ export function useRemoveLeadTag() {
 
   return useMutation({
     mutationFn: async ({ leadId, tagId }: { leadId: string; tagId: string }) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado');
-      if (!organizationId) throw new Error('Usuario nao possui organizacao');
+      if (!user?.id) throw new Error('Usuário não autenticado');
+      if (!organizationId) throw new Error('Usuário não possui organização');
 
       enforceClientActionRateLimit(`lead:tag:remove:${user.id}:${leadId}`, [
         { limit: 2, windowMs: 1000 },

@@ -26,7 +26,7 @@ export function useScheduleComments(eventId: string | undefined) {
   const addCommentMutation = useMutation({
     mutationFn: async (content: string) => {
       if (!eventId) throw new Error('Evento nao identificado')
-      if (!profile?.organization_id) throw new Error('Organizacao nao encontrada')
+      if (!profile?.organization_id) throw new Error('Organização não encontrada')
       return scheduleAPI.addComment(eventId, content, profile.organization_id)
     },
     onSuccess: () => {

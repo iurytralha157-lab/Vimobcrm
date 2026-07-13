@@ -184,7 +184,7 @@ export const apiMessageTemplateListResponseSchema = apiEnvelopeSchema(z.array(me
 export const paymentCheckoutQuerySchema = z.object({
   token: z.string().trim().min(8).max(2_000).nullish(),
   organization_id: uuidSchema.nullish(),
-}).strict().refine((value) => Boolean(value.token || value.organization_id), 'Informe token ou organizacao')
+}).strict().refine((value) => Boolean(value.token || value.organization_id), 'Informe token ou organização')
 export const paymentStatusQuerySchema = z.object({
   payment_id: safePathSegmentSchema,
   checkout_token: z.string().trim().min(8).max(2_000),

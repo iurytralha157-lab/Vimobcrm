@@ -34,6 +34,7 @@ import { useState } from 'react';
 import { QuickActions } from '@/components/features/help/QuickActions';
 import { MyRequestsList } from '@/components/features/help/MyRequestsList';
 import { FeatureRequestDialog } from '@/components/features/help/FeatureRequestDialog';
+import { FEATURES } from '@/config/constants';
 
 const helpSections = [
   {
@@ -134,7 +135,9 @@ const helpSections = [
       },
       {
         question: 'Como sincronizar com Google Agenda?',
-        answer: 'Na tela da Agenda, clique em "Conectar Google Agenda". Autorize o acesso e seus eventos serão sincronizados automaticamente entre o CRM e sua agenda Google.'
+        answer: FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION
+          ? 'Na tela da Agenda, clique em "Conectar Google Agenda". Autorize o acesso e seus eventos serão sincronizados automaticamente entre o CRM e sua agenda Google.'
+          : 'A integração com Google Agenda está desativada temporariamente para todos os usuários.'
       },
       {
         question: 'Como visualizar a agenda de toda equipe?',

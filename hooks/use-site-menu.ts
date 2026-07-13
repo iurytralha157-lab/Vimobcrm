@@ -28,7 +28,7 @@ export function useCreateMenuItem() {
 
   return useMutation({
     mutationFn: async (item: Omit<SiteMenuItem, 'id' | 'organization_id' | 'created_at'>) => {
-      if (!profile?.organization_id) throw new Error('Organizacao nao encontrada')
+      if (!profile?.organization_id) throw new Error('Organização não encontrada')
       return siteAPI.createMenuItem(item, profile.organization_id)
     },
     onSuccess: () => {

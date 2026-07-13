@@ -56,7 +56,7 @@ export function useSaveVistaIntegration() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['vista-integration'] });
-      toast.success('Integracao Vista salva!');
+      toast.success('Integração Vista salva!');
     },
     onError: (e: unknown) => toast.error(`Erro ao salvar: ${getErrorMessage(e)}`),
   });
@@ -91,7 +91,7 @@ export function useSyncVistaProperties() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['vista-integration'] });
       queryClient.invalidateQueries({ queryKey: ['properties'] });
-      toast.success(`Sincronizacao concluida! ${data.synced} imoveis importados.`);
+      toast.success(`Sincronização concluída! ${data.synced} imóveis importados.`);
     },
     onError: (e: unknown) => toast.error(`Erro na sincronizacao: ${getErrorMessage(e)}`),
   });
@@ -108,7 +108,7 @@ export function useDeleteVistaIntegration() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['vista-integration'] });
-      toast.success('Integracao removida!');
+      toast.success('Integração removida!');
     },
   });
 }

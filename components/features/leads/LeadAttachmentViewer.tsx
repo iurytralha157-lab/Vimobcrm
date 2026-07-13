@@ -220,11 +220,11 @@ export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAtt
                 )}
                 <div>
                   <p className="text-base font-semibold">
-                    {hasError ? 'Nao foi possivel carregar a previa' : 'Previa indisponivel'}
+                    {hasError ? 'Não foi possível carregar a prévia' : 'Prévia indisponível'}
                   </p>
                   <p className="mt-1 text-sm text-white/55">
                     {hasError
-                      ? 'A URL do arquivo nao respondeu corretamente. O arquivo continua anexado e pode ser baixado.'
+                      ? 'A URL do arquivo não respondeu corretamente. O arquivo continua anexado e pode ser baixado.'
                       : 'Este tipo de arquivo nao tem visualizacao direta no navegador. O arquivo esta anexado e pode ser baixado.'}
                   </p>
                 </div>

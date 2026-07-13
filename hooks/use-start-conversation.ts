@@ -26,7 +26,7 @@ export function getWhatsAppStartErrorMessage(error: unknown) {
   const normalized = message.toLowerCase();
 
   if (normalized.includes("statement timeout") || normalized.includes("timeout")) {
-    return "Nao foi possivel abrir a conversa agora. Tente novamente em alguns instantes.";
+    return "Não foi possível abrir a conversa agora. Tente novamente em alguns instantes.";
   }
 
   if (normalized.includes("invalid") || normalized.includes("jid") || normalized.includes("phone") || normalized.includes("telefone")) {

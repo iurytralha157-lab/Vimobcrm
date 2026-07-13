@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useOrganizationModules, type ModuleName } from '@/hooks/use-organization-modules';
 import { useAuth } from '@/contexts/AuthContext';
+import { FEATURES } from '@/config/constants';
 
 interface QuickAction {
   icon: ComponentType<{ className?: string }>;
@@ -23,6 +24,7 @@ interface QuickAction {
   path: string;
   module?: ModuleName;
   segment?: 'imobiliario';
+  enabled?: boolean;
 }
 
 const QUICK_ACTIONS: QuickAction[] = [
@@ -59,6 +61,7 @@ const QUICK_ACTIONS: QuickAction[] = [
     description: 'Sincronizar com seu calendário',
     path: '/agenda',
     module: 'agenda',
+    enabled: FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION,
   },
   {
     icon: Zap,
@@ -91,6 +94,8 @@ export function QuickActions() {
 
   // Filter actions based on modules and segment
   const availableActions = QUICK_ACTIONS.filter((action) => {
+    if (action.enabled === false) return false;
+
     // Check module availability
     if (action.module && !hasModule(action.module)) return false;
 

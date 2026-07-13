@@ -668,11 +668,14 @@ func emptyMetaWebhookHealth(missing bool) map[string]any {
 	}
 }
 
+const googleCalendarIntegrationEnabled = false
+
 func allowedFunction(name string) bool {
 	switch name {
 	case "google-calendar-oauth",
-		"google-calendar-sync",
-		"vista-sync",
+		"google-calendar-sync":
+		return googleCalendarIntegrationEnabled
+	case "vista-sync",
 		"imoview-sync",
 		"asaas-checkout-info",
 		"asaas-create-charge",

@@ -242,7 +242,7 @@ export function useWebPush() {
 
     try {
       if (!VAPID_PUBLIC_KEY) {
-        const errorMessage = 'Notificacoes push nao estao configuradas neste ambiente.';
+        const errorMessage = 'Notificações push não estão configuradas neste ambiente.';
         setState(prev => ({
           ...prev,
           isLoading: false,
@@ -271,7 +271,7 @@ export function useWebPush() {
         return {
           ok: false,
           reason: 'permission_denied',
-          message: 'Permissao de notificacao negada. Ative nas configuracoes do navegador.',
+          message: 'Permissão de notificação negada. Ative nas configurações do navegador.',
         };
       }
 
@@ -281,7 +281,7 @@ export function useWebPush() {
       try {
         registration = await getReadyServiceWorkerRegistration();
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Service Worker indisponivel';
+        const errorMessage = error instanceof Error ? error.message : 'Service Worker indisponível';
         setState(prev => ({
           ...prev,
           isLoading: false,
@@ -290,7 +290,7 @@ export function useWebPush() {
         return {
           ok: false,
           reason: 'service_worker',
-          message: 'Nao foi possivel preparar o dispositivo para notificacoes. Atualize a pagina e tente novamente.',
+          message: 'Não foi possível preparar o dispositivo para notificações. Atualize a página e tente novamente.',
         };
       }
       console.log('[WebPush] Service Worker pronto:', registration.scope);
@@ -311,7 +311,7 @@ export function useWebPush() {
         return {
           ok: false,
           reason: 'browser_push',
-          message: 'O navegador recusou a ativacao das notificacoes neste dispositivo.',
+          message: 'O navegador recusou a ativação das notificações neste dispositivo.',
         };
       }
 
@@ -334,7 +334,7 @@ export function useWebPush() {
         return {
           ok: false,
           reason: 'save_failed',
-          message: 'Nao foi possivel registrar este dispositivo no servidor. Tente novamente em instantes.',
+          message: 'Não foi possível registrar este dispositivo no servidor. Tente novamente em instantes.',
         };
       }
       console.log('[WebPush] Subscription salva com sucesso!');
@@ -359,7 +359,7 @@ export function useWebPush() {
       return {
         ok: false,
         reason: 'unknown',
-        message: 'Nao foi possivel ativar as notificacoes agora. Tente novamente em instantes.',
+        message: 'Não foi possível ativar as notificações agora. Tente novamente em instantes.',
       };
     }
   }, [saveSubscription]);
@@ -422,7 +422,7 @@ export function useWebPush() {
         } catch (error) {
           syncError = error instanceof Error
             ? error.message
-            : 'Nao foi possivel reinscrever este dispositivo para notificacoes.';
+            : 'Não foi possível reinscrever este dispositivo para notificações.';
         }
       } else if (subscription && profile?.organization_id) {
         try {
@@ -430,7 +430,7 @@ export function useWebPush() {
         } catch (error) {
           syncError = error instanceof Error
             ? error.message
-            : 'Nao foi possivel sincronizar a subscription no servidor.';
+            : 'Não foi possível sincronizar a subscription no servidor.';
         }
       }
 

@@ -144,15 +144,15 @@ function getAttachmentFileName(event: UnifiedHistoryEvent) {
 
 const OUTCOME_LABELS: Record<string, string> = {
   answered: 'Atendeu',
-  not_answered: 'Nao atendeu',
-  invalid_number: 'Numero invalido',
+  not_answered: 'Não atendeu',
+  invalid_number: 'Número inválido',
   busy: 'Linha ocupada',
   scheduled: 'Agendou retorno',
   replied: 'Respondeu',
-  seen_no_reply: 'Visualizou e nao respondeu',
-  not_seen: 'Nao visualizou',
+  seen_no_reply: 'Visualizou e não respondeu',
+  not_seen: 'Não visualizou',
   no_whatsapp: 'Lead sem WhatsApp',
-  not_replied: 'Nao respondeu',
+  not_replied: 'Não respondeu',
   bounced: 'E-mail invalido',
   done: 'Concluido',
 };
@@ -342,12 +342,12 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
 
   if (event.type === 'meta_form_answer') {
     const question = metadataText(metadata.question) || label.replace(/^Meta:\s*/i, '');
-    return question ? `Meta: ${question}` : 'Resposta do formulario Meta';
+    return question ? `Meta: ${question}` : 'Resposta do formulário Meta';
   }
 
   if (event.type === 'webhook_form_answer') {
     const question = metadataText(metadata.question) || label.replace(/^Webhook:\s*/i, '');
-    return question ? `Webhook: ${question}` : 'Resposta do formulario';
+    return question ? `Webhook: ${question}` : 'Resposta do formulário';
   }
 
   if (isAttachmentEvent(event)) {
@@ -357,7 +357,7 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
 
   if (event.type === 'property_selected' || event.type === 'property_linked') {
     const code = metadataText(metadata.property_code) || metadataText(metadata.property_ref);
-    return code ? `Imovel selecionado: ${code}` : 'Imovel selecionado';
+    return code ? `Imóvel selecionado: ${code}` : 'Imóvel selecionado';
   }
 
   if (event.type === 'proposal_sent') {
@@ -366,12 +366,12 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
 
   if (event.type === 'agenda_created') return 'Atividade agendada';
   if (event.type === 'agenda_rescheduled') return 'Atividade remarcada';
-  if (event.type === 'agenda_completed') return 'Atividade concluida';
+  if (event.type === 'agenda_completed') return 'Atividade concluída';
   if (event.type === 'agenda_cancelled') return 'Atividade cancelada';
   if (event.type === 'visit_scheduled') return 'Visita agendada';
   if (event.type === 'visit_confirmed') return 'Visita realizada';
-  if (event.type === 'meeting_scheduled') return 'Reuniao agendada';
-  if (event.type === 'meeting_held') return 'Reuniao realizada';
+  if (event.type === 'meeting_scheduled') return 'Reunião agendada';
+  if (event.type === 'meeting_held') return 'Reunião realizada';
 
   if (event.type === 'first_response') {
     return content || label || 'Primeiro contato';
@@ -392,7 +392,7 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
       taskName = content.replace(/^Cadencia concluida:\s+/i, '').trim();
     }
 
-    if (!taskName && label && !/tarefa concluida|ligacao realizada|email enviado|mensagem enviada/i.test(label)) {
+    if (!taskName && label && !/tarefa concluida|tarefa concluída|ligacao realizada|ligação realizada|email enviado|mensagem enviada/i.test(label)) {
       taskName = label;
     }
 
@@ -995,7 +995,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
 
   const handleSendAudio = async (base64: string, mimetype: string) => {
     if (!canSendMessage || isSendingMessage) {
-      toast.error('Audio nao enviado', {
+      toast.error('Áudio não enviado', {
         description: inputPlaceholder,
       });
       return;
@@ -1019,7 +1019,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
     if (!file) return;
 
     if (!canSendMessage || isSendingMessage) {
-      toast.error('Arquivo nao enviado', {
+      toast.error('Arquivo não enviado', {
         description: inputPlaceholder,
       });
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -1046,7 +1046,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
       toast.error('Erro ao enviar arquivo', {
         description: error instanceof Error && error.message.length < 160
           ? error.message
-          : 'Nao foi possivel enviar o arquivo.',
+          : 'Não foi possível enviar o arquivo.',
       });
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -1058,8 +1058,8 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
       await whatsappAPI.retryMediaDownload(messageId, profile?.organization_id);
       await refetchMessages();
     } catch {
-      toast.error('Midia nao atualizada', {
-        description: 'Nao foi possivel buscar a midia agora.',
+      toast.error('Mídia não atualizada', {
+        description: 'Não foi possível buscar a mídia agora.',
       });
     }
   };

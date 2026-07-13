@@ -67,8 +67,8 @@ export function useCreatePropertyFeature() {
 
   return useMutation({
     mutationFn: async (name: string) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado')
-      if (!organizationId) throw new Error('Usuario nao possui organizacao')
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
 
       const { data } = await propertyCatalogAPI.createFeature(organizationId, name)
       return toPropertyFeature(data)
@@ -90,8 +90,8 @@ export function useSeedDefaultFeatures() {
 
   return useMutation({
     mutationFn: async () => {
-      if (!user?.id) throw new Error('Usuario nao autenticado')
-      if (!organizationId) throw new Error('Usuario nao possui organizacao')
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
 
       await propertyCatalogAPI.seedFeatures(organizationId, DEFAULT_FEATURES)
     },

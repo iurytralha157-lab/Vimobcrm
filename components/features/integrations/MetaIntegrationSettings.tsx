@@ -204,7 +204,7 @@ export function MetaIntegrationSettings({
       if (status.flowId) {
         try {
           const flow = await getOAuthFlow.mutateAsync(status.flowId);
-          if (openOAuthWizard(flow.payload, "Conta do Facebook autorizada. Escolha a pagina para concluir.")) {
+          if (openOAuthWizard(flow.payload, "Conta do Facebook autorizada. Escolha a página para concluir.")) {
             await refetchConfigs();
             return;
           }
@@ -222,7 +222,7 @@ export function MetaIntegrationSettings({
       if ((integrationsResult.data || []).length > 0) {
         toast.success("Conta do Facebook reconectada com sucesso.");
       } else {
-        toast.warning("Conta do Facebook autorizada, mas nenhuma pagina foi vinculada ainda. Escolha uma pagina para concluir.");
+        toast.warning("Conta do Facebook autorizada, mas nenhuma página foi vinculada ainda. Escolha uma página para concluir.");
       }
       return;
     }
@@ -250,7 +250,7 @@ export function MetaIntegrationSettings({
       }
 
       queueMicrotask(() => {
-        openOAuthWizard(payload, "Conta do Facebook conectada. Escolha a pagina para continuar.");
+        openOAuthWizard(payload, "Conta do Facebook conectada. Escolha a página para continuar.");
         return;
         setNewOAuth(payload);
         setSelectedAccountKey("new-oauth");
@@ -268,7 +268,7 @@ export function MetaIntegrationSettings({
   useEffect(() => {
     if (!oauthPayload) return;
     queueMicrotask(() => {
-      openOAuthWizard(oauthPayload, "Conta do Facebook conectada. Escolha a pagina para continuar.");
+      openOAuthWizard(oauthPayload, "Conta do Facebook conectada. Escolha a página para continuar.");
       return;
       setNewOAuth(oauthPayload ?? null);
       setSelectedAccountKey("new-oauth");
@@ -315,7 +315,7 @@ export function MetaIntegrationSettings({
       }
 
       if (!event.data || event.data.type !== "META_OAUTH_SUCCESS") return;
-      if (openOAuthWizard(event.data.data || null, "Conta do Facebook conectada. Escolha a pagina para continuar.")) return;
+      if (openOAuthWizard(event.data.data || null, "Conta do Facebook conectada. Escolha a página para continuar.")) return;
       setNewOAuth(event.data.data || null);
       setSelectedAccountKey("new-oauth");
       setWizardOpen(true);

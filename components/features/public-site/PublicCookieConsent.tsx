@@ -25,9 +25,9 @@ export function PublicCookieConsent({ primaryColor, privacyHref, siteTitle }: Pu
     <div className="fixed inset-x-3 bottom-3 z-[70] mx-auto max-w-xl rounded-[10px] border border-white/10 bg-[var(--site-card)] p-4 text-[var(--site-fg)] sm:bottom-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm font-light leading-6 opacity-78">
-          A {siteTitle} usa cookies para melhorar sua experiencia no site. Leia a{" "}
+          A {siteTitle} usa cookies para melhorar sua experiência no site. Leia a{" "}
           <Link href={privacyHref} className="font-normal underline underline-offset-4" style={{ color: primaryColor }}>
-            Politica de Privacidade
+            Política de Privacidade
           </Link>
           .
         </p>

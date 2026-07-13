@@ -60,7 +60,7 @@ export function useUpdateUser() {
         return current.map((user) => (user.id === updatedUser.id ? { ...user, ...updatedUser } : user));
       });
       queryClient.invalidateQueries({ queryKey: ['organization-users'] });
-      toast.success('Usuario atualizado!');
+      toast.success('Usuário atualizado!');
     },
     onError: (error) => {
       toast.error('Erro ao atualizar usuario: ' + error.message);

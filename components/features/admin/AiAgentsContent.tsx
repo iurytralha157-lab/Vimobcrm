@@ -32,7 +32,7 @@ type FormState = {
 
 const TOOL_OPTIONS = [
   { key: "getLeadContext", label: "Contexto do lead" },
-  { key: "searchProperties", label: "Buscar imoveis" },
+  { key: "searchProperties", label: "Buscar imóveis" },
   { key: "classifyLeadIntent", label: "Classificar perfil" },
   { key: "draftWhatsAppMessage", label: "Rascunhar WhatsApp" },
   { key: "createFollowUpTask", label: "Criar follow-up" },
@@ -79,7 +79,7 @@ export function AiAgentsContent() {
       queryClient.invalidateQueries({ queryKey: ["admin-ai-agents"] });
     },
     onError: () => {
-      toast.error("Nao foi possivel salvar o agente.");
+      toast.error("Não foi possível salvar o agente.");
     },
   });
 
@@ -91,7 +91,7 @@ export function AiAgentsContent() {
       queryClient.invalidateQueries({ queryKey: ["admin-ai-agents"] });
     },
     onError: () => {
-      toast.error("Nao foi possivel remover o agente.");
+      toast.error("Não foi possível remover o agente.");
     },
   });
 
@@ -107,7 +107,7 @@ export function AiAgentsContent() {
       toast.success(result.mode === "openai" ? "Resposta gerada pela OpenAI." : "Resposta simulada gerada.");
     },
     onError: () => {
-      toast.error("Nao foi possivel testar o agente.");
+      toast.error("Não foi possível testar o agente.");
     },
   });
 
@@ -175,7 +175,7 @@ export function AiAgentsContent() {
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-base font-semibold">{form.id ? "Editar agente" : "Novo agente"}</h2>
-                <p className="text-xs text-muted-foreground">O prompt e liberado, mas a seguranca fica fixa no backend.</p>
+                <p className="text-xs text-muted-foreground">O prompt é liberado, mas a segurança fica fixa no backend.</p>
               </div>
               {form.id && (
                 <Button
@@ -194,7 +194,7 @@ export function AiAgentsContent() {
               <Field label="Nome">
                 <Input value={form.name} onChange={(event) => setFormValue("name", event.target.value, setForm)} />
               </Field>
-              <Field label="Organizacao">
+              <Field label="Organização">
                 <select
                   value={form.organizationId}
                   onChange={(event) => setFormValue("organizationId", event.target.value, setForm)}

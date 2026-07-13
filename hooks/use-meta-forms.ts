@@ -163,7 +163,7 @@ export function useSaveFormConfig() {
       queryClient.invalidateQueries({ queryKey: ["meta-form-configs", variables.integrationId] });
       queryClient.invalidateQueries({ queryKey: ["meta-form-configs"] });
       queryClient.invalidateQueries({ queryKey: ["round-robin-rules"] });
-      toast.success("Configuracao do formulario salva!");
+      toast.success("Configuração do formulário salva!");
     },
     onError: (error: Error) => {
       toast.error(`Erro ao salvar: ${error.message}`);
@@ -205,7 +205,7 @@ export function useDeleteFormConfig() {
       queryClient.invalidateQueries({ queryKey: ["meta-form-configs", variables.integrationId] });
       queryClient.invalidateQueries({ queryKey: ["meta-form-configs"] });
       queryClient.invalidateQueries({ queryKey: ["round-robin-rules"] });
-      toast.success("Configuracao removida!");
+      toast.success("Configuração removida!");
     },
     onError: (error: Error) => {
       toast.error(`Erro: ${error.message}`);

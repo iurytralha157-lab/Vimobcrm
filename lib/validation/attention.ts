@@ -178,7 +178,7 @@ export const updateAttentionSettingsInputSchema = z.object({
   defaultRepeatMinutes: z.number().int().min(15).max(525_600).optional(),
   maxReminders: z.number().int().min(0).max(10_000).optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, {
-  message: 'Informe ao menos uma configuracao.',
+  message: 'Informe ao menos uma configuração.',
 })
 
 export const acknowledgeAttentionItemInputSchema = z.object({

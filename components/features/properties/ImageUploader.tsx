@@ -227,7 +227,7 @@ export function ImageUploader({
       <div className="space-y-3">
         <Label className="text-base font-medium">Imagem Principal</Label>
         <p className="text-sm text-muted-foreground">
-          Esta imagem sera exibida em destaque nos anuncios
+          Esta imagem será exibida em destaque nos anúncios
         </p>
 
         {mainImage ? (
@@ -306,7 +306,7 @@ export function ImageUploader({
       <div className="space-y-3">
         <Label className="text-base font-medium">Galeria de Fotos</Label>
         <p className="text-sm text-muted-foreground">
-          Adicione mais fotos do imovel. Arraste para reordenar.
+          Adicione mais fotos do imóvel. Arraste para reordenar.
         </p>
 
         <label
@@ -424,7 +424,7 @@ export function ImageUploader({
             <ImageIcon className="h-8 w-8 text-muted-foreground" />
             <div>
               <p className="text-sm font-medium">Nenhuma foto na galeria</p>
-              <p className="text-xs text-muted-foreground">Adicione mais fotos do imovel</p>
+              <p className="text-xs text-muted-foreground">Adicione mais fotos do imóvel</p>
             </div>
           </div>
         )}

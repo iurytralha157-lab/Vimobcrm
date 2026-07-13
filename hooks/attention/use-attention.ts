@@ -98,9 +98,9 @@ export function useAcknowledgeAttentionItem() {
     mutationFn: ({ id, note }: { id: string; note?: string }) => attentionAPI.acknowledgeItem(id, note, organizationId),
     onSuccess: () => {
       invalidate()
-      toast.success('Alerta assumido. A equipe agora sabe que voce esta cuidando dele.')
+      toast.success('Alerta assumido. A equipe agora sabe que você está cuidando dele.')
     },
-    onError: (error: Error) => toast.error(error.message || 'Nao foi possivel assumir o alerta.'),
+    onError: (error: Error) => toast.error(error.message || 'Não foi possível assumir o alerta.'),
   })
 }
 
@@ -114,9 +114,9 @@ export function useSnoozeAttentionItem() {
     ),
     onSuccess: () => {
       invalidate()
-      toast.success('Alerta adiado pelo periodo selecionado.')
+      toast.success('Alerta adiado pelo período selecionado.')
     },
-    onError: (error: Error) => toast.error(error.message || 'Nao foi possivel adiar o alerta.'),
+    onError: (error: Error) => toast.error(error.message || 'Não foi possível adiar o alerta.'),
   })
 }
 
@@ -132,7 +132,7 @@ export function useResolveAttentionItem() {
       invalidate()
       toast.success('Alerta resolvido.')
     },
-    onError: (error: Error) => toast.error(error.message || 'Nao foi possivel resolver o alerta.'),
+    onError: (error: Error) => toast.error(error.message || 'Não foi possível resolver o alerta.'),
   })
 }
 
@@ -144,9 +144,9 @@ export function useCreateAttentionPolicy() {
     mutationFn: (input: CreateAttentionPolicyInput) => attentionAPI.createPolicy(input, organizationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attention', 'policies'] })
-      toast.success('Regra criada em modo de observacao.')
+      toast.success('Regra criada em modo de observação.')
     },
-    onError: (error: Error) => toast.error(error.message || 'Nao foi possivel criar a regra.'),
+    onError: (error: Error) => toast.error(error.message || 'Não foi possível criar a regra.'),
   })
 }
 
@@ -162,9 +162,9 @@ export function useUpdateAttentionPolicy() {
       queryClient.invalidateQueries({ queryKey: ['attention', 'policies'] })
       queryClient.invalidateQueries({ queryKey: ['attention', 'items'] })
       queryClient.invalidateQueries({ queryKey: ['attention', 'summary'] })
-      toast.success('Regra atualizada. Ciclos existentes mantem a versao original.')
+      toast.success('Regra atualizada. Ciclos existentes mantêm a versão original.')
     },
-    onError: (error: Error) => toast.error(error.message || 'Nao foi possivel atualizar a regra.'),
+    onError: (error: Error) => toast.error(error.message || 'Não foi possível atualizar a regra.'),
   })
 }
 
@@ -178,8 +178,8 @@ export function useUpdateAttentionSettings() {
       queryClient.invalidateQueries({ queryKey: ['attention', 'settings'] })
       queryClient.invalidateQueries({ queryKey: ['attention', 'items'] })
       queryClient.invalidateQueries({ queryKey: ['attention', 'summary'] })
-      toast.success('Configuracoes globais do motor atualizadas.')
+      toast.success('Configurações globais do motor atualizadas.')
     },
-    onError: (error: Error) => toast.error(error.message || 'Nao foi possivel atualizar a seguranca global.'),
+    onError: (error: Error) => toast.error(error.message || 'Não foi possível atualizar a segurança global.'),
   })
 }

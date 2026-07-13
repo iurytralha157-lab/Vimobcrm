@@ -673,7 +673,7 @@ function PerformanceCharts({ data }: { data: GamificationOverview }) {
         </div>
 
         <div className="app-card p-4">
-          <PanelTitle icon={Activity} eyebrow="Semana" title="Volume de acoes" />
+          <PanelTitle icon={Activity} eyebrow="Semana" title="Volume de ações" />
           <div className="mt-4 h-[280px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={data.performance.chartData}>
@@ -704,7 +704,7 @@ function DistributionPanel({ data, totalActions }: { data: GamificationOverview;
                   <span>{percentage}%</span>
                 </div>
                  <Progress value={percentage} className="h-2 bg-black/10 dark:bg-white/10" />
-                <p className="text-xs text-muted-foreground">{formatNumber(item.value)} acoes</p>
+                <p className="text-xs text-muted-foreground">{formatNumber(item.value)} ações</p>
               </div>
             );
           })}
@@ -763,7 +763,7 @@ function ManualEntrySubmitCard({ admin, entries }: { admin: AdminHook; entries: 
               value={form.notes}
               onChange={(event) => setForm({ ...form, notes: event.target.value })}
               rows={3}
-              placeholder="Ex.: ligacoes feitas no stand, planilha de prospeccao, visita externa..."
+              placeholder="Ex.: ligações feitas no stand, planilha de prospecção, visita externa..."
             />
           </Field>
           <Button type="submit" disabled={admin.createManualEntry.isPending || !form.actionKey}>
@@ -773,7 +773,7 @@ function ManualEntrySubmitCard({ admin, entries }: { admin: AdminHook; entries: 
         </form>
 
         <div className="rounded-md bg-[var(--app-surface-soft)] p-3">
-          <p className="text-sm font-semibold">Minhas solicitacoes</p>
+          <p className="text-sm font-semibold">Minhas solicitações</p>
           <div className="mt-3 space-y-2">
             {recentEntries.length === 0 ? (
               <p className="text-xs text-muted-foreground">Nenhum lancamento manual enviado ainda.</p>
@@ -1144,10 +1144,10 @@ function HistoryView({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="7">Ultimos 7 dias</SelectItem>
-                <SelectItem value="30">Ultimos 30 dias</SelectItem>
-                <SelectItem value="90">Ultimos 90 dias</SelectItem>
-                <SelectItem value="all">Todo periodo</SelectItem>
+                <SelectItem value="7">Últimos 7 dias</SelectItem>
+                <SelectItem value="30">Últimos 30 dias</SelectItem>
+                <SelectItem value="90">Últimos 90 dias</SelectItem>
+                <SelectItem value="all">Todo período</SelectItem>
               </SelectContent>
             </Select>
           )}
@@ -1248,7 +1248,7 @@ function AdminView({
     return (
       <div className="app-card flex min-h-[260px] items-center justify-center gap-3 text-sm text-muted-foreground">
         <Loader2 className="h-5 w-5 animate-spin text-primary" />
-        Carregando configuracoes da arena...
+        Carregando configurações da arena...
       </div>
     );
   }
@@ -1275,7 +1275,7 @@ function AdminView({
         <ConfigTab value="missions" icon={Target} label="Missoes" />
         <ConfigTab value="participants" icon={Users} label="Participantes" />
         <ConfigTab value="seasons" icon={Flag} label="Temporada" />
-        <ConfigTab value="manual" icon={ClipboardCheck} label="Aprovacoes" />
+        <ConfigTab value="manual" icon={ClipboardCheck} label="Aprovações" />
       </TabsList>
 
       <TabsContent value="rules" className="mt-0">
@@ -1439,7 +1439,7 @@ function MissionsAdmin({
             Esta missão já possui progresso. Ação, período, meta, bônus e público ficam bloqueados para preservar o histórico.
           </p>
         )}
-        <Field label="Titulo">
+        <Field label="Título">
           <Input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required />
         </Field>
         <Field label="Descricao">
@@ -1728,7 +1728,7 @@ function ManualEntriesAdmin({ snapshot, admin }: { snapshot: GamificationAdminSn
       <form onSubmit={submit} className="app-card space-y-4 p-4">
         <PanelTitle icon={ClipboardCheck} eyebrow="Manual" title="Novo lancamento" showIcon={false} />
         <p className="text-sm text-muted-foreground">
-          Aprovacoes sao atividades enviadas pela equipe para validar pontos feitos fora do CRM.
+          Aprovações são atividades enviadas pela equipe para validar pontos feitos fora do CRM.
         </p>
         <Field label="Tipo de atividade">
           <Select value={form.actionKey} onValueChange={(value) => setForm({ ...form, actionKey: value as GamificationActionType })}>
@@ -1753,7 +1753,7 @@ function ManualEntriesAdmin({ snapshot, admin }: { snapshot: GamificationAdminSn
             onChange={(event) => setForm({ ...form, quantity: Number(event.target.value) || 1 })}
           />
         </Field>
-        <Field label="Observacoes / evidencia">
+        <Field label="Observações / evidência">
           <Textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} rows={4} />
         </Field>
         <Button type="submit" className="w-full" disabled={admin.createManualEntry.isPending || !form.actionKey}>
@@ -1762,8 +1762,8 @@ function ManualEntriesAdmin({ snapshot, admin }: { snapshot: GamificationAdminSn
       </form>
 
       <section className="space-y-4">
-        <ManualEntryList title="Fila de aprovacoes e concessoes" entries={snapshot.pendingManualEntries} admin={admin} rejectReasons={rejectReasons} setRejectReasons={setRejectReasons} />
-        <ManualEntryList title="Minhas ultimas solicitacoes" entries={snapshot.myManualEntries} admin={admin} />
+        <ManualEntryList title="Fila de aprovações e concessões" entries={snapshot.pendingManualEntries} admin={admin} rejectReasons={rejectReasons} setRejectReasons={setRejectReasons} />
+        <ManualEntryList title="Minhas últimas solicitações" entries={snapshot.myManualEntries} admin={admin} />
       </section>
     </div>
   );

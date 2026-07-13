@@ -7,7 +7,7 @@ export type { SiteSearchFilter }
 
 export const AVAILABLE_FILTERS = [
   { key: 'search', label: 'Busca por texto', defaultLabel: 'Buscar' },
-  { key: 'tipo', label: 'Tipo de imovel', defaultLabel: 'Tipo de Imovel' },
+  { key: 'tipo', label: 'Tipo de imóvel', defaultLabel: 'Tipo de Imóvel' },
   { key: 'finalidade', label: 'Finalidade (Venda/Aluguel)', defaultLabel: 'Finalidade' },
   { key: 'cidade', label: 'Cidade', defaultLabel: 'Cidade' },
   { key: 'bairro', label: 'Bairro', defaultLabel: 'Bairro' },
@@ -42,7 +42,7 @@ export function useCreateSearchFilter() {
 
   return useMutation({
     mutationFn: async (item: Pick<SiteSearchFilter, 'filter_key' | 'label' | 'position' | 'is_active'>) => {
-      if (!profile?.organization_id) throw new Error('Organizacao nao encontrada')
+      if (!profile?.organization_id) throw new Error('Organização não encontrada')
       return siteAPI.createSearchFilter(item, profile.organization_id)
     },
     onSuccess: () => {

@@ -15,8 +15,10 @@ import { useDeleteProperty, useProperties, useUpdateProperty, Property } from '@
 import { PropertyCard } from '@/components/features/properties/PropertyCard';
 import { PropertyPreviewDialog } from '@/components/features/properties/PropertyPreviewDialog';
 import { getPropertySiteInfo } from '@/lib/api/property-support';
+import { canDeleteProperties, canEditPropertyDetails, canUpdatePropertyAvailability } from '@/lib/access/properties';
 import { useAuth } from '@/contexts/AuthContext';
 import { useQuery } from '@tanstack/react-query';
+import { toast } from 'sonner';
 
 const formatPrice = (value: number | null, tipo: string | null) => {
   if (!value) return 'Preço não informado';
@@ -43,14 +45,30 @@ const isRentalProperty = (property: Property) => {
   );
 };
 
+type PropertyWithCreator = Property & {
+  cadastrado_por?: string | null;
+  created_by?: string | null;
+  responsible_user_id?: string | null;
+};
+
 export default function PropertyRentals() {
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [previewProperty, setPreviewProperty] = useState<Property | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const { profile, organization, isSuperAdmin } = useAuth();
-  const isAdmin = profile?.role === 'admin' || isSuperAdmin;
+  const { profile, organization, tenantContext, isSuperAdmin } = useAuth();
   const organizationId = organization?.id || profile?.organization_id;
+  const propertyAccessContext = {
+    userId: profile?.id,
+    organizationId,
+    isSuperAdmin,
+    memberRole: tenantContext?.memberRole,
+    profileRole: profile?.role,
+    permissions: tenantContext?.permissions,
+    propertyEditPolicy: organization?.property_edit_policy,
+  };
+  const canUpdateAvailability = canUpdatePropertyAvailability(propertyAccessContext);
+  const canDeleteProperty = canDeleteProperties(propertyAccessContext);
   const updateProperty = useUpdateProperty();
   const deleteProperty = useDeleteProperty();
 
@@ -74,6 +92,21 @@ export default function PropertyRentals() {
 
   const handleToggleVisibility = async (id: string, isPublic: boolean) => {
     await updateProperty.mutateAsync({ id, anunciar: isPublic });
+  };
+
+  const handleChangeStatus = async (id: string, status: 'ativo' | 'reservado' | 'vendido' | 'alugado') => {
+    await updateProperty.mutateAsync({
+      id,
+      status,
+      ...(status === 'ativo' ? { anunciar: true } : { anunciar: false }),
+    });
+    const labels = {
+      ativo: 'disponivel',
+      reservado: 'reservado',
+      vendido: 'vendido',
+      alugado: 'alugado',
+    };
+    toast.success(`Imovel marcado como ${labels[status]}!`);
   };
 
   if (isLoading) {
@@ -156,22 +189,36 @@ export default function PropertyRentals() {
 
         {/* Properties Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {properties.map((property) => (
-            <PropertyCard
-              key={property.id}
-              property={property}
-              onEdit={(item) => router.push(`/properties/${item.id}/edit`)}
-              onDelete={(id) => deleteProperty.mutateAsync(id)}
-              onPreview={(p) => {
-                setPreviewProperty(p);
-                setPreviewOpen(true);
-              }}
-              onToggleVisibility={handleToggleVisibility}
-              formatPrice={formatPrice}
-              canEdit={isAdmin || property.cadastrado_por === profile?.id}
-              siteInfo={siteInfo}
-            />
-          ))}
+          {properties.map((property) => {
+            const propertyWithOwner = property as PropertyWithCreator;
+
+            return (
+              <PropertyCard
+                key={property.id}
+                property={property}
+                onEdit={(item) => router.push(`/properties/${item.id}/edit`)}
+                onDelete={(id) => deleteProperty.mutateAsync(id)}
+                onPreview={(p) => {
+                  setPreviewProperty(p);
+                  setPreviewOpen(true);
+                }}
+                onChangeStatus={handleChangeStatus}
+                onToggleVisibility={handleToggleVisibility}
+                formatPrice={formatPrice}
+                canEdit={canEditPropertyDetails({
+                  ...propertyAccessContext,
+                  ownerIds: [
+                    propertyWithOwner.cadastrado_por,
+                    propertyWithOwner.created_by,
+                    propertyWithOwner.responsible_user_id,
+                  ],
+                })}
+                canUpdateAvailability={canUpdateAvailability}
+                canDelete={canDeleteProperty}
+                siteInfo={siteInfo}
+              />
+            );
+          })}
         </div>
 
         {/* Preview Dialog */}

@@ -26,7 +26,7 @@ export function APITab() {
 
   const generateKeyMutation = useMutation<string, Error>({
     mutationFn: async () => {
-      if (!profile?.organization_id) throw new Error('Organizacao nao encontrada');
+      if (!profile?.organization_id) throw new Error('Organização não encontrada');
       const result = await settingsAPI.createApiKey(
         { name: keyName || 'Chave Padrao' },
         profile.organization_id,
@@ -69,8 +69,8 @@ export function APITab() {
           <div className="space-y-1 text-sm">
             <p className="font-medium">Mantenha sua chave em segredo</p>
             <p className="text-muted-foreground">
-              A chave da acesso aos imoveis desta organizacao. Nunca a coloque no frontend
-              publico (HTML, JS do navegador, repositorios publicos). Use sempre a partir
+              A chave dá acesso aos imóveis desta organização. Nunca a coloque no frontend
+              público (HTML, JS do navegador, repositórios públicos). Use sempre a partir
               do seu backend.
             </p>
           </div>
@@ -86,8 +86,8 @@ export function APITab() {
                 Chaves de API
               </CardTitle>
               <CardDescription>
-                Use estas chaves para autenticar suas requisicoes na API publica e puxar
-                os imoveis cadastrados nesta organizacao.
+                Use estas chaves para autenticar suas requisições na API pública e puxar
+                os imóveis cadastrados nesta organização.
               </CardDescription>
             </div>
           </div>
@@ -124,7 +124,7 @@ export function APITab() {
                 Sua nova chave de API
               </div>
               <p className="text-sm text-muted-foreground">
-                Esta e a <strong>unica vez</strong> que voce vera a chave completa. Copie e
+                Esta é a <strong>única vez</strong> que você verá a chave completa. Copie e
                 guarde em local seguro agora; depois so restara o prefixo identificador.
               </p>
               <div className="flex gap-2">
@@ -166,7 +166,7 @@ export function APITab() {
                       </span>
                       {key.last_used_at && (
                         <span className="text-xs text-muted-foreground">
-                          - Ultimo uso {formatApiKeyDate(key.last_used_at)}
+                          - Último uso {formatApiKeyDate(key.last_used_at)}
                         </span>
                       )}
                     </div>
@@ -194,13 +194,13 @@ export function APITab() {
         <CardHeader>
           <CardTitle className="text-lg">Documentacao da API</CardTitle>
           <CardDescription>
-            Aprenda como integrar seus imoveis em sites e outros sistemas.
+            Aprenda como integrar seus imóveis em sites e outros sistemas.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="app-card-soft flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 gap-4">
             <div className="space-y-1">
-              <p className="font-medium">Guia de Integracao</p>
+              <p className="font-medium">Guia de Integração</p>
               <p className="text-sm text-muted-foreground">
                 Endpoints, parametros, exemplos em curl/JavaScript e formato de resposta.
               </p>

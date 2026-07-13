@@ -57,6 +57,8 @@ interface PropertyCardProps {
   onToggleVisibility?: (id: string, isPublic: boolean) => void;
   formatPrice: (value: number | null, tipo: string | null) => string;
   canEdit?: boolean;
+  canUpdateAvailability?: boolean;
+  canDelete?: boolean;
   siteInfo?: PropertySiteInfo | null;
 }
 
@@ -70,6 +72,8 @@ export function PropertyCard({
   onToggleVisibility,
   formatPrice,
   canEdit = false,
+  canUpdateAvailability,
+  canDelete,
   siteInfo,
 }: PropertyCardProps) {
   const publication = property as PropertyWithPublication;
@@ -123,13 +127,18 @@ export function PropertyCard({
       : isReserved
         ? 'bg-amber-950/75 text-white dark:bg-amber-200/90 dark:text-amber-950'
         : 'bg-black/70 text-white';
+  const canRunAvailabilityActions = canUpdateAvailability ?? canEdit;
+  const canDeleteProperty = canDelete ?? canEdit;
+  const hasStatusActions = canRunAvailabilityActions && !!onChangeStatus;
+  const hasVisibilityAction = canRunAvailabilityActions && !!onToggleVisibility && !isUnavailable;
+  const hasAvailabilityActions = hasStatusActions || hasVisibilityAction;
 
   const copyPropertyUrl = async () => {
     if (!propertySiteUrl) return false;
 
     try {
       await navigator.clipboard.writeText(propertySiteUrl);
-      toast.success('Link do imovel copiado!');
+      toast.success('Link do imóvel copiado!');
       return true;
     } catch {
       return false;
@@ -139,7 +148,7 @@ export function PropertyCard({
   const handleShareProperty = async (event?: { stopPropagation: () => void }) => {
     event?.stopPropagation();
     if (!propertySiteUrl) {
-      toast.info('Publique o imovel no site para compartilhar o link.');
+      toast.info('Publique o imóvel no site para compartilhar o link.');
       return;
     }
 
@@ -158,7 +167,7 @@ export function PropertyCard({
     const copied = await copyPropertyUrl();
     if (!copied) {
       window.open(propertySiteUrl, '_blank', 'noopener,noreferrer');
-      toast.info('Abrimos o link do imovel em uma nova aba.');
+      toast.info('Abrimos o link do imóvel em uma nova aba.');
     }
   };
 
@@ -302,37 +311,37 @@ export function PropertyCard({
                   Editar
                 </DropdownMenuItem>
               )}
-              {canEdit && <DropdownMenuSeparator />}
-              {canEdit && onChangeStatus && (
+              {canEdit && (hasAvailabilityActions || canDeleteProperty) && <DropdownMenuSeparator />}
+              {hasStatusActions && (
                 <>
                   {!isReserved && !isSold && !isRented && (
-                    <DropdownMenuItem onClick={() => onChangeStatus(property.id, 'reservado')}>
+                    <DropdownMenuItem onClick={() => onChangeStatus?.(property.id, 'reservado')}>
                       <Clock className="h-4 w-4 mr-2 text-amber-500" />
                       Marcar como Reservado
                     </DropdownMenuItem>
                   )}
                   {isSaleIntent && !isSold && (
-                    <DropdownMenuItem onClick={() => onChangeStatus(property.id, 'vendido')}>
+                    <DropdownMenuItem onClick={() => onChangeStatus?.(property.id, 'vendido')}>
                       <CheckCircle className="h-4 w-4 mr-2 text-success" />
                       Marcar como Vendido
                     </DropdownMenuItem>
                   )}
                   {isRentalIntent && !isRented && (
-                    <DropdownMenuItem onClick={() => onChangeStatus(property.id, 'alugado')}>
+                    <DropdownMenuItem onClick={() => onChangeStatus?.(property.id, 'alugado')}>
                       <KeyRound className="h-4 w-4 mr-2 text-sky-500" />
                       Marcar como Alugado
                     </DropdownMenuItem>
                   )}
                   {(isUnavailable || isInactive || isPrivateStatus) && (
-                    <DropdownMenuItem onClick={() => onChangeStatus(property.id, 'ativo')}>
+                    <DropdownMenuItem onClick={() => onChangeStatus?.(property.id, 'ativo')}>
                       <RotateCcw className="h-4 w-4 mr-2" />
-                      Voltar disponivel
+                      Voltar disponível
                     </DropdownMenuItem>
                   )}
                 </>
               )}
-              {canEdit && onToggleVisibility && !isUnavailable && (
-                <DropdownMenuItem onClick={() => onToggleVisibility(property.id, !isSitePublished)}>
+              {hasVisibilityAction && (
+                <DropdownMenuItem onClick={() => onToggleVisibility?.(property.id, !isSitePublished)}>
                   {isSitePublished ? (
                     <>
                       <Lock className="h-4 w-4 mr-2" />
@@ -346,9 +355,9 @@ export function PropertyCard({
                   )}
                 </DropdownMenuItem>
               )}
-              {canEdit && (
+              {hasAvailabilityActions && canDeleteProperty && <DropdownMenuSeparator />}
+              {canDeleteProperty && (
                 <>
-                  <DropdownMenuSeparator />
                   <DropdownMenuItem
                     className="text-destructive focus:text-destructive"
                     onClick={() => onDelete(property.id)}

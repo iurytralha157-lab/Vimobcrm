@@ -777,11 +777,11 @@ function buildLabel(type: string, metadata: HistoryMetadata): string {
     }
     case 'meta_form_answer': {
       const question = metadataString(metadata?.question);
-      return question ? `Meta: ${question}` : 'Resposta do formulario Meta';
+      return question ? `Meta: ${question}` : 'Resposta do formulário Meta';
     }
     case 'webhook_form_answer': {
       const question = metadataString(metadata?.question);
-      return question ? `Webhook: ${question}` : 'Resposta do formulario';
+      return question ? `Webhook: ${question}` : 'Resposta do formulário';
     }
     case 'meta_creative':
       return 'Criativo Meta';
@@ -936,7 +936,7 @@ const AUDIT_FIELD_LABELS: Record<string, string> = {
   phone: 'Telefone',
   source: 'Origem',
   message: 'Mensagem',
-  property_code: 'Codigo do imovel',
+  property_code: 'Código do imóvel',
   property_id: 'Imovel',
   interest_property_id: 'Imovel de interesse',
   pipeline_id: 'Pipeline',
@@ -950,8 +950,8 @@ const AUDIT_FIELD_LABELS: Record<string, string> = {
   cargo: 'Cargo',
   empresa: 'Empresa',
   profissao: 'Profissao',
-  endereco: 'Endereco',
-  numero: 'Numero',
+  endereco: 'Endereço',
+  numero: 'Número',
   complemento: 'Complemento',
   bairro: 'Bairro',
   cep: 'CEP',

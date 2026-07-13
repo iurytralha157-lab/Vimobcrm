@@ -42,7 +42,7 @@ export function useAdminOrganizationActions() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-organizations-list'] });
-      toast.success('Status da organizacao atualizado');
+      toast.success('Status da organização atualizado');
     },
     onError: (error) => {
       toast.error('Erro ao atualizar status: ' + error.message);

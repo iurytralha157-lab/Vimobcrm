@@ -92,7 +92,7 @@ export function useCreateMessageTemplate() {
   return useMutation({
     mutationFn: async (input: CreateTemplateInput) => {
       if (!organizationId) {
-        throw new Error('Organizacao nao encontrada');
+        throw new Error('Organização não encontrada');
       }
 
       return messageTemplatesAPI.create({
@@ -119,7 +119,7 @@ export function useUpdateMessageTemplate() {
   return useMutation({
     mutationFn: async ({ id, ...input }: Partial<CreateTemplateInput> & { id: string }) => {
       if (!organizationId) {
-        throw new Error('Organizacao nao encontrada');
+        throw new Error('Organização não encontrada');
       }
 
       const updateInput: UpdateTemplateInput = {
@@ -147,7 +147,7 @@ export function useDeleteMessageTemplate() {
   return useMutation({
     mutationFn: async (id: string) => {
       if (!organizationId) {
-        throw new Error('Organizacao nao encontrada');
+        throw new Error('Organização não encontrada');
       }
 
       await messageTemplatesAPI.remove(id, organizationId);

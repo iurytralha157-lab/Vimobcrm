@@ -99,10 +99,10 @@ function statusLabel(value: unknown) {
 }
 
 function publicationLabel(value: unknown) {
-  if (typeof value === 'boolean') return value ? 'publico' : 'privado';
+  if (typeof value === 'boolean') return value ? 'público' : 'privado';
   if (typeof value === 'string') {
     const normalized = value.trim().toLowerCase();
-    if (['true', 'sim', 'yes', '1', 'publico', 'publicado'].includes(normalized)) return 'publico';
+    if (['true', 'sim', 'yes', '1', 'publico', 'publicado'].includes(normalized)) return 'público';
     if (['false', 'nao', 'no', '0', 'privado'].includes(normalized)) return 'privado';
   }
 
@@ -115,7 +115,7 @@ function propertyLabel(metadata: Record<string, unknown>, property: Property | n
     metadataString(metadata.title) ||
     property?.title ||
     property?.tipo_de_imovel ||
-    'imovel';
+    'imóvel';
 
   return [code, title].filter(Boolean).join(' - ');
 }
@@ -135,34 +135,34 @@ function historyAction(eventType: string, metadata: Record<string, unknown>, pro
     publicationLabel(changedTo(metadata, 'anunciar'));
 
   if (eventType === 'property_created') {
-    return { before: 'Criou o imovel', property: label, after: '' };
+    return { before: 'Criou o imóvel', property: label, after: '' };
   }
 
   if (eventType === 'property_status_changed') {
-    return { before: 'Alterou o imovel', property: label, after: status ? ` para ${status}` : '' };
+    return { before: 'Alterou o imóvel', property: label, after: status ? ` para ${status}` : '' };
   }
 
   if (eventType === 'property_publication_changed') {
-    return { before: 'Alterou o imovel', property: label, after: publication ? ` para ${publication}` : '' };
+    return { before: 'Alterou o imóvel', property: label, after: publication ? ` para ${publication}` : '' };
   }
 
   if (eventType === 'property_price_updated') {
-    return { before: 'Atualizou o valor do imovel', property: label, after: '' };
+    return { before: 'Atualizou o valor do imóvel', property: label, after: '' };
   }
 
   if (eventType === 'property_reserved_by_won_lead') {
-    return { before: 'Reservou o imovel', property: label, after: ' pelo ganho do lead', lead: leadLabel(metadata) };
+    return { before: 'Reservou o imóvel', property: label, after: ' pelo ganho do lead', lead: leadLabel(metadata) };
   }
 
   if (eventType === 'property_schedule_completed') {
-    return { before: 'Concluiu agendamento do imovel', property: label, after: '' };
+    return { before: 'Concluiu agendamento do imóvel', property: label, after: '' };
   }
 
   if (eventType === 'property_schedule') {
-    return { before: 'Agendou compromisso no imovel', property: label, after: '' };
+    return { before: 'Agendou compromisso no imóvel', property: label, after: '' };
   }
 
-  return { before: 'Editou o imovel', property: label, after: '' };
+  return { before: 'Editou o imóvel', property: label, after: '' };
 }
 
 export function PropertyHistoryDialog({
@@ -180,7 +180,7 @@ export function PropertyHistoryDialog({
         <DialogHeader className="shrink-0 border-b px-5 py-4">
           <DialogTitle className="flex items-center gap-2 text-base font-medium">
             <History className="h-4 w-4 text-primary" />
-            Historico do imovel
+            Histórico do imóvel
           </DialogTitle>
           {property && (
             <p className="truncate text-xs font-normal text-muted-foreground">
@@ -200,7 +200,7 @@ export function PropertyHistoryDialog({
             <div className="space-y-3">
               {historyEvents.map((event) => {
                 const message = metadataString(event.metadata?.message);
-                const title = event.title || message || 'Atualizacao do imovel';
+                const title = event.title || message || 'Atualização do imóvel';
                 const action = historyAction(event.type, event.metadata, property);
                 const actorId =
                   metadataString(event.metadata?.actor_user_id) ||

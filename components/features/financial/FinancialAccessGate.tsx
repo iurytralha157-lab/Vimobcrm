@@ -29,9 +29,9 @@ export function FinancialAccessGate({ children }: { children: ReactNode }) {
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[8px] bg-[var(--app-surface-muted)] text-[var(--app-text-secondary)]">
             <LockKeyhole className="h-5 w-5" strokeWidth={1.5} />
           </div>
-          <h1 className="text-xl font-light">Financeiro indisponivel</h1>
+          <h1 className="text-xl font-light">Financeiro indisponível</h1>
           <p className="mt-2 text-sm font-light text-[var(--app-text-secondary)]">
-            O modulo financeiro esta habilitado apenas para a Vetter Co.
+            O módulo financeiro está habilitado apenas para a Vetter Co.
           </p>
           <Button
             type="button"

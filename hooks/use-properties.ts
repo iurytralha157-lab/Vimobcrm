@@ -193,8 +193,8 @@ export function useCreateProperty() {
 
   return useMutation({
     mutationFn: async (propertyInput: PropertyMutationInput) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado')
-      if (!organizationId) throw new Error('Usuario nao possui organizacao')
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
 
       enforceClientActionRateLimit(`property:create:${user.id}`, [
         { limit: 1, windowMs: 1000 },
@@ -207,7 +207,7 @@ export function useCreateProperty() {
       })
 
       if (error) throw error
-      if (!data) throw new Error('API nao retornou o imovel criado')
+      if (!data) throw new Error('API não retornou o imóvel criado')
 
       return data
     },
@@ -234,8 +234,8 @@ export function useUpdateProperty() {
 
   return useMutation({
     mutationFn: async ({ id, ...updates }: PropertyUpdateInput) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado')
-      if (!organizationId) throw new Error('Usuario nao possui organizacao')
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
 
       enforceClientActionRateLimit(`property:update:${user.id}:${id}`, [
         { limit: 2, windowMs: 1000 },
@@ -245,7 +245,7 @@ export function useUpdateProperty() {
       const { data, error } = await propertiesAPI.updateProperty(id, updates as TablesUpdate<'properties'> & { metadata?: Record<string, unknown> }, organizationId)
 
       if (error) throw error
-      if (!data) throw new Error('Nenhuma alteracao foi gravada. Verifique sua permissao para editar este imovel.')
+      if (!data) throw new Error('Nenhuma alteração foi gravada. Verifique sua permissão para editar este imóvel.')
 
       return data
     },
@@ -276,8 +276,8 @@ export function useDeleteProperty() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado')
-      if (!organizationId) throw new Error('Usuario nao possui organizacao')
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
 
       enforceClientActionRateLimit(`property:delete:${user.id}:${id}`, [
         { limit: 1, windowMs: 1000 },

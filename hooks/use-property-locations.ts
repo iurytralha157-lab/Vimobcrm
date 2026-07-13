@@ -44,8 +44,8 @@ export function useCreateCity() {
 
   return useMutation({
     mutationFn: async (city: { name: string; uf?: string }) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado')
-      if (!organizationId) throw new Error('Usuario nao possui organizacao')
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
 
       const { data } = await propertyLocationsAPI.createCity(organizationId, city)
       return data
@@ -67,8 +67,8 @@ export function useDeleteCity() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado')
-      if (!organizationId) throw new Error('Usuario nao possui organizacao')
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
 
       await propertyLocationsAPI.deleteCity(organizationId, id)
     },
@@ -107,8 +107,8 @@ export function useCreateNeighborhood() {
 
   return useMutation({
     mutationFn: async (neighborhood: { name: string; city_id: string }) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado')
-      if (!organizationId) throw new Error('Usuario nao possui organizacao')
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
 
       const { data } = await propertyLocationsAPI.createNeighborhood(organizationId, neighborhood)
       return data
@@ -130,8 +130,8 @@ export function useDeleteNeighborhood() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado')
-      if (!organizationId) throw new Error('Usuario nao possui organizacao')
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
 
       await propertyLocationsAPI.deleteNeighborhood(organizationId, id)
     },
@@ -169,8 +169,8 @@ export function useCreateCondominium() {
 
   return useMutation({
     mutationFn: async (condominium: CreatePropertyCondominiumInput) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado')
-      if (!organizationId) throw new Error('Usuario nao possui organizacao')
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
 
       const { data } = await propertyLocationsAPI.createCondominium(organizationId, condominium)
       return data
@@ -192,8 +192,8 @@ export function useDeleteCondominium() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado')
-      if (!organizationId) throw new Error('Usuario nao possui organizacao')
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
 
       await propertyLocationsAPI.deleteCondominium(organizationId, id)
     },

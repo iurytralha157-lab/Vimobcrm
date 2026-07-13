@@ -265,7 +265,7 @@ export function ErrorEventsContent() {
       { id: event.id, note: "Revisado pelo superadmin." },
       {
         onSuccess: () => toast.success("Erro marcado como resolvido."),
-        onError: (error) => toast.error(error instanceof Error ? error.message : "Nao foi possivel resolver o erro."),
+        onError: (error) => toast.error(error instanceof Error ? error.message : "Não foi possível resolver o erro."),
       },
     );
   };
@@ -274,7 +274,7 @@ export function ErrorEventsContent() {
     <div className="space-y-4">
       <div className="grid gap-3 md:grid-cols-4">
         <ErrorKpi label="Eventos filtrados" value={query.data?.total || 0} icon={ShieldAlert} />
-        <ErrorKpi label="Abertos na pagina" value={unresolvedCount} icon={AlertTriangle} />
+        <ErrorKpi label="Abertos na página" value={unresolvedCount} icon={AlertTriangle} />
         <ErrorKpi label="Erro/critico" value={errorCount} icon={ShieldAlert} />
         <ErrorKpi label="Fingerprints" value={groups.length} icon={CheckCircle2} />
       </div>
@@ -361,7 +361,7 @@ export function ErrorEventsContent() {
       {query.isError ? (
         <div className="app-card flex items-start gap-3 p-4 text-sm text-[#FFB3A6]">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>{query.error instanceof Error ? query.error.message : "Nao foi possivel carregar os erros."}</p>
+          <p>{query.error instanceof Error ? query.error.message : "Não foi possível carregar os erros."}</p>
         </div>
       ) : null}
 

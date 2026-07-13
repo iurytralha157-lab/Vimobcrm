@@ -59,7 +59,7 @@ export function useCreateCommissionRule() {
   return useMutation({
     mutationFn: (data: Partial<CommissionRule>) => {
       const organizationId = organization?.id || profile?.organization_id;
-      if (!organizationId) throw new Error("Organizacao nao encontrada");
+      if (!organizationId) throw new Error("Organização não encontrada");
       return financialAPI.createCommissionRule<CommissionRule>(data, organizationId);
     },
     onSuccess: () => {

@@ -109,7 +109,7 @@ export async function POST(request: Request) {
     return jsonResponse(
       {
         ok: false,
-        message: 'A API do Vimob nao esta acessivel para concluir o cadastro.',
+        message: 'A API do Vimob não está acessível para concluir o cadastro.',
       },
       503,
     )

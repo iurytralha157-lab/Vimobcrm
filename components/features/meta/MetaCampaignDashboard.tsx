@@ -438,7 +438,7 @@ export function MetaCampaignDashboard({ filters }: MetaCampaignDashboardProps) {
               </AreaChart>
             </ChartContainer>
           ) : (
-            <EmptyState message="Nenhum dado de campanha sincronizado no periodo." />
+            <EmptyState message="Nenhum dado de campanha sincronizado no período." />
           )}
         </div>
 
@@ -493,7 +493,7 @@ export function MetaCampaignDashboard({ filters }: MetaCampaignDashboardProps) {
           </Accordion>
         ) : (
           <div className="min-w-[860px] px-3 py-10 text-center text-sm text-muted-foreground">
-            Nenhuma campanha sincronizada no periodo selecionado.
+            Nenhuma campanha sincronizada no período selecionado.
           </div>
         )}
       </div>

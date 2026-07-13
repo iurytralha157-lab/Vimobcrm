@@ -181,7 +181,7 @@ export function AutomationList({
         </div>
         <h3 className="mb-2 text-base font-semibold">Nenhuma automação criada</h3>
         <p className="max-w-sm text-sm text-muted-foreground">
-          Crie um fluxo de follow-up para testar mensagens, esperas, condicoes e acoes automaticas.
+          Crie um fluxo de follow-up para testar mensagens, esperas, condições e ações automáticas.
         </p>
         {showCreateAction && (
           <Button className="mt-5 gap-2" onClick={onCreate}>

@@ -12,13 +12,13 @@ export const NotificationsTab = () => {
   const handleToggle = async () => {
     if (isSubscribed) {
       await unsubscribe();
-      toast.success('Notificacoes desativadas');
+      toast.success('Notificações desativadas');
       return;
     }
 
     const result = await subscribe();
     if (result.ok) {
-      toast.success('Notificacoes ativadas com sucesso!');
+      toast.success('Notificações ativadas com sucesso!');
     } else {
       toast.error(result.message);
     }
@@ -31,7 +31,7 @@ export const NotificationsTab = () => {
       const organizationId = profile?.organization_id || '';
 
       if (!organizationId) {
-        toast.error('Nao encontramos a organizacao para enviar o teste.');
+        toast.error('Não encontramos a organização para enviar o teste.');
         return;
       }
 
@@ -55,9 +55,9 @@ export const NotificationsTab = () => {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Notificacoes Push</CardTitle>
+          <CardTitle>Notificações Push</CardTitle>
           <CardDescription>
-            Seu navegador nao suporta notificacoes push nativas.
+            Seu navegador não suporta notificações push nativas.
           </CardDescription>
         </CardHeader>
       </Card>
@@ -67,9 +67,9 @@ export const NotificationsTab = () => {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Notificacoes Push</CardTitle>
+        <CardTitle>Notificações Push</CardTitle>
         <CardDescription>
-          Receba notificacoes em tempo real diretamente no seu dispositivo.
+          Receba notificações em tempo real diretamente no seu dispositivo.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -82,14 +82,14 @@ export const NotificationsTab = () => {
             )}
             <div>
               <p className="font-medium">
-                {isSubscribed ? 'Notificacoes Ativas' : 'Notificacoes Inativas'}
+                {isSubscribed ? 'Notificações Ativas' : 'Notificações Inativas'}
               </p>
               <p className="text-sm text-muted-foreground">
                 {permission === 'denied'
                   ? 'Permissao negada no navegador'
                   : isSubscribed
-                    ? 'Voce esta inscrito para receber notificacoes neste dispositivo.'
-                    : 'Clique no botao para ativar as notificacoes.'}
+                    ? 'Você está inscrito para receber notificações neste dispositivo.'
+                    : 'Clique no botão para ativar as notificações.'}
               </p>
             </div>
           </div>

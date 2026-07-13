@@ -202,7 +202,7 @@ export function useToggleAutomation() {
         };
         const validation = saveAutomationFlowInputSchema.safeParse({ flowDefinition });
         if (!validation.success) {
-          throw new Error(validation.error.issues[0]?.message || "O fluxo esta incompleto.");
+          throw new Error(validation.error.issues[0]?.message || "O fluxo está incompleto.");
         }
       }
 

@@ -30,3 +30,11 @@ func TestReadJSONBodyAlwaysOverridesOrganization(t *testing.T) {
 		}
 	}
 }
+
+func TestAllowedFunctionBlocksGoogleCalendarWhenDisabled(t *testing.T) {
+	for _, name := range []string{"google-calendar-oauth", "google-calendar-sync"} {
+		if allowedFunction(name) {
+			t.Fatalf("allowedFunction(%q) = true, want false while Google Calendar is disabled", name)
+		}
+	}
+}

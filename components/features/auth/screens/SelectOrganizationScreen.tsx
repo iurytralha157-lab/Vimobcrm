@@ -170,7 +170,7 @@ export default function SelectOrganization() {
         <div className="mt-5 flex max-w-sm items-start gap-2 rounded-[6px] bg-[#FF4529]/10 px-4 py-3 text-left text-sm font-extralight leading-5 tracking-wide text-[#ff7a66]">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.5} />
           <span>
-            Erro: este usuario nao esta vinculado a uma organizacao ativa. Peca ao administrador para revisar o convite ou liberar o acesso.
+            Erro: este usuário não está vinculado a uma organização ativa. Peça ao administrador para revisar o convite ou liberar o acesso.
           </span>
         </div>
 

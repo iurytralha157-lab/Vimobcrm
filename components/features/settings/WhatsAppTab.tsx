@@ -181,8 +181,8 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
       toast({
         title: "Limite do plano atingido",
         description: sessionQuota?.maxSessions
-          ? `Esta organizacao ja usa ${sessionQuota.currentSessions} de ${sessionQuota.maxSessions} conexoes WhatsApp. Apague uma conexao ou aumente o limite do plano.`
-          : "Esta organizacao nao pode criar novas conexoes WhatsApp no plano atual.",
+          ? `Esta organização já usa ${sessionQuota.currentSessions} de ${sessionQuota.maxSessions} conexões WhatsApp. Apague uma conexão ou aumente o limite do plano.`
+          : "Esta organização não pode criar novas conexões WhatsApp no plano atual.",
         variant: "destructive",
       });
       return;
@@ -207,10 +207,10 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
 
       await refreshQRCode(result.session);
     } catch (error) {
-      const message = getErrorMessage(error, "Nao foi possivel criar a conexao WhatsApp.");
+      const message = getErrorMessage(error, "Não foi possível criar a conexão WhatsApp.");
       console.warn("WhatsApp session create failed:", message);
       toast({
-        title: "Erro ao criar conexao",
+        title: "Erro ao criar conexão",
         description: message,
         variant: "destructive",
       });
@@ -222,7 +222,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
     try {
       const isGo = session.provider === "evolution_go";
       if (!isGo) {
-        throw new Error("Evolution legada esta desativada. Crie uma nova conexao Evolution Go.");
+        throw new Error("Evolution legada está desativada. Crie uma nova conexão Evolution Go.");
       }
 
       let lastQr: string | null = null;
@@ -245,7 +245,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
           lastQr = getQrCodeValue(data);
         } catch (error) {
           lastError = error;
-          console.warn("WhatsApp QR attempt failed:", getErrorMessage(error, "QR Code ainda nao esta pronto."));
+          console.warn("WhatsApp QR attempt failed:", getErrorMessage(error, "QR Code ainda não está pronto."));
         }
         attempt++;
       }
@@ -256,8 +256,8 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
         return "ready";
       } else {
         const description = lastError
-          ? getErrorMessage(lastError, "A conexao foi criada, mas o QR Code ainda nao ficou pronto. Tente atualizar em alguns instantes.")
-          : "A conexao foi criada, mas o QR Code ainda nao ficou pronto. Tente atualizar em alguns instantes.";
+          ? getErrorMessage(lastError, "A conexão foi criada, mas o QR Code ainda não ficou pronto. Tente atualizar em alguns instantes.")
+          : "A conexão foi criada, mas o QR Code ainda não ficou pronto. Tente atualizar em alguns instantes.";
 
         toast({
           title: "QR Code ainda nao pronto",
@@ -280,7 +280,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
     try {
       const isGo = session.provider === "evolution_go";
       if (!isGo) {
-        throw new Error("Evolution legada esta desativada. Crie uma nova conexao Evolution Go.");
+        throw new Error("Evolution legada está desativada. Crie uma nova conexão Evolution Go.");
       }
       const data = await getConnectionStatus.mutateAsync({
         provider: "evolution_go",
@@ -294,7 +294,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
         setQrCode(null);
       }
     } catch (error) {
-      console.warn("WhatsApp status check failed:", getErrorMessage(error, "Nao foi possivel verificar a conexao."));
+      console.warn("WhatsApp status check failed:", getErrorMessage(error, "Não foi possível verificar a conexão."));
     }
   };
 
@@ -306,7 +306,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
     if (refreshStatus === "error") {
       try {
         if (session.provider !== "evolution_go") {
-          throw new Error("Evolution legada esta desativada. Crie uma nova conexao Evolution Go.");
+          throw new Error("Evolution legada está desativada. Crie uma nova conexão Evolution Go.");
         }
 
         const result = await recreateSession.mutateAsync(session);
@@ -315,7 +315,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
         await wait(1500);
         await refreshQRCode(nextSession);
       } catch (e) {
-        console.warn("WhatsApp instance recreate failed:", getErrorMessage(e, "Nao foi possivel reconectar."));
+        console.warn("WhatsApp instance recreate failed:", getErrorMessage(e, "Não foi possível reconectar."));
         toast({ title: "Erro", description: "Não foi possível reconectar. Tente excluir e criar uma nova conexão.", variant: "destructive" });
       }
     }
@@ -332,7 +332,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
       }
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
     } catch (error) {
-      console.warn("WhatsApp verification failed:", getErrorMessage(error, "Nao foi possivel verificar a conexao."));
+      console.warn("WhatsApp verification failed:", getErrorMessage(error, "Não foi possível verificar a conexão."));
       toast({ title: "Erro", description: "Não foi possível verificar a conexão.", variant: "destructive" });
     } finally {
       setVerifyingSessionId(null);

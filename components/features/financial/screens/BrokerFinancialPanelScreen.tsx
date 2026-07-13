@@ -131,7 +131,7 @@ export default function BrokerFinancialPanel() {
                 <h4 className="text-sm font-semibold">Dica do Gestor</h4>
                 <div className="app-card-soft p-3 bg-primary/5 border-primary/10">
                   <p className="text-xs leading-relaxed text-muted-foreground">
-                    {`Foque nos leads da etapa 'Apresentação' esta semana. Temos 3 imóveis com comissão bonificada!`}
+                    {`Foque nos leads da etapa 'Apresentação' esta semana. Temos 3 imóveis com comissão bonificada.`}
                   </p>
                 </div>
               </div>

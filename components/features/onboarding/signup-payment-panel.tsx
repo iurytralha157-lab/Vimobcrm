@@ -183,14 +183,14 @@ function getPlanFeatures(plan: SignupPaymentPlan) {
 
   const slug = String(plan.slug || plan.name || "").toLowerCase();
   const modules = new Set((plan.modules || []).map((moduleName) => moduleName.toLowerCase()));
-  const features = ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integracao Meta", "Imoveis"];
+  const features = ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integração Meta", "Imóveis"];
 
   if (modules.has("site") || slug.includes("pro") || slug.includes("intermediario") || slug.includes("master")) {
     features.push("Site");
   }
 
   if (modules.has("automations") || slug.includes("master")) {
-    features.push("Automacoes");
+    features.push("Automações");
   }
 
   if (modules.has("portals") || slug.includes("master")) {
@@ -528,7 +528,7 @@ export function SignupPaymentPanel({
               />
             ) : (
               <div className="flex h-56 items-center justify-center text-sm text-black/60">
-                QR Code indisponivel
+                QR Code indisponível
               </div>
             )}
           </div>
@@ -595,7 +595,7 @@ export function SignupPaymentPanel({
             <div className="rounded-[6px] bg-[#151515]/50 p-3">
               <p className="text-xs font-extralight leading-5 text-white/45">
                 {isPlanChangeMode
-                  ? "Escolha o novo plano no formulario. O pagamento fica pausado ate voce concluir a troca."
+                  ? "Escolha o novo plano no formulário. O pagamento fica pausado até você concluir a troca."
                   : "Se precisar escolher outro plano, troque antes de gerar Pix ou tentar o cartao."}
               </p>
               {!isPlanChangeMode ? (
@@ -670,7 +670,7 @@ export function SignupPaymentPanel({
                   />
                 </label>
                 <label className="min-w-0 space-y-1.5">
-                  <span className={labelClass}>Numero do cartao</span>
+                  <span className={labelClass}>Número do cartão</span>
                   <input
                     value={billingData.cardNumber}
                     onChange={(event) => updateBillingField("cardNumber", event.target.value)}
@@ -715,7 +715,7 @@ export function SignupPaymentPanel({
                     />
                   </label>
                   <label className="min-w-0 space-y-1.5">
-                    <span className={labelClass}>Numero</span>
+                    <span className={labelClass}>Número</span>
                     <input
                       value={billingData.addressNumber}
                       onChange={(event) => updateBillingField("addressNumber", event.target.value)}

@@ -17,7 +17,7 @@ export const defaultMenuItems: SiteMenuItem[] = [
   {
     id: "properties",
     organization_id: "",
-    label: "Imoveis",
+    label: "Imóveis",
     link_type: "internal",
     href: "/imoveis",
     position: 1,
@@ -47,11 +47,11 @@ export const defaultMenuItems: SiteMenuItem[] = [
 ];
 
 export function getSiteTitle(site: PublicSiteConfig) {
-  return site.site_title || site.organization_name || "Site imobiliario";
+  return site.site_title || site.organization_name || "Site imobiliário";
 }
 
 export function getSiteDescription(site: PublicSiteConfig) {
-  return site.site_description || `Encontre o imovel dos seus sonhos com a ${getSiteTitle(site)}.`;
+  return site.site_description || `Encontre o imóvel dos seus sonhos com a ${getSiteTitle(site)}.`;
 }
 
 export function buildSiteHref(basePath: string, href: string) {
@@ -73,7 +73,7 @@ export function getPropertyCode(property: PublicProperty) {
 }
 
 export function getPropertyTitle(property: PublicProperty) {
-  return property.titulo || property.tipo_imovel || "Imovel disponivel";
+  return property.titulo || property.tipo_imovel || "Imóvel disponível";
 }
 
 export function getPropertyPrice(property: PublicProperty) {
@@ -102,7 +102,7 @@ export function getPropertyLocation(property: PublicProperty) {
 export function getWhatsAppHref(site: PublicSiteConfig, message?: string) {
   const phone = site.whatsapp?.replace(/\D/g, "");
   if (!phone) return null;
-  const text = message || `Ola, vim pelo site da ${getSiteTitle(site)}.`;
+  const text = message || `Olá, vim pelo site da ${getSiteTitle(site)}.`;
   return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
 }
 

@@ -157,7 +157,7 @@ export function SdrDistributionButton({ lead, refetchStages }: SdrDistributionBu
 
       const distribution = await leadsAPI.redistributeLeadRoundRobin(lead.id, organization?.id);
       if (distribution.error || !distribution.success) {
-        throw new Error(distribution.error || 'Distribuicao automatica nao encontrou uma fila disponivel.');
+        throw new Error(distribution.error || 'Distribuição automática não encontrou uma fila disponível.');
       }
 
       toast.success(`Lead movido para ${selectedPipeline?.name} e distribuído automaticamente.`);

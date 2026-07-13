@@ -33,6 +33,7 @@ import { ImageUploader } from '@/components/features/properties/ImageUploader';
 import { FeatureSelector } from '@/components/features/properties/FeatureSelector';
 import { useUsers } from '@/hooks/use-users';
 import { useAuth } from '@/contexts/AuthContext';
+import { canAssignProperties, canEditPropertyDetails } from '@/lib/access/properties';
 import { cleanPropertyDescription } from '@/lib/property-description';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -342,7 +343,7 @@ export default function PropertyForm() {
   const rawId = params.id;
   const propertyId = Array.isArray(rawId) ? rawId[0] ?? null : rawId ?? null;
   const isEditing = !!propertyId;
-  const { user, profile, organization, isSuperAdmin } = useAuth();
+  const { user, profile, organization, tenantContext, isSuperAdmin } = useAuth();
 
   const [formData, setFormData] = useState<PropertyFormData>(() => {
     if (!propertyId && typeof window !== "undefined") {
@@ -410,16 +411,26 @@ export default function PropertyForm() {
   const { mutate: seedDefaultFeatures } = useSeedDefaultFeatures();
   const { mutate: seedDefaultProximities } = useSeedDefaultProximities();
 
-  // Permission check: only admin or the creator can edit
-  const isAdmin = profile?.role === 'admin' || isSuperAdmin;
-  const propertyOwnership = property as PropertyOwnership | undefined;
-  const isCreator = propertyOwnership && (
-    propertyOwnership.cadastrado_por === user?.id ||
-    propertyOwnership.responsible_user_id === user?.id ||
-    propertyOwnership.created_by === user?.id
-  );
-  const canEdit = !isEditing || isAdmin || isCreator;
   const activeOrganizationId = property?.organization_id || organization?.id || profile?.organization_id || undefined;
+  const propertyAccessContext = {
+    userId: user?.id,
+    organizationId: activeOrganizationId,
+    isSuperAdmin,
+    memberRole: tenantContext?.memberRole,
+    profileRole: profile?.role,
+    permissions: tenantContext?.permissions,
+    propertyEditPolicy: organization?.property_edit_policy,
+  };
+  const propertyOwnership = property as PropertyOwnership | undefined;
+  const canAssignProperty = canAssignProperties(propertyAccessContext);
+  const canEdit = !isEditing || canEditPropertyDetails({
+    ...propertyAccessContext,
+    ownerIds: [
+      propertyOwnership?.cadastrado_por,
+      propertyOwnership?.responsible_user_id,
+      propertyOwnership?.created_by,
+    ],
+  });
 
   const set = <K extends keyof PropertyFormData>(field: K, value: PropertyFormData[K]) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -715,6 +726,10 @@ export default function PropertyForm() {
       projeto_aprovado: formData.projeto_aprovado, observacoes_documentacao: formData.observacoes_documentacao || null,
     };
 
+    if (isEditing && !canAssignProperty) {
+      delete propertyData.cadastrado_por;
+    }
+
     try {
       if (isEditing && propertyId) {
         await updateProperty.mutateAsync({ id: propertyId, ...propertyData });
@@ -974,7 +989,7 @@ export default function PropertyForm() {
                   <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_184px] lg:items-end">
                     <div className="space-y-2">
                       <Label>Responsável pela captação <RequiredMark /></Label>
-                      <Select value={formData.cadastrado_por} onValueChange={v => set('cadastrado_por', v)}>
+                      <Select value={formData.cadastrado_por} onValueChange={v => set('cadastrado_por', v)} disabled={!canAssignProperty}>
                         <SelectTrigger>
                           <SelectValue placeholder="Selecione o captador responsável" />
                         </SelectTrigger>

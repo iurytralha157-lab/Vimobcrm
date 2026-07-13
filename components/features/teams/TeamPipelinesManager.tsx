@@ -276,7 +276,7 @@ export function TeamPipelinesManager() {
               {selectedTeam?.name}
             </DialogTitle>
             <DialogDescription>
-              Selecione as pipelines que esta equipe terá acesso
+              Selecione as pipelines que esta equipe terá acesso.
             </DialogDescription>
           </DialogHeader>
 

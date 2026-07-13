@@ -155,13 +155,13 @@ export function useMetaConnectPage() {
       queryClient.invalidateQueries({ queryKey: ["meta-integrations"] });
       queryClient.invalidateQueries({ queryKey: ["meta-form-configs"] });
       if (data.success && data.messenger_active === false) {
-        toast.success("A pagina foi conectada para leads. Mensagens do Messenger exigem permissao adicional.");
+        toast.success("A página foi conectada para leads. Mensagens do Messenger exigem permissão adicional.");
       } else {
-        toast.success("Pagina conectada com sucesso!");
+      toast.success("Página conectada com sucesso!");
       }
     },
     onError: (error: Error) => {
-      toast.error(`Erro ao conectar pagina: ${error.message}`);
+      toast.error(`Erro ao conectar página: ${error.message}`);
     },
   });
 }
@@ -195,7 +195,7 @@ export function useMetaUpdatePage() {
       }, organizationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["meta-integrations"] });
-      toast.success("Configuracao atualizada!");
+      toast.success("Configuração atualizada!");
     },
     onError: (error: Error) => {
       toast.error(`Erro ao atualizar: ${error.message}`);
@@ -216,7 +216,7 @@ export function useMetaDisconnectPage() {
       }, organizationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["meta-integrations"] });
-      toast.success("Pagina desconectada!");
+      toast.success("Página desconectada!");
     },
     onError: (error: Error) => {
       toast.error(`Erro ao desconectar: ${error.message}`);
@@ -273,7 +273,7 @@ export function useMetaOAuthFlowResult() {
 
   return useMutation({
     mutationFn: async (flowId: string) => {
-      if (!organizationId) throw new Error("Organizacao nao encontrada");
+      if (!organizationId) throw new Error("Organização não encontrada");
       return integrationsAPI.getMetaOAuthFlow(flowId, organizationId) as unknown as Promise<MetaOAuthFlowResult>;
     },
   });

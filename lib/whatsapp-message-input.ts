@@ -1,8 +1,12 @@
 type MessageInputConversation = {
+  lead_id?: string | null;
   session_id?: string | null;
   contact_phone?: string | null;
   remote_jid?: string | null;
   is_group?: boolean | null;
+  lead?: {
+    id?: string | null;
+  } | null;
   session?: {
     id?: string | null;
     status?: string | null;
@@ -98,6 +102,13 @@ export function getWhatsAppMessageInputState(
     };
   }
 
+  if (!conversation.lead_id && !conversation.lead?.id) {
+    return {
+      disabled: true,
+      placeholder: "Crie ou vincule um lead para responder",
+    };
+  }
+
   const sendSessionId = getWhatsAppSendSessionId(conversation, selectedSessionId, sessions);
   if (!sendSessionId) {
     const connectedSessions = getConnectedSessions(sessions);
@@ -119,8 +130,8 @@ export function getWhatsAppMessageInputState(
     return {
       disabled: true,
       placeholder: selectedSession
-        ? "A conexao selecionada esta desconectada"
-        : "A conexao deste WhatsApp esta desconectada",
+        ? "A conexão selecionada está desconectada"
+        : "A conexão deste WhatsApp está desconectada",
       sendSessionId,
     };
   }

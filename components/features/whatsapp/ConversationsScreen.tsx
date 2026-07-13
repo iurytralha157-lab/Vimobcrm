@@ -72,6 +72,9 @@ const fileToBase64 = (file: Blob) => new Promise<string>((resolve, reject) => {
 const getConversationAvatarUrl = (conversation?: WhatsAppConversation | null) =>
   conversation?.lead?.whatsapp_avatar_url || conversation?.contact_picture || undefined;
 
+const hasConversationLead = (conversation: ScreenConversation) =>
+  Boolean(conversation.lead_id || conversation.lead?.id);
+
 type ScreenConversation = WhatsAppConversation & {
   external_id?: string;
   platform?: MetaConversation["platform"];
@@ -191,6 +194,7 @@ export default function Conversations() {
     return localStorage.getItem("whatsapp-show-archived") === "true";
   });
   const [onlyLeads, setOnlyLeads] = useState(false);
+  const [withoutLeadOnly, setWithoutLeadOnly] = useState(false);
   const [pendingReplyOnly, setPendingReplyOnly] = useState(false);
   const [showAutomationDialog, setShowAutomationDialog] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -337,9 +341,10 @@ export default function Conversations() {
       hideGroups,
       showArchived,
       onlyLeads,
+      withoutLeadOnly,
       pendingReplyOnly,
     ].filter(Boolean).length;
-  }, [activePlatform, selectedSessionId, hideGroups, showArchived, onlyLeads, pendingReplyOnly]);
+  }, [activePlatform, selectedSessionId, hideGroups, showArchived, onlyLeads, withoutLeadOnly, pendingReplyOnly]);
 
   // Save hide groups preference
   useEffect(() => {
@@ -396,7 +401,10 @@ export default function Conversations() {
     if (activePlatform === 'whatsapp') {
       source = (conversations || []) as ScreenConversation[];
       if (onlyLeads) {
-        source = source.filter(conv => Boolean(conv.lead_id || conv.lead?.id));
+        source = source.filter(hasConversationLead);
+      }
+      if (withoutLeadOnly) {
+        source = source.filter(conv => !hasConversationLead(conv));
       }
       if (pendingReplyOnly) {
         source = source.filter(conv => (conv.unread_count ?? 0) > 0);
@@ -414,7 +422,7 @@ export default function Conversations() {
       conv.contact_phone?.includes(search) ||
       conv.lead?.name?.toLowerCase().includes(search)
     );
-  }, [conversations, metaConversations, activePlatform, searchTerm, onlyLeads, pendingReplyOnly]);
+  }, [conversations, metaConversations, activePlatform, searchTerm, onlyLeads, withoutLeadOnly, pendingReplyOnly]);
 
   const whatsappMessageInputState = useMemo(
     () => getWhatsAppMessageInputState(selectedConversation, selectedSessionId, sessions),
@@ -804,7 +812,19 @@ export default function Conversations() {
                             </label>
                             <label className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
                               <span>Somente leads</span>
-                              <Checkbox className="h-3.5 w-3.5 rounded-[4px] border-primary/70 [&_svg]:h-3 [&_svg]:w-3" checked={onlyLeads} onCheckedChange={checked => setOnlyLeads(checked === true)} />
+                              <Checkbox className="h-3.5 w-3.5 rounded-[4px] border-primary/70 [&_svg]:h-3 [&_svg]:w-3" checked={onlyLeads} onCheckedChange={checked => {
+                                const next = checked === true;
+                                setOnlyLeads(next);
+                                if (next) setWithoutLeadOnly(false);
+                              }} />
+                            </label>
+                            <label className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
+                              <span>Sem lead</span>
+                              <Checkbox className="h-3.5 w-3.5 rounded-[4px] border-primary/70 [&_svg]:h-3 [&_svg]:w-3" checked={withoutLeadOnly} onCheckedChange={checked => {
+                                const next = checked === true;
+                                setWithoutLeadOnly(next);
+                                if (next) setOnlyLeads(false);
+                              }} />
                             </label>
                             <label className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
                               <span>Sem resposta</span>
@@ -824,6 +844,7 @@ export default function Conversations() {
                               setHideGroups(false);
                               setShowArchived(false);
                               setOnlyLeads(false);
+                              setWithoutLeadOnly(false);
                               setPendingReplyOnly(false);
                             }}
                           >
@@ -853,8 +874,8 @@ export default function Conversations() {
                   {conversationsFailed ? (
                     <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
                       <MessageSquare className="w-8 h-8 text-muted-foreground mb-2" />
-                      <p className="text-sm font-medium mb-1">Nao foi possivel carregar as conversas</p>
-                      <p className="text-xs text-muted-foreground mb-4">Verifique a conexao do WhatsApp e tente novamente.</p>
+                      <p className="text-sm font-medium mb-1">Não foi possível carregar as conversas</p>
+                      <p className="text-xs text-muted-foreground mb-4">Verifique a conexão do WhatsApp e tente novamente.</p>
                       <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
                         Tentar novamente
                       </Button>
@@ -1003,7 +1024,19 @@ export default function Conversations() {
                         </label>
                         <label className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
                           <span>Somente leads</span>
-                          <Checkbox className="h-3.5 w-3.5 rounded-[4px] border-primary/70 [&_svg]:h-3 [&_svg]:w-3" checked={onlyLeads} onCheckedChange={checked => setOnlyLeads(checked === true)} />
+                          <Checkbox className="h-3.5 w-3.5 rounded-[4px] border-primary/70 [&_svg]:h-3 [&_svg]:w-3" checked={onlyLeads} onCheckedChange={checked => {
+                            const next = checked === true;
+                            setOnlyLeads(next);
+                            if (next) setWithoutLeadOnly(false);
+                          }} />
+                        </label>
+                        <label className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
+                          <span>Sem lead</span>
+                          <Checkbox className="h-3.5 w-3.5 rounded-[4px] border-primary/70 [&_svg]:h-3 [&_svg]:w-3" checked={withoutLeadOnly} onCheckedChange={checked => {
+                            const next = checked === true;
+                            setWithoutLeadOnly(next);
+                            if (next) setOnlyLeads(false);
+                          }} />
                         </label>
                         <label className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
                           <span>Sem resposta</span>
@@ -1023,6 +1056,7 @@ export default function Conversations() {
                           setHideGroups(false);
                           setShowArchived(false);
                           setOnlyLeads(false);
+                          setWithoutLeadOnly(false);
                           setPendingReplyOnly(false);
                         }}
                       >
@@ -1100,8 +1134,8 @@ export default function Conversations() {
                 conversationsFailed ? (
                   <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
                     <MessageSquare className="w-8 h-8 text-muted-foreground mb-2" />
-                    <p className="text-sm font-medium mb-1">Nao foi possivel carregar as conversas</p>
-                    <p className="text-xs text-muted-foreground mb-4">Verifique a conexao do WhatsApp e tente novamente.</p>
+                    <p className="text-sm font-medium mb-1">Não foi possível carregar as conversas</p>
+                    <p className="text-xs text-muted-foreground mb-4">Verifique a conexão do WhatsApp e tente novamente.</p>
                     <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
                       Tentar novamente
                     </Button>
@@ -1411,6 +1445,7 @@ function ConversationItem({
   onViewLead?: () => void;
   onCreateLead: () => void;
 }) {
+  const hasLead = Boolean(conversation.lead_id || conversation.lead?.id);
   const leadTags = conversation.lead?.tags || [];
   const leadTagIds = leadTags.map(lt => lt.tag.id);
   const unassignedTags = availableTags.filter(t => !leadTagIds.includes(t.id));
@@ -1459,6 +1494,11 @@ function ConversationItem({
               {conversation.is_group && <Badge className="h-4 shrink-0 border-0 bg-orange-500/15 px-1.5 text-[9px] font-medium text-orange-700 shadow-none dark:bg-orange-500/15 dark:text-orange-300">
                   Grupo
                 </Badge>}
+              {!hasLead && (
+                <Badge className="h-4 shrink-0 border-0 bg-sky-500/15 px-1.5 text-[9px] font-medium text-sky-700 shadow-none dark:text-sky-300">
+                  Sem lead
+                </Badge>
+              )}
               {otherAssigneeName && (
                 <Badge className="h-4 max-w-[72px] shrink-0 border-0 bg-amber-500/15 px-1.5 text-[9px] font-medium text-amber-700 shadow-none dark:text-amber-300">
                   <span className="truncate">com {otherAssigneeName}</span>
@@ -1561,7 +1601,7 @@ function ConversationItem({
               </DropdownMenuSubContent>
             </DropdownMenuSub>}
           {/* Create Lead option - only show if no lead associated */}
-          {!conversation.lead && <DropdownMenuItem onClick={onCreateLead}>
+          {!hasLead && <DropdownMenuItem onClick={onCreateLead}>
               <UserPlus className="w-4 h-4 mr-2" />
               Criar Lead
             </DropdownMenuItem>}

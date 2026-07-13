@@ -73,3 +73,78 @@ func TestCanAssignPropertiesRequiresManagerPermission(t *testing.T) {
 		t.Fatal("explicit property_assign permission should allow transfers")
 	}
 }
+
+func TestPropertyAssignmentChangeDetection(t *testing.T) {
+	current := propertySnapshot{
+		CreatorID:         "creator-1",
+		ResponsibleUserID: "responsible-1",
+	}
+
+	if isPropertyAssignmentChange(propertyRequest{
+		"responsible_user_id": "responsible-2",
+	}, current) != true {
+		t.Fatal("changing responsible_user_id should be detected")
+	}
+
+	if isPropertyAssignmentChange(propertyRequest{
+		"responsible_user_id": "responsible-1",
+	}, current) {
+		t.Fatal("unchanged responsible_user_id should not be treated as transfer")
+	}
+
+	if isPropertyAssignmentChange(propertyRequest{
+		"cadastrado_por": "responsible-2",
+	}, current) != true {
+		t.Fatal("changing legacy cadastrado_por should be detected as transfer")
+	}
+}
+
+func TestCanEditPropertyHonorsOrganizationPolicy(t *testing.T) {
+	userContext := tenant.Context{
+		UserID:         "user-1",
+		OrganizationID: "org-1",
+		MemberRole:     "user",
+	}
+
+	if !canEditProperty(userContext, "other-user", "another-user", "everyone") {
+		t.Fatal("regular organization users should edit property details when policy is everyone")
+	}
+
+	if canEditProperty(userContext, "other-user", "another-user", "responsible_or_admin") {
+		t.Fatal("regular organization users should not edit another user's property under restricted policy")
+	}
+}
+
+func TestCanUpdatePropertyAvailabilityAllowsOnlyStatusAndPublication(t *testing.T) {
+	userContext := tenant.Context{
+		UserID:         "user-1",
+		OrganizationID: "org-1",
+		MemberRole:     "user",
+	}
+
+	if !canUpdatePropertyAvailability(userContext, propertyRequest{
+		"status":            "reserved",
+		"published_on_site": false,
+	}) {
+		t.Fatal("regular organization users should update property availability fields")
+	}
+
+	if canUpdatePropertyAvailability(userContext, propertyRequest{
+		"status": "reserved",
+		"title":  "Changed title",
+	}) {
+		t.Fatal("availability update must not allow property detail fields")
+	}
+
+	if canUpdatePropertyAvailability(userContext, propertyRequest{
+		"status": "archived",
+	}) {
+		t.Fatal("availability update must not allow archival statuses")
+	}
+
+	if canUpdatePropertyAvailability(tenant.Context{UserID: "user-1"}, propertyRequest{
+		"status": "reserved",
+	}) {
+		t.Fatal("availability update requires organization context")
+	}
+}

@@ -87,7 +87,7 @@ export async function renderPublicSiteRoute({
     const query = normalizePropertiesQuery(route.query);
     const data = await getPublicProperties(site.organization_id, query);
     return (
-      <PublicSiteShell basePath={basePath} menuItems={menuItems} pageTitle={`Imoveis - ${getSiteTitle(site)}`} site={site}>
+      <PublicSiteShell basePath={basePath} menuItems={menuItems} pageTitle={`Imóveis - ${getSiteTitle(site)}`} site={site}>
         <PublicPropertiesScreen basePath={basePath} data={data} query={route.query} site={site} />
       </PublicSiteShell>
     );
@@ -137,7 +137,7 @@ export async function renderPublicSiteRoute({
 
   if (route.kind === "privacy") {
     return (
-      <PublicSiteShell basePath={basePath} menuItems={menuItems} pageTitle={`Politica de privacidade - ${getSiteTitle(site)}`} site={site}>
+      <PublicSiteShell basePath={basePath} menuItems={menuItems} pageTitle={`Política de privacidade - ${getSiteTitle(site)}`} site={site}>
         <PublicPrivacyPolicyScreen site={site} />
       </PublicSiteShell>
     );
@@ -180,7 +180,7 @@ export async function generatePublicSiteMetadata({
   let canonicalPath = buildRouteCanonicalPath(route);
 
   if (route.kind === "properties") {
-    title = `Imoveis - ${siteTitle}`;
+    title = `Imóveis - ${siteTitle}`;
     shareTitle = title;
     canonicalPath = buildSiteHref(basePath, "/imoveis");
   } else if (route.kind === "about") {
@@ -192,9 +192,9 @@ export async function generatePublicSiteMetadata({
     shareTitle = title;
     canonicalPath = buildSiteHref(basePath, "/contato");
   } else if (route.kind === "privacy") {
-    title = `Politica de privacidade - ${siteTitle}`;
+    title = `Política de privacidade - ${siteTitle}`;
     shareTitle = title;
-    description = `Politica de privacidade da ${siteTitle}.`;
+    description = `Política de privacidade da ${siteTitle}.`;
     canonicalPath = buildSiteHref(basePath, "/politica-de-privacidade");
   } else if (route.kind === "favorites") {
     title = `Favoritos - ${siteTitle}`;
@@ -203,7 +203,7 @@ export async function generatePublicSiteMetadata({
   } else if (route.kind === "not-found") {
     title = `404 - ${siteTitle}`;
     shareTitle = title;
-    description = "Nao encontramos essa pagina.";
+    description = "Não encontramos essa página.";
     canonicalPath = buildSiteHref(basePath, "/");
   } else if (route.kind === "property") {
     const property = await getPublicProperty(site.organization_id, route.propertyCode);

@@ -22,7 +22,7 @@ type PublicContactLeadDialogProps = {
 
 export function PublicContactLeadDialog({
   className,
-  defaultMessage = "Ola, vim pelo site e gostaria de receber mais informacoes.",
+  defaultMessage = "Olá, vim pelo site e gostaria de receber mais informações.",
   organizationId,
   primaryColor,
   privacyHref,

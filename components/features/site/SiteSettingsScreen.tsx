@@ -464,7 +464,7 @@ export default {
         if (cached) return cached;
       }
 
-      return new Response('Site temporariamente indisponivel. Tente novamente em instantes.', {
+      return new Response('Site temporariamente indisponível. Tente novamente em instantes.', {
         status: 503,
         headers: {
           'Content-Type': 'text/plain; charset=utf-8',
@@ -477,7 +477,7 @@ export default {
   };
 
   const copyDnsInstructions = () => {
-    const instructions = `Configuracao de dominio proprio via Cloudflare Worker para ${formData.custom_domain}:
+    const instructions = `Configuração de domínio próprio via Cloudflare Worker para ${formData.custom_domain}:
 
 1. Crie uma conta gratuita em https://cloudflare.com
 2. Adicione seu dominio (${formData.custom_domain}) no Cloudflare

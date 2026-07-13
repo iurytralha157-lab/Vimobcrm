@@ -23,9 +23,13 @@ import { useGoogleCalendarStatus } from "@/hooks/use-google-calendar";
 import { useGrupoOLXIntegration } from "@/hooks/use-grupo-olx-integration";
 import { useAuth } from "@/contexts/AuthContext";
 import { canManageOrganization } from "@/lib/access/organization";
+import { FEATURES } from "@/config/constants";
 
 type IntegrationKey = "whatsapp" | "ai" | "meta" | "grupo-olx" | "google-calendar" | "vista" | "imoview" | "webhooks" | "api";
 const ADMIN_ONLY_INTEGRATIONS = new Set<IntegrationKey>(["meta", "grupo-olx", "vista", "imoview"]);
+const TEMPORARILY_DISABLED_INTEGRATIONS = new Set<IntegrationKey>(
+  FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION ? [] : ["google-calendar"],
+);
 
 interface MetaOAuthPayload {
   pages?: MetaPage[];
@@ -124,7 +128,8 @@ export function IntegrationsTab({
     return true;
   }, [hasAIModule, hasAPIModule, hasPortalsModule, hasWebhooksModule, hasWhatsAppModule]);
   const defaultIntegrationUnavailable =
-    defaultIntegrationKey !== null && !isIntegrationEnabled(defaultIntegrationKey);
+    defaultIntegrationKey !== null &&
+    (!isIntegrationEnabled(defaultIntegrationKey) || TEMPORARILY_DISABLED_INTEGRATIONS.has(defaultIntegrationKey));
   const defaultIntegrationLocked =
     defaultIntegrationKey !== null &&
     ADMIN_ONLY_INTEGRATIONS.has(defaultIntegrationKey) &&
@@ -142,7 +147,7 @@ export function IntegrationsTab({
   const { data: imoviewIntegration } = useImoviewIntegration();
   const { data: googleCalendarStatus } = useGoogleCalendarStatus();
   const { data: grupoOLXIntegration } = useGrupoOLXIntegration({ enabled: hasPortalsModule });
-  const disabledIntegrations = new Set<IntegrationKey>();
+  const disabledIntegrations = TEMPORARILY_DISABLED_INTEGRATIONS;
 
   useEffect(() => {
     if (!defaultIntegrationKey || defaultIntegrationLocked || defaultIntegrationUnavailable) {
@@ -321,11 +326,11 @@ export function IntegrationsTab({
       {
         key: "grupo-olx" as const,
         title: "Grupo OLX / Canal Pro",
-        description: "Publique imoveis no ZAP, Viva Real e OLX e receba leads no CRM.",
+        description: "Publique imóveis no ZAP, Viva Real e OLX e receba leads no CRM.",
         enabled: hasPortalsModule,
         requiresAdmin: true,
         connected: grupoOLXConnected,
-        detail: grupoOLXIntegration?.status === "pending_setup" ? "Aguardando Canal Pro" : "Portais imobiliarios",
+        detail: grupoOLXIntegration?.status === "pending_setup" ? "Aguardando Canal Pro" : "Portais imobiliários",
         icon: <Building2 className="h-7 w-7 text-primary" />,
       },
       {
@@ -385,7 +390,9 @@ export function IntegrationsTab({
   });
 
   const effectiveActiveIntegration =
-    activeIntegration && ADMIN_ONLY_INTEGRATIONS.has(activeIntegration) && !canManageAdminIntegrations
+    activeIntegration &&
+    ((ADMIN_ONLY_INTEGRATIONS.has(activeIntegration) && !canManageAdminIntegrations) ||
+      disabledIntegrations.has(activeIntegration))
       ? null
       : activeIntegration;
   const activeTitle = integrations.find((item) => item.key === effectiveActiveIntegration)?.title;
@@ -447,7 +454,7 @@ export function IntegrationsTab({
                     variant={isAccessLocked || !item.connected ? "outline" : "default"}
                     className={isAccessLocked || !item.connected ? "border-transparent bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-soft)]" : ""}
                   >
-                    {isAccessLocked ? "Sem acesso" : isTemporarilyDisabled ? "Em breve" : item.connected ? "Integrado" : "Não integrado"}
+                    {isAccessLocked ? "Sem acesso" : isTemporarilyDisabled ? "Desativado" : item.connected ? "Integrado" : "Não integrado"}
                   </Badge>
                 </div>
               </CardHeader>

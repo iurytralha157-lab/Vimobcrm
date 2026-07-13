@@ -118,42 +118,42 @@ const fallbackPlanOptions: PlanOption[] = [
     signupPath: "trial",
     name: "Starter",
     price: "R$ 197/mes",
-    description: "7 dias gratis. Kanban, dashboard, agenda, WhatsApp, Meta e imoveis.",
+    description: "7 dias grátis. Kanban, dashboard, agenda, WhatsApp, Meta e imóveis.",
     billingCycle: "monthly",
     trialEnabled: true,
     trialDays: 7,
     maxUsers: 5,
     maxWhatsappSessions: 5,
     modules: ["crm", "agenda", "whatsapp", "meta"],
-    features: ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integracao Meta", "Imoveis"],
+    features: ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integração Meta", "Imóveis"],
   },
   {
     slug: "intermediario-297",
     signupPath: "paid",
     name: "Pro",
     price: "R$ 297/mes",
-    description: "Tudo do Starter, com site publico.",
+    description: "Tudo do Starter, com site público.",
     billingCycle: "monthly",
     trialEnabled: false,
     trialDays: null,
     maxUsers: 10,
     maxWhatsappSessions: 10,
     modules: ["crm", "agenda", "whatsapp", "meta", "properties", "site"],
-    features: ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integracao Meta", "Imoveis", "Site"],
+    features: ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integração Meta", "Imóveis", "Site"],
   },
   {
     slug: "master-497",
     signupPath: "paid",
     name: "Master",
     price: "R$ 497/mes",
-    description: "Tudo do Pro, com automacoes e mais usuarios.",
+    description: "Tudo do Pro, com automações e mais usuários.",
     billingCycle: "monthly",
     trialEnabled: false,
     trialDays: null,
     maxUsers: 20,
     maxWhatsappSessions: 20,
     modules: ["crm", "agenda", "whatsapp", "meta", "properties", "site", "automations", "webhooks", "api", "portals"],
-    features: ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integracao Meta", "Imoveis", "Site", "Automacoes", "Portais"],
+    features: ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integração Meta", "Imóveis", "Site", "Automações", "Portais"],
   },
 ];
 
@@ -181,14 +181,14 @@ function formatPlanPrice(price?: number, cycle?: string | null) {
 function getPlanFeatures(slug: string, modules: string[]) {
   const normalizedSlug = slug.toLowerCase();
   const moduleSet = new Set(modules.map((moduleName) => moduleName.toLowerCase()));
-  const features = ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integracao Meta", "Imoveis"];
+  const features = ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integração Meta", "Imóveis"];
 
   if (moduleSet.has("site") || normalizedSlug.includes("pro") || normalizedSlug.includes("intermediario") || normalizedSlug.includes("master")) {
     features.push("Site");
   }
 
   if (moduleSet.has("automations") || normalizedSlug.includes("master")) {
-    features.push("Automacoes");
+    features.push("Automações");
   }
 
   if (moduleSet.has("portals") || normalizedSlug.includes("master")) {

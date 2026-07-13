@@ -37,8 +37,8 @@ export function useCreatePropertyOwner() {
 
   return useMutation({
     mutationFn: async (owner: PropertyOwnerInput) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado')
-      if (!organizationId) throw new Error('Usuario nao possui organizacao')
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
 
       const { data } = await propertyOwnersAPI.createOwner(organizationId, owner)
       return data
@@ -60,8 +60,8 @@ export function useUpdatePropertyOwner() {
 
   return useMutation({
     mutationFn: async ({ id, ...owner }: PropertyOwnerInput & { id: string }) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado')
-      if (!organizationId) throw new Error('Usuario nao possui organizacao')
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
 
       const { data } = await propertyOwnersAPI.updateOwner(organizationId, id, owner)
       return data

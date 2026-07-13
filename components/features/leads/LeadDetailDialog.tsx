@@ -361,8 +361,8 @@ function CampaignTrackingHover({ leadMeta }: { leadMeta: CampaignTrackingDetails
     ['Conjunto', leadMeta?.adset_name],
     ['Anuncio', leadMeta?.ad_name],
     ['Formulario', leadMeta?.form_name],
-    ['ID do formulario', leadMeta?.form_id],
-    ['Pagina', leadMeta?.page_name || leadMeta?.page_id],
+    ['ID do formulário', leadMeta?.form_id],
+    ['Página', leadMeta?.page_name || leadMeta?.page_id],
     ['Leadgen', leadMeta?.leadgen_id],
     ['Plataforma', trackingSourceLabel(leadMeta?.platform) || leadMeta?.platform],
     ['Origem', trackingSourceLabel(leadMeta?.source_type) || leadMeta?.utm_source],
@@ -2834,7 +2834,7 @@ export function LeadDetailDialog({
 
                 <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <Textarea
-                    placeholder="Registre o feedback sobre atendimento, perfil ou proximos passos..."
+                    placeholder="Registre o feedback sobre atendimento, perfil ou próximos passos..."
                     value={feedback}
                     onChange={(event) => setFeedback(event.target.value)}
                     className="min-h-[92px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"
@@ -3212,7 +3212,7 @@ export function LeadDetailDialog({
 
                 <section data-tour="lead-detail-feedback" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <Textarea
-                    placeholder="Registre o feedback sobre atendimento, perfil ou proximos passos..."
+                    placeholder="Registre o feedback sobre atendimento, perfil ou próximos passos..."
                     value={feedback}
                     onChange={(event) => setFeedback(event.target.value)}
                     className="min-h-[74px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"

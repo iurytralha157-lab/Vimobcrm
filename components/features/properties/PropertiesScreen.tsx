@@ -31,6 +31,7 @@ import { useUsers } from '@/hooks/use-users';
 import { usePropertyTypes } from '@/hooks/use-property-types';
 import { usePropertyOwners } from '@/hooks/use-property-owners';
 import { usePropertyCities, usePropertyCondominiums, usePropertyNeighborhoods } from '@/hooks/use-property-locations';
+import { canDeleteProperties, canEditPropertyDetails, canUpdatePropertyAvailability } from '@/lib/access/properties';
 import { cn } from '@/lib/utils';
 import { getPropertySiteInfo } from '@/lib/api/property-support';
 import { toast } from 'sonner';
@@ -73,9 +74,19 @@ export default function Properties() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const isMobile = useIsMobile();
-  const { profile, organization, isSuperAdmin } = useAuth();
-  const isAdmin = profile?.role === 'admin' || isSuperAdmin;
+  const { profile, organization, tenantContext, isSuperAdmin } = useAuth();
   const organizationId = organization?.id || profile?.organization_id;
+  const propertyAccessContext = {
+    userId: profile?.id,
+    organizationId,
+    isSuperAdmin,
+    memberRole: tenantContext?.memberRole,
+    profileRole: profile?.role,
+    permissions: tenantContext?.permissions,
+    propertyEditPolicy: organization?.property_edit_policy,
+  };
+  const canUpdateAvailability = canUpdatePropertyAvailability(propertyAccessContext);
+  const canDeleteProperty = canDeleteProperties(propertyAccessContext);
   const { data: users = [] } = useUsers();
   const { data: propertyTypes = [] } = usePropertyTypes();
   const { data: propertyOwners = [] } = usePropertyOwners();
@@ -137,7 +148,7 @@ export default function Properties() {
       id,
       anunciar: isPublic
     });
-    toast.success(isPublic ? 'Imovel publicado no site!' : 'Imovel removido do site!');
+    toast.success(isPublic ? 'Imóvel publicado no site!' : 'Imóvel removido do site!');
   };
 
   const isFilterSettling = search.trim() !== debouncedSearch || filters !== debouncedFilters;
@@ -801,16 +812,15 @@ export default function Properties() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
               {properties.map((property) => {
                 const propertyWithOwner = property as PropertyWithCreator;
-                const activeUserId = profile?.id;
                 const ownerIds = [
                   propertyWithOwner.cadastrado_por,
                   propertyWithOwner.created_by,
                   propertyWithOwner.responsible_user_id,
                 ].filter(Boolean);
-                const canEditProperty =
-                  isAdmin ||
-                  organization?.property_edit_policy === 'everyone' ||
-                  (!!activeUserId && ownerIds.includes(activeUserId));
+                const canEditProperty = canEditPropertyDetails({
+                  ...propertyAccessContext,
+                  ownerIds,
+                });
                 return (
                   <PropertyCard
                     key={property.id}
@@ -829,6 +839,8 @@ export default function Properties() {
                     }}
                     formatPrice={formatPrice}
                     canEdit={canEditProperty}
+                    canUpdateAvailability={canUpdateAvailability}
+                    canDelete={canDeleteProperty}
                     siteInfo={siteInfo}
                   />
                 );

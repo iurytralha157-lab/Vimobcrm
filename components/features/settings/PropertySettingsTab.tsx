@@ -13,7 +13,7 @@ type CurrentOrganization = NonNullable<ReturnType<typeof useAuth>["organization"
 
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) return error.message;
-  return "Nao foi possivel salvar as configuracoes de imoveis.";
+  return "Não foi possível salvar as configurações de imóveis.";
 };
 
 function organizationPayload(
@@ -51,7 +51,7 @@ export function PropertySettingsTab() {
   if (!organization) {
     return (
       <div className="max-w-4xl rounded-[8px] bg-card p-5 text-sm text-muted-foreground">
-        Carregando configuracoes de imoveis...
+        Carregando configurações de imóveis...
       </div>
     );
   }
@@ -85,7 +85,7 @@ function PropertySettingsForm({
     try {
       await settingsAPI.updateOrganization(organizationPayload(organization, editPolicy, ownerVisibility), organization.id);
       await refreshProfile();
-      toast.success("Configuracoes de imoveis salvas.");
+      toast.success("Configurações de imóveis salvas.");
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
@@ -101,8 +101,8 @@ function PropertySettingsForm({
             <Building2 className="h-4 w-4" strokeWidth={1.6} />
           </div>
           <div>
-            <h2 className="text-base font-medium">Configuracoes de imoveis</h2>
-            <p className="text-sm text-muted-foreground">Defina regras da carteira para esta organizacao.</p>
+            <h2 className="text-base font-medium">Configurações de imóveis</h2>
+            <p className="text-sm text-muted-foreground">Defina regras da carteira para esta organização.</p>
           </div>
         </div>
 
@@ -111,8 +111,8 @@ function PropertySettingsForm({
             <div className="mb-4 flex items-center gap-2">
               <PencilLine className="h-4 w-4 text-primary" strokeWidth={1.6} />
               <div>
-                <h3 className="text-sm font-medium">Edicao de imoveis</h3>
-                <p className="text-xs text-muted-foreground">Controle quem pode alterar dados dos imoveis.</p>
+                <h3 className="text-sm font-medium">Edição de imóveis</h3>
+                <p className="text-xs text-muted-foreground">Controle quem pode alterar dados dos imóveis.</p>
               </div>
             </div>
             <div className="space-y-2">
@@ -125,8 +125,8 @@ function PropertySettingsForm({
               />
               <PolicyOption
                 value="everyone"
-                label="Todos os usuarios"
-                description="Qualquer usuario ativo da organizacao pode editar imoveis."
+                label="Todos os usuários"
+                description="Qualquer usuário ativo da organização pode editar imóveis."
                 selected={editPolicy === "everyone"}
                 onSelect={() => setEditPolicy("everyone")}
               />
@@ -163,7 +163,7 @@ function PropertySettingsForm({
         <div className="mt-5 flex justify-end">
           <Button onClick={handleSave} disabled={saving || !organization?.id}>
             {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-            Salvar configuracoes
+            Salvar configurações
           </Button>
         </div>
       </section>

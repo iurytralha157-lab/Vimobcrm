@@ -151,7 +151,7 @@ export function PublicSiteShell({
           propertyCode={propertyCode}
           propertyId={propertyId}
           siteTitle={title}
-          triggerLabel="Abrir formulario de WhatsApp"
+          triggerLabel="Abrir formulário de WhatsApp"
           variant="floating"
         />
       ) : null}
@@ -179,7 +179,7 @@ export function PublicSiteShell({
               ))}
               <li>
                 <Link href={buildSiteHref(basePath, "/politica-de-privacidade")} className="hover:text-white">
-                  Politica de Privacidade
+                  Política de Privacidade
                 </Link>
               </li>
             </ul>
@@ -257,9 +257,9 @@ function buildWhatsAppDefaultMessage(propertyTitle?: string, propertyCode?: stri
   const title = propertyTitle?.trim();
   const code = propertyCode?.trim();
   if (!title) {
-    return "Ola, vim pelo site e gostaria de receber mais informacoes.";
+    return "Olá, vim pelo site e gostaria de receber mais informações.";
   }
-  return `Ola, vim pelo site e tenho interesse no imovel ${title}${code ? ` (ref. ${code})` : ""}. Gostaria de receber mais informacoes.`;
+  return `Olá, vim pelo site e tenho interesse no imóvel ${title}${code ? ` (ref. ${code})` : ""}. Gostaria de receber mais informações.`;
 }
 
 function buildDesktopNavItems(items: SiteMenuItem[]) {
@@ -324,8 +324,7 @@ function buildDesktopNavItems(items: SiteMenuItem[]) {
 
 function formatDesktopMenuLabel(label: string) {
   const normalized = label.trim().toLowerCase();
-  if (normalized === "imoveis" || normalized.startsWith("imÃ")) return "IMOVEIS";
-  if (normalized === "imoveis" || normalized === "imóveis") return "IMÓVEIS";
+  if (normalized === "imoveis" || normalized === "imóveis" || normalized.startsWith("imÃ")) return "IMÓVEIS";
   return label.toUpperCase();
 }
 

@@ -226,7 +226,7 @@ export const gamificationMissionInputSchema = z.object({
   isActive: z.boolean().optional(),
 }).strict().superRefine((input, ctx) => {
   if (input.targetScope === 'user' && !input.targetUserId) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetUserId'], message: 'Usuario e obrigatorio' })
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetUserId'], message: 'Usuário é obrigatório' })
   }
 })
 export const gamificationManualEntryInputSchema = z.object({

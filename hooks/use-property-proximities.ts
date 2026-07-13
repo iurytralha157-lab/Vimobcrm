@@ -65,8 +65,8 @@ export function useCreatePropertyProximity() {
 
   return useMutation({
     mutationFn: async (name: string) => {
-      if (!user?.id) throw new Error('Usuario nao autenticado')
-      if (!organizationId) throw new Error('Usuario nao possui organizacao')
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
 
       const { data } = await propertyCatalogAPI.createProximity(organizationId, name)
       return toPropertyProximity(data)
@@ -88,8 +88,8 @@ export function useSeedDefaultProximities() {
 
   return useMutation({
     mutationFn: async () => {
-      if (!user?.id) throw new Error('Usuario nao autenticado')
-      if (!organizationId) throw new Error('Usuario nao possui organizacao')
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
 
       await propertyCatalogAPI.seedProximities(organizationId, DEFAULT_PROXIMITIES)
     },

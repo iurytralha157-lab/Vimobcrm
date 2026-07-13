@@ -85,7 +85,7 @@ export function useCreateContract() {
   return useMutation({
     mutationFn: (data: CreateContractInput) => {
       const orgId = organization?.id || profile?.organization_id;
-      if (!orgId) throw new Error('Organizacao nao encontrada');
+      if (!orgId) throw new Error('Organização não encontrada');
       return financialAPI.createContract<Contract>(data, orgId);
     },
     onSuccess: () => {

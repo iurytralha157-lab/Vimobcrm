@@ -40,7 +40,7 @@ export function useUpdateAISettings() {
     mutationFn: (input: AISettingsInput) => aiAPI.updateSettings(input, organizationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["ai-settings", organizationId] });
-      toast({ title: "IA atualizada", description: "Configuracao salva com sucesso." });
+      toast({ title: "IA atualizada", description: "Configuração salva com sucesso." });
     },
     onError: (error: Error) => {
       toast({ title: "Erro ao salvar IA", description: error.message, variant: "destructive" });
@@ -87,7 +87,7 @@ export function useUpdateAIOrganizationAgent() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["ai-organization-agents", organizationId] });
       queryClient.invalidateQueries({ queryKey: ["ai-routing-rules", organizationId] });
-      toast({ title: "Agente atualizado", description: "As alteracoes ja valem para os proximos atendimentos." });
+      toast({ title: "Agente atualizado", description: "As alterações já valem para os próximos atendimentos." });
     },
     onError: (error: Error) => {
       toast({ title: "Erro ao atualizar agente", description: error.message, variant: "destructive" });
@@ -106,7 +106,7 @@ export function useDeleteAIOrganizationAgent() {
       queryClient.invalidateQueries({ queryKey: ["ai-organization-agents", organizationId] });
       queryClient.invalidateQueries({ queryKey: ["ai-settings", organizationId] });
       queryClient.invalidateQueries({ queryKey: ["ai-routing-rules", organizationId] });
-      toast({ title: "Agente removido", description: "O agente saiu da configuracao desta organizacao." });
+      toast({ title: "Agente removido", description: "O agente saiu da configuração desta organização." });
     },
     onError: (error: Error) => {
       toast({ title: "Erro ao remover agente", description: error.message, variant: "destructive" });
@@ -134,7 +134,7 @@ export function useCreateAIRoutingRule() {
     mutationFn: (input: AIRoutingRuleInput) => aiAPI.createRoutingRule(input, organizationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["ai-routing-rules", organizationId] });
-      toast({ title: "Regra criada", description: "A IA vai considerar esta regra nos proximos atendimentos." });
+      toast({ title: "Regra criada", description: "A IA vai considerar esta regra nos próximos atendimentos." });
     },
     onError: (error: Error) => {
       toast({ title: "Erro ao criar regra", description: error.message, variant: "destructive" });

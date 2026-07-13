@@ -207,7 +207,7 @@ export function useDeleteWhatsAppSession() {
       queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] });
       toast({
         title: "Sessao excluida",
-        description: "A conexao WhatsApp foi removida",
+        description: "A conexão WhatsApp foi removida",
       });
     },
     onError: (error: Error, _session, context) => {
@@ -238,7 +238,7 @@ export function useGetQRCode() {
       arg: string | { provider: WhatsAppProvider; instanceName: string; sessionId?: string; instanceId?: string | null },
     ) => {
       if (typeof arg === "string" || arg.provider !== "evolution_go" || !arg.sessionId) {
-        throw new Error("Evolution legada esta desativada. Crie uma nova conexao Evolution Go.");
+        throw new Error("Evolution legada está desativada. Crie uma nova conexão Evolution Go.");
       }
 
       return whatsappAPI.getQRCode(arg.sessionId, profile?.organization_id);
@@ -254,7 +254,7 @@ export function useGetConnectionStatus() {
       arg: string | { provider: WhatsAppProvider; instanceName: string; sessionId?: string; instanceId?: string | null },
     ) => {
       if (typeof arg === "string" || arg.provider !== "evolution_go" || !arg.sessionId) {
-        throw new Error("Evolution legada esta desativada. Crie uma nova conexao Evolution Go.");
+        throw new Error("Evolution legada está desativada. Crie uma nova conexão Evolution Go.");
       }
 
       return whatsappAPI.getConnectionStatus(arg.sessionId, profile?.organization_id);
@@ -321,7 +321,7 @@ export function useRevokeSessionAccess() {
       queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] });
       toast({
         title: "Acesso revogado",
-        description: "O usuario nao tem mais acesso a sessao",
+        description: "O usuário não tem mais acesso à sessão",
       });
     },
   });
@@ -512,7 +512,7 @@ export function useToggleNotificationSession() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
       toast({
-        title: "Configuracao atualizada",
+        title: "Configuração atualizada",
         description: "Sessao de notificacao alterada com sucesso",
       });
     },
@@ -540,8 +540,8 @@ export function useToggleAIAutoReplySession() {
       toast({
         title: "IA atualizada",
         description: variables.enabled
-          ? "A IA vai atender esta conexao WhatsApp."
-          : "A IA foi desligada nesta conexao WhatsApp.",
+          ? "A IA vai atender esta conexão WhatsApp."
+          : "A IA foi desligada nesta conexão WhatsApp.",
       });
     },
     onError: (error: Error) => {
