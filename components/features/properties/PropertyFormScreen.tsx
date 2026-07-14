@@ -48,6 +48,8 @@ interface PropertyFormData {
   endereco: string;
   numero: string;
   complemento: string;
+  quadra: string;
+  lote: string;
   bairro: string;
   cidade: string;
   city_id: string;
@@ -151,8 +153,8 @@ interface PropertyFormData {
 }
 
 const initialFormData: PropertyFormData = {
-  title: '', tipo_de_imovel: 'Apartamento', tipo_de_negocio: 'Venda', status: 'ativo',
-  destaque: false, endereco: '', numero: '', complemento: '', bairro: '', cidade: '',
+  title: '', tipo_de_imovel: '', tipo_de_negocio: 'Venda', status: 'ativo',
+  destaque: false, endereco: '', numero: '', complemento: '', quadra: '', lote: '', bairro: '', cidade: '',
    city_id: '', neighborhood_id: '', condominium_id: '', uf: '', cep: '', public_address_visibility: 'parcial', quartos: '', suites: '', banheiros: '', vagas: '', area_util: '',
   area_total: '', mobilia: '', regra_pet: false, andar: '', ano_construcao: '', preco: '',
   valor_locacao: '', condominio: '', iptu: '', seguro_incendio: '', taxa_de_servico: '',
@@ -197,12 +199,12 @@ function optionsWithCurrent(options: string[], current: string) {
 
 const formatCurrencyDisplay = (value: string): string => {
   if (!value) return '';
-  const numbers = value.replace(/\D/g, '');
-  if (!numbers) return '';
-  return `R$ ${Number(numbers).toLocaleString('pt-BR')}`;
+  const parsed = parseLocaleNumber(value);
+  if (parsed === null) return '';
+  return `R$ ${parsed.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
-const parseCurrencyInput = (value: string): string => value.replace(/\D/g, '');
+const parseCurrencyInput = (value: string): string => normalizeLocaleNumberString(value, 2);
 const parseDecimalInput = (value: string): string => value.replace(/[^\d,.]/g, '');
 const onlyCepDigits = (value: string) => value.replace(/\D/g, '').slice(0, 8);
 const formatCep = (value: string) => {
@@ -234,6 +236,7 @@ const isSaleType = (value: string) => ['venda', 'venda e aluguel', 'venda e loca
 
 type PropertyMutationInput = Omit<Partial<Property>, 'id' | 'code' | 'organization_id' | 'created_at' | 'updated_at'> & {
   metadata?: Record<string, unknown>;
+  property_type_id?: string | null;
 };
 type PropertyOwnership = Property & {
   created_by?: string | null;
@@ -248,7 +251,47 @@ type PropertyMetadata = {
   iptu_period?: unknown;
   rent_adjustment_index?: unknown;
   financing_mode?: unknown;
+  quadra?: unknown;
+  lote?: unknown;
 };
+
+type PropertyWithCanonicalType = Property & {
+  tipo?: string | null;
+};
+
+function normalizeLocaleNumberString(value: string, maxDecimals?: number) {
+  const cleaned = value.replace(/[^\d,.]/g, '');
+  if (!cleaned) return '';
+
+  const lastComma = cleaned.lastIndexOf(',');
+  const lastDot = cleaned.lastIndexOf('.');
+  const decimalIndex = lastComma > lastDot ? lastComma : lastDot;
+  const separator = decimalIndex >= 0 ? cleaned[decimalIndex] : '';
+  const fraction = decimalIndex >= 0 ? cleaned.slice(decimalIndex + 1).replace(/\D/g, '') : '';
+  const integerSource = decimalIndex >= 0 ? cleaned.slice(0, decimalIndex) : cleaned;
+  const hasComma = cleaned.includes(',');
+  const dotCount = (cleaned.match(/\./g) || []).length;
+
+  if (
+    !separator ||
+    fraction.length === 0 ||
+    (separator === '.' && !hasComma && fraction.length === 3) ||
+    (separator === '.' && !hasComma && dotCount > 1 && fraction.length > 2)
+  ) {
+    return cleaned.replace(/\D/g, '');
+  }
+
+  const integer = integerSource.replace(/\D/g, '') || '0';
+  const decimals = typeof maxDecimals === 'number' ? fraction.slice(0, maxDecimals) : fraction;
+  return decimals ? `${integer}.${decimals}` : integer;
+}
+
+function parseLocaleNumber(value: string) {
+  const normalized = normalizeLocaleNumberString(value);
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 function toStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
@@ -269,11 +312,13 @@ function metadataBoolean(value: unknown) {
 
 function propertyToFormData(p: Property): PropertyFormData {
   const metadata = getPropertyMetadata(p);
+  const propertyType = p.tipo_de_imovel || (p as PropertyWithCanonicalType).tipo || '';
   return {
-    title: p.title || '', tipo_de_imovel: p.tipo_de_imovel || 'Apartamento',
+    title: p.title || '', tipo_de_imovel: propertyType,
     tipo_de_negocio: p.tipo_de_negocio || 'Venda', status: p.status || 'ativo',
     destaque: p.destaque || false, endereco: p.endereco || '', numero: p.numero || '',
-    complemento: p.complemento || '', bairro: p.bairro || '', cidade: p.cidade || '',
+    complemento: p.complemento || '', quadra: metadataString(metadata.quadra), lote: metadataString(metadata.lote),
+    bairro: p.bairro || '', cidade: p.cidade || '',
     city_id: p.city_id || '', neighborhood_id: p.neighborhood_id || '', condominium_id: p.condominium_id || '',
     uf: p.uf || '', cep: p.cep || '', public_address_visibility: p.public_address_visibility || 'parcial', quartos: p.quartos?.toString() || '',
     suites: p.suites?.toString() || '', banheiros: p.banheiros?.toString() || '',
@@ -644,12 +689,7 @@ export default function PropertyForm() {
       return;
     }
 
-    const parseNum = (v: string) => {
-      if (!v) return null;
-      const normalized = v.trim().replace(/\./g, '').replace(',', '.').replace(/[^\d.-]/g, '');
-      const parsed = Number(normalized);
-      return Number.isFinite(parsed) ? parsed : null;
-    };
+    const parseNum = (v: string) => parseLocaleNumber(v);
     const parseInt2 = (v: string) => v ? parseInt(v) || null : null;
 
     const propertyData: PropertyMutationInput = {
@@ -704,6 +744,8 @@ export default function PropertyForm() {
         iptu_period: formData.iptu_period || null,
         rent_adjustment_index: supportsRentalContractTerms ? formData.rent_adjustment_index || null : null,
         financing_mode: supportsSaleTerms ? formData.financing_mode || null : 'nao',
+        quadra: formData.quadra.trim() || null,
+        lote: formData.lote.trim() || null,
       },
       zoneamento: formData.zoneamento || null,
       valor_venda_avaliado: isSale ? parseNum(formData.valor_venda_avaliado) : null,
@@ -726,6 +768,10 @@ export default function PropertyForm() {
 
     if (isEditing && !canAssignProperty) {
       delete propertyData.cadastrado_por;
+    }
+    if (isEditing) {
+      delete propertyData.tipo_de_imovel;
+      delete propertyData.property_type_id;
     }
 
     try {
@@ -1134,22 +1180,31 @@ export default function PropertyForm() {
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <Label>Tipo de Imóvel <RequiredMark /></Label>
-                      <Button type="button" variant="ghost" size="sm" className="h-6 border-0 px-2 text-xs shadow-none hover:bg-primary hover:text-primary-foreground" onClick={() => setShowAddType(!showAddType)}>
-                        <Plus className="h-3 w-3 mr-1" /> Novo
-                      </Button>
+                      {!isEditing && (
+                        <Button type="button" variant="ghost" size="sm" className="h-6 border-0 px-2 text-xs shadow-none hover:bg-primary hover:text-primary-foreground" onClick={() => setShowAddType(!showAddType)}>
+                          <Plus className="h-3 w-3 mr-1" /> Novo
+                        </Button>
+                      )}
                     </div>
-                    {showAddType && (
+                    {!isEditing && showAddType && (
                       <div className="flex gap-2 mb-2">
                         <Input placeholder="Novo tipo..." value={newTypeName} onChange={e => setNewTypeName(e.target.value)} className="h-8 text-sm" />
                         <Button type="button" size="sm" className="h-8" onClick={handleAddPropertyType} disabled={createPropertyType.isPending}>OK</Button>
                       </div>
                     )}
-                    <Select value={formData.tipo_de_imovel} onValueChange={v => set('tipo_de_imovel', v)}>
-                      <SelectTrigger><span className="truncate">{formData.tipo_de_imovel || 'Selecione'}</span></SelectTrigger>
-                      <SelectContent>
-                        {propertyTypes.map(type => <SelectItem key={type} value={type}>{type}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                    {isEditing ? (
+                      <div className="flex min-h-10 items-center gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-3 text-sm text-muted-foreground">
+                        <Lock className="h-4 w-4 shrink-0" />
+                        <span className="truncate font-medium text-foreground">{formData.tipo_de_imovel || 'Tipo não informado'}</span>
+                      </div>
+                    ) : (
+                      <Select value={formData.tipo_de_imovel || undefined} onValueChange={v => set('tipo_de_imovel', v)}>
+                        <SelectTrigger><span className="truncate">{formData.tipo_de_imovel || 'Selecione'}</span></SelectTrigger>
+                        <SelectContent>
+                          {propertyTypes.map(type => <SelectItem key={type} value={type}>{type}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
@@ -1369,7 +1424,7 @@ export default function PropertyForm() {
                               condominium.neighborhood?.name,
                               condominium.city?.name,
                             ].filter(Boolean).join(' - ')}
-                            {condominium.default_condominium_fee ? ` - R$ ${Number(condominium.default_condominium_fee).toLocaleString('pt-BR')}` : ''}
+                            {condominium.default_condominium_fee ? ` - R$ ${Number(condominium.default_condominium_fee).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -1388,6 +1443,16 @@ export default function PropertyForm() {
                   <div className="space-y-2">
                     <Label>Complemento</Label>
                     <Input value={formData.complemento} onChange={e => set('complemento', e.target.value)} placeholder="Apto, bloco..." />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Quadra</Label>
+                    <Input value={formData.quadra} onChange={e => set('quadra', e.target.value)} placeholder="Ex: QD 12" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Lote</Label>
+                    <Input value={formData.lote} onChange={e => set('lote', e.target.value)} placeholder="Ex: LT 08" />
                   </div>
                 </div>
                 {showAddCondominium && (

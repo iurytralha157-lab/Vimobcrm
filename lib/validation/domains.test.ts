@@ -73,7 +73,7 @@ const validAutomationFlow = {
 
 test('imovel exige titulo e filtros usam UUID valido', () => {
   assert.equal(propertyCreateInputSchema.safeParse({ status: 'active' }).success, false)
-  assert.equal(propertyCreateInputSchema.safeParse({ title: 'Apartamento Centro', quartos: 2 }).success, true)
+  assert.equal(propertyCreateInputSchema.safeParse({ title: 'Apartamento Centro', tipo_de_imovel: 'Apartamento', quartos: 2 }).success, true)
   assert.equal(propertyListQuerySchema.safeParse({ owner_id: 'invalido' }).success, false)
 })
 

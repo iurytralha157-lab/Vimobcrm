@@ -722,7 +722,7 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
                         <TableCell className="font-medium">{condominium.name}</TableCell>
                         <TableCell>{condominium.neighborhood?.name || '-'}</TableCell>
                         <TableCell>{condominium.city?.name}{condominium.city?.uf ? ` (${condominium.city.uf})` : ''}</TableCell>
-                        <TableCell>{condominium.default_condominium_fee ? `R$ ${Number(condominium.default_condominium_fee).toLocaleString('pt-BR')}` : '-'}</TableCell>
+                        <TableCell>{condominium.default_condominium_fee ? `R$ ${Number(condominium.default_condominium_fee).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}</TableCell>
                         <TableCell>{condominium.has_concierge ? condominium.concierge_type || 'Sim' : '-'}</TableCell>
                         <TableCell>
                           <div className="flex justify-end gap-1">

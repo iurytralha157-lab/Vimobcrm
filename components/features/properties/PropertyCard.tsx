@@ -47,6 +47,11 @@ type PropertyWithPublication = Property & {
   anunciar?: boolean | null;
 };
 
+type PropertyWithMetadata = Property & {
+  tipo?: string | null;
+  metadata?: unknown;
+};
+
 interface PropertyCardProps {
   property: Property;
   onEdit: (property: Property) => void;
@@ -60,6 +65,15 @@ interface PropertyCardProps {
   canUpdateAvailability?: boolean;
   canDelete?: boolean;
   siteInfo?: PropertySiteInfo | null;
+}
+
+function getPropertyMetadata(property: Property) {
+  const raw = (property as PropertyWithMetadata).metadata;
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+}
+
+function metadataString(value: unknown) {
+  return typeof value === 'string' ? value : '';
 }
 
 export function PropertyCard({
@@ -77,6 +91,10 @@ export function PropertyCard({
   siteInfo,
 }: PropertyCardProps) {
   const publication = property as PropertyWithPublication;
+  const propertyMetadata = getPropertyMetadata(property);
+  const displayPropertyType = property.tipo_de_imovel || (property as PropertyWithMetadata).tipo || '';
+  const quadra = metadataString(propertyMetadata.quadra);
+  const lote = metadataString(propertyMetadata.lote);
   const normalizedStatus = (property.status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const isSold = normalizedStatus === 'vendido';
   const isReserved = normalizedStatus === 'reservado';
@@ -86,7 +104,7 @@ export function PropertyCard({
   const isUnavailable = isSold || isReserved || isRented;
   const isSitePublished = Boolean(publication.published_on_site ?? publication.anunciar ?? true);
   const isPrivate = (!isSitePublished && !isUnavailable) || isPrivateStatus;
-  const propertyType = (property.tipo_de_imovel || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const propertyType = displayPropertyType.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const isLand = propertyType === 'terreno' || propertyType === 'lote';
   const displayArea = isLand ? property.area_total : (property.area_util || property.area_total);
   const dealType = (property.tipo_de_negocio || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -372,13 +390,20 @@ export function PropertyCard({
         </div>
 
         <h3 className="font-medium text-sm line-clamp-2 mb-2">
-          {property.title || `${property.tipo_de_imovel} em ${property.bairro}`}
+          {property.title || `${displayPropertyType || 'Imóvel'} em ${property.bairro || property.cidade || 'localização não informada'}`}
         </h3>
 
-        {(property.bairro || property.cidade) && (
+        {(property.bairro || property.cidade || quadra || lote) && (
           <div className="flex items-center gap-1 text-muted-foreground text-sm mb-3">
             <MapPin className="h-3 w-3 flex-shrink-0" />
-            <span className="truncate">{[property.bairro, property.cidade].filter(Boolean).join(', ')}</span>
+            <span className="truncate">
+              {[
+                property.bairro,
+                quadra ? `Quadra ${quadra}` : null,
+                lote ? `Lote ${lote}` : null,
+                property.cidade,
+              ].filter(Boolean).join(', ')}
+            </span>
           </div>
         )}
 

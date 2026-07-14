@@ -38,10 +38,11 @@ import { toast } from 'sonner';
 
 const formatPrice = (value: number | null, tipo: string | null) => {
   if (!value) return 'Preço não informado';
+  const formatted = `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   if (tipo === 'Aluguel') {
-    return `R$ ${value.toLocaleString('pt-BR')}/mês`;
+    return `${formatted}/mês`;
   }
-  return `R$ ${value.toLocaleString('pt-BR')}`;
+  return formatted;
 };
 
 const ALL_FILTER_VALUE = '__all__';
@@ -874,6 +875,7 @@ export default function Properties() {
           open={previewOpen}
           onOpenChange={setPreviewOpen}
           formatPrice={formatPrice}
+          siteInfo={siteInfo}
         />
         <PropertyHistoryDialog
           property={historyProperty}

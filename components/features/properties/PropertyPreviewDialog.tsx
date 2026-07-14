@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -11,9 +12,11 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Property, useProperty, useUpdateProperty } from '@/hooks/use-properties';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
-import { getPropertyCaptor } from '@/lib/api/property-support';
+import { getPropertyCaptor, type PropertySiteInfo } from '@/lib/api/property-support';
 import { cleanPropertyDescription } from '@/lib/property-description';
+import { buildPropertySiteUrl } from '@/lib/property-site-url';
 import useEmblaCarousel from 'embla-carousel-react';
+import { toast } from 'sonner';
 import {
   MapPin,
   Bed,
@@ -36,6 +39,7 @@ import {
   User,
   Phone,
   Mail,
+  Share2,
 } from 'lucide-react';
 
 interface PropertyPreviewDialogProps {
@@ -43,11 +47,20 @@ interface PropertyPreviewDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   formatPrice: (value: number | null, tipo: string | null) => string;
+  siteInfo?: PropertySiteInfo | null;
 }
 
 type PropertyMetadata = {
   financing_details?: unknown;
   exchange_details?: unknown;
+  quadra?: unknown;
+  lote?: unknown;
+};
+
+type PropertyWithCanonicalType = Property & {
+  tipo?: string | null;
+  published_on_site?: boolean | null;
+  anunciar?: boolean | null;
 };
 
 function getPropertyMetadata(property?: Property | null): PropertyMetadata {
@@ -64,6 +77,7 @@ export function PropertyPreviewDialog({
   open,
   onOpenChange,
   formatPrice,
+  siteInfo,
 }: PropertyPreviewDialogProps) {
   const isMobile = useIsMobile();
   const [imageSelection, setImageSelection] = useState<{ propertyId: string | null; index: number }>({
@@ -146,9 +160,14 @@ export function PropertyPreviewDialog({
     });
   }
 
-  const isActive = property?.status !== 'inativo';
+  const normalizedStatus = (property?.status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const isUnavailable = normalizedStatus === 'vendido' || normalizedStatus === 'reservado' || normalizedStatus === 'alugado' || normalizedStatus === 'locado';
+  const isActive = normalizedStatus !== 'inativo' && normalizedStatus !== 'inactive';
+  const publication = property as PropertyWithCanonicalType | null | undefined;
+  const isSitePublished = Boolean(publication?.published_on_site ?? publication?.anunciar ?? true);
   const dealType = (property?.tipo_de_negocio || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  const propertyType = (property?.tipo_de_imovel || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const displayPropertyType = property?.tipo_de_imovel || (property as PropertyWithCanonicalType | null | undefined)?.tipo || '';
+  const propertyType = displayPropertyType.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const isLand = propertyType === 'terreno' || propertyType === 'lote';
   const displayPrice = dealType === 'aluguel' || dealType === 'locacao' || dealType === 'temporada'
     ? property?.valor_locacao || property?.preco || null
@@ -158,6 +177,8 @@ export function PropertyPreviewDialog({
   const propertyMetadata = getPropertyMetadata(property);
   const financingDetails = metadataString(propertyMetadata.financing_details);
   const exchangeDetails = metadataString(propertyMetadata.exchange_details);
+  const quadra = metadataString(propertyMetadata.quadra);
+  const lote = metadataString(propertyMetadata.lote);
   const ownerPhone = property?.owner_cellphone || property?.owner_phone_commercial || property?.owner_phone_residential || null;
   const captorName = captorUser?.name || (cadastroUserId ? null : property?.cadastrado_por) || null;
   const captorContact = captorUser?.whatsapp || captorUser?.email || null;
@@ -166,7 +187,7 @@ export function PropertyPreviewDialog({
   const extraDetails = property?.detalhes_extras ?? [];
   const proximities = property?.proximidades ?? [];
   const formatCurrency = (value?: number | null) => value
-    ? `R$ ${value.toLocaleString('pt-BR')}`
+    ? `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     : null;
   const formatBoolean = (value?: boolean | null) => {
     if (value === null || value === undefined) return null;
@@ -181,6 +202,34 @@ export function PropertyPreviewDialog({
     });
   };
 
+  const propertySiteUrl = property && isActive && isSitePublished && !isUnavailable ? buildPropertySiteUrl(property.code, siteInfo) : null;
+  const handleShareProperty = async () => {
+    if (!property || !propertySiteUrl) {
+      toast.info('Configure o site do imóvel para compartilhar o link.');
+      return;
+    }
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: property.title || property.code || 'Imóvel',
+          url: propertySiteUrl,
+        });
+        return;
+      } catch {
+        // The native share sheet can be cancelled; clipboard is the fallback.
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(propertySiteUrl);
+      toast.success('Link do imóvel copiado!');
+    } catch {
+      window.open(propertySiteUrl, '_blank', 'noopener,noreferrer');
+      toast.info('Abrimos o link do imóvel em uma nova aba.');
+    }
+  };
+
   const propertyDetailsSection = property ? (
     <div className="space-y-3">
       <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
@@ -188,11 +237,11 @@ export function PropertyPreviewDialog({
       </h3>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-        {property.tipo_de_imovel && (
+        {displayPropertyType && (
           <div className="flex items-center gap-2 p-2 rounded-lg bg-[var(--app-surface-soft)]">
             <Home className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground">Tipo:</span>
-            <span className="font-medium ml-auto">{property.tipo_de_imovel}</span>
+            <span className="font-medium ml-auto">{displayPropertyType}</span>
           </div>
         )}
         {property.suites !== null && property.suites !== undefined && property.suites > 0 && (
@@ -315,7 +364,7 @@ export function PropertyPreviewDialog({
           <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--app-surface-soft)] px-2.5 py-2">
             <span className="text-xs text-muted-foreground block">Condomínio</span>
             <span className="font-semibold text-primary">
-              R$ {property.condominio.toLocaleString('pt-BR')}
+              R$ {property.condominio.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         )}
@@ -323,7 +372,7 @@ export function PropertyPreviewDialog({
           <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--app-surface-soft)] px-2.5 py-2">
             <span className="text-xs text-muted-foreground block">IPTU</span>
             <span className="font-semibold text-primary">
-              R$ {property.iptu.toLocaleString('pt-BR')}
+              R$ {property.iptu.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         )}
@@ -331,7 +380,7 @@ export function PropertyPreviewDialog({
           <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--app-surface-soft)] px-2.5 py-2">
             <span className="text-xs text-muted-foreground block">Seguro incêndio</span>
             <span className="font-semibold text-primary">
-              R$ {property.seguro_incendio.toLocaleString('pt-BR')}
+              R$ {property.seguro_incendio.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         )}
@@ -339,7 +388,7 @@ export function PropertyPreviewDialog({
           <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--app-surface-soft)] px-2.5 py-2">
             <span className="text-xs text-muted-foreground block">Taxa de serviço</span>
             <span className="font-semibold text-primary">
-              R$ {property.taxa_de_servico.toLocaleString('pt-BR')}
+              R$ {property.taxa_de_servico.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         )}
@@ -366,11 +415,23 @@ export function PropertyPreviewDialog({
             )}
           </div>
           <h2 className="text-base font-bold leading-tight lg:text-lg">
-            {property.title || `${property.tipo_de_imovel} em ${property.bairro || 'Localização'}`}
+            {property.title || `${displayPropertyType || 'Imóvel'} em ${property.bairro || 'Localização'}`}
           </h2>
         </div>
 
-        <div className="shrink-0 pt-1">
+        <div className="flex shrink-0 items-center gap-2 pt-1">
+          {propertySiteUrl && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-[6px] bg-[var(--app-surface-soft)]"
+              title="Compartilhar link do imóvel"
+              onClick={handleShareProperty}
+            >
+              <Share2 className="h-4 w-4" />
+            </Button>
+          )}
           <Switch
             checked={isActive}
             onCheckedChange={handleToggleStatus}
@@ -379,11 +440,11 @@ export function PropertyPreviewDialog({
         </div>
       </div>
 
-      {(property.endereco || property.bairro || property.cidade) && (
+      {(property.endereco || property.bairro || property.cidade || quadra || lote) && (
         <div className="flex items-start gap-2 text-muted-foreground">
           <MapPin className="h-4 w-4 mt-0.5 shrink-0" />
           <span className="text-sm">
-            {[property.endereco, property.numero, property.bairro, property.cidade, property.uf]
+            {[property.endereco, property.numero, property.bairro, quadra ? `Quadra ${quadra}` : null, lote ? `Lote ${lote}` : null, property.cidade, property.uf]
               .filter(Boolean)
               .join(', ')}
             {property.cep && <span className="text-xs ml-1">- CEP: {property.cep}</span>}

@@ -17,10 +17,12 @@ const defaultTypes = [
   'Cobertura',
   'Comercial',
   'Terreno',
+  'Lote',
   'Kitnet',
   'Flat',
   'Fazenda',
   'S\u00edtio',
+  'Ch\u00e1cara',
   'Galp\u00e3o',
 ]
 

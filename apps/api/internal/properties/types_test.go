@@ -78,6 +78,31 @@ func TestSanitizePayloadReservedStatusUnpublishesCanonicalColumn(t *testing.T) {
 	}
 }
 
+func TestNormalizePropertyOutputUsesCanonicalTypeWhenLegacyIsBlank(t *testing.T) {
+	out := normalizePropertyOutput(Property{
+		"tipo":           "Ch\u00e1cara",
+		"tipo_de_imovel": "",
+	})
+
+	if got := out["tipo_de_imovel"]; got != "Ch\u00e1cara" {
+		t.Fatalf("tipo_de_imovel fallback = %#v, want Ch\u00e1cara", got)
+	}
+}
+
+func TestNormalizedSearchPatternRemovesAccents(t *testing.T) {
+	if got := normalizedSearchPattern("Uni\u00e3o"); got != "%uniao%" {
+		t.Fatalf("normalized search pattern = %q, want %%uniao%%", got)
+	}
+}
+
+func TestPropertyPrefixUsesLandPrefixForTerrenoAndLote(t *testing.T) {
+	for _, propertyType := range []string{"Terreno", "Lote"} {
+		if got := propertyPrefix(propertyType); got != "TE" {
+			t.Fatalf("propertyPrefix(%q) = %q, want TE", propertyType, got)
+		}
+	}
+}
+
 func TestAddPropertyTypeFilterKeepsRegularTypesLiteral(t *testing.T) {
 	args, where := addPropertyTypeFilter([]any{"org-1"}, []string{"p.organization_id = $1::uuid"}, "Apartamento")
 

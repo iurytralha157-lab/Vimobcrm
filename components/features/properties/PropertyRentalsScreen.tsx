@@ -22,11 +22,12 @@ import { toast } from 'sonner';
 
 const formatPrice = (value: number | null, tipo: string | null) => {
   if (!value) return 'Preço não informado';
+  const formatted = `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const normalized = (tipo || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   if (normalized === 'aluguel' || normalized === 'locacao' || normalized === 'venda e aluguel' || normalized === 'venda e locacao' || normalized === 'temporada') {
-    return `R$ ${value.toLocaleString('pt-BR')}/mês`;
+    return `${formatted}/mês`;
   }
-  return `R$ ${value.toLocaleString('pt-BR')}`;
+  return formatted;
 };
 
 const isRentalDeal = (dealType?: string | null) => {
@@ -225,6 +226,7 @@ export default function PropertyRentals() {
           open={previewOpen}
           onOpenChange={setPreviewOpen}
           formatPrice={formatPrice}
+          siteInfo={siteInfo}
         />
       </div>
     </AppLayout>

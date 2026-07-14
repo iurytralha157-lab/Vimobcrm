@@ -54,19 +54,9 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	}
 
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, normalizedSearchPattern(filter.Search))
 		index := len(args)
-		where = append(where, fmt.Sprintf(`(
-			p.code ilike $%d
-			or p.title ilike $%d
-			or p.endereco ilike $%d
-			or p.bairro ilike $%d
-			or p.cidade ilike $%d
-			or p.uf ilike $%d
-			or p.tipo ilike $%d
-			or p.finalidade ilike $%d
-			or p.external_id ilike $%d
-		)`, index, index, index, index, index, index, index, index, index))
+		where = append(where, propertySearchClause(index))
 	}
 	if filter.Status != "" {
 		addFilter("lower(trim(coalesce(p.status, ''))) = any($%d::text[])", propertyStatusAliases(filter.Status))
@@ -86,10 +76,10 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 		args, where = addPropertyTypeFilter(args, where, filter.PropertyType)
 	}
 	if filter.City != "" {
-		addFilter("p.cidade ilike $%d", "%"+filter.City+"%")
+		addFilter(normalizedTextMatchClause("p.cidade"), normalizedSearchPattern(filter.City))
 	}
 	if filter.Neighborhood != "" {
-		addFilter("p.bairro ilike $%d", "%"+filter.Neighborhood+"%")
+		addFilter(normalizedTextMatchClause("p.bairro"), normalizedSearchPattern(filter.Neighborhood))
 	}
 	if filter.AcceptsExchange != nil {
 		addFilter("coalesce(p.aceita_permuta, false) = $%d::boolean", *filter.AcceptsExchange)
@@ -269,19 +259,9 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 	}
 
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, normalizedSearchPattern(filter.Search))
 		index := len(args)
-		where = append(where, fmt.Sprintf(`(
-			p.code ilike $%d
-			or p.title ilike $%d
-			or p.endereco ilike $%d
-			or p.bairro ilike $%d
-			or p.cidade ilike $%d
-			or p.uf ilike $%d
-			or p.tipo ilike $%d
-			or p.finalidade ilike $%d
-			or p.external_id ilike $%d
-		)`, index, index, index, index, index, index, index, index, index))
+		where = append(where, propertySearchClause(index))
 	}
 	if filter.Status != "" {
 		addFilter("lower(trim(coalesce(p.status, ''))) = any($%d::text[])", propertyStatusAliases(filter.Status))
@@ -301,10 +281,10 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 		args, where = addPropertyTypeFilter(args, where, filter.PropertyType)
 	}
 	if filter.City != "" {
-		addFilter("p.cidade ilike $%d", "%"+filter.City+"%")
+		addFilter(normalizedTextMatchClause("p.cidade"), normalizedSearchPattern(filter.City))
 	}
 	if filter.Neighborhood != "" {
-		addFilter("p.bairro ilike $%d", "%"+filter.Neighborhood+"%")
+		addFilter(normalizedTextMatchClause("p.bairro"), normalizedSearchPattern(filter.Neighborhood))
 	}
 	if filter.AcceptsExchange != nil {
 		addFilter("coalesce(p.aceita_permuta, false) = $%d::boolean", *filter.AcceptsExchange)
@@ -485,6 +465,54 @@ func addPropertyTypeFilter(args []any, where []string, propertyType string) ([]a
 	return args, where
 }
 
+func propertySearchClause(index int) string {
+	placeholder := fmt.Sprintf("$%d", index)
+	return fmt.Sprintf(`(
+		%[2]s like %[1]s
+		or %[3]s like %[1]s
+		or %[4]s like %[1]s
+		or %[5]s like %[1]s
+		or %[6]s like %[1]s
+		or %[7]s like %[1]s
+		or %[8]s like %[1]s
+		or %[9]s like %[1]s
+		or %[10]s like %[1]s
+		or %[11]s like %[1]s
+		or exists (
+			select 1
+			from public.property_condominiums co
+			where co.id = p.condominium_id
+			  and co.organization_id = p.organization_id
+			  and %[12]s like %[1]s
+		)
+	)`,
+		placeholder,
+		normalizedTextSQL("p.code"),
+		normalizedTextSQL("p.title"),
+		normalizedTextSQL("p.endereco"),
+		normalizedTextSQL("p.bairro"),
+		normalizedTextSQL("p.cidade"),
+		normalizedTextSQL("p.uf"),
+		normalizedTextSQL("p.tipo"),
+		normalizedTextSQL("p.tipo_de_imovel"),
+		normalizedTextSQL("p.finalidade"),
+		normalizedTextSQL("p.external_id"),
+		normalizedTextSQL("co.name"),
+	)
+}
+
+func normalizedTextMatchClause(expression string) string {
+	return normalizedTextSQL(expression) + " like $%d"
+}
+
+func normalizedTextSQL(expression string) string {
+	return fmt.Sprintf("translate(lower(coalesce(%s, '')), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc')", expression)
+}
+
+func normalizedSearchPattern(value string) string {
+	return "%" + normalizeASCII(value) + "%"
+}
+
 func isHousePropertyType(propertyType string) bool {
 	return normalizeASCII(propertyType) == "casa"
 }
@@ -631,6 +659,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	}
 
 	propertyType, _ := input["tipo"].(string)
+	if strings.TrimSpace(propertyType) == "" {
+		return nil, fmt.Errorf("%w: tipo_de_imovel is required", ErrInvalidInput)
+	}
 	code, err := repo.generatePropertyCode(ctx, tx, tenantContext.OrganizationID, propertyType)
 	if err != nil {
 		return nil, err
@@ -696,12 +727,8 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		delete(input, "cadastrado_por")
 	}
 
-	if nextType, ok := input["tipo"].(string); ok && strings.TrimSpace(nextType) != "" && nextType != current.PropertyType {
-		code, err := repo.generatePropertyCode(ctx, tx, tenantContext.OrganizationID, nextType)
-		if err != nil {
-			return nil, err
-		}
-		input["code"] = code
+	if nextType, ok := input["tipo"].(string); ok && strings.TrimSpace(nextType) != "" && normalizeASCII(nextType) != normalizeASCII(current.PropertyType) {
+		return nil, fmt.Errorf("%w: tipo_de_imovel cannot be changed after creation", ErrInvalidInput)
 	}
 
 	assignments, args := updateParts(input, 3)
@@ -1392,7 +1419,7 @@ func normalizePropertyOutput(property Property) Property {
 		return property
 	}
 
-	if _, ok := property["tipo_de_imovel"]; !ok {
+	if strings.TrimSpace(anyString(property["tipo_de_imovel"])) == "" {
 		property["tipo_de_imovel"] = anyString(property["tipo"])
 	}
 	dealType := anyString(property["tipo_de_negocio"])
@@ -1549,7 +1576,7 @@ func propertyPrefix(propertyType string) string {
 	case "galpao":
 		return "GA"
 	case "terreno", "lote":
-		return "TR"
+		return "TE"
 	case "sitio", "chacara":
 		return "SI"
 	case "fazenda":
@@ -1562,11 +1589,11 @@ func propertyPrefix(propertyType string) string {
 func normalizeASCII(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	replacer := strings.NewReplacer(
-		"\u00e1", "a", "\u00e0", "a", "\u00e2", "a", "\u00e3", "a",
-		"\u00e9", "e", "\u00ea", "e",
-		"\u00ed", "i",
-		"\u00f3", "o", "\u00f4", "o", "\u00f5", "o",
-		"\u00fa", "u",
+		"\u00e1", "a", "\u00e0", "a", "\u00e2", "a", "\u00e3", "a", "\u00e4", "a",
+		"\u00e9", "e", "\u00e8", "e", "\u00ea", "e", "\u00eb", "e",
+		"\u00ed", "i", "\u00ec", "i", "\u00ee", "i", "\u00ef", "i",
+		"\u00f3", "o", "\u00f2", "o", "\u00f4", "o", "\u00f5", "o", "\u00f6", "o",
+		"\u00fa", "u", "\u00f9", "u", "\u00fb", "u", "\u00fc", "u",
 		"\u00e7", "c",
 	)
 	return replacer.Replace(value)

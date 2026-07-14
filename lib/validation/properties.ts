@@ -77,6 +77,9 @@ const propertyMutationShape = {
 export const propertyCreateInputSchema = z.object(propertyMutationShape).catchall(z.unknown()).refine(
   (input) => typeof input.title === 'string' && input.title.trim().length > 0,
   { path: ['title'], message: 'Título do imóvel é obrigatório' },
+).refine(
+  (input) => typeof input.tipo_de_imovel === 'string' && input.tipo_de_imovel.trim().length > 0,
+  { path: ['tipo_de_imovel'], message: 'Tipo de imóvel é obrigatório' },
 )
 
 export const propertyUpdateInputSchema = z.object(propertyMutationShape).catchall(z.unknown()).refine(
