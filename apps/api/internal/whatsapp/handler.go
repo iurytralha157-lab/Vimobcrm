@@ -15,10 +15,16 @@ type Handler struct {
 	repo           Repository
 	aiRunner       aiRunner
 	autoReplyToken string
+	workerConfig   WorkerConfig
 }
 
 func NewHandler(repo Repository) Handler {
-	return Handler{repo: repo}
+	return Handler{repo: repo, workerConfig: DefaultWorkerConfig()}
+}
+
+func (handler Handler) WithWorkerConfig(config WorkerConfig) Handler {
+	handler.workerConfig = config.normalized()
+	return handler
 }
 
 func (handler Handler) EvolutionGoWebhook(w http.ResponseWriter, r *http.Request) {

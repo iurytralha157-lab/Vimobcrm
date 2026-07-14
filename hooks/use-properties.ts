@@ -15,6 +15,7 @@ type PropertyUpdateInput = Partial<Property> & {
 }
 
 export interface PropertyFilters {
+  scope?: 'own'
   status?: string
   tipo_de_negocio?: string
   tipo_de_imovel?: string
@@ -52,6 +53,7 @@ function parseNumericFilter(value?: string) {
 
 function normalizeFilters(filters: PropertyFilters = {}) {
   return {
+    scope: filters.scope,
     status: filters.status || undefined,
     tipo_de_negocio: filters.tipo_de_negocio || undefined,
     tipo_de_imovel: filters.tipo_de_imovel || undefined,
@@ -92,19 +94,21 @@ const getErrorMessage = (error: unknown) => {
   return String(error)
 }
 
-export function useProperties(search?: string) {
+export function useProperties(search?: string, filters: Pick<PropertyFilters, 'scope'> = {}) {
   const { user } = useAuth()
   const organizationId = useOrganizationId()
   const normalizedSearch = sanitizeSearchTerm(search)
+  const normalizedFilters = normalizeFilters(filters)
 
   return useQuery({
-    queryKey: ['properties', organizationId, normalizedSearch],
+    queryKey: ['properties', organizationId, normalizedSearch, normalizedFilters],
     queryFn: async () => {
       if (!organizationId) return [] as Property[]
 
       const { data, error } = await propertiesAPI.getProperties(organizationId, {
         search: normalizedSearch,
         limit: 1000,
+        ...normalizedFilters,
       })
 
       if (error) throw error

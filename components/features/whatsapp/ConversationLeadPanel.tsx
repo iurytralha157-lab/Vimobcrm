@@ -4,12 +4,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { LostReasonDialog } from "@/components/features/leads/LostReasonDialog";
 import { PropertyPickerDialog } from "@/components/features/properties/PropertyPickerDialog";
+import { EventForm } from "@/components/features/schedule/EventForm";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import {
   Command,
   CommandEmpty,
@@ -22,22 +24,30 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Building2,
   Calendar,
+  Check,
   ChevronDown,
   ChevronRight,
   CircleDot,
+  ExternalLink,
   FileEdit,
   FileText,
+  Info,
+  ListTodo,
   Loader2,
   Mail,
+  MapPin,
+  MessageCircle,
   Paperclip,
   Phone,
   Plus,
   User,
+  UserPlus,
   X,
 } from "lucide-react";
 import { formatPhoneForDisplay } from "@/lib/phone-utils";
 import { cn } from "@/lib/utils";
-import { format } from "date-fns";
+import { format, type Locale } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { useConversationLeadDetail } from "@/hooks/use-conversation-lead-detail";
 import { useTags } from "@/hooks/use-tags";
 import { useUpdateLead } from "@/hooks/use-leads";
@@ -45,9 +55,11 @@ import { useAddLeadTag, useRemoveLeadTag } from "@/hooks/use-leads";
 import { useProperties } from "@/hooks/use-properties";
 import { useUsers } from "@/hooks/use-users";
 import { useLeadAttachments, useUploadLeadAttachment, type LeadAttachment } from "@/hooks/use-lead-attachments";
+import { useScheduleEvents, type EventType, type ScheduleEvent } from "@/hooks/use-schedule-events";
 import { useDealStatusChange } from "@/hooks/use-deal-status-change";
 import { useAuth } from "@/contexts/AuthContext";
 import { leadsAPI } from "@/lib/api/leads";
+import type { ConversationLeadDetail } from "@/lib/api/conversation-lead-detail";
 
 interface ConversationLeadPanelProps {
   leadId: string;
@@ -72,6 +84,33 @@ const SOURCE_LABELS: Record<string, string> = {
   whatsapp: "Whatsapp",
 };
 
+const sectionTitleClassName = "leading-none";
+const sectionTitleStyle = {
+  color: "var(--app-text-secondary)",
+  fontSize: "11px",
+  fontWeight: 400,
+  letterSpacing: 0,
+};
+const panelSectionClassName = "min-w-0 rounded-[8px] bg-[var(--app-surface-soft)] p-3";
+
+const scheduleEventTypeLabels: Record<EventType, string> = {
+  call: "Ligacao",
+  email: "E-mail",
+  meeting: "Reuniao",
+  task: "Tarefa",
+  message: "Mensagem",
+  visit: "Visita",
+};
+
+const scheduleEventTypeIcons: Record<EventType, typeof Phone> = {
+  call: Phone,
+  email: Mail,
+  meeting: Calendar,
+  task: ListTodo,
+  message: MessageCircle,
+  visit: MapPin,
+};
+
 type LeadTagRelation = {
   tag: {
     id: string;
@@ -82,9 +121,268 @@ type LeadTagRelation = {
 
 function InfoLine({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="flex min-w-0 items-center justify-between gap-3 text-xs">
-      <span className="text-[var(--app-text-tertiary)]">{label}</span>
-      <span className="max-w-[60%] truncate text-right font-medium text-[var(--app-text-primary)]">{value}</span>
+    <div className="flex min-w-0 items-start justify-between gap-3 text-xs">
+      <span className="shrink-0 text-[var(--app-text-tertiary)]">{label}</span>
+      <span className="flex min-w-0 flex-1 justify-end break-words text-right font-medium text-[var(--app-text-primary)]">{value}</span>
+    </div>
+  );
+}
+
+type ConversationLeadMeta = ConversationLeadDetail["meta"];
+
+function metaText(value: unknown) {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+}
+
+function hasLeadTrackingData(leadMeta: ConversationLeadMeta | null | undefined) {
+  if (!leadMeta) return false;
+  return [
+    leadMeta.campaign_name,
+    leadMeta.ad_name,
+    leadMeta.form_name,
+    leadMeta.utm_campaign,
+    leadMeta.utm_medium,
+    leadMeta.utm_source,
+    leadMeta.contact_notes,
+    leadMeta.creative_url,
+    leadMeta.creative_video_url,
+  ].some((value) => Boolean(metaText(value)));
+}
+
+function CampaignTrackingHover({
+  leadMeta,
+  fallbackLabel,
+}: {
+  leadMeta: ConversationLeadMeta | null | undefined;
+  fallbackLabel: string;
+}) {
+  if (!hasLeadTrackingData(leadMeta)) return <>{fallbackLabel}</>;
+
+  const displayName =
+    metaText(leadMeta?.campaign_name) ||
+    metaText(leadMeta?.utm_campaign) ||
+    metaText(leadMeta?.ad_name) ||
+    metaText(leadMeta?.form_name) ||
+    fallbackLabel;
+  const mainRows = [
+    ["Campanha", leadMeta?.campaign_name || leadMeta?.utm_campaign],
+    ["Conjunto", null],
+    ["Anuncio", leadMeta?.ad_name],
+    ["Formulario", leadMeta?.form_name],
+    ["Plataforma", fallbackLabel],
+    ["Origem", leadMeta?.utm_source],
+  ] as const;
+  const utmRows = [
+    ["utm_source", leadMeta?.utm_source],
+    ["utm_medium", leadMeta?.utm_medium],
+    ["utm_campaign", leadMeta?.utm_campaign],
+  ] as const;
+  const links = [
+    ["Criativo", leadMeta?.creative_url],
+    ["Video", leadMeta?.creative_video_url],
+  ] as const;
+  const DetailRow = ({ label, value }: { label: string; value: unknown }) => {
+    const text = metaText(value);
+    if (!text) return null;
+
+    return (
+      <div className="grid grid-cols-[100px_minmax(0,1fr)] gap-2 text-left text-[11px] leading-snug">
+        <span className="text-[var(--app-text-tertiary)]">{label}</span>
+        <span className="break-words text-left font-medium text-[var(--app-text-primary)]">{text}</span>
+      </div>
+    );
+  };
+  const hasUtms = utmRows.some(([, value]) => Boolean(metaText(value)));
+  const hasLinks = links.some(([, value]) => Boolean(metaText(value)));
+
+  return (
+    <HoverCard openDelay={100} closeDelay={420}>
+      <HoverCardTrigger asChild>
+        <button
+          type="button"
+          className="group inline-flex min-w-0 max-w-[180px] items-center justify-end gap-1 overflow-hidden whitespace-nowrap text-right font-medium text-[var(--app-text-primary)] outline-none transition-colors hover:text-primary focus-visible:text-primary"
+          title={displayName}
+        >
+          <span className="min-w-0 truncate underline decoration-dotted decoration-[var(--app-text-tertiary)] underline-offset-4 group-hover:decoration-primary group-focus-visible:decoration-primary">
+            {displayName}
+          </span>
+          <Info className="h-3 w-3 shrink-0 text-[var(--app-text-tertiary)] transition-colors group-hover:text-primary group-focus-visible:text-primary" />
+        </button>
+      </HoverCardTrigger>
+      <HoverCardContent
+        side="left"
+        align="center"
+        sideOffset={4}
+        className="vimob-popover-content z-[100] w-[min(420px,calc(100vw-2rem))] rounded-[8px] border-0 p-0 text-left text-[var(--app-text-primary)] shadow-[0_22px_70px_rgba(0,0,0,0.28)] dark:shadow-[0_22px_70px_rgba(0,0,0,0.58)]"
+      >
+        <div className="border-b border-[var(--app-border)] px-3 py-2 text-left">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-primary">Rastreamento de Campanha</p>
+        </div>
+
+        <div className="max-h-[420px] space-y-3 overflow-y-auto p-3 text-left">
+          <div className="space-y-1.5">
+            {mainRows.map(([label, value]) => (
+              <DetailRow key={label} label={label} value={value} />
+            ))}
+          </div>
+
+          {hasUtms && (
+            <div className="space-y-1.5 border-t border-[var(--app-border)] pt-3 text-left">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--app-text-tertiary)]">UTMs</p>
+              {utmRows.map(([label, value]) => (
+                <DetailRow key={label} label={label} value={value} />
+              ))}
+            </div>
+          )}
+
+          {leadMeta?.contact_notes && (
+            <div className="border-t border-[var(--app-border)] pt-3 text-left">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--app-text-tertiary)]">Observações</p>
+              <p className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-snug text-[var(--app-text-secondary)]">
+                {leadMeta.contact_notes}
+              </p>
+            </div>
+          )}
+
+          {hasLinks && (
+            <div className="flex flex-wrap gap-2 border-t border-[var(--app-border)] pt-3 text-left">
+              {links.map(([label, value]) => {
+                const href = metaText(value);
+                if (!href) return null;
+                return (
+                  <a
+                    key={label}
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1 text-[11px] font-medium text-[var(--app-text-secondary)] transition-colors hover:text-primary"
+                  >
+                    <span>{label}</span>
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </HoverCardContent>
+    </HoverCard>
+  );
+}
+
+function getScheduleEventType(value?: string | null): EventType {
+  return value === "email" ||
+    value === "meeting" ||
+    value === "task" ||
+    value === "message" ||
+    value === "visit"
+    ? value
+    : "call";
+}
+
+function getScheduleStatusLabel(status?: string | null, isLate = false) {
+  if (status === "completed") return "Concluido";
+  if (status === "cancelled" || status === "canceled") return "Cancelado";
+  if (status === "no_show") return "Nao compareceu";
+  if (isLate) return "Atrasado";
+  return "Em aberto";
+}
+
+function getScheduleStatusClass(status?: string | null, isLate = false) {
+  if (status === "completed") return "bg-emerald-500/12 text-emerald-500";
+  if (status === "cancelled" || status === "canceled") return "bg-red-500/12 text-red-500";
+  if (status === "no_show") return "bg-amber-500/12 text-amber-500";
+  if (isLate) return "bg-red-500/12 text-red-500";
+  return "bg-primary/12 text-primary";
+}
+
+function getScheduleDateLabel(event: ScheduleEvent, locale: Locale) {
+  const startDate = new Date(event.start_time);
+  const endDate = new Date(event.end_time);
+  const dateLabel = format(startDate, "dd/MM", { locale });
+  const startTime = format(startDate, "HH:mm", { locale });
+  const endTime = format(endDate, "HH:mm", { locale });
+
+  if (event.is_all_day) return `${dateLabel} - dia todo`;
+  if (event.end_time && startTime !== endTime) return `${dateLabel} ${startTime}-${endTime}`;
+  return `${dateLabel} ${startTime}`;
+}
+
+function CompactScheduleEventsList({
+  events,
+  locale,
+  onEditEvent,
+}: {
+  events: ScheduleEvent[];
+  locale: Locale;
+  onEditEvent: (event: ScheduleEvent) => void;
+}) {
+  const [currentTime] = useState(() => Date.now());
+  const sortedEvents = [...events].sort((left, right) => {
+    const leftCompleted = left.status === "completed";
+    const rightCompleted = right.status === "completed";
+    if (leftCompleted !== rightCompleted) return leftCompleted ? 1 : -1;
+    return new Date(left.start_time).getTime() - new Date(right.start_time).getTime();
+  });
+
+  if (sortedEvents.length === 0) {
+    return (
+      <p className="mt-3 rounded-[6px] bg-[var(--app-surface-solid)] px-3 py-2 text-xs text-[var(--app-text-tertiary)]">
+        Nenhum compromisso agendado
+      </p>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        "mt-3 space-y-1.5 overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        sortedEvents.length > 2 ? "h-[148px]" : "max-h-[148px]",
+      )}
+    >
+      {sortedEvents.map((event) => {
+        const eventType = getScheduleEventType(event.event_type);
+        const EventIcon = scheduleEventTypeIcons[eventType] || Calendar;
+        const isCompleted = event.status === "completed";
+        const isLate = !isCompleted && new Date(event.start_time).getTime() < currentTime;
+
+        return (
+          <button
+            key={event.id}
+            type="button"
+            onClick={() => onEditEvent(event)}
+            className={cn(
+              "flex w-full items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-1.5 text-left transition-colors hover:bg-primary/10",
+              isCompleted && "opacity-65",
+            )}
+          >
+            <span
+              className={cn(
+                "flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]",
+                isCompleted ? "bg-emerald-500/18 text-emerald-500" : "bg-primary/12 text-primary",
+              )}
+            >
+              {isCompleted ? <Check className="h-3 w-3" /> : <EventIcon className="h-3 w-3" />}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className={cn("block truncate text-[11px] font-medium leading-tight", isCompleted && "line-through")}>
+                {event.title || scheduleEventTypeLabels[eventType]}
+              </span>
+              <span className="mt-px flex min-w-0 flex-wrap items-center gap-1 text-[10.5px] font-medium leading-tight text-[var(--app-text-secondary)]">
+                <span className="font-semibold text-[var(--app-text-primary)]">{scheduleEventTypeLabels[eventType]}</span>
+                <span>-</span>
+                <span>{getScheduleDateLabel(event, locale)}</span>
+                {!isCompleted && (
+                  <span className={cn("rounded-[4px] px-1.5 py-0.5 font-medium", getScheduleStatusClass(event.status, isLate))}>
+                    {getScheduleStatusLabel(event.status, isLate)}
+                  </span>
+                )}
+              </span>
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -120,15 +418,16 @@ function getAttachmentLabel(attachment: LeadAttachment) {
   return attachment.file_name || "Documento";
 }
 
-export function ConversationLeadPanel({ leadId, onClose, className, contactPicture }: ConversationLeadPanelProps) {
+export function ConversationLeadPanel({ leadId, className, contactPicture }: ConversationLeadPanelProps) {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { profile, organization, tenantContext, isSuperAdmin } = useAuth();
   const organizationId = profile?.organization_id || organization?.id || undefined;
   const { data: lead, isLoading } = useConversationLeadDetail(leadId);
   const { data: allTags } = useTags();
   const { data: properties = [] } = useProperties();
   const { data: users = [] } = useUsers();
   const { data: attachments = [] } = useLeadAttachments(leadId);
+  const { data: scheduleEvents = [] } = useScheduleEvents({ leadId });
   const uploadAttachment = useUploadLeadAttachment();
   const updateLead = useUpdateLead();
   const addTag = useAddLeadTag();
@@ -141,6 +440,9 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
   const [isUploading, setIsUploading] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [lostReasonDialogOpen, setLostReasonDialogOpen] = useState(false);
+  const [scheduleFormOpen, setScheduleFormOpen] = useState(false);
+  const [editingScheduleEvent, setEditingScheduleEvent] = useState<ScheduleEvent | null>(null);
+  const [scheduleDefaultType, setScheduleDefaultType] = useState<EventType>("visit");
 
   if (isLoading) {
     return (
@@ -159,14 +461,33 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
   const selectedProperty = properties.find((property) => property.id === selectedPropertyId);
   const currentAssignee = users.find((user) => user.id === lead.assigned_user_id);
   const assigneeName = currentAssignee?.name || currentAssignee?.email || "Sem responsável";
+  const currentUserId = profile?.id || tenantContext?.userId || "";
+  const currentAssigneeId = lead.assigned_user_id || "";
+  const tenantPermissions = tenantContext?.permissions || [];
+  const hasTenantPermission = (permission: string) =>
+    tenantPermissions.includes("*") || tenantPermissions.includes(permission);
+  const canAssignAnyLead =
+    isSuperAdmin ||
+    Boolean(tenantContext?.isSuperAdmin) ||
+    ["owner", "admin", "manager"].includes(tenantContext?.memberRole || "") ||
+    hasTenantPermission("lead_manage") ||
+    hasTenantPermission("lead_assign") ||
+    hasTenantPermission("lead_transfer");
+  const canAssignCurrentLead =
+    canAssignAnyLead ||
+    (!!currentUserId && !!currentAssigneeId && currentAssigneeId === currentUserId);
   const dealStatus = lead.deal_status || "open";
   const dealStatusLabel = dealStatus === "won" ? "Ganho" : dealStatus === "lost" ? "Perdido" : "Aberto";
   const phoneDigits = lead.phone?.replace(/\D/g, "") || "";
+  const sourceLabel = formatSource(lead.source);
+  const sourceValue = hasLeadTrackingData(lead.meta) ? (
+    <CampaignTrackingHover leadMeta={lead.meta} fallbackLabel={sourceLabel} />
+  ) : sourceLabel;
   const contactRows = [
     { label: "Nome", value: lead.name },
     { label: "Telefone", value: lead.phone ? formatPhoneForDisplay(lead.phone) : null },
     { label: "E-mail", value: lead.email },
-    { label: "Origem", value: formatSource(lead.source) },
+    { label: "Origem", value: sourceValue },
     { label: "Criado em", value: lead.created_at ? format(new Date(lead.created_at), "dd/MM/yy HH:mm") : null },
   ].filter((row) => Boolean(row.value));
 
@@ -220,6 +541,16 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
 
   const handleAssignUser = async (userId: string | null) => {
     if (userId === lead.assigned_user_id) {
+      setAssigneePopoverOpen(false);
+      return;
+    }
+    if (!canAssignCurrentLead) {
+      toast.error("Você só pode trocar o responsável dos seus próprios leads");
+      setAssigneePopoverOpen(false);
+      return;
+    }
+    if (!userId && !canAssignAnyLead) {
+      toast.error("Você só pode transferir seus leads para outro usuário");
       setAssigneePopoverOpen(false);
       return;
     }
@@ -297,25 +628,31 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
     }
   };
 
+  const handleOpenScheduleForm = () => {
+    setEditingScheduleEvent(null);
+    setScheduleDefaultType("visit");
+    setScheduleFormOpen(true);
+  };
+
+  const handleEditScheduleEvent = (event: ScheduleEvent) => {
+    setEditingScheduleEvent(event);
+    setScheduleFormOpen(true);
+  };
+
+  const handleCloseScheduleForm = () => {
+    setScheduleFormOpen(false);
+    setEditingScheduleEvent(null);
+  };
+
   return (
     <div
       className={cn(
-        "lead-detail-dialog lead-detail-v2 flex h-full min-h-0 flex-col overflow-hidden rounded-2xl bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]",
+        "lead-detail-dialog lead-detail-v2 flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]",
         className,
       )}
     >
-      <div className="relative shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-4 pb-3 pt-4">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="absolute right-3 top-3 h-7 w-7 rounded-[6px]"
-          onClick={onClose}
-        >
-          <X className="h-4 w-4" />
-        </Button>
-
-        <div className="flex items-start gap-2.5 pr-8">
+      <div className="relative min-w-0 shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-4 pb-3 pt-4">
+        <div className="flex items-start gap-2.5">
           <Avatar className="h-12 w-12 shrink-0 border-0">
             <AvatarImage src={contactPicture || undefined} alt={lead.name || "Lead"} />
             <AvatarFallback className="bg-primary text-base font-semibold text-white">
@@ -323,7 +660,7 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
             </AvatarFallback>
           </Avatar>
 
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 overflow-hidden">
             <h2 className="truncate text-base font-semibold leading-tight">{lead.name || "Lead"}</h2>
             {lead.phone && <p className="mt-1 text-xs text-[var(--app-text-tertiary)]">{formatPhoneForDisplay(lead.phone)}</p>}
 
@@ -389,6 +726,7 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
               <Button
                 type="button"
                 variant="ghost"
+                disabled={!canAssignCurrentLead || isAssigning}
                 className="h-8 min-w-0 justify-start rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-xs text-[var(--app-text-secondary)]"
               >
                 <User className="mr-1.5 h-3.5 w-3.5 shrink-0" />
@@ -402,9 +740,11 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
                 <CommandList className="max-h-[min(58vh,340px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin">
                   <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">Nenhum encontrado.</CommandEmpty>
                   <CommandGroup>
+                    {canAssignAnyLead && (
                     <CommandItem onSelect={() => void handleAssignUser(null)} className="cursor-pointer rounded-[6px] px-3 py-2">
                       Sem responsável
                     </CommandItem>
+                    )}
                     {users.map((user) => (
                       <CommandItem key={user.id} onSelect={() => void handleAssignUser(user.id)} className="cursor-pointer rounded-[6px] px-3 py-2">
                         <div className="flex min-w-0 items-center gap-2">
@@ -463,14 +803,14 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
         </div>
       </div>
 
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-3 p-3 pb-4">
-          <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+      <ScrollArea className="min-h-0 min-w-0 flex-1">
+        <div className="min-w-0 space-y-3 p-3 pb-4">
+          <section className={panelSectionClassName}>
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-xs font-semibold">Dados do contato</h3>
-              <Button variant="ghost" size="sm" className="h-7 rounded-[5px] px-2 text-[10px]" asChild>
+              <h3 className={sectionTitleClassName} style={sectionTitleStyle}>Dados do contato</h3>
+              <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" asChild>
                 <Link href={`/crm/pipelines?lead=${lead.id}`}>
-                  <FileEdit className="mr-1 h-3 w-3" />
+                  <FileEdit className="h-3 w-3" />
                   Editar
                 </Link>
               </Button>
@@ -491,7 +831,7 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
               <Button
                 type="button"
                 variant="ghost"
-                className="h-10 w-full justify-between rounded-[8px] border-0 bg-[var(--app-surface-soft)] px-3 text-xs text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
+                className="h-10 w-full min-w-0 justify-between rounded-[8px] border-0 bg-[var(--app-surface-soft)] px-3 text-xs text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
               >
                 <div className="flex min-w-0 items-center gap-2">
                   <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -502,18 +842,18 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
             }
           />
 
-          <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+          <section className={panelSectionClassName}>
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-xs font-semibold">Documentação</h3>
+              <h3 className={sectionTitleClassName} style={sectionTitleStyle}>Documentação</h3>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-7 rounded-[5px] px-2 text-[10px]"
+                className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]"
                 disabled={isUploading || uploadAttachment.isPending}
                 onClick={() => fileInputRef.current?.click()}
               >
-                {isUploading || uploadAttachment.isPending ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Paperclip className="mr-1 h-3 w-3" />}
+                {isUploading || uploadAttachment.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
                 Anexar
               </Button>
               <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileUpload} />
@@ -539,22 +879,29 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
             )}
           </section>
 
-          <section className="lead-agenda-card rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+          <section className={cn("lead-agenda-card", panelSectionClassName)}>
             <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <h3 className="text-xs font-semibold">Agenda</h3>
-                <p className="text-[10px] text-[var(--app-text-tertiary)]">Criar compromisso</p>
+              <div className="lead-agenda-summary min-w-0">
+                <h3 className={sectionTitleClassName} style={sectionTitleStyle}>Agenda</h3>
+                <p className="text-[10px] text-[var(--app-text-tertiary)]">{scheduleEvents.length} compromisso(s)</p>
               </div>
-              <Button size="sm" className="h-8 shrink-0 rounded-[6px]" asChild>
-                <Link href={`/agenda?lead=${lead.id}`}>
-                  <Calendar className="mr-1.5 h-3.5 w-3.5" />
-                  Agendar
-                </Link>
+              <Button
+                size="sm"
+                className="lead-detail-primary-action lead-agenda-action h-8 shrink-0 rounded-[6px] px-2.5"
+                onClick={handleOpenScheduleForm}
+              >
+                <Calendar className="h-3.5 w-3.5" />
+                Agendar
               </Button>
             </div>
+            <CompactScheduleEventsList
+              events={scheduleEvents}
+              locale={ptBR}
+              onEditEvent={handleEditScheduleEvent}
+            />
           </section>
 
-          <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+          <section className={panelSectionClassName}>
             <Textarea
               placeholder="Registre o feedback sobre atendimento, perfil ou próximos passos..."
               value={feedback}
@@ -562,13 +909,26 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
               className="min-h-[92px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"
             />
             <div className="mt-2 flex justify-end">
-              <Button className="h-8 rounded-[6px] px-3" disabled={!feedback.trim() || updateLead.isPending} onClick={handleSaveFeedback}>
+              <Button className="lead-detail-primary-action h-8 rounded-[6px] px-3" disabled={!feedback.trim() || updateLead.isPending} onClick={handleSaveFeedback}>
                 Registrar feedback
               </Button>
             </div>
           </section>
         </div>
       </ScrollArea>
+
+      <EventForm
+        open={scheduleFormOpen}
+        onOpenChange={(open) => {
+          if (!open) handleCloseScheduleForm();
+          else setScheduleFormOpen(true);
+        }}
+        event={editingScheduleEvent}
+        leadId={lead.id}
+        leadName={lead.name}
+        defaultUserId={lead.assigned_user_id || profile?.id || undefined}
+        defaultType={scheduleDefaultType}
+      />
 
       <LostReasonDialog
         open={lostReasonDialogOpen}
@@ -578,5 +938,67 @@ export function ConversationLeadPanel({ leadId, onClose, className, contactPictu
         loading={dealStatusChange.isPending}
       />
     </div>
+  );
+}
+
+interface ConversationUnregisteredPanelProps {
+  contactName?: string | null;
+  contactPhone?: string | null;
+  contactPicture?: string | null;
+  isGroup?: boolean;
+  onCreateLead: () => void;
+  className?: string;
+}
+
+export function ConversationUnregisteredPanel({
+  contactName,
+  contactPhone,
+  contactPicture,
+  isGroup,
+  onCreateLead,
+  className,
+}: ConversationUnregisteredPanelProps) {
+  const displayName =
+    contactName && contactName !== contactPhone
+      ? contactName
+      : formatPhoneForDisplay(contactPhone || "") || "Contato";
+
+  return (
+    <aside
+      className={cn(
+        "lead-detail-dialog lead-detail-v2 flex h-full min-h-0 flex-col overflow-hidden rounded-2xl bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]",
+        className,
+      )}
+    >
+      <div className="flex shrink-0 flex-col items-center border-b border-[var(--app-border)] px-4 py-5 text-center">
+        <Avatar className="h-14 w-14 border-0">
+          <AvatarImage src={contactPicture || undefined} alt={displayName} />
+          <AvatarFallback className="bg-[var(--app-surface-soft)] text-base font-medium text-[var(--app-text-secondary)]">
+            {isGroup ? <User className="h-5 w-5" /> : displayName[0]?.toUpperCase() || "?"}
+          </AvatarFallback>
+        </Avatar>
+        <h2 className="mt-3 max-w-full truncate text-sm font-medium">{displayName}</h2>
+        {contactPhone && (
+          <p className="mt-1 text-xs text-[var(--app-text-tertiary)]">{formatPhoneForDisplay(contactPhone)}</p>
+        )}
+        <Badge className="mt-3 rounded-[5px] border-0 bg-amber-500/14 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-300">
+          Não cadastrado
+        </Badge>
+      </div>
+
+      <div className="flex flex-1 flex-col justify-center gap-4 px-4 py-5 text-center">
+        <div className="rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-4">
+          <p className="text-sm font-medium text-[var(--app-text-primary)]">Criar lead para esta conversa</p>
+          <p className="mt-1 text-xs leading-relaxed text-[var(--app-text-tertiary)]">
+            Vincule este contato para acompanhar etapa, responsavel, agenda, documentacao e historico comercial.
+          </p>
+        </div>
+
+        <Button className="lead-detail-primary-action h-8 rounded-[6px] px-3" onClick={onCreateLead}>
+          <UserPlus className="h-3.5 w-3.5" />
+          Cadastrar lead
+        </Button>
+      </div>
+    </aside>
   );
 }

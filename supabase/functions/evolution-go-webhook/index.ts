@@ -2043,9 +2043,7 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
       source: "evolution_go_webhook",
       whatsapp_attribution: whatsappAttribution(message),
       whatsapp_referral: message.referral,
-      // The durable Go inbox owns raw webhook retention. Keep the raw message
-      // only while a media retry still needs provider download fields.
-      ...(isMedia && !mediaStoragePath ? { raw: message.raw } : {}),
+      ...(isMedia && !mediaStoragePath ? { media_retry_source: "provider" } : {}),
     },
   };
 
@@ -2112,7 +2110,6 @@ async function markMessageDeleted(session: JsonRecord, message: ReturnType<typeo
         deleted_at: deletedAt,
         deletion_event: {
           message_id: message.messageId,
-          raw: message.raw,
         },
       },
     })
@@ -2532,7 +2529,7 @@ async function upsertGroups(session: JsonRecord, payload: any) {
       participants: Array.isArray(group.participants) ? group.participants : [],
       owner_jid: normalizeJid(firstPresent(group.owner, group.ownerJid), false) || null,
       is_announce: parseBoolean(firstPresent(group.isAnnounce, group.announce)),
-      metadata: { raw: group },
+      metadata: { source: "evolution_go_webhook" },
     };
 
     const { error } = await supabase

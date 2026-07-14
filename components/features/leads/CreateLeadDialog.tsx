@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useId, useRef } from 'react';
 import { maskPhone } from '@/lib/masks';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -31,6 +31,20 @@ interface CreateLeadDialogProps {
   conversationId?: string | null;
 }
 
+type LeadFormErrors = Partial<Record<
+  'name' | 'contact' | 'phone' | 'email' | 'assigned_user_id' | 'pipeline_id' | 'stage_id',
+  string
+>>;
+
+function omitBasicErrors(errors: LeadFormErrors) {
+  const next = { ...errors };
+  delete next.name;
+  delete next.contact;
+  delete next.phone;
+  delete next.email;
+  return next;
+}
+
 const dealStatusOptions = [
   { value: 'open', label: 'Aberto', icon: CircleDot, color: 'text-blue-500' },
   { value: 'won', label: 'Ganho', icon: Trophy, color: 'text-green-500' },
@@ -47,6 +61,7 @@ export function CreateLeadDialog({
   conversationId
 }: CreateLeadDialogProps) {
   const { profile, organization } = useAuth();
+  const fieldIdPrefix = useId();
   const { hasPermission } = useUserPermissions();
   const { data: allUsers = [] } = useOrganizationUsers();
   const users = hasPermission('lead_view_all') ? allUsers : allUsers.filter(u => u.id === profile?.id);
@@ -98,6 +113,7 @@ export function CreateLeadDialog({
   }), [profile?.id, defaultPipelineId, defaultStageId]);
 
   const [formData, setFormData] = useState(getEmptyFormData);
+  const [errors, setErrors] = useState<LeadFormErrors>({});
   const [dialogPosition, setDialogPosition] = useState({ x: 0, y: 0 });
   const dialogContentRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{
@@ -171,6 +187,7 @@ export function CreateLeadDialog({
   useEffect(() => {
     if (open) {
       setDraftRestored(false);
+      setErrors({});
       setDialogPosition({ x: 0, y: 0 });
       dialogPositionRef.current = { x: 0, y: 0 };
 
@@ -219,6 +236,7 @@ export function CreateLeadDialog({
     if (draftKey) localStorage.removeItem(draftKey);
     setDraftRestored(false);
     setActiveTab('basic');
+    setErrors({});
     const defaultPipeline = pipelines.find(p => p.is_default) || pipelines[0];
     setFormData({
       ...getEmptyFormData(),
@@ -374,6 +392,7 @@ export function CreateLeadDialog({
       // Clear draft on success
       if (draftKey) localStorage.removeItem(draftKey);
       setDraftRestored(false);
+      setErrors({});
       onOpenChange(false);
     } catch {
       // Error handled by mutation
@@ -382,6 +401,34 @@ export function CreateLeadDialog({
 
   const updateField = <K extends keyof typeof formData>(field: K, value: (typeof formData)[K]) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+    setErrors(prev => {
+      let changed = false;
+      const next = { ...prev };
+      const remove = (key: keyof LeadFormErrors) => {
+        if (next[key]) {
+          delete next[key];
+          changed = true;
+        }
+      };
+
+      if (field === 'name') remove('name');
+      if (field === 'phone') {
+        remove('phone');
+        remove('contact');
+      }
+      if (field === 'email') {
+        remove('email');
+        remove('contact');
+      }
+      if (field === 'assigned_user_id') remove('assigned_user_id');
+      if (field === 'pipeline_id') {
+        remove('pipeline_id');
+        remove('stage_id');
+      }
+      if (field === 'stage_id') remove('stage_id');
+
+      return changed ? next : prev;
+    });
   };
 
   const phoneDigits = formData.phone.replace(/\D/g, '');
@@ -394,6 +441,13 @@ export function CreateLeadDialog({
   const selectedLeadPropertyLabel = selectedLeadProperty
     ? [selectedLeadProperty.code, selectedLeadProperty.title].filter(Boolean).join(' - ')
     : '';
+  const fieldIds = {
+    name: `${fieldIdPrefix}-lead-name`,
+    contact: `${fieldIdPrefix}-lead-contact`,
+    phone: `${fieldIdPrefix}-lead-phone`,
+    email: `${fieldIdPrefix}-lead-email`,
+  };
+  const describedBy = (...ids: Array<string | false | null | undefined>) => ids.filter(Boolean).join(' ') || undefined;
   const leadDialogSurfaceClass = cn(
     "!left-1/2 !right-auto !top-1/2 !bottom-auto !h-auto max-h-[86vh] !w-[94vw] !border-0 bg-[var(--app-surface)] !p-0 text-[var(--app-text-primary)] shadow-[0_24px_80px_rgba(0,0,0,0.34)] backdrop-blur-2xl sm:!w-[560px] sm:!max-w-[560px]",
     "!duration-0 !transition-none flex flex-col overflow-hidden rounded-none will-change-transform sm:rounded-[24px]",
@@ -409,30 +463,33 @@ export function CreateLeadDialog({
   );
 
   const validateBasicStep = () => {
+    const nextErrors: LeadFormErrors = {};
+
     if (!formData.name.trim()) {
-      toast.error('Informe o nome do lead');
-      setActiveTab('basic');
-      return false;
+      nextErrors.name = 'Informe o nome do lead';
     }
 
     if (!formData.phone && !formData.email.trim()) {
-      toast.error('Informe pelo menos um telefone ou email');
-      setActiveTab('basic');
-      return false;
+      nextErrors.contact = 'Informe pelo menos um telefone ou email';
     }
 
     if (formData.phone && !hasValidPhone) {
-      toast.error('Telefone inválido. Informe DDD + número (mín. 10 dígitos).');
-      setActiveTab('basic');
-      return false;
+      nextErrors.phone = 'Telefone invalido. Informe DDD + numero (min. 10 digitos).';
     }
 
     if (formData.email.trim() && !hasValidEmail) {
-      toast.error('Email inválido. Use o formato nome@dominio.com');
+      nextErrors.email = 'Email invalido. Use o formato nome@dominio.com';
+    }
+
+    const firstError = nextErrors.name || nextErrors.contact || nextErrors.phone || nextErrors.email;
+    if (firstError) {
+      setErrors(prev => ({ ...omitBasicErrors(prev), ...nextErrors }));
+      toast.error(firstError);
       setActiveTab('basic');
       return false;
     }
 
+    setErrors(prev => omitBasicErrors(prev));
     return true;
   };
 
@@ -541,38 +598,73 @@ export function CreateLeadDialog({
                     <div className="space-y-4">
                       {/* Real Estate: Basic Info - Clean Layout */}
                       <div className="space-y-1.5">
-                        <Label className="text-sm font-medium">Nome *</Label>
+                        <Label htmlFor={fieldIds.name} className="text-sm font-medium">Nome *</Label>
                         <Input
+                          id={fieldIds.name}
                           value={formData.name}
                           onChange={(e) => updateField('name', e.target.value)}
                           placeholder="Nome do lead"
                           required
+                          aria-invalid={Boolean(errors.name)}
+                          aria-describedby={errors.name ? `${fieldIds.name}-error` : undefined}
                         />
+                        {errors.name ? (
+                          <p id={`${fieldIds.name}-error`} className="text-xs font-medium text-destructive" role="alert">
+                            {errors.name}
+                          </p>
+                        ) : null}
                       </div>
 
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-1.5">
-                          <Label className="text-sm font-medium">Telefone</Label>
+                          <Label htmlFor={fieldIds.phone} className="text-sm font-medium">Telefone</Label>
                           <Input
+                            id={fieldIds.phone}
                             value={formData.phone}
                             onChange={(e) => updateField('phone', maskPhone(e.target.value))}
                             placeholder="(00) 00000-0000"
                             inputMode="tel"
                             maxLength={15}
+                            aria-invalid={Boolean(errors.phone || errors.contact)}
+                            aria-describedby={describedBy(
+                              errors.phone && `${fieldIds.phone}-error`,
+                              errors.contact && `${fieldIds.contact}-error`,
+                            )}
                           />
+                          {errors.phone ? (
+                            <p id={`${fieldIds.phone}-error`} className="text-xs font-medium text-destructive" role="alert">
+                              {errors.phone}
+                            </p>
+                          ) : null}
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-sm font-medium">Email</Label>
+                          <Label htmlFor={fieldIds.email} className="text-sm font-medium">Email</Label>
                           <Input
+                            id={fieldIds.email}
                             type="email"
                             value={formData.email}
                             onChange={(e) => updateField('email', e.target.value)}
                             placeholder="email@exemplo.com"
                             pattern="^[^\s@]+@[^\s@]+\.[^\s@]{2,}$"
+                            aria-invalid={Boolean(errors.email || errors.contact)}
+                            aria-describedby={describedBy(
+                              errors.email && `${fieldIds.email}-error`,
+                              errors.contact && `${fieldIds.contact}-error`,
+                            )}
                             title="Informe um email válido (ex: nome@dominio.com)"
                           />
+                          {errors.email ? (
+                            <p id={`${fieldIds.email}-error`} className="text-xs font-medium text-destructive" role="alert">
+                              {errors.email}
+                            </p>
+                          ) : null}
                         </div>
                       </div>
+                      {errors.contact ? (
+                        <p id={`${fieldIds.contact}-error`} className="-mt-2 text-xs font-medium text-destructive" role="alert">
+                          {errors.contact}
+                        </p>
+                      ) : null}
 
                       <div className="space-y-1.5">
                         <Label className="text-sm font-medium">Fonte</Label>

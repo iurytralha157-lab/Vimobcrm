@@ -19,7 +19,7 @@ import { MessageErrorBoundary } from "@/components/features/whatsapp/MessageErro
 import { DateSeparator, shouldShowDateSeparator } from "@/components/features/whatsapp/DateSeparator";
 import { CreateLeadDialog } from "@/components/features/leads/CreateLeadDialog";
 import { ConversationHeader } from "@/components/features/whatsapp/ConversationHeader";
-import { ConversationLeadPanel } from "@/components/features/whatsapp/ConversationLeadPanel";
+import { ConversationLeadPanel, ConversationUnregisteredPanel } from "@/components/features/whatsapp/ConversationLeadPanel";
 import { cn } from "@/lib/utils";
 import { format, isToday, isYesterday } from "date-fns";
 import { useWhatsAppConversations, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppRealtimeConversations, useArchiveConversation, useDeleteConversation, type WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
@@ -1429,13 +1429,30 @@ export default function Conversations() {
         </main>
 
         {/* Lead Side Panel - Desktop only */}
-        {selectedLeadId && showLeadPanel && (
-          <ConversationLeadPanel
-            leadId={selectedLeadId}
-            onClose={() => setShowLeadPanel(false)}
-            contactPicture={getConversationAvatarUrl(selectedConversation)}
-            className="w-[300px] min-w-[300px] max-w-[300px] shrink-0 animate-in slide-in-from-right-5 duration-300"
-          />
+        {selectedConversation && showLeadPanel && (
+          selectedLeadId ? (
+            <ConversationLeadPanel
+              leadId={selectedLeadId}
+              onClose={() => setShowLeadPanel(false)}
+              contactPicture={getConversationAvatarUrl(selectedConversation)}
+              className="w-[330px] min-w-[330px] max-w-[330px] shrink-0 animate-in slide-in-from-right-5 duration-300"
+            />
+          ) : !selectedConversation.is_group ? (
+            <ConversationUnregisteredPanel
+              contactName={selectedConversation.contact_name}
+              contactPhone={selectedConversation.contact_phone}
+              contactPicture={getConversationAvatarUrl(selectedConversation)}
+              onCreateLead={() => {
+                setCreateLeadContact({
+                  phone: selectedConversation.contact_phone || undefined,
+                  name: selectedConversation.contact_name || undefined,
+                  conversationId: selectedConversation.id,
+                });
+                setCreateLeadOpen(true);
+              }}
+              className="w-[330px] min-w-[330px] max-w-[330px] shrink-0 animate-in slide-in-from-right-5 duration-300"
+            />
+          ) : null
         )}
       </div>
 

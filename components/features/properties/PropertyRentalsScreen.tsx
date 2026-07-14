@@ -64,7 +64,6 @@ export default function PropertyRentals() {
     isSuperAdmin,
     memberRole: tenantContext?.memberRole,
     permissions: tenantContext?.permissions,
-    propertyEditPolicy: organization?.property_edit_policy,
   };
   const canUpdateAvailability = canUpdatePropertyAvailability(propertyAccessContext);
   const canDeleteProperty = canDeleteProperties(propertyAccessContext);

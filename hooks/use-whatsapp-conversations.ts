@@ -19,6 +19,9 @@ import {
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
 
 const WHATSAPP_SEND_COOLDOWN_MS = 1000;
+const WHATSAPP_CONVERSATIONS_REFETCH_MS = 90_000;
+const WHATSAPP_ACTIVE_MESSAGES_REFETCH_MS = 30_000;
+const WHATSAPP_ACTIVE_MESSAGES_STALE_MS = 10_000;
 const lastWhatsAppSendByUser = new Map<string, number>();
 
 export interface WhatsAppConversation {
@@ -200,11 +203,11 @@ export function useWhatsAppConversations(
       }) as Promise<WhatsAppConversation[]>;
     },
     enabled: !!scope.organizationId && !!scope.userId,
-    refetchInterval: 60_000,
+    refetchInterval: WHATSAPP_CONVERSATIONS_REFETCH_MS,
     refetchIntervalInBackground: false,
     refetchOnReconnect: true,
     refetchOnWindowFocus: false,
-    staleTime: 10_000,
+    staleTime: 30_000,
     gcTime: 1000 * 60 * 10,
     retry: false,
   });
@@ -232,7 +235,7 @@ export function useWhatsAppMessages(
   const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
   const includeLeadHistory = options.includeLeadHistory ?? true;
-  const refetchInterval = options.refetchIntervalMs ?? (conversationId || leadId ? 15_000 : false);
+  const refetchInterval = options.refetchIntervalMs ?? (conversationId || leadId ? WHATSAPP_ACTIVE_MESSAGES_REFETCH_MS : false);
   const queryKey = whatsappQueryKeys.messages(scope, {
     conversationId,
     leadId: leadId ?? null,
@@ -280,8 +283,8 @@ export function useWhatsAppMessages(
     refetchInterval,
     refetchIntervalInBackground: false,
     refetchOnReconnect: true,
-    refetchOnWindowFocus: options.refetchOnWindowFocus ?? true,
-    staleTime: 2_000,
+    refetchOnWindowFocus: options.refetchOnWindowFocus ?? false,
+    staleTime: WHATSAPP_ACTIVE_MESSAGES_STALE_MS,
     gcTime: 1000 * 60 * 15,
     refetchOnMount: options.refetchOnMount ?? true,
   });

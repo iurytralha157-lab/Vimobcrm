@@ -20,6 +20,7 @@ type PropertyMetadataInput = { metadata?: Record<string, unknown> }
 type PropertyAPIOptions = {
   limit?: number
   offset?: number
+  scope?: 'own'
   search?: string
   status?: string
   tipo_de_negocio?: string

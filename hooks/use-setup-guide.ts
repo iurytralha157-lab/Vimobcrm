@@ -162,7 +162,7 @@ export function useSetupGuide() {
         title: 'Criar primeiro lead',
         subtitle: 'Cadastre, organize e abra o card completo',
         description: 'Crie um lead manual e conheça o fluxo atual de dados básicos, perfil e gestão antes de iniciar o atendimento.',
-        route: '/crm/contacts',
+        route: '/crm/contacts?new=lead',
         ctaLabel: 'Criar lead',
         section: 'Primeiros passos',
         badge: 'Lead',

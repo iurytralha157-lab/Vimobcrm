@@ -13,8 +13,6 @@ import (
 )
 
 const (
-	aiWorkerInterval          = time.Minute
-	aiFollowUpWorkerInterval  = 10 * time.Minute
 	aiWorkerBatchLimit        = 1
 	aiFollowUpBatchLimit      = 1
 	aiJobMaxAttempts          = 3
@@ -45,46 +43,51 @@ type aiFollowUpCandidate struct {
 }
 
 func (handler Handler) StartAIWorker(ctx context.Context, logger *slog.Logger) {
-	if handler.aiRunner == nil {
+	config := handler.workerConfig.normalized()
+	if handler.aiRunner == nil || (!config.AIWorkerEnabled && !config.AIFollowUpWorkerEnabled) {
 		return
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	go func() {
-		timer := time.NewTimer(3 * time.Second)
-		defer timer.Stop()
+	if config.AIWorkerEnabled {
+		go func() {
+			timer := time.NewTimer(3 * time.Second)
+			defer timer.Stop()
 
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-timer.C:
-				if err := handler.ProcessAIJobs(ctx); err != nil && !errors.Is(err, context.Canceled) {
-					logger.Error("whatsapp ai worker failed", "error", err)
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-timer.C:
+					if err := handler.ProcessAIJobs(ctx); err != nil && !errors.Is(err, context.Canceled) {
+						logger.Error("whatsapp ai worker failed", "error", err)
+					}
+					timer.Reset(config.AIWorkerInterval)
 				}
-				timer.Reset(aiWorkerInterval)
 			}
-		}
-	}()
+		}()
+	}
 
-	go func() {
-		timer := time.NewTimer(15 * time.Second)
-		defer timer.Stop()
+	if config.AIFollowUpWorkerEnabled {
+		go func() {
+			timer := time.NewTimer(15 * time.Second)
+			defer timer.Stop()
 
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-timer.C:
-				if err := handler.ProcessAIFollowUps(ctx); err != nil && !errors.Is(err, context.Canceled) {
-					logger.Error("whatsapp ai follow-up worker failed", "error", err)
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-timer.C:
+					if err := handler.ProcessAIFollowUps(ctx); err != nil && !errors.Is(err, context.Canceled) {
+						logger.Error("whatsapp ai follow-up worker failed", "error", err)
+					}
+					timer.Reset(config.AIFollowUpWorkerInterval)
 				}
-				timer.Reset(aiFollowUpWorkerInterval)
 			}
-		}
-	}()
+		}()
+	}
 }
 
 func (handler Handler) ProcessAIJobs(ctx context.Context) error {

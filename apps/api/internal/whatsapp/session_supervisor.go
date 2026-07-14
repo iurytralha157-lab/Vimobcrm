@@ -9,12 +9,9 @@ import (
 )
 
 const (
-	whatsappSessionSupervisorInitialDelay = 30 * time.Second
-	whatsappSessionSupervisorInterval     = time.Minute
-	whatsappSupervisorBatchLimit          = 5
-	whatsappWebhookSubscriptionVersion    = "lead-message-events-v2"
-	whatsappWebhookRolloutManagedSetting  = "webhook_rollout_managed"
-	whatsappNotificationSafeVersion       = "evolution-advanced-settings-v1"
+	whatsappWebhookSubscriptionVersion   = "lead-message-events-v2"
+	whatsappWebhookRolloutManagedSetting = "webhook_rollout_managed"
+	whatsappNotificationSafeVersion      = "evolution-advanced-settings-v1"
 )
 
 var whatsappWebhookSubscriptions = []string{
@@ -29,12 +26,16 @@ var whatsappWebhookSubscriptions = []string{
 }
 
 func (handler Handler) StartSessionSupervisor(ctx context.Context, logger *slog.Logger) {
+	config := handler.workerConfig.normalized()
+	if !config.SessionSupervisorEnabled {
+		return
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	go func() {
-		timer := time.NewTimer(whatsappSessionSupervisorInitialDelay)
+		timer := time.NewTimer(config.SessionSupervisorInitialDelay)
 		defer timer.Stop()
 
 		for {
@@ -42,16 +43,21 @@ func (handler Handler) StartSessionSupervisor(ctx context.Context, logger *slog.
 			case <-ctx.Done():
 				return
 			case <-timer.C:
-				if err := handler.repo.superviseActiveSessions(ctx, logger); err != nil && !errors.Is(err, context.Canceled) {
+				if err := handler.repo.superviseActiveSessionsWithLimit(ctx, logger, config.SessionSupervisorBatch); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("whatsapp session supervisor failed", "error", err)
 				}
-				timer.Reset(whatsappSessionSupervisorInterval)
+				timer.Reset(config.SessionSupervisorInterval)
 			}
 		}
 	}()
 }
 
 func (repo Repository) superviseActiveSessions(ctx context.Context, logger *slog.Logger) error {
+	return repo.superviseActiveSessionsWithLimit(ctx, logger, defaultWhatsAppSessionSupervisorBatch)
+}
+
+func (repo Repository) superviseActiveSessionsWithLimit(ctx context.Context, logger *slog.Logger, batch int) error {
+	batch = normalizeWorkerBatch(batch, defaultWhatsAppSessionSupervisorBatch)
 	rows, err := repo.db.Pool().Query(ctx, `
 		select `+sessionSelectFields()+`
 		from public.whatsapp_sessions ws
@@ -67,12 +73,12 @@ func (repo Repository) superviseActiveSessions(ctx context.Context, logger *slog
 		  ws.updated_at asc,
 		  ws.id asc
 		limit $1::integer
-	`, whatsappSupervisorBatchLimit)
+	`, batch)
 	if err != nil {
 		return err
 	}
 
-	sessions := make([]Session, 0, whatsappSupervisorBatchLimit)
+	sessions := make([]Session, 0, batch)
 	for rows.Next() {
 		session, err := scanSession(rows)
 		if err != nil {

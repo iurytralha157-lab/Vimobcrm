@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
-import { Bell, Loader2, LogOut, ChevronDown, UserPlus, CheckSquare, FileText, DollarSign, Info, Settings, Shield, Building2, Check, Key, AlertTriangle, Sparkles } from 'lucide-react';
-import { useOrganizationModules } from '@/hooks/use-organization-modules';
+import { Bell, Loader2, LogOut, ChevronDown, UserPlus, CheckSquare, FileText, DollarSign, Info, Settings, Building2, Check, AlertTriangle, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotifications, useUnreadNotificationsCount, useMarkNotificationRead, useMarkAllNotificationsRead } from '@/hooks/use-notifications';
@@ -38,7 +37,6 @@ export const AppHeader = React.memo(function AppHeader({
   const {
     profile,
     signOut,
-    isSuperAdmin,
     organization,
     switchOrganization,
     user,
@@ -47,7 +45,6 @@ export const AppHeader = React.memo(function AppHeader({
   const [isSwitching, setIsSwitching] = useState(false);
   const [updatesOpen, setUpdatesOpen] = useState(false);
   const queryClient = useQueryClient();
-  const { hasModule } = useOrganizationModules();
   const router = useRouter();
   const isMobile = useIsMobile();
   const {
@@ -293,47 +290,29 @@ export const AppHeader = React.memo(function AppHeader({
               </div>
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" sideOffset={12} collisionPadding={16} className="w-56 bg-popover/95 backdrop-blur-md rounded-2xl p-1 border-border/50">
-            <div className="px-3 py-3 border-b border-border/40">
+          <DropdownMenuContent align="end" sideOffset={12} collisionPadding={16} className="w-56 rounded-[10px] border-border/40 bg-popover/95 p-2 backdrop-blur-md">
+            <div className="border-b border-border/30 px-2.5 pb-2 pt-1.5">
               <p className="text-sm font-bold truncate">{profile?.name}</p>
               <p className="text-[10px] text-muted-foreground truncate">{profile?.email}</p>
             </div>
-            <div className="mt-1">
-              <DropdownMenuItem onClick={() => router.push('/settings')} className="cursor-pointer rounded-xl m-1 px-3 py-2 text-sm gap-2">
+            <div className="mt-1 space-y-0.5">
+              <DropdownMenuItem onClick={() => router.push('/settings')} className="cursor-pointer gap-2 rounded-[7px] px-2.5 py-2 text-sm transition-colors hover:bg-[var(--app-surface-hover)] focus:bg-[var(--app-surface-hover)]">
                 <Settings className="h-4 w-4 text-muted-foreground" />
                 Configurações
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => window.dispatchEvent(new Event('setup-guide:open'))} className="cursor-pointer rounded-xl m-1 px-3 py-2 text-sm gap-2">
+              <DropdownMenuItem onClick={() => window.dispatchEvent(new Event('setup-guide:open'))} className="cursor-pointer gap-2 rounded-[7px] px-2.5 py-2 text-sm transition-colors hover:bg-[var(--app-surface-hover)] focus:bg-[var(--app-surface-hover)]">
                 <CheckSquare className="h-4 w-4 text-muted-foreground" />
                 Guia de configuração
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => router.push('/docs/api')} className="cursor-pointer rounded-xl m-1 px-3 py-2 text-sm gap-2">
-                <FileText className="h-4 w-4 text-muted-foreground" />
-                Documentação da API
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setUpdatesOpen(true)} className="cursor-pointer rounded-xl m-1 px-3 py-2 text-sm gap-2">
+              <DropdownMenuItem onClick={() => setUpdatesOpen(true)} className="cursor-pointer gap-2 rounded-[7px] px-2.5 py-2 text-sm transition-colors hover:bg-[var(--app-surface-hover)] focus:bg-[var(--app-surface-hover)]">
                 <Sparkles className="h-4 w-4 text-muted-foreground" />
                 Novidades
               </DropdownMenuItem>
-              {hasModule('api') && (
-                  <DropdownMenuItem onClick={() => router.push('/settings?tab=api')} className="cursor-pointer rounded-xl m-1 px-3 py-2 text-sm gap-2">
-                    <Key className="h-4 w-4 text-muted-foreground" />
-                    Configuração da API
-                  </DropdownMenuItem>
-              )}
-              {isSuperAdmin && (
-                <DropdownMenuItem onClick={() => router.push('/admin')} className="cursor-pointer rounded-xl m-1 px-3 py-2 text-sm gap-2 border-t border-border/20 mt-1">
-                  <Shield className="h-4 w-4 text-primary" />
-                  Super Admin
-                </DropdownMenuItem>
-              )}
-              
-              <div className="px-4 py-2 mt-1 border-t border-border/20 flex items-center justify-between">
+              <div className="flex items-center justify-between px-2.5 pb-0.5 pt-1">
                 <span className="text-[10px] text-muted-foreground/60">Versão</span>
                 <span className="text-[10px] font-medium text-muted-foreground/80">v2.2.1</span>
               </div>
             </div>
-            <DropdownMenuSeparator className="my-1 border-border/40" />
             <DropdownMenuItem
               onClick={async () => {
                 try {
@@ -343,7 +322,7 @@ export const AppHeader = React.memo(function AppHeader({
                 }
                 window.location.href = '/login';
               }}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 focus:bg-destructive/90 cursor-pointer rounded-xl m-1 px-3 py-2 text-sm gap-2 transition-colors"
+              className="mt-1 cursor-pointer gap-2 rounded-[7px] bg-destructive px-2.5 py-2 text-sm text-destructive-foreground transition-colors hover:bg-destructive/90 focus:bg-destructive/90"
             >
               <LogOut className="h-4 w-4" />
               Sair

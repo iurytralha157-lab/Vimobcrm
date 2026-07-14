@@ -15,6 +15,7 @@ const optionalNonNegativeFilterSchema = z.union([
 export const propertyListQuerySchema = z.object({
   limit: z.number().int().min(1).max(1_000).optional(),
   offset: z.number().int().min(0).max(100_000).optional(),
+  scope: z.enum(['own']).optional(),
   search: z.string().trim().max(120).optional(),
   status: z.string().trim().max(80).optional(),
   tipo_de_negocio: z.string().trim().max(80).optional(),

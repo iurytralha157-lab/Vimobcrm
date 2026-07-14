@@ -14,11 +14,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const (
-	whatsappWebhookWorkerInterval = time.Second
-	whatsappWebhookWorkerBatch    = 5
-)
-
 var whatsappWebhookWorkerID = "vimob-api-evolution-webhook-" + randomHex(8)
 var whatsappWebhookWorkerWake = make(chan struct{}, 1)
 
@@ -42,12 +37,16 @@ type pendingEvolutionWebhook struct {
 }
 
 func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logger) {
+	config := handler.workerConfig.normalized()
+	if !config.WebhookWorkerEnabled {
+		return
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	go func() {
-		pollTicker := time.NewTicker(whatsappWebhookWorkerInterval)
+		pollTicker := time.NewTicker(config.WebhookWorkerInterval)
 		cleanupTicker := time.NewTicker(time.Hour)
 		defer pollTicker.Stop()
 		defer cleanupTicker.Stop()
@@ -60,11 +59,11 @@ func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logg
 					logger.Error("whatsapp webhook inbox cleanup failed", "error", err)
 				}
 			case <-pollTicker.C:
-				if err := handler.repo.ProcessWebhookInbox(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				if err := handler.repo.ProcessWebhookInboxWithBatch(ctx, config.WebhookWorkerBatch); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("whatsapp webhook inbox worker failed", "error", err)
 				}
 			case <-whatsappWebhookWorkerWake:
-				if err := handler.repo.ProcessWebhookInbox(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				if err := handler.repo.ProcessWebhookInboxWithBatch(ctx, config.WebhookWorkerBatch); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("whatsapp webhook inbox worker failed", "error", err)
 				}
 			}
@@ -97,7 +96,11 @@ func (repo Repository) CleanupExpiredWebhookInbox(ctx context.Context, limit int
 }
 
 func (repo Repository) ProcessWebhookInbox(ctx context.Context) error {
-	items, err := repo.claimEvolutionWebhooks(ctx)
+	return repo.ProcessWebhookInboxWithBatch(ctx, defaultWhatsAppWebhookWorkerBatch)
+}
+
+func (repo Repository) ProcessWebhookInboxWithBatch(ctx context.Context, batch int) error {
+	items, err := repo.claimEvolutionWebhooksWithBatch(ctx, batch)
 	if err != nil {
 		return err
 	}
@@ -138,6 +141,11 @@ func (repo Repository) renewEvolutionWebhookLease(ctx context.Context, id string
 }
 
 func (repo Repository) claimEvolutionWebhooks(ctx context.Context) ([]pendingEvolutionWebhook, error) {
+	return repo.claimEvolutionWebhooksWithBatch(ctx, defaultWhatsAppWebhookWorkerBatch)
+}
+
+func (repo Repository) claimEvolutionWebhooksWithBatch(ctx context.Context, batch int) ([]pendingEvolutionWebhook, error) {
+	batch = normalizeWorkerBatch(batch, defaultWhatsAppWebhookWorkerBatch)
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -177,13 +185,13 @@ func (repo Repository) claimEvolutionWebhooks(ctx context.Context) ([]pendingEvo
 			wi.payload::text,
 			wi.attempts,
 			wi.max_attempts
-	`, whatsappWebhookWorkerBatch, whatsappWebhookWorkerID)
+	`, batch, whatsappWebhookWorkerID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	items := make([]pendingEvolutionWebhook, 0, whatsappWebhookWorkerBatch)
+	items := make([]pendingEvolutionWebhook, 0, batch)
 	for rows.Next() {
 		var item pendingEvolutionWebhook
 		var payload string

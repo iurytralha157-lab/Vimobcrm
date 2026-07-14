@@ -69,6 +69,9 @@ SUPABASE_JWT_ISSUER=https://seu-projeto.supabase.co/auth/v1
 SUPABASE_JWT_AUDIENCE=authenticated
 SUPABASE_SERVICE_ROLE_KEY=sua-chave-server-side
 DATABASE_URL=postgresql://...
+DATABASE_MAX_CONNS=8
+DATABASE_MIN_CONNS=0
+DATABASE_MAX_CONN_IDLE_TIME=2m
 
 RESEND_API_KEY=
 RESEND_FROM_EMAIL=Vimob CRM <naoresponde@vimobcrm.com.br>
@@ -91,6 +94,12 @@ EVOLUTION_GO_WEBHOOK_URL=https://seu-projeto.supabase.co/functions/v1/evolution-
 EVOLUTION_GO_BACKEND_WEBHOOK_URL=https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go
 WHATSAPP_WEBHOOK_PROCESSOR_MODE=native_fallback
 WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS=13eea7e8-a74f-4bfb-bb36-024e3d26ccc9
+WHATSAPP_OUTBOX_WORKER_INTERVAL=2s
+WHATSAPP_OUTBOX_WORKER_BATCH=10
+WHATSAPP_WEBHOOK_WORKER_INTERVAL=2s
+WHATSAPP_WEBHOOK_WORKER_BATCH=10
+WHATSAPP_SESSION_SUPERVISOR_INTERVAL=2m
+WHATSAPP_SESSION_SUPERVISOR_BATCH=3
 
 META_APP_SECRET=segredo-do-app-meta
 META_WEBHOOK_VERIFY_TOKEN=token-igual-ao-configurado-no-meta-webhooks
@@ -99,6 +108,8 @@ META_GRAPH_BASE_URL=https://graph.facebook.com
 ```
 
 `EVOLUTION_GO_API_URL` e `EVOLUTION_GO_API_KEY` fazem a API Go criar instancias, consultar QR Code, status e enviar mensagens diretamente no Evo Go. `EVOLUTION_GO_WEBHOOK_URL` e a rota legada da Edge Function, usada por todas as sessoes fora do rollout. `EVOLUTION_GO_BACKEND_WEBHOOK_URL` deve apontar para `/v1/whatsapp/webhook/evolution-go` da API Go e so e usada por sessoes allowlisted. Mantenha `WHATSAPP_WEBHOOK_PROCESSOR_MODE=native_fallback` durante o canario; use `native` somente depois de eliminar todos os eventos ainda dependentes da Edge Function.
+
+Para picos de uso, mantenha o backend com pool pequeno contra o Supabase (`DATABASE_MAX_CONNS=8`, `DATABASE_MIN_CONNS=0`) e controle a pressao dos workers de WhatsApp pelas variaveis `WHATSAPP_*_WORKER_INTERVAL` e `WHATSAPP_*_WORKER_BATCH`. Aumente throughput primeiro pelo batch; reduza intervalo apenas se o banco estiver com folga.
 
 `WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS` e o gate unico da criacao, recriacao, supervisor e processador. Vazio e o padrao seguro: sessoes novas/recriadas continuam na Edge, o supervisor nao altera URL nem assinaturas e todo evento que eventualmente chegar ao backend ainda e encaminhado para a Edge; a consulta e a atualizacao de status continuam funcionando. Para o primeiro canario, use somente `13eea7e8-a74f-4bfb-bb36-024e3d26ccc9`: apenas essa sessao recebe a URL do backend e pode executar `native_fallback`. Uma lista de UUIDs separados por virgula libera apenas aquelas sessoes; `*` libera todas explicitamente e so deve ser usado depois da validacao completa dos canarios. Um UUID invalido, `*` misturado com UUIDs ou rollout sem `EVOLUTION_GO_BACKEND_WEBHOOK_URL` impede a API de iniciar.
 

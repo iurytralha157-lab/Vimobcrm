@@ -175,7 +175,22 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			WebhookProcessorMode:     cfg.EvolutionGo.WebhookProcessorMode,
 			WebhookRolloutSessionIDs: cfg.EvolutionGo.WebhookRolloutSessionIDs,
 		},
-	})).WithAutoReply(aiService, cfg.AI.AutoReplyToken)
+	})).WithAutoReply(aiService, cfg.AI.AutoReplyToken).WithWorkerConfig(whatsapp.WorkerConfig{
+		AIWorkerEnabled:               cfg.WhatsApp.AIWorkerEnabled,
+		AIWorkerInterval:              cfg.WhatsApp.AIWorkerInterval,
+		AIFollowUpWorkerEnabled:       cfg.WhatsApp.AIFollowUpWorkerEnabled,
+		AIFollowUpWorkerInterval:      cfg.WhatsApp.AIFollowUpWorkerInterval,
+		OutboxWorkerEnabled:           cfg.WhatsApp.OutboxWorkerEnabled,
+		OutboxWorkerInterval:          cfg.WhatsApp.OutboxWorkerInterval,
+		OutboxWorkerBatch:             cfg.WhatsApp.OutboxWorkerBatch,
+		WebhookWorkerEnabled:          cfg.WhatsApp.WebhookWorkerEnabled,
+		WebhookWorkerInterval:         cfg.WhatsApp.WebhookWorkerInterval,
+		WebhookWorkerBatch:            cfg.WhatsApp.WebhookWorkerBatch,
+		SessionSupervisorEnabled:      cfg.WhatsApp.SessionSupervisorEnabled,
+		SessionSupervisorInitialDelay: cfg.WhatsApp.SessionSupervisorInitialDelay,
+		SessionSupervisorInterval:     cfg.WhatsApp.SessionSupervisorInterval,
+		SessionSupervisorBatch:        cfg.WhatsApp.SessionSupervisorBatch,
+	})
 	whatsappHandler.StartAIWorker(ctx, logger)
 	whatsappHandler.StartOutboxWorker(ctx, logger)
 	whatsappHandler.StartWebhookWorker(ctx, logger)

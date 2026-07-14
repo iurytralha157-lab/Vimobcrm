@@ -4,7 +4,6 @@ type PropertyAccessInput = {
   isSuperAdmin?: boolean
   memberRole?: string | null
   permissions?: readonly string[] | null
-  propertyEditPolicy?: 'everyone' | 'responsible_or_admin' | null
   ownerIds?: Array<string | null | undefined>
 }
 
@@ -69,7 +68,6 @@ export function canAssignProperties(input: PropertyAccessInput) {
 export function canEditPropertyDetails(input: PropertyAccessInput) {
   if (canManageProperties(input)) return true
   if (!isOrganizationMember(input)) return false
-  if (input.propertyEditPolicy === 'everyone') return true
 
   return Boolean(input.ownerIds?.some((ownerId) => ownerId && ownerId === input.userId))
 }

@@ -27,6 +27,7 @@ type Config struct {
 	Email       EmailConfig
 	Push        PushConfig
 	AI          AIConfig
+	WhatsApp    WhatsAppConfig
 	EvolutionGo EvolutionGoConfig
 	Meta        MetaConfig
 }
@@ -94,6 +95,23 @@ type AIConfig struct {
 	AutoReplyToken string
 }
 
+type WhatsAppConfig struct {
+	AIWorkerEnabled               bool
+	AIWorkerInterval              time.Duration
+	AIFollowUpWorkerEnabled       bool
+	AIFollowUpWorkerInterval      time.Duration
+	OutboxWorkerEnabled           bool
+	OutboxWorkerInterval          time.Duration
+	OutboxWorkerBatch             int
+	WebhookWorkerEnabled          bool
+	WebhookWorkerInterval         time.Duration
+	WebhookWorkerBatch            int
+	SessionSupervisorEnabled      bool
+	SessionSupervisorInitialDelay time.Duration
+	SessionSupervisorInterval     time.Duration
+	SessionSupervisorBatch        int
+}
+
 func (cfg HTTPConfig) Addr() string {
 	return cfg.Host + ":" + cfg.Port
 }
@@ -124,10 +142,10 @@ func Load() (Config, error) {
 		},
 		Database: dbpkg.Config{
 			URL:                  os.Getenv("DATABASE_URL"),
-			MaxConns:             parseInt("DATABASE_MAX_CONNS", 20),
-			MinConns:             parseInt("DATABASE_MIN_CONNS", 2),
+			MaxConns:             parseInt("DATABASE_MAX_CONNS", 8),
+			MinConns:             parseInt("DATABASE_MIN_CONNS", 0),
 			MaxConnLifetime:      parseDuration("DATABASE_MAX_CONN_LIFETIME", 30*time.Minute),
-			MaxConnIdleTime:      parseDuration("DATABASE_MAX_CONN_IDLE_TIME", 5*time.Minute),
+			MaxConnIdleTime:      parseDuration("DATABASE_MAX_CONN_IDLE_TIME", 2*time.Minute),
 			HealthTimeout:        parseDuration("DATABASE_HEALTH_TIMEOUT", 10*time.Second),
 			StartupRetryTimeout:  parseDuration("DATABASE_STARTUP_RETRY_TIMEOUT", 5*time.Minute),
 			StartupRetryInterval: parseDuration("DATABASE_STARTUP_RETRY_INTERVAL", 5*time.Second),
@@ -166,6 +184,22 @@ func Load() (Config, error) {
 			RealtimeModel:  getEnv("OPENAI_REALTIME_MODEL", "gpt-realtime-2"),
 			RealtimeVoice:  getEnv("OPENAI_REALTIME_VOICE", "cedar"),
 			AutoReplyToken: getEnv("AI_AUTOREPLY_TOKEN", os.Getenv("INTERNAL_WEBHOOK_TOKEN")),
+		},
+		WhatsApp: WhatsAppConfig{
+			AIWorkerEnabled:               parseBool("WHATSAPP_AI_WORKER_ENABLED", true),
+			AIWorkerInterval:              parseDuration("WHATSAPP_AI_WORKER_INTERVAL", time.Minute),
+			AIFollowUpWorkerEnabled:       parseBool("WHATSAPP_AI_FOLLOW_UP_WORKER_ENABLED", true),
+			AIFollowUpWorkerInterval:      parseDuration("WHATSAPP_AI_FOLLOW_UP_WORKER_INTERVAL", 10*time.Minute),
+			OutboxWorkerEnabled:           parseBool("WHATSAPP_OUTBOX_WORKER_ENABLED", true),
+			OutboxWorkerInterval:          parseDuration("WHATSAPP_OUTBOX_WORKER_INTERVAL", time.Second),
+			OutboxWorkerBatch:             int(parseInt("WHATSAPP_OUTBOX_WORKER_BATCH", 5)),
+			WebhookWorkerEnabled:          parseBool("WHATSAPP_WEBHOOK_WORKER_ENABLED", true),
+			WebhookWorkerInterval:         parseDuration("WHATSAPP_WEBHOOK_WORKER_INTERVAL", time.Second),
+			WebhookWorkerBatch:            int(parseInt("WHATSAPP_WEBHOOK_WORKER_BATCH", 5)),
+			SessionSupervisorEnabled:      parseBool("WHATSAPP_SESSION_SUPERVISOR_ENABLED", true),
+			SessionSupervisorInitialDelay: parseDuration("WHATSAPP_SESSION_SUPERVISOR_INITIAL_DELAY", 30*time.Second),
+			SessionSupervisorInterval:     parseDuration("WHATSAPP_SESSION_SUPERVISOR_INTERVAL", time.Minute),
+			SessionSupervisorBatch:        int(parseInt("WHATSAPP_SESSION_SUPERVISOR_BATCH", 5)),
 		},
 		EvolutionGo: EvolutionGoConfig{
 			APIURL:                   strings.TrimRight(getEnv("EVOLUTION_GO_API_URL", ""), "/"),

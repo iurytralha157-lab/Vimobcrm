@@ -162,7 +162,7 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
     ],
   },
   first_lead: {
-    route: "/crm/contacts",
+    route: "/crm/contacts?new=lead",
     path: "/crm/contacts",
     items: [
       {

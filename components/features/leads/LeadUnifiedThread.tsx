@@ -769,7 +769,7 @@ function FeedbackBubble({ event }: { event: UnifiedHistoryEvent }) {
   );
 }
 
-export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerified, leadCreatedAt, composerRequest }: LeadUnifiedThreadProps) {
+export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, whatsappVerified, leadCreatedAt, composerRequest }: LeadUnifiedThreadProps) {
   const [text, setText] = useState('');
   const [composerHighlighted, setComposerHighlighted] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1143,6 +1143,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadPhone, whatsappVerifie
                       messageId={item.message.id}
                       leadId={leadId}
                       leadName={leadName}
+                      contactAvatarUrl={leadAvatarUrl}
                       conversationRemoteJid={conversation?.remote_jid ?? item.message.remote_jid ?? null}
                       conversationSessionId={conversation?.session_id ?? item.message.session_id ?? null}
                       compact

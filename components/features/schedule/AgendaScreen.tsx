@@ -39,7 +39,7 @@ import { EventsList } from "@/components/features/schedule/EventsList";
 import { EventSheet } from "@/components/features/schedule/EventSheet";
 import { UserFilter } from "@/components/features/schedule/UserFilter";
 import { useScheduleEvents, ScheduleEvent, useScheduleCapabilities, useUpdateScheduleEvent } from "@/hooks/use-schedule-events";
-import { useUsers } from "@/hooks/use-users";
+import { useScheduleUsers } from "@/hooks/use-schedule-users";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -78,7 +78,7 @@ export default function Agenda() {
 
   const { data: scheduleCapabilities } = useScheduleCapabilities();
 
-  const { data: users = [] } = useUsers();
+  const { data: users = [], canFilterScheduleUsers } = useScheduleUsers();
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [pivotDate, setPivotDate] = useState(new Date());
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
@@ -193,7 +193,20 @@ export default function Agenda() {
   }, [openCreateSheet]);
 
 
-  const canFilterUsers = Boolean(scheduleCapabilities?.isTeamLeader);
+  const canFilterUsers = Boolean(scheduleCapabilities?.isTeamLeader && canFilterScheduleUsers);
+
+  useEffect(() => {
+    if (!selectedUserId) return;
+    if (!users.some((user) => user.id === selectedUserId)) {
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (!cancelled) setSelectedUserId(null);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+  }, [selectedUserId, users]);
 
   const VIEW_MODES: Array<{ value: AgendaViewMode; label: string; icon: React.ElementType }> = [
     { value: "day", label: "Dia", icon: Clock },

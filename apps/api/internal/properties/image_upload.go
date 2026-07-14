@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -94,20 +93,7 @@ func (repo Repository) ensureCanUploadImage(ctx context.Context, tenantContext t
 		return err
 	}
 
-	var editPolicy string
-	err = repo.db.Pool().QueryRow(ctx, `
-		select coalesce(nullif(property_edit_policy, ''), 'responsible_or_admin')
-		from public.organizations
-		where id = $1::uuid
-	`, tenantContext.OrganizationID).Scan(&editPolicy)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return err
-	}
-	if err == pgx.ErrNoRows {
-		editPolicy = "responsible_or_admin"
-	}
-
-	if !canEditProperty(tenantContext, textValue(creatorID), textValue(responsibleUserID), editPolicy) {
+	if !canEditProperty(tenantContext, textValue(creatorID), textValue(responsibleUserID)) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 

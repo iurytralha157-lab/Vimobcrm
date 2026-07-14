@@ -580,45 +580,53 @@ export function MessageBubble({
     </div>
   );
 
-  const renderAudioAvatar = () => (
-    <button
-      type="button"
-      onClick={cyclePlaybackRate}
-      className={cn(
-        "relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full text-[11px] font-semibold transition-colors",
-        fromMe
-          ? "bg-primary-foreground/20 text-primary-foreground hover:bg-primary-foreground/30"
-          : "bg-white/[0.08] text-white hover:bg-white/[0.12]"
-      )}
-      title={`Velocidade ${playbackRate}x`}
-      aria-label={`Alterar velocidade do audio para ${playbackRate}x`}
-    >
-      {isPlaying || currentTime > 0 ? (
-        <span>{playbackRate}x</span>
-      ) : contactAvatarUrl && !fromMe ? (
-        <NextImage
-          src={contactAvatarUrl}
-          alt={audioAvatarName}
-          fill
-          sizes="40px"
-          className="object-cover"
-          unoptimized
-        />
-      ) : (
-        <span>{audioAvatarInitial}</span>
-      )}
-      <span
-        className={cn(
-          "absolute bottom-0 right-0 flex h-3.5 w-3.5 items-center justify-center rounded-full border",
-          fromMe
-            ? "border-primary bg-primary-foreground text-primary"
-            : "border-[#242424] bg-primary text-primary-foreground"
-        )}
-      >
-        <Mic className="h-2.5 w-2.5" />
-      </span>
-    </button>
-  );
+  const renderAudioAvatar = () => {
+    const canChangePlaybackRate = isPlaying || currentTime > 0;
+
+    return (
+      <div className="relative h-10 w-10 shrink-0 overflow-visible">
+        <button
+          type="button"
+          onClick={canChangePlaybackRate ? cyclePlaybackRate : undefined}
+          disabled={!canChangePlaybackRate}
+          className={cn(
+            "relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-full text-[11px] font-semibold transition-colors disabled:cursor-default",
+            fromMe
+              ? "bg-primary-foreground/20 text-primary-foreground"
+              : "bg-white/[0.08] text-white",
+            canChangePlaybackRate && (fromMe ? "hover:bg-primary-foreground/30" : "hover:bg-white/[0.12]"),
+          )}
+          title={canChangePlaybackRate ? `Velocidade ${playbackRate}x` : audioAvatarName}
+          aria-label={canChangePlaybackRate ? `Alterar velocidade do audio para ${playbackRate}x` : "Avatar do audio"}
+        >
+          {canChangePlaybackRate ? (
+            <span>{playbackRate}x</span>
+          ) : contactAvatarUrl && !fromMe ? (
+            <NextImage
+              src={contactAvatarUrl}
+              alt={audioAvatarName}
+              fill
+              sizes="40px"
+              className="object-cover"
+              unoptimized
+            />
+          ) : (
+            <span>{audioAvatarInitial}</span>
+          )}
+        </button>
+        <span
+          className={cn(
+            "pointer-events-none absolute -bottom-0.5 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full border",
+            fromMe
+              ? "border-primary bg-primary-foreground text-primary"
+              : "border-transparent bg-primary text-primary-foreground shadow-[0_0_0_1px_rgba(255,255,255,0.45)]"
+          )}
+        >
+          <Mic className="h-2.5 w-2.5" />
+        </span>
+      </div>
+    );
+  };
 
   const renderAudioPlayer = () => {
     const hasValidMedia = isValidMediaUrl(mediaUrl);
@@ -1013,6 +1021,7 @@ export function MessageBubble({
   const isDeletedMessage = mediaKind === "deleted";
   const isMediaWithOverlayTimestamp = (mediaKind === "image" || mediaKind === "video") && isValidMediaUrl(mediaUrl) && !imageError;
   const isAudioMessage = mediaKind === "audio";
+  const isMediaWithOwnTimestamp = isAudioMessage || mediaKind === "document";
   const hasReactions = reactions.length > 0;
   const ownReactionEmoji = reactions.find((reaction) => reaction.fromMe)?.emoji || null;
   const reactionOptions = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
@@ -1031,10 +1040,11 @@ export function MessageBubble({
     if (!hasReactions) return null;
     return (
       <div className={cn(
-        "absolute -bottom-2 right-2 z-10 flex"
+        "absolute -bottom-3 z-10 flex",
+        fromMe ? "right-2" : "left-2",
       )}>
         <div className={cn(
-          "inline-flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-sm leading-none shadow-md backdrop-blur-sm",
+          "inline-flex items-center gap-0.5 rounded-[8px] border px-1.5 py-0.5 text-sm leading-none shadow-md backdrop-blur-sm",
           fromMe
             ? "border-primary-foreground/20 bg-background/95 text-foreground"
             : "border-white/10 bg-background/95 text-foreground"
@@ -1141,7 +1151,7 @@ export function MessageBubble({
 
 
           {/* Inline timestamp for text messages and non-overlay media (except audio which has its own) */}
-          {(!isMediaWithOverlayTimestamp && !isAudioMessage) && (
+          {(!isMediaWithOverlayTimestamp && !isMediaWithOwnTimestamp) && (
             <span className={cn(
               "float-right -mt-4 ml-2 flex items-center gap-0.5",
               fromMe ? "text-primary-foreground/60" : "text-white/55"

@@ -82,7 +82,6 @@ export default function Properties() {
     isSuperAdmin,
     memberRole: tenantContext?.memberRole,
     permissions: tenantContext?.permissions,
-    propertyEditPolicy: organization?.property_edit_policy,
   };
   const canUpdateAvailability = canUpdatePropertyAvailability(propertyAccessContext);
   const canDeleteProperty = canDeleteProperties(propertyAccessContext);
@@ -542,7 +541,7 @@ export default function Properties() {
                 <Select value={filters.banheiros_min || ALL_FILTER_VALUE} onValueChange={(value) => updateFilter('banheiros_min', value)}>
                   <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
                     <span className={cn("truncate", !filters.banheiros_min && "text-muted-foreground")}>
-                      {filters.banheiros_min ? `${filters.banheiros_min}+` : 'Banhos'}
+                      {filters.banheiros_min ? `${filters.banheiros_min}+` : 'Banheiros'}
                     </span>
                   </SelectTrigger>
                   <SelectContent>

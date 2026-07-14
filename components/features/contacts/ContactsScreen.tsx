@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useDeferredValue, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { Card } from "@/components/ui/card";
 import { LeadDetailDialog } from "@/components/features/leads/LeadDetailDialog";
@@ -114,6 +115,8 @@ function LeadCountBadge({
 }
 
 export default function Contacts() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { organization, profile, isSuperAdmin } = useAuth();
   const { hasPermission } = useUserPermissions();
   const organizationId = organization?.id ?? profile?.organization_id ?? null;
@@ -173,6 +176,25 @@ export default function Contacts() {
   const [shiftPressed, setShiftPressed] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const openLeadDetails = (contactId: string) => setSelectedContactId(contactId);
+
+  useEffect(() => {
+    if (searchParams.get("new") !== "lead") return;
+
+    const cleanParams = new URLSearchParams(searchParams.toString());
+    cleanParams.delete("new");
+    const cleanSearch = cleanParams.toString();
+
+    let isActive = true;
+    queueMicrotask(() => {
+      if (!isActive) return;
+      setIsCreateDialogOpen(true);
+      router.replace(`/crm/contacts${cleanSearch ? `?${cleanSearch}` : ""}`);
+    });
+
+    return () => {
+      isActive = false;
+    };
+  }, [searchParams, router]);
 
   useEffect(() => {
     const handleKeyDown = (e: globalThis.KeyboardEvent) => {

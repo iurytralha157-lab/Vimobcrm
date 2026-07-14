@@ -4,6 +4,7 @@ import { useFilters } from '@/contexts/FilterContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { contactsAPI } from '@/lib/api/contacts';
 import { getLeadMetaFilters } from '@/lib/api/pipeline-board';
+import { useTags } from '@/hooks/use-tags';
 import { DatePreset } from './use-dashboard-filters';
 
 export interface SharedFilters {
@@ -93,8 +94,12 @@ export function useSharedFilters(options?: { loadDynamicOptions?: boolean }) {
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,
+    retry: 1,
+    retryDelay: 800,
     placeholderData: (previous) => previous ?? { campaigns: [], adsets: [], ads: [] },
   });
+
+  const tagsQuery = useTags({ enabled: shouldLoadDynamicOptions });
 
   const dynamicSources = useMemo(() => {
     const sources = new Set((contactsQuery.data || []).map((contact) => contact.source).filter(Boolean));
@@ -133,12 +138,10 @@ export function useSharedFilters(options?: { loadDynamicOptions?: boolean }) {
   );
 
   const tags = useMemo(() => {
-    const unique = new Map<string, { id: string; name: string; color: string }>();
-    (contactsQuery.data || []).forEach((contact) => {
-      contact.tags.forEach((tag) => unique.set(tag.id, tag));
-    });
-    return Array.from(unique.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [contactsQuery.data]);
+    return (tagsQuery.data || [])
+      .map((tag) => ({ id: tag.id, name: tag.name, color: tag.color }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [tagsQuery.data]);
 
   useEffect(() => {
     let isActive = true;

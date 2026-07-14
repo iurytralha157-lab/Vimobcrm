@@ -34,6 +34,10 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
+type queryRower interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 type destination struct {
 	PipelineID *string
 	StageID    *string
@@ -280,7 +284,16 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err != nil {
 		return Lead{}, err
 	}
-	if !canEdit && !canUpdateAssignedLeadOperationalPatch(tenantContext, current, input) {
+
+	canOperationalPatch := canUpdateAssignedLeadOperationalPatch(tenantContext, current, input)
+	if !canEdit && !canOperationalPatch && isLeadPropertyInterestPatch(input) {
+		canViewLead, err := canViewExistingLeadWithQuerier(ctx, tx, tenantContext, current.AssignedUserID)
+		if err != nil {
+			return Lead{}, err
+		}
+		canOperationalPatch = canUpdateVisibleLeadPropertyInterest(canViewLead, input)
+	}
+	if !canEdit && !canOperationalPatch {
 		return Lead{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -1950,6 +1963,10 @@ func (repo Repository) findExistingLeadByPhone(ctx context.Context, organization
 }
 
 func (repo Repository) canViewExistingLead(ctx context.Context, tenantContext tenant.Context, assignedUserID string) (bool, error) {
+	return canViewExistingLeadWithQuerier(ctx, repo.db.Pool(), tenantContext, assignedUserID)
+}
+
+func canViewExistingLeadWithQuerier(ctx context.Context, querier queryRower, tenantContext tenant.Context, assignedUserID string) (bool, error) {
 	if canViewAllLeads(tenantContext) {
 		return true, nil
 	}
@@ -1967,7 +1984,7 @@ func (repo Repository) canViewExistingLead(ctx context.Context, tenantContext te
 	}
 
 	var canView bool
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := querier.QueryRow(ctx, `
 		select exists (
 			select 1
 			from public.team_members leader
@@ -3137,7 +3154,11 @@ func canUpdateAssignedLeadOperationalPatch(tenantContext tenant.Context, current
 	if !canMoveLead(tenantContext, current.AssignedUserID) {
 		return false
 	}
-	return isLeadStatusPatch(current, input) || isLeadFeedbackPatch(input)
+	return isLeadStatusPatch(current, input) || isLeadFeedbackPatch(input) || isLeadPropertyInterestPatch(input)
+}
+
+func canUpdateVisibleLeadPropertyInterest(canViewLead bool, input updateInput) bool {
+	return canViewLead && isLeadPropertyInterestPatch(input)
 }
 
 func canUpdateAssignedLeadStatus(tenantContext tenant.Context, current leadSnapshot, input updateInput) bool {
@@ -3216,6 +3237,51 @@ func isLeadFeedbackPatch(input updateInput) bool {
 		input.CommissionPercentage,
 		input.DealStatus,
 		input.LostReason,
+		input.Cargo,
+		input.Empresa,
+		input.Profissao,
+		input.Endereco,
+		input.Numero,
+		input.Complemento,
+		input.Bairro,
+		input.CEP,
+		input.Cidade,
+		input.UF,
+		input.RendaFamiliar,
+		input.FaixaValorImovel,
+		input.FinalidadeCompra,
+	} {
+		if field.Set {
+			return false
+		}
+	}
+
+	return !input.Trabalha.Set &&
+		!input.ProcuraFinanciamento.Set &&
+		!input.IsOwnResource.Set
+}
+
+func isLeadPropertyInterestPatch(input updateInput) bool {
+	if !input.PropertyID.Set && !input.InterestPropertyID.Set {
+		return false
+	}
+	if (!input.PropertyID.Set || input.PropertyID.Value == nil) &&
+		(!input.InterestPropertyID.Set || input.InterestPropertyID.Value == nil) {
+		return false
+	}
+
+	for _, field := range []patchString{
+		input.Name,
+		input.Email,
+		input.Phone,
+		input.Source,
+		input.Message,
+		input.PipelineID,
+		input.StageID,
+		input.AssignedUserID,
+		input.DealStatus,
+		input.LostReason,
+		input.Feedback,
 		input.Cargo,
 		input.Empresa,
 		input.Profissao,

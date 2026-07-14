@@ -1,6 +1,9 @@
 package properties
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSanitizePayloadWritesCanonicalPropertyColumns(t *testing.T) {
 	input := propertyRequest{
@@ -73,4 +76,97 @@ func TestSanitizePayloadReservedStatusUnpublishesCanonicalColumn(t *testing.T) {
 	if _, exists := out["anunciar"]; exists {
 		t.Fatalf("legacy anunciar key should not be written: %#v", out)
 	}
+}
+
+func TestAddPropertyTypeFilterKeepsRegularTypesLiteral(t *testing.T) {
+	args, where := addPropertyTypeFilter([]any{"org-1"}, []string{"p.organization_id = $1::uuid"}, "Apartamento")
+
+	if len(args) != 2 {
+		t.Fatalf("args length = %d, want 2: %#v", len(args), args)
+	}
+	if args[1] != "Apartamento" {
+		t.Fatalf("property type arg = %#v, want Apartamento", args[1])
+	}
+	if got := where[len(where)-1]; got != "(p.tipo = $2 or p.tipo_de_imovel = $2)" {
+		t.Fatalf("regular property type filter = %s", got)
+	}
+}
+
+func TestAddPropertyTypeFilterExpandsHouse(t *testing.T) {
+	args, where := addPropertyTypeFilter([]any{"org-1"}, []string{"p.organization_id = $1::uuid"}, "Casa")
+
+	if len(args) != 3 {
+		t.Fatalf("args length = %d, want 3: %#v", len(args), args)
+	}
+	if args[1] != "Casa" {
+		t.Fatalf("exact property type arg = %#v", args[1])
+	}
+	aliases, ok := args[2].([]string)
+	if !ok {
+		t.Fatalf("alias arg type = %T, want []string", args[2])
+	}
+	if !containsString(aliases, "casa") || !containsString(aliases, "casa de condom\u00ednio") {
+		t.Fatalf("house aliases = %#v", aliases)
+	}
+
+	clause := where[len(where)-1]
+	for _, expected := range []string{
+		"p.tipo = $2",
+		"p.tipo_de_imovel = $2",
+		"= any($3::text[])",
+	} {
+		if !strings.Contains(clause, expected) {
+			t.Fatalf("house filter %q missing %q", clause, expected)
+		}
+	}
+	if strings.Contains(clause, "p.condominium_id is not null") {
+		t.Fatalf("house filter should not require condominium link: %s", clause)
+	}
+}
+
+func TestAddPropertyTypeFilterExpandsCondominiumHouse(t *testing.T) {
+	args, where := addPropertyTypeFilter([]any{"org-1"}, []string{"p.organization_id = $1::uuid"}, "Casa de condom\u00ednio")
+
+	if len(args) != 4 {
+		t.Fatalf("args length = %d, want 4: %#v", len(args), args)
+	}
+	if args[1] != "Casa de condom\u00ednio" {
+		t.Fatalf("exact property type arg = %#v", args[1])
+	}
+	explicitAliases, ok := args[2].([]string)
+	if !ok {
+		t.Fatalf("explicit alias arg type = %T, want []string", args[2])
+	}
+	if !containsString(explicitAliases, "casa de condom\u00ednio") || containsString(explicitAliases, "casa") {
+		t.Fatalf("explicit condominium house aliases = %#v", explicitAliases)
+	}
+	linkedAliases, ok := args[3].([]string)
+	if !ok {
+		t.Fatalf("linked alias arg type = %T, want []string", args[3])
+	}
+	if !containsString(linkedAliases, "casa") || !containsString(linkedAliases, "sobrado") || containsString(linkedAliases, "casa de condom\u00ednio") {
+		t.Fatalf("linked condominium house aliases = %#v", linkedAliases)
+	}
+
+	clause := where[len(where)-1]
+	for _, expected := range []string{
+		"p.tipo = $2",
+		"p.tipo_de_imovel = $2",
+		"= any($3::text[])",
+		"p.condominium_id is not null",
+		"= any($4::text[])",
+	} {
+		if !strings.Contains(clause, expected) {
+			t.Fatalf("condominium house filter %q missing %q", clause, expected)
+		}
+	}
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }

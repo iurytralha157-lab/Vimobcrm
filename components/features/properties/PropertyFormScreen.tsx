@@ -396,7 +396,7 @@ export default function PropertyForm() {
   const { data: proximities = [], isLoading: loadingProximities } = usePropertyProximities();
   const { data: cities = [] } = usePropertyCities();
   const { data: neighborhoods = [] } = usePropertyNeighborhoods(formData.city_id || undefined);
-  const { data: condominiums = [] } = usePropertyCondominiums(formData.neighborhood_id || undefined);
+  const { data: condominiums = [] } = usePropertyCondominiums();
   const { data: propertyOwners = [] } = usePropertyOwners();
   const { data: users = [] } = useUsers();
   const createPropertyType = useCreatePropertyType();
@@ -418,7 +418,6 @@ export default function PropertyForm() {
     isSuperAdmin,
     memberRole: tenantContext?.memberRole,
     permissions: tenantContext?.permissions,
-    propertyEditPolicy: organization?.property_edit_policy,
   };
   const propertyOwnership = property as PropertyOwnership | undefined;
   const canAssignProperty = canAssignProperties(propertyAccessContext);
@@ -1365,7 +1364,11 @@ export default function PropertyForm() {
                         <SelectItem value="__none__">Sem condomínio</SelectItem>
                         {condominiums.map(condominium => (
                           <SelectItem key={condominium.id} value={condominium.id}>
-                            {condominium.name}
+                            {[
+                              condominium.name,
+                              condominium.neighborhood?.name,
+                              condominium.city?.name,
+                            ].filter(Boolean).join(' - ')}
                             {condominium.default_condominium_fee ? ` - R$ ${Number(condominium.default_condominium_fee).toLocaleString('pt-BR')}` : ''}
                           </SelectItem>
                         ))}

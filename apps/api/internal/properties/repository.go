@@ -43,8 +43,10 @@ func NewRepository(db *dbpkg.Postgres, storageConfig StorageConfig) Repository {
 }
 
 func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, filter ListFilter) (ListResponse, error) {
-	args := []any{tenantContext.OrganizationID}
-	where := []string{"p.organization_id = $1::uuid"}
+	args, where := basePropertyWhere(tenantContext)
+	if filter.Scope == "own" {
+		args, where = addScopedPropertyVisibility(args, where, tenantContext, "p")
+	}
 
 	addFilter := func(clause string, value any) {
 		args = append(args, value)
@@ -57,13 +59,14 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 		where = append(where, fmt.Sprintf(`(
 			p.code ilike $%d
 			or p.title ilike $%d
+			or p.endereco ilike $%d
 			or p.bairro ilike $%d
 			or p.cidade ilike $%d
 			or p.uf ilike $%d
 			or p.tipo ilike $%d
 			or p.finalidade ilike $%d
 			or p.external_id ilike $%d
-		)`, index, index, index, index, index, index, index, index))
+		)`, index, index, index, index, index, index, index, index, index))
 	}
 	if filter.Status != "" {
 		addFilter("lower(trim(coalesce(p.status, ''))) = any($%d::text[])", propertyStatusAliases(filter.Status))
@@ -80,7 +83,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 		}
 	}
 	if filter.PropertyType != "" {
-		addFilter("p.tipo = $%d", filter.PropertyType)
+		args, where = addPropertyTypeFilter(args, where, filter.PropertyType)
 	}
 	if filter.City != "" {
 		addFilter("p.cidade ilike $%d", "%"+filter.City+"%")
@@ -255,8 +258,10 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 }
 
 func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, filter ListFilter) (StatsResponse, error) {
-	args := []any{tenantContext.OrganizationID}
-	where := []string{"p.organization_id = $1::uuid"}
+	args, where := basePropertyWhere(tenantContext)
+	if filter.Scope == "own" {
+		args, where = addScopedPropertyVisibility(args, where, tenantContext, "p")
+	}
 
 	addFilter := func(clause string, value any) {
 		args = append(args, value)
@@ -269,13 +274,14 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 		where = append(where, fmt.Sprintf(`(
 			p.code ilike $%d
 			or p.title ilike $%d
+			or p.endereco ilike $%d
 			or p.bairro ilike $%d
 			or p.cidade ilike $%d
 			or p.uf ilike $%d
 			or p.tipo ilike $%d
 			or p.finalidade ilike $%d
 			or p.external_id ilike $%d
-		)`, index, index, index, index, index, index, index, index))
+		)`, index, index, index, index, index, index, index, index, index))
 	}
 	if filter.Status != "" {
 		addFilter("lower(trim(coalesce(p.status, ''))) = any($%d::text[])", propertyStatusAliases(filter.Status))
@@ -292,7 +298,7 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 		}
 	}
 	if filter.PropertyType != "" {
-		addFilter("p.tipo = $%d", filter.PropertyType)
+		args, where = addPropertyTypeFilter(args, where, filter.PropertyType)
 	}
 	if filter.City != "" {
 		addFilter("p.cidade ilike $%d", "%"+filter.City+"%")
@@ -441,6 +447,83 @@ func propertyStatusAliases(status string) []string {
 	}
 }
 
+func addPropertyTypeFilter(args []any, where []string, propertyType string) ([]any, []string) {
+	args = append(args, propertyType)
+	exactIndex := len(args)
+
+	if isHousePropertyType(propertyType) {
+		args = append(args, housePropertyTypeAliases())
+		aliasIndex := len(args)
+		where = append(where, fmt.Sprintf(`(
+			p.tipo = $%[1]d
+			or p.tipo_de_imovel = $%[1]d
+			or lower(trim(coalesce(p.tipo, ''))) = any($%[2]d::text[])
+			or lower(trim(coalesce(p.tipo_de_imovel, ''))) = any($%[2]d::text[])
+		)`, exactIndex, aliasIndex))
+		return args, where
+	}
+
+	if !isCondominiumHousePropertyType(propertyType) {
+		where = append(where, fmt.Sprintf("(p.tipo = $%[1]d or p.tipo_de_imovel = $%[1]d)", exactIndex))
+		return args, where
+	}
+
+	args = append(args, condominiumHouseExplicitTypeAliases())
+	explicitAliasIndex := len(args)
+	args = append(args, condominiumHouseLinkedTypeAliases())
+	linkedAliasIndex := len(args)
+	where = append(where, fmt.Sprintf(`(
+		p.tipo = $%[1]d
+		or p.tipo_de_imovel = $%[1]d
+		or lower(trim(coalesce(p.tipo, ''))) = any($%[2]d::text[])
+		or lower(trim(coalesce(p.tipo_de_imovel, ''))) = any($%[2]d::text[])
+		or (
+			p.condominium_id is not null
+			and lower(trim(coalesce(nullif(p.tipo, ''), nullif(p.tipo_de_imovel, ''), ''))) = any($%[3]d::text[])
+		)
+	)`, exactIndex, explicitAliasIndex, linkedAliasIndex))
+	return args, where
+}
+
+func isHousePropertyType(propertyType string) bool {
+	return normalizeASCII(propertyType) == "casa"
+}
+
+func housePropertyTypeAliases() []string {
+	return []string{
+		"casa",
+		"casa de condominio",
+		"casa de condom\u00ednio",
+		"casa em condominio",
+		"casa em condom\u00ednio",
+	}
+}
+
+func isCondominiumHousePropertyType(propertyType string) bool {
+	switch normalizeASCII(propertyType) {
+	case "casa de condominio", "casa em condominio":
+		return true
+	default:
+		return false
+	}
+}
+
+func condominiumHouseExplicitTypeAliases() []string {
+	return []string{
+		"casa de condominio",
+		"casa de condom\u00ednio",
+		"casa em condominio",
+		"casa em condom\u00ednio",
+	}
+}
+
+func condominiumHouseLinkedTypeAliases() []string {
+	return []string{
+		"casa",
+		"sobrado",
+	}
+}
+
 func dealTypeFilterClause() string {
 	return `(
 		lower(trim(coalesce(p.finalidade, ''))) = any($%[1]d::text[])
@@ -512,7 +595,10 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, pr
 		where p.organization_id = $1::uuid
 		  and p.id = $2::uuid
 		limit 1
-	`, tenantContext.OrganizationID, propertyID))
+	`,
+		tenantContext.OrganizationID,
+		propertyID,
+	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrPropertyNotFound
 	}
@@ -597,11 +683,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err != nil {
 		return nil, err
 	}
-	editPolicy, err := repo.propertyEditPolicy(ctx, tx, tenantContext.OrganizationID)
-	if err != nil {
-		return nil, err
-	}
-	if !canEditProperty(tenantContext, current.CreatorID, current.ResponsibleUserID, editPolicy) &&
+	if !canEditProperty(tenantContext, current.CreatorID, current.ResponsibleUserID) &&
 		!canUpdatePropertyAvailability(tenantContext, input) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
@@ -690,11 +772,14 @@ func (repo Repository) ListHistory(ctx context.Context, tenantContext tenant.Con
 	if err := repo.db.Pool().QueryRow(ctx, `
 		select exists (
 			select 1
-			from public.properties
-			where organization_id = $1::uuid
-			  and id = $2::uuid
+			from public.properties p
+			where p.organization_id = $1::uuid
+			  and p.id = $2::uuid
 		)
-	`, tenantContext.OrganizationID, propertyID).Scan(&exists); err != nil {
+	`,
+		tenantContext.OrganizationID,
+		propertyID,
+	).Scan(&exists); err != nil {
 		return nil, err
 	}
 	if !exists {
@@ -827,22 +912,6 @@ func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, orga
 	snapshot.Code = textValue(code)
 	snapshot.Status = textValue(status)
 	return snapshot, nil
-}
-
-func (repo Repository) propertyEditPolicy(ctx context.Context, tx pgx.Tx, organizationID string) (string, error) {
-	var policy string
-	err := tx.QueryRow(ctx, `
-		select coalesce(nullif(property_edit_policy, ''), 'responsible_or_admin')
-		from public.organizations
-		where id = $1::uuid
-	`, organizationID).Scan(&policy)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "responsible_or_admin", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	return policy, nil
 }
 
 func (repo Repository) generatePropertyCode(ctx context.Context, tx pgx.Tx, organizationID string, propertyType string) (string, error) {
@@ -1503,6 +1572,56 @@ func normalizeASCII(value string) string {
 	return replacer.Replace(value)
 }
 
+func basePropertyWhere(tenantContext tenant.Context) ([]any, []string) {
+	return []any{tenantContext.OrganizationID}, []string{"p.organization_id = $1::uuid"}
+}
+
+func addScopedPropertyVisibility(args []any, where []string, tenantContext tenant.Context, alias string) ([]any, []string) {
+	args = append(args, canViewAllProperties(tenantContext), tenantContext.UserID, canViewTeamProperties(tenantContext))
+	canViewAllIndex := len(args) - 2
+	userIDIndex := len(args) - 1
+	canViewTeamIndex := len(args)
+	where = append(where, propertyVisibilitySQL(
+		fmt.Sprintf("$%d", canViewAllIndex),
+		fmt.Sprintf("$%d", userIDIndex),
+		fmt.Sprintf("$%d", canViewTeamIndex),
+		alias,
+	))
+	return args, where
+}
+
+func propertyVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, canViewTeamPlaceholder string, alias string) string {
+	return `(
+		` + canViewAllPlaceholder + `::boolean
+		or ` + alias + `.responsible_user_id = ` + userIDPlaceholder + `::uuid
+		or ` + alias + `.created_by = ` + userIDPlaceholder + `::uuid
+		or (
+			` + canViewTeamPlaceholder + `::boolean
+			and exists (
+				select 1
+				from public.team_members leader
+				join public.team_members member
+				  on member.organization_id = leader.organization_id
+				 and member.team_id = leader.team_id
+				 and member.is_active = true
+				where leader.organization_id = ` + alias + `.organization_id
+				  and leader.user_id = ` + userIDPlaceholder + `::uuid
+				  and leader.is_active = true
+				  and leader.is_leader = true
+				  and (member.user_id = ` + alias + `.responsible_user_id or member.user_id = ` + alias + `.created_by)
+			)
+		)
+	)`
+}
+
+func canViewAllProperties(tenantContext tenant.Context) bool {
+	return canManageProperties(tenantContext) || tenantContext.HasPermission("property_view_all")
+}
+
+func canViewTeamProperties(tenantContext tenant.Context) bool {
+	return tenantContext.IsTeamLeader || tenantContext.HasPermission("lead_view_team") || tenantContext.HasPermission("property_view_team")
+}
+
 func canManageProperties(tenantContext tenant.Context) bool {
 	return tenantContext.IsSuperAdmin ||
 		tenantContext.HasRole("owner", "admin", "manager") ||
@@ -1553,11 +1672,8 @@ func sameOptionalUUID(value any, current string) bool {
 	return next == strings.TrimSpace(current)
 }
 
-func canEditProperty(tenantContext tenant.Context, creatorID string, responsibleUserID string, editPolicy ...string) bool {
+func canEditProperty(tenantContext tenant.Context, creatorID string, responsibleUserID string) bool {
 	if canManageProperties(tenantContext) {
-		return true
-	}
-	if len(editPolicy) > 0 && editPolicy[0] == "everyone" && tenantContext.UserID != "" {
 		return true
 	}
 	return (creatorID != "" && creatorID == tenantContext.UserID) ||

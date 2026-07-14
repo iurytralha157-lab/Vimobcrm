@@ -158,6 +158,9 @@ export function useLeadMetaFilters(dateRange?: { from: Date; to: Date } | null) 
     },
     staleTime: PIPELINE_REFERENCE_STALE_TIME_MS,
     gcTime: PIPELINE_CACHE_TIME_MS,
+    retry: 1,
+    retryDelay: 800,
+    placeholderData: keepPreviousData,
   });
 }
 

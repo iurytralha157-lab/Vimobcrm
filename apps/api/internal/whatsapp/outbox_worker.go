@@ -12,11 +12,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const (
-	whatsappOutboxWorkerInterval = time.Second
-	whatsappOutboxWorkerBatch    = 5
-)
-
 var whatsappOutboxWorkerID = "vimob-api-whatsapp-outbox-" + randomHex(8)
 var whatsappOutboxWorkerWake = make(chan struct{}, 1)
 
@@ -41,12 +36,16 @@ type pendingWhatsAppOutbox struct {
 }
 
 func (handler Handler) StartOutboxWorker(ctx context.Context, logger *slog.Logger) {
+	config := handler.workerConfig.normalized()
+	if !config.OutboxWorkerEnabled {
+		return
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	go func() {
-		pollTicker := time.NewTicker(whatsappOutboxWorkerInterval)
+		pollTicker := time.NewTicker(config.OutboxWorkerInterval)
 		cleanupTicker := time.NewTicker(time.Hour)
 		defer pollTicker.Stop()
 		defer cleanupTicker.Stop()
@@ -59,11 +58,11 @@ func (handler Handler) StartOutboxWorker(ctx context.Context, logger *slog.Logge
 					logger.Error("whatsapp outbox cleanup failed", "error", err)
 				}
 			case <-pollTicker.C:
-				if err := handler.repo.ProcessWhatsAppOutbox(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				if err := handler.repo.ProcessWhatsAppOutboxWithBatch(ctx, config.OutboxWorkerBatch); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("whatsapp outbox worker failed", "error", err)
 				}
 			case <-whatsappOutboxWorkerWake:
-				if err := handler.repo.ProcessWhatsAppOutbox(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				if err := handler.repo.ProcessWhatsAppOutboxWithBatch(ctx, config.OutboxWorkerBatch); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("whatsapp outbox worker failed", "error", err)
 				}
 			}
@@ -101,7 +100,11 @@ func (repo Repository) CleanupTerminalWhatsAppOutbox(ctx context.Context, limit 
 }
 
 func (repo Repository) ProcessWhatsAppOutbox(ctx context.Context) error {
-	items, err := repo.claimWhatsAppOutbox(ctx)
+	return repo.ProcessWhatsAppOutboxWithBatch(ctx, defaultWhatsAppOutboxWorkerBatch)
+}
+
+func (repo Repository) ProcessWhatsAppOutboxWithBatch(ctx context.Context, batch int) error {
+	items, err := repo.claimWhatsAppOutboxWithBatch(ctx, batch)
 	if err != nil {
 		return err
 	}
@@ -253,6 +256,11 @@ func (repo Repository) getOutboundMessageByClientID(ctx context.Context, organiz
 }
 
 func (repo Repository) claimWhatsAppOutbox(ctx context.Context) ([]pendingWhatsAppOutbox, error) {
+	return repo.claimWhatsAppOutboxWithBatch(ctx, defaultWhatsAppOutboxWorkerBatch)
+}
+
+func (repo Repository) claimWhatsAppOutboxWithBatch(ctx context.Context, batch int) ([]pendingWhatsAppOutbox, error) {
+	batch = normalizeWorkerBatch(batch, defaultWhatsAppOutboxWorkerBatch)
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -323,13 +331,13 @@ func (repo Repository) claimWhatsAppOutbox(ctx context.Context) ([]pendingWhatsA
 			queued.payload::text,
 			queued.attempts,
 			queued.max_attempts
-	`, whatsappOutboxWorkerBatch, whatsappOutboxWorkerID)
+	`, batch, whatsappOutboxWorkerID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	items := make([]pendingWhatsAppOutbox, 0, whatsappOutboxWorkerBatch)
+	items := make([]pendingWhatsAppOutbox, 0, batch)
 	for rows.Next() {
 		var item pendingWhatsAppOutbox
 		var rawPayload string

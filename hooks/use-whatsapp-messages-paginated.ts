@@ -9,6 +9,8 @@ import {
 import type { WhatsAppMessage } from './use-whatsapp-conversations'
 import { useWhatsAppQueryScope } from './use-whatsapp-query-scope'
 
+const WHATSAPP_PAGINATED_MESSAGES_REFETCH_MS = 30_000
+
 interface PaginatedMessagesResult {
   messages: WhatsAppMessage[]
   nextCursor: string | null
@@ -21,7 +23,7 @@ export function useWhatsAppMessagesPaginated(
   const queryClient = useQueryClient()
   const scope = useWhatsAppQueryScope()
   const pageSize = options?.pageSize || 30
-  const refreshInterval = options?.refetchIntervalMs ?? 15_000
+  const refreshInterval = options?.refetchIntervalMs ?? WHATSAPP_PAGINATED_MESSAGES_REFETCH_MS
   const queryKey = whatsappQueryKeys.paginatedMessages(scope, conversationId, pageSize)
 
   const query = useInfiniteQuery({
@@ -57,7 +59,7 @@ export function useWhatsAppMessagesPaginated(
     },
     refetchIntervalInBackground: false,
     refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
     refetchOnReconnect: true,
   })
 

@@ -138,23 +138,18 @@ export async function getLeadMetaFilters(params: {
   organizationId?: string | null
   dateRange?: { from: Date; to: Date } | null
 }) {
-  try {
-    const response = await vimobAPIRequest<LeadMetaFiltersEnvelope>('/v1/lead-meta-filters', {
-      organizationId: params.organizationId,
-      query: {
-        dateFrom: params.dateRange?.from.toISOString(),
-        dateTo: params.dateRange?.to.toISOString(),
-      },
-      timeoutMs: 4_000,
-      skipTelemetry: true,
-    })
-    validateDomainResponse(leadMetaFiltersResponseSchema, response, 'pipeline-board.meta-filters')
+  const response = await vimobAPIRequest<LeadMetaFiltersEnvelope>('/v1/lead-meta-filters', {
+    organizationId: params.organizationId,
+    query: {
+      dateFrom: params.dateRange?.from.toISOString(),
+      dateTo: params.dateRange?.to.toISOString(),
+    },
+    timeoutMs: 8_000,
+    skipTelemetry: true,
+  })
+  validateDomainResponse(leadMetaFiltersResponseSchema, response, 'pipeline-board.meta-filters')
 
-    return response.data
-  } catch (error) {
-    if (!isReadAPIUnavailable(error)) throw error
-    return { campaigns: [], adsets: [], ads: [] }
-  }
+  return response.data
 }
 
 function isReadAPIUnavailable(error: unknown) {

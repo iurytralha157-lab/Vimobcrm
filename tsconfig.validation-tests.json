@@ -18,6 +18,8 @@
     "lib/validation/users.ts",
     "lib/validation/whatsapp.ts",
     "lib/validation/*.test.ts",
+    "lib/access/management.ts",
+    "lib/access/management.test.ts",
     "lib/access/navigation.ts",
     "lib/access/navigation.test.ts",
     "lib/access/tenant-navigation.ts",

@@ -415,7 +415,7 @@ function CampaignTrackingHover({ leadMeta }: { leadMeta: CampaignTrackingDetails
   const hasLinks = links.some(([, value]) => Boolean(metaText(value)));
 
   return (
-    <HoverCard openDelay={100} closeDelay={120}>
+    <HoverCard openDelay={100} closeDelay={420}>
       <HoverCardTrigger asChild>
         <button
           type="button"
@@ -430,7 +430,7 @@ function CampaignTrackingHover({ leadMeta }: { leadMeta: CampaignTrackingDetails
       <HoverCardContent
         side="right"
         align="center"
-        sideOffset={10}
+        sideOffset={4}
         avoidCollisions={false}
         className="vimob-popover-content z-[100] w-[min(420px,calc(100vw-2rem))] rounded-[8px] border-0 p-0 text-left text-[var(--app-text-primary)] shadow-[0_22px_70px_rgba(0,0,0,0.28)] dark:shadow-[0_22px_70px_rgba(0,0,0,0.58)]"
       >
@@ -549,7 +549,7 @@ function getScheduleStatusLabel(status?: string | null, isLate = false) {
   if (status === 'cancelled' || status === 'canceled') return 'Cancelado';
   if (status === 'no_show') return 'Não compareceu';
   if (isLate) return 'Atrasado';
-  return 'Pendente';
+  return 'Em aberto';
 }
 
 function getScheduleStatusClass(status?: string | null, isLate = false) {
@@ -616,7 +616,7 @@ function CompactScheduleEventsList({
             type="button"
             onClick={() => onEditEvent(event)}
             className={cn(
-              'flex w-full items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-2 text-left transition-colors hover:bg-primary/10',
+              'flex w-full items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-1.5 text-left transition-colors hover:bg-primary/10',
               isCompleted && 'opacity-65',
             )}
           >
@@ -629,16 +629,18 @@ function CompactScheduleEventsList({
               {isCompleted ? <Check className="h-3 w-3" /> : <EventIcon className="h-3 w-3" />}
             </span>
             <span className="min-w-0 flex-1">
-              <span className={cn('block truncate text-xs font-medium', isCompleted && 'line-through')}>
+              <span className={cn('block truncate text-[11px] font-medium leading-tight', isCompleted && 'line-through')}>
                 {event.title || scheduleEventTypeLabels[eventType]}
               </span>
-              <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-[10px] text-[var(--app-text-tertiary)]">
-                <span>{scheduleEventTypeLabels[eventType]}</span>
+              <span className="mt-px flex min-w-0 flex-wrap items-center gap-1 text-[10.5px] font-medium leading-tight text-[var(--app-text-secondary)]">
+                <span className="font-semibold text-[var(--app-text-primary)]">{scheduleEventTypeLabels[eventType]}</span>
                 <span>-</span>
                 <span>{getScheduleDateLabel(event, locale)}</span>
-                <span className={cn('rounded-[4px] px-1.5 py-0.5 font-medium', getScheduleStatusClass(event.status, isLate))}>
-                  {getScheduleStatusLabel(event.status, isLate)}
-                </span>
+                {!isCompleted && (
+                  <span className={cn('rounded-[4px] px-1.5 py-0.5 font-medium', getScheduleStatusClass(event.status, isLate))}>
+                    {getScheduleStatusLabel(event.status, isLate)}
+                  </span>
+                )}
               </span>
             </span>
           </button>
@@ -873,7 +875,7 @@ export function LeadDetailDialog({
   const updateCommission = useUpdateLeadCommission();
   const dealStatusChange = useDealStatusChange();
   const { recordFirstResponse } = useRecordFirstResponseOnAction();
-  const { profile, organization } = useAuth();
+  const { profile, organization, tenantContext } = useAuth();
   const accessScope = useUserAccessScope();
   const { data: teams = [] } = useTeams({ includeInactive: true });
   const createCallMutation = useCreateCall();
@@ -1042,16 +1044,24 @@ export function LeadDetailDialog({
   const leadTags = Array.isArray(localLead.tags) ? localLead.tags.filter(hasTagId) : [];
   const safeAllTags = Array.isArray(allTags) ? allTags.filter(Boolean) : [];
   const safeAllUsers = Array.isArray(allUsers) ? allUsers.filter(Boolean) : [];
-  const canTransferLead = accessScope.canTransferAnyLead || (
+  const currentUserId = profile?.id || tenantContext?.userId || '';
+  const currentAssigneeId = localLead.assigned_user_id || localLead.assignee?.id || '';
+  const canTransferOwnLead =
+    !!currentUserId &&
+    !!currentAssigneeId &&
+    currentAssigneeId === currentUserId;
+  const canTransferTeamLead = (
     accessScope.isTeamLeader &&
     (
       (!!localLead.pipeline_id && accessScope.ledPipelineIds.includes(localLead.pipeline_id)) ||
-      (!!localLead.assigned_user_id && accessScope.ledUserIds.includes(localLead.assigned_user_id))
+      (!!currentAssigneeId && accessScope.ledUserIds.includes(currentAssigneeId))
     )
   );
-  const assignableUsers = accessScope.canTransferAnyLead
+  const canTransferLead = accessScope.canTransferAnyLead || canTransferOwnLead || canTransferTeamLead;
+  const canUnassignLead = accessScope.canTransferAnyLead || canTransferTeamLead;
+  const assignableUsers = accessScope.canTransferAnyLead || canTransferOwnLead
     ? safeAllUsers
-    : accessScope.isTeamLeader
+    : canTransferTeamLead
       ? safeAllUsers.filter((candidate) => accessScope.ledUserIds.includes(candidate.id))
       : [];
   const safeLeadTasks = Array.isArray(leadTasks) ? leadTasks.filter(Boolean) : [];
@@ -1267,6 +1277,10 @@ export function LeadDetailDialog({
   const handleAssignUser = async (userId: string | null) => {
     if (!canTransferLead) {
       toast.error('Você não tem permissão para trocar o responsável deste lead');
+      return;
+    }
+    if (!userId && !canUnassignLead) {
+      toast.error('Você só pode transferir seus leads para outro usuário');
       return;
     }
     if (userId && !assignableUsers.some((candidate) => candidate.id === userId)) {
@@ -2013,7 +2027,7 @@ export function LeadDetailDialog({
                 />
                 <div className="flex justify-end">
                   <Button
-                    className="rounded-xl px-4"
+                    className="lead-detail-primary-action rounded-[6px] px-3"
                     size="sm"
                     disabled={!feedback.trim() || updateLead.isPending}
                     onClick={handleSaveFeedback}
@@ -2034,8 +2048,8 @@ export function LeadDetailDialog({
                   setEditingScheduleEvent(null);
                   setScheduleDefaultType('call');
                   setScheduleFormOpen(true);
-                }} className="rounded-xl h-11 px-6">
-                  <Plus className="h-4 w-4 mr-2" />
+                }} className="lead-detail-primary-action rounded-[6px] px-3">
+                  <Plus className="h-3.5 w-3.5" />
                   Novo agendamento
                 </Button>
               </div>
@@ -2065,8 +2079,8 @@ export function LeadDetailDialog({
                 {!isEditingContact && <Button variant="ghost" size="sm" onClick={() => {
                     setActiveTab('contact');
                     setIsEditingContact(true);
-                  }} className="h-8 px-3 rounded-full">
-                    <FileEdit className="h-3.5 w-3.5 mr-1" />
+                  }} className="lead-detail-subtle-action h-8 rounded-[6px] px-3">
+                    <FileEdit className="h-3.5 w-3.5" />
                     Editar
                   </Button>}
                 </div>
@@ -2833,8 +2847,8 @@ export function LeadDetailDialog({
                 <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-xs font-semibold">Dados do contato</h3>
-                    <Button variant="ghost" size="sm" className="h-7 rounded-[5px] px-2 text-[10px]" onClick={() => setIsEditingContact((value) => !value)}>
-                      <FileEdit className="mr-1 h-3 w-3" />
+                    <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" onClick={() => setIsEditingContact((value) => !value)}>
+                      <FileEdit className="h-3 w-3" />
                       {isEditingContact ? 'Fechar' : 'Editar'}
                     </Button>
                   </div>
@@ -2875,8 +2889,8 @@ export function LeadDetailDialog({
                     <h3 className="text-xs font-semibold">Documentação</h3>
                     {(accessScope.isAdmin || profile?.id === lead.assigned_user_id) && (
                       <>
-                        <Button variant="ghost" size="sm" className="h-7 rounded-[5px] px-2 text-[10px]" disabled={isUploading} onClick={() => fileInputRef.current?.click()}>
-                          {isUploading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Paperclip className="mr-1 h-3 w-3" />}
+                        <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" disabled={isUploading} onClick={() => fileInputRef.current?.click()}>
+                          {isUploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
                           Anexar
                         </Button>
                         <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileUpload} />
@@ -2916,14 +2930,14 @@ export function LeadDetailDialog({
                     </div>
                     <Button
                       size="sm"
-                      className="lead-agenda-action h-8 shrink-0 rounded-[6px]"
+                      className="lead-detail-primary-action lead-agenda-action h-8 shrink-0 rounded-[6px] px-2.5"
                       onClick={() => {
                         setEditingScheduleEvent(null);
                         setScheduleDefaultType('visit');
                         setScheduleFormOpen(true);
                       }}
                     >
-                      <Calendar className="mr-1.5 h-3.5 w-3.5" />
+                      <Calendar className="h-3.5 w-3.5" />
                       Agendar
                     </Button>
                   </div>
@@ -2995,7 +3009,7 @@ export function LeadDetailDialog({
                     className="min-h-[92px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"
                   />
                   <div className="mt-2 flex justify-end">
-                    <Button className="h-8 rounded-[6px] px-3" disabled={!feedback.trim() || updateLead.isPending} onClick={handleSaveFeedback}>
+                    <Button className="lead-detail-primary-action h-8 rounded-[6px] px-3" disabled={!feedback.trim() || updateLead.isPending} onClick={handleSaveFeedback}>
                       Registrar feedback
                     </Button>
                   </div>
@@ -3227,8 +3241,8 @@ export function LeadDetailDialog({
                 <div data-tour="lead-detail-contact" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-xs font-semibold">Dados do contato</h3>
-                    <Button variant="ghost" size="sm" className="h-7 rounded-[5px] px-2 text-[10px]" onClick={() => setIsEditingContact((value) => !value)}>
-                      <FileEdit className="mr-1 h-3 w-3" />
+                    <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" onClick={() => setIsEditingContact((value) => !value)}>
+                      <FileEdit className="h-3 w-3" />
                       {isEditingContact ? 'Fechar' : 'Editar'}
                     </Button>
                   </div>
@@ -3267,8 +3281,8 @@ export function LeadDetailDialog({
                     <h3 className="text-xs font-semibold">Documentacao</h3>
                     {(accessScope.isAdmin || profile?.id === lead.assigned_user_id) && (
                       <>
-                        <Button variant="ghost" size="sm" className="h-7 rounded-[5px] px-2 text-[10px]" disabled={isUploading} onClick={() => fileInputRef.current?.click()}>
-                          {isUploading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Paperclip className="mr-1 h-3 w-3" />}
+                        <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" disabled={isUploading} onClick={() => fileInputRef.current?.click()}>
+                          {isUploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
                           Anexar
                         </Button>
                         <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileUpload} />
@@ -3309,14 +3323,14 @@ export function LeadDetailDialog({
                     </div>
                     <Button
                       size="sm"
-                      className="lead-agenda-action h-8 shrink-0 rounded-[6px]"
+                      className="lead-detail-primary-action lead-agenda-action h-8 shrink-0 rounded-[6px] px-2.5"
                       onClick={() => {
                         setEditingScheduleEvent(null);
                         setScheduleDefaultType('visit');
                         setScheduleFormOpen(true);
                       }}
                     >
-                      <Calendar className="mr-1.5 h-3.5 w-3.5" />
+                      <Calendar className="h-3.5 w-3.5" />
                       Agendar
                     </Button>
                   </div>
@@ -3389,7 +3403,7 @@ export function LeadDetailDialog({
                   />
                   <div className="mt-2 flex justify-end">
                     <Button
-                      className="h-8 rounded-[6px] px-3"
+                      className="lead-detail-primary-action h-8 rounded-[6px] px-3"
                       disabled={!feedback.trim() || updateLead.isPending}
                       onClick={handleSaveFeedback}
                     >
@@ -3790,7 +3804,7 @@ export function LeadDetailDialog({
                   />
                   <div className="flex justify-end">
                     <Button
-                      className="rounded-xl px-4"
+                      className="lead-detail-primary-action rounded-[6px] px-3"
                       disabled={!feedback.trim() || updateLead.isPending}
                       onClick={handleSaveFeedback}
                     >
@@ -3811,8 +3825,8 @@ export function LeadDetailDialog({
                   setEditingScheduleEvent(null);
                   setScheduleDefaultType('call');
                   setScheduleFormOpen(true);
-                }} className="rounded-xl h-11 px-6">
-                  <Plus className="h-4 w-4 mr-2" />
+                }} className="lead-detail-primary-action rounded-[6px] px-3">
+                  <Plus className="h-3.5 w-3.5" />
                   Novo agendamento
                 </Button>
               </div>
@@ -3844,8 +3858,8 @@ export function LeadDetailDialog({
                       {!isEditingContact ? <Button variant="ghost" size="sm" onClick={() => {
                         setActiveTab('contact');
                         setIsEditingContact(true);
-                      }} className="h-8 px-3 rounded-full">
-                        <FileEdit className="h-3.5 w-3.5 mr-1" />
+                      }} className="lead-detail-subtle-action h-8 rounded-[6px] px-3">
+                        <FileEdit className="h-3.5 w-3.5" />
                         Editar
                       </Button> : <div className="flex gap-2">
                         <Button variant="ghost" size="sm" onClick={() => {
@@ -4070,7 +4084,7 @@ export function LeadDetailDialog({
                             <Button
                               variant="outline"
                               size="sm"
-                              className="h-8 gap-1.5 px-3"
+                              className="lead-detail-subtle-action h-8 gap-1 px-3"
                               disabled={isUploading}
                               onClick={() => fileInputRef.current?.click()}
                             >

@@ -1,6 +1,7 @@
 package properties
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -74,6 +75,63 @@ func TestCanAssignPropertiesRequiresManagerPermission(t *testing.T) {
 	}
 }
 
+func TestPropertyVisibilitySQLIncludesOwnAndTeamPredicates(t *testing.T) {
+	clause := propertyVisibilitySQL("$2", "$3", "$4", "p")
+	if !strings.Contains(clause, "p.responsible_user_id = $3::uuid") {
+		t.Fatalf("scoped visibility must include responsible properties: %s", clause)
+	}
+	if !strings.Contains(clause, "p.created_by = $3::uuid") {
+		t.Fatalf("scoped visibility must include properties created by the user: %s", clause)
+	}
+	if !strings.Contains(clause, "public.team_members leader") {
+		t.Fatalf("team leaders must be scoped through team membership: %s", clause)
+	}
+}
+
+func TestCanViewAllPropertiesHonorsManagersAndExplicitPermission(t *testing.T) {
+	managerContext := tenant.Context{
+		UserID:         "manager-1",
+		OrganizationID: "org-1",
+		MemberRole:     "manager",
+	}
+	if !canViewAllProperties(managerContext) {
+		t.Fatal("managers should see all organization properties")
+	}
+
+	userContext := tenant.Context{
+		UserID:         "user-1",
+		OrganizationID: "org-1",
+		MemberRole:     "user",
+	}
+	if canViewAllProperties(userContext) {
+		t.Fatal("regular users should not see all organization properties")
+	}
+
+	viewAllContext := tenant.Context{
+		UserID:         "user-2",
+		OrganizationID: "org-1",
+		MemberRole:     "user",
+		Permissions:    []string{"property_view_all"},
+	}
+	if !canViewAllProperties(viewAllContext) {
+		t.Fatal("property_view_all permission should allow full property visibility")
+	}
+}
+
+func TestCanViewTeamPropertiesHonorsTeamLeaderScope(t *testing.T) {
+	if !canViewTeamProperties(tenant.Context{IsTeamLeader: true}) {
+		t.Fatal("team leaders should be allowed to see team-scoped properties")
+	}
+
+	if !canViewTeamProperties(tenant.Context{Permissions: []string{"lead_view_team"}}) {
+		t.Fatal("lead_view_team permission should allow team-scoped properties")
+	}
+
+	if canViewTeamProperties(tenant.Context{MemberRole: "user"}) {
+		t.Fatal("regular users should not see team-scoped properties")
+	}
+}
+
 func TestPropertyAssignmentChangeDetection(t *testing.T) {
 	current := propertySnapshot{
 		CreatorID:         "creator-1",
@@ -99,19 +157,32 @@ func TestPropertyAssignmentChangeDetection(t *testing.T) {
 	}
 }
 
-func TestCanEditPropertyHonorsOrganizationPolicy(t *testing.T) {
+func TestCanEditPropertyRequiresManagerOrOwnership(t *testing.T) {
 	userContext := tenant.Context{
 		UserID:         "user-1",
 		OrganizationID: "org-1",
 		MemberRole:     "user",
 	}
 
-	if !canEditProperty(userContext, "other-user", "another-user", "everyone") {
-		t.Fatal("regular organization users should edit property details when policy is everyone")
+	if canEditProperty(userContext, "other-user", "another-user") {
+		t.Fatal("regular organization users should not edit another user's property details")
 	}
 
-	if canEditProperty(userContext, "other-user", "another-user", "responsible_or_admin") {
-		t.Fatal("regular organization users should not edit another user's property under restricted policy")
+	if !canEditProperty(userContext, "user-1", "another-user") {
+		t.Fatal("property creator should edit property details")
+	}
+
+	if !canEditProperty(userContext, "other-user", "user-1") {
+		t.Fatal("responsible user should edit property details")
+	}
+
+	adminContext := tenant.Context{
+		UserID:         "admin-1",
+		OrganizationID: "org-1",
+		MemberRole:     "admin",
+	}
+	if !canEditProperty(adminContext, "other-user", "another-user") {
+		t.Fatal("property managers should edit any organization property")
 	}
 }
 

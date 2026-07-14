@@ -33,11 +33,14 @@ interface AppLayoutProps {
 
 function MaintenanceBanner() {
   const { data: settings } = useSystemSettings();
-  const { profile, organization, isSuperAdmin, userOrganizations } = useAuth();
+  const { profile, organization, tenantContext, isSuperAdmin, userOrganizations } = useAuth();
 
   const activeOrganizationId = organization?.id || profile?.organization_id;
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
-  const isAdmin = canManageOrganization({ isSuperAdmin, memberRole: activeMemberRole });
+  const fallbackMemberRole = tenantContext && tenantContext.organizationId === activeOrganizationId
+    ? tenantContext.memberRole
+    : undefined;
+  const isAdmin = canManageOrganization({ isSuperAdmin, memberRole: activeMemberRole || fallbackMemberRole });
 
   if (!settings?.maintenance_mode || isAdmin) return null;
 

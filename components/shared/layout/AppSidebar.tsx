@@ -271,7 +271,7 @@ const bottomItems: NavItem[] = [
 export const AppSidebar = React.memo(function AppSidebar() {
   const pathname = usePathname() || '';
   const searchParams = useSearchParams();
-  const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
+  const { profile, isSuperAdmin, organization, tenantContext, userOrganizations } = useAuth();
   const { t } = useLanguage();
   const { hasModule } = useOrganizationModules();
   const { hasPermission } = useUserPermissions();
@@ -294,7 +294,10 @@ export const AppSidebar = React.memo(function AppSidebar() {
   const isBillingBlocked = !isSuperAdmin && isBillingBlockedStatus(organization?.subscription_status);
   const activeOrganizationId = organization?.id || profile?.organization_id;
   const activeOrganizationMembership = userOrganizations.find(org => org.organization_id === activeOrganizationId);
-  const activeMemberRole = activeOrganizationMembership?.member_role;
+  const fallbackMemberRole = tenantContext && tenantContext.organizationId === activeOrganizationId
+    ? tenantContext.memberRole
+    : undefined;
+  const activeMemberRole = activeOrganizationMembership?.member_role || fallbackMemberRole;
   const canAccessFinancialModule = canUseFinancialModule({
     id: activeOrganizationId,
     name: organization?.name || activeOrganizationMembership?.organization_name,

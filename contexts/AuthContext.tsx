@@ -120,6 +120,60 @@ interface ImpersonateSession {
   orgName: string;
 }
 
+const AUTH_SNAPSHOT_VERSION = 1;
+const AUTH_SNAPSHOT_TTL_MS = 1000 * 60 * 60 * 8;
+
+interface CachedAuthSnapshot {
+  version: number;
+  cachedAt: number;
+  profile: UserProfile;
+  organization: Organization | null;
+  tenantContext: TenantContext | null;
+  isSuperAdmin: boolean;
+}
+
+function authSnapshotKey(userId: string) {
+  return `vimob_auth_snapshot_${userId}`;
+}
+
+function readAuthSnapshot(userId: string): CachedAuthSnapshot | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = localStorage.getItem(authSnapshotKey(userId));
+    if (!raw) return null;
+
+    const snapshot = JSON.parse(raw) as Partial<CachedAuthSnapshot>;
+    if (
+      snapshot.version !== AUTH_SNAPSHOT_VERSION ||
+      !snapshot.cachedAt ||
+      Date.now() - snapshot.cachedAt > AUTH_SNAPSHOT_TTL_MS ||
+      !snapshot.profile?.id
+    ) {
+      localStorage.removeItem(authSnapshotKey(userId));
+      return null;
+    }
+
+    return snapshot as CachedAuthSnapshot;
+  } catch {
+    localStorage.removeItem(authSnapshotKey(userId));
+    return null;
+  }
+}
+
+function writeAuthSnapshot(userId: string, snapshot: Omit<CachedAuthSnapshot, 'version' | 'cachedAt'>) {
+  if (typeof window === 'undefined') return;
+
+  localStorage.setItem(
+    authSnapshotKey(userId),
+    JSON.stringify({
+      version: AUTH_SNAPSHOT_VERSION,
+      cachedAt: Date.now(),
+      ...snapshot,
+    }),
+  );
+}
+
 interface AuthContextType {
   user: User | null;
   session: Session | null;
@@ -152,7 +206,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const profileRef = useRef<UserProfile | null>(null);
   const [organization, setOrganization] = useState<Organization | null>(null);
+  const organizationRef = useRef<Organization | null>(null);
   const [tenantContext, setTenantContext] = useState<TenantContext | null>(null);
   const [loading, setLoading] = useState(true);
   const [authInitialized, setAuthInitialized] = useState(false);
@@ -171,6 +227,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       organizationsLoaded,
     };
   }, [authInitialized, organizationsLoaded]);
+
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
+
+  useEffect(() => {
+    organizationRef.current = organization;
+  }, [organization]);
 
   useEffect(() => {
     if (organization) {
@@ -235,9 +299,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return false;
         }
 
+        const organizationData = response.organization as Organization | null;
+        profileRef.current = profileData;
+        organizationRef.current = organizationData;
         setProfile(profileData);
-        setOrganization(response.organization as Organization | null);
+        setOrganization(organizationData);
         setTenantContext(response.context);
+
+        writeAuthSnapshot(userId, {
+          profile: profileData,
+          organization: organizationData,
+          tenantContext: response.context,
+          isSuperAdmin: superAdmin,
+        });
 
         if (response.context.organizationId) {
           localStorage.setItem(
@@ -252,8 +326,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error('Error fetching profile:', error);
         if (isExpiredAPISessionError(error)) {
           isLoggingOutRef.current = true;
+          localStorage.removeItem(authSnapshotKey(userId));
           setUser(null);
           setSession(null);
+          profileRef.current = null;
+          organizationRef.current = null;
           setProfile(null);
           setOrganization(null);
           setTenantContext(null);
@@ -285,7 +362,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .single();
       
       if (data) {
-        setProfile(prev => prev ? { ...prev, ...data } : null);
+        setProfile(prev => {
+          const next = prev ? { ...prev, ...data } : null;
+          profileRef.current = next;
+          return next;
+        });
       }
     } catch (error) {
       console.error('Error fetching full profile:', error);
@@ -314,7 +395,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .eq('id', orgId)
       .single();
 
-    if (orgData) setOrganization(orgData as Organization);
+    if (orgData) {
+      organizationRef.current = orgData as Organization;
+      setOrganization(orgData as Organization);
+    }
   };
 
   const stopImpersonate = async () => {
@@ -328,6 +412,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setImpersonating(null);
     localStorage.removeItem('impersonating');
+    organizationRef.current = null;
     setOrganization(null); // Limpa org impersonada imediatamente
 
     // Recarregar org original do super admin (usando organization_id real do banco)
@@ -352,6 +437,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .single();
 
     if (orgData) {
+      organizationRef.current = orgData as Organization;
       setOrganization(orgData as Organization);
     }
 
@@ -365,9 +451,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (memberData) {
       const memberRole = memberData.role;
       const newRole = normalizeProfileRole(memberRole);
-      setProfile(prev => prev ? { ...prev, organization_id: orgId, role: newRole } : prev);
+      setProfile(prev => {
+        const next = prev ? { ...prev, organization_id: orgId, role: newRole } : prev;
+        profileRef.current = next;
+        return next;
+      });
     } else {
-      setProfile(prev => prev ? { ...prev, organization_id: orgId } : prev);
+      setProfile(prev => {
+        const next = prev ? { ...prev, organization_id: orgId } : prev;
+        profileRef.current = next;
+        return next;
+      });
     }
   };
 
@@ -421,12 +515,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const uniqueOrgs = Array.from(orgsMap.values());
         setUserOrganizations(uniqueOrgs);
         const count = uniqueOrgs.length;
+        const currentOrganizationId =
+          organizationRef.current?.id || profileRef.current?.organization_id || null;
         authDebug('[AuthContext] found', count, 'active organizations');
 
         if (count === 1) {
           const onlyOrgId = uniqueOrgs[0].organization_id;
           
-          if (!organization || organization.id !== onlyOrgId) {
+          if (currentOrganizationId !== onlyOrgId) {
             authDebug('[AuthContext] auto-selecting single org:', onlyOrgId);
             setIsInitializingOrg(true);
             try {
@@ -438,14 +534,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } else if (count > 1) {
           if (options?.forceSelectorForMultiOrg) {
             authDebug('[AuthContext] multiple organizations found; forcing organization selector');
+            organizationRef.current = null;
             setOrganization(null);
-            setProfile(prev => prev ? { ...prev, organization_id: null } : prev);
+            setProfile(prev => {
+              const next = prev ? { ...prev, organization_id: null } : prev;
+              profileRef.current = next;
+              return next;
+            });
             return;
           }
 
           const savedOrgId = localStorage.getItem(`vimob_active_organization_${userId}`);
           
-          if (savedOrgId && (!organization || organization.id !== savedOrgId)) {
+          if (savedOrgId && currentOrganizationId !== savedOrgId) {
             const isValid = uniqueOrgs.some(o => o.organization_id === savedOrgId);
             
             if (isValid) {
@@ -475,6 +576,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const fetchProfileRef = useRef(fetchProfile);
   const checkMultiOrgRef = useRef(checkMultiOrg);
 
+  const hydrateAuthSnapshot = (userId: string) => {
+    if (typeof window === 'undefined') return false;
+    if (localStorage.getItem('impersonating')) return false;
+
+    const snapshot = readAuthSnapshot(userId);
+    if (!snapshot) return false;
+
+    profileRef.current = snapshot.profile;
+    organizationRef.current = snapshot.organization;
+    setProfile(snapshot.profile);
+    setOrganization(snapshot.organization);
+    setTenantContext(snapshot.tenantContext);
+    setIsSuperAdmin(snapshot.isSuperAdmin);
+
+    if (snapshot.tenantContext?.organizationId) {
+      localStorage.setItem(
+        `vimob_active_organization_${userId}`,
+        snapshot.tenantContext.organizationId,
+      );
+    }
+
+    return true;
+  };
+
   useEffect(() => {
     fetchProfileRef.current = fetchProfile;
     checkMultiOrgRef.current = checkMultiOrg;
@@ -489,10 +614,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const currentUserId = userRef.current?.id;
       if (currentUserId) {
         localStorage.removeItem(`vimob_active_organization_${currentUserId}`);
+        localStorage.removeItem(authSnapshotKey(currentUserId));
       }
 
       setSession(null);
       setUser(null);
+      profileRef.current = null;
+      organizationRef.current = null;
       setProfile(null);
       setOrganization(null);
       setTenantContext(null);
@@ -534,6 +662,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(session.user);
       userRef.current = session.user;
       authDebug('[AuthContext] login user loaded:', session.user.id);
+      if (hydrateAuthSnapshot(session.user.id)) {
+        authDebug('[AuthContext] hydrated cached auth snapshot');
+      }
 
       try {
         // Sequencial to ensure organizations are loaded before setting initialized

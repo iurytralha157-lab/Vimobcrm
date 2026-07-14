@@ -437,9 +437,6 @@ export default function Pipelines() {
 
   const shouldLoadLeadDialogResources = Boolean(selectedLead);
   const { data: users = [] } = useOrganizationUsers({ enabled: shouldLoadLeadDialogResources });
-  const visibleUsers = hasUserScope
-    ? users.filter((candidate) => scopedVisibleUserIds.includes(candidate.id))
-    : users;
   const { data: allTags = [] } = useTags({ enabled: shouldLoadLeadDialogResources });
   const assignLeadRoundRobin = useAssignLeadRoundRobin();
   const shouldLoadPipelineManagementAccess = Boolean(selectedPipelineId) && (!leadsLoading || stagesWithLeads.length > 0);
@@ -1481,7 +1478,7 @@ export default function Pipelines() {
               stages={stages}
               onClose={() => setSelectedLead(null)}
               allTags={allTags}
-              allUsers={visibleUsers}
+              allUsers={users}
               refetchStages={refetch}
             />
           </LeadDialogErrorBoundary>

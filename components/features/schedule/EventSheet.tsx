@@ -25,7 +25,7 @@ import {
   useCreateScheduleEvent, useUpdateScheduleEvent, useDeleteScheduleEvent,
   EventType, ScheduleEvent, ScheduleEventVisibility,
 } from "@/hooks/use-schedule-events";
-import { useUsers } from "@/hooks/use-users";
+import { useScheduleUsers } from "@/hooks/use-schedule-users";
 import { useLeads } from "@/hooks/use-leads";
 import { useProperties } from "@/hooks/use-properties";
 import { useScheduleComments } from "@/hooks/use-schedule-comments";
@@ -121,7 +121,7 @@ interface EventSheetProps {
 export function EventSheet({
   open, onOpenChange, event, defaultUserId, defaultDate, defaultType, leadId, leadName,
 }: EventSheetProps) {
-  const { data: users = [] } = useUsers();
+  const { data: users = [] } = useScheduleUsers();
   const { data: teams = [] } = useTeams();
   const createEvent = useCreateScheduleEvent();
   const updateEvent = useUpdateScheduleEvent();
@@ -253,11 +253,19 @@ export function EventSheet({
     durationTouched.current = true;
   };
 
+  const eventUserId = event?.user?.id;
+  const eventUserName = event?.user?.name;
+  const eventUserAvatarURL = event?.user?.avatar_url || null;
+
   const allAssignees = useMemo(() => {
     if (isMasked) return [];
 
     const list: { id: string; name: string; avatar_url: string | null; primary: boolean; pending?: boolean }[] = [];
-    const primary = users.find((u) => u.id === primaryUserId);
+    const primary = users.find((u) => u.id === primaryUserId) || (
+      eventUserId === primaryUserId && eventUserName
+        ? { id: eventUserId, name: eventUserName, avatar_url: eventUserAvatarURL }
+        : null
+    );
     if (primary) list.push({ ...primary, primary: true });
 
     assignees.forEach((a) => {
@@ -272,7 +280,7 @@ export function EventSheet({
     });
 
     return list;
-  }, [isMasked, users, primaryUserId, assignees, pendingAssigneeIds]);
+  }, [eventUserAvatarURL, eventUserId, eventUserName, isMasked, users, primaryUserId, assignees, pendingAssigneeIds]);
 
   const availableUsers = users.filter(
     (u) => u.id !== primaryUserId && !assignees.some((a) => a.id === u.id) && !pendingAssigneeIds.includes(u.id),

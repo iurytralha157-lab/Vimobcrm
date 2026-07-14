@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
+	"golang.org/x/sync/errgroup"
 )
 
 type dashboardLeadWhereOptions struct {
@@ -79,29 +80,46 @@ func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tena
 	currentFilter := filterWithDateRange(filter, currentFrom, currentTo)
 	previousFilter := filterWithDateRange(filter, prevFrom, prevTo)
 
-	currentAggregate, err := repo.dashboardAggregate(ctx, tenantContext, currentFilter, dashboardLeadWhereOptions{DateColumn: "created_at"})
-	if err != nil {
-		return DashboardStats{}, err
-	}
-	previousAggregate, err := repo.dashboardAggregate(ctx, tenantContext, previousFilter, dashboardLeadWhereOptions{DateColumn: "created_at"})
-	if err != nil {
-		return DashboardStats{}, err
-	}
+	var currentAggregate dashboardAggregate
+	var previousAggregate dashboardAggregate
+	var wonDeals []WonDealDetail
+	var lostDeals []LostDealDetail
+	var previousWonCount int64
+	var previousLostCount int64
 
-	wonDeals, err := repo.dashboardWonDeals(ctx, tenantContext, currentFilter)
-	if err != nil {
-		return DashboardStats{}, err
-	}
-	lostDeals, err := repo.dashboardLostDeals(ctx, tenantContext, currentFilter)
-	if err != nil {
-		return DashboardStats{}, err
-	}
-	previousWonCount, err := repo.dashboardWonCount(ctx, tenantContext, previousFilter)
-	if err != nil {
-		return DashboardStats{}, err
-	}
-	previousLostCount, err := repo.dashboardLostCount(ctx, tenantContext, previousFilter)
-	if err != nil {
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(3)
+	group.Go(func() error {
+		var err error
+		currentAggregate, err = repo.dashboardAggregate(groupCtx, tenantContext, currentFilter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+		return err
+	})
+	group.Go(func() error {
+		var err error
+		previousAggregate, err = repo.dashboardAggregate(groupCtx, tenantContext, previousFilter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+		return err
+	})
+	group.Go(func() error {
+		var err error
+		wonDeals, err = repo.dashboardWonDeals(groupCtx, tenantContext, currentFilter)
+		return err
+	})
+	group.Go(func() error {
+		var err error
+		lostDeals, err = repo.dashboardLostDeals(groupCtx, tenantContext, currentFilter)
+		return err
+	})
+	group.Go(func() error {
+		var err error
+		previousWonCount, err = repo.dashboardWonCount(groupCtx, tenantContext, previousFilter)
+		return err
+	})
+	group.Go(func() error {
+		var err error
+		previousLostCount, err = repo.dashboardLostCount(groupCtx, tenantContext, previousFilter)
+		return err
+	})
+	if err := group.Wait(); err != nil {
 		return DashboardStats{}, err
 	}
 
@@ -406,16 +424,28 @@ func (repo Repository) GetDashboardExtraCounts(ctx context.Context, tenantContex
 	from, to := dashboardDateRange(filter)
 	filter = filterWithDateRange(filter, from, to)
 
-	propertyCount, err := repo.countDashboardProperties(ctx, tenantContext, filter)
-	if err != nil {
-		return DashboardExtraCounts{}, err
-	}
-	siteVisits, err := repo.countDashboardSiteVisits(ctx, tenantContext, filter)
-	if err != nil {
-		return DashboardExtraCounts{}, err
-	}
-	scheduledVisits, err := repo.countDashboardScheduledVisits(ctx, tenantContext, filter)
-	if err != nil {
+	var propertyCount int64
+	var siteVisits int64
+	var scheduledVisits int64
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(3)
+	group.Go(func() error {
+		var err error
+		propertyCount, err = repo.countDashboardProperties(groupCtx, tenantContext, filter)
+		return err
+	})
+	group.Go(func() error {
+		var err error
+		siteVisits, err = repo.countDashboardSiteVisits(groupCtx, tenantContext, filter)
+		return err
+	})
+	group.Go(func() error {
+		var err error
+		scheduledVisits, err = repo.countDashboardScheduledVisits(groupCtx, tenantContext, filter)
+		return err
+	})
+	if err := group.Wait(); err != nil {
 		return DashboardExtraCounts{}, err
 	}
 
@@ -734,12 +764,15 @@ func (repo Repository) dashboardWonDeals(ctx context.Context, tenantContext tena
 			l.name,
 			l.phone,
 			l.source,
-			l.valor_interesse::double precision,
+			coalesce(nullif(l.valor_interesse, 0), nullif(p.preco, 0), nullif(p.valor_venda_avaliado, 0), 0)::double precision,
 			l.created_at,
 			l.won_at,
 			u.name
 		from public.leads l
 		left join public.users u on u.id = l.assigned_user_id
+		left join public.properties p
+		  on p.organization_id = l.organization_id
+		 and p.id = coalesce(l.interest_property_id, l.property_id)
 		where `+strings.Join(where, " and ")+`
 		order by l.won_at desc nulls last, l.created_at desc
 	`, args...)
@@ -875,8 +908,13 @@ func (repo Repository) dashboardTopBrokers(ctx context.Context, tenantContext te
 
 	rows, err := repo.db.Pool().Query(ctx, `
 		with filtered_leads as (
-			select l.assigned_user_id, coalesce(l.valor_interesse, 0)::double precision as value
+			select
+				l.assigned_user_id,
+				coalesce(nullif(l.valor_interesse, 0), nullif(p.preco, 0), nullif(p.valor_venda_avaliado, 0), 0)::double precision as value
 			from public.leads l
+			left join public.properties p
+			  on p.organization_id = l.organization_id
+			 and p.id = coalesce(l.interest_property_id, l.property_id)
 			where `+strings.Join(where, " and ")+`
 		)
 		select

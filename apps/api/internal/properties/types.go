@@ -55,6 +55,7 @@ type propertyRequest map[string]any
 type ListFilter struct {
 	Limit            int
 	Offset           int
+	Scope            string
 	Search           string
 	Status           string
 	DealType         string
@@ -253,6 +254,7 @@ func ParseListFilter(values url.Values) (ListFilter, error) {
 	filter := ListFilter{
 		Limit:         limit,
 		Offset:        offset,
+		Scope:         normalizedPropertyScope(values.Get("scope")),
 		Search:        trimMax(values.Get("search"), 120),
 		Status:        normalizedPropertyStatusForFilter(values.Get("status")),
 		DealType:      trimMax(values.Get("tipo_de_negocio"), 80),
@@ -305,6 +307,15 @@ func ParseListFilter(values url.Values) (ListFilter, error) {
 	}
 
 	return filter, nil
+}
+
+func normalizedPropertyScope(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "own", "mine", "pipeline":
+		return "own"
+	default:
+		return ""
+	}
 }
 
 func (request propertyRequest) ValidateCreate() (propertyRequest, error) {

@@ -762,8 +762,8 @@ function LostDealsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-tour="dashboard-lost-dialog" className="app-card max-h-[82dvh] w-[calc(100vw-24px)] max-w-[980px] overflow-hidden rounded-[12px] p-0 shadow-2xl backdrop-blur-xl sm:w-[92vw] sm:rounded-xl">
-        <DialogHeader className="px-4 pb-3 pt-4 text-left sm:px-5 sm:pt-5">
+      <DialogContent data-tour="dashboard-lost-dialog" className="app-card max-h-[82dvh] w-[calc(100vw-24px)] max-w-[980px] gap-0 overflow-hidden rounded-[12px] p-0 shadow-2xl backdrop-blur-xl sm:w-[92vw] sm:rounded-xl">
+        <DialogHeader className="px-4 pb-2 pt-4 text-left sm:px-5 sm:pt-5">
           <DialogTitle className="flex items-start gap-2 pr-8 text-[15px] font-semibold leading-snug sm:items-center sm:text-base">
             <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive sm:mt-0" />
             <span>Perdidos - Motivos de Perda</span>
@@ -774,7 +774,7 @@ function LostDealsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[calc(82dvh-88px)] overflow-x-hidden">
+        <ScrollArea className="dashboard-dialog-scroll max-h-[calc(82dvh-78px)] overflow-x-hidden">
           <div className="space-y-4 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:space-y-5 sm:px-5 sm:pb-5">
             <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
               <div className="app-card-soft p-3">
@@ -850,9 +850,9 @@ function LostDealsDialog({
                             <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: bucket.color }} />
                             <span className="truncate font-semibold">{bucket.label}</span>
                           </div>
-                          <div className="h-2 overflow-hidden rounded-full bg-white/[0.045]">
+                          <div className="h-2.5 overflow-hidden rounded-full bg-black/[0.08] dark:bg-white/[0.10]">
                             <div
-                              className="h-full rounded-full transition-all"
+                              className="h-full rounded-full shadow-[0_0_0_1px_rgba(0,0,0,0.04)] transition-all"
                               style={{ width: `${Math.max(4, Math.min(100, bucket.percentage || 0))}%`, backgroundColor: bucket.color }}
                             />
                           </div>
@@ -881,11 +881,11 @@ function LostDealsDialog({
                   Nenhum lead perdido nesse período.
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className="dashboard-dialog-list overflow-hidden rounded-[8px] bg-black/[0.015] dark:bg-white/[0.025]">
                   {lostDeals.map((deal) => (
                     <div
                       key={deal.id}
-                      className="grid gap-2 rounded-lg bg-white/[0.035] p-3 text-sm transition-colors hover:bg-white/[0.055] md:grid-cols-[1.1fr_1fr_0.8fr_0.7fr_auto] md:items-center"
+                      className="dashboard-dialog-list-row grid gap-2 p-3 text-sm transition-colors hover:bg-black/[0.035] dark:hover:bg-white/[0.055] md:grid-cols-[1.1fr_1fr_0.8fr_0.7fr_auto] md:items-center"
                     >
                       <div className="min-w-0">
                         <p className="truncate font-semibold">{deal.name}</p>
@@ -948,8 +948,8 @@ function WonDealsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-tour="dashboard-won-dialog" className="app-card max-h-[82dvh] w-[calc(100vw-24px)] max-w-[980px] overflow-hidden rounded-[12px] p-0 shadow-2xl backdrop-blur-xl sm:w-[92vw] sm:rounded-xl">
-        <DialogHeader className="px-4 pb-3 pt-4 text-left sm:px-5 sm:pt-5">
+      <DialogContent data-tour="dashboard-won-dialog" className="app-card max-h-[82dvh] w-[calc(100vw-24px)] max-w-[980px] gap-0 overflow-hidden rounded-[12px] p-0 shadow-2xl backdrop-blur-xl sm:w-[92vw] sm:rounded-xl">
+        <DialogHeader className="px-4 pb-2 pt-4 text-left sm:px-5 sm:pt-5">
           <DialogTitle className="flex items-start gap-2 pr-8 text-[15px] font-semibold leading-snug sm:items-center sm:text-base">
             <Trophy className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500 sm:mt-0" />
             <span>Ganhos - Tempo de Conversão</span>
@@ -960,7 +960,7 @@ function WonDealsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[calc(82dvh-88px)] overflow-x-hidden">
+        <ScrollArea className="dashboard-dialog-scroll max-h-[calc(82dvh-78px)] overflow-x-hidden">
           <div className="space-y-4 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:space-y-5 sm:px-5 sm:pb-5">
             <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
               <div className="app-card-soft p-3">
@@ -1016,9 +1016,9 @@ function WonDealsDialog({
                           </span>
                         </div>
                       </div>
-                      <div className={cn("overflow-hidden rounded-full bg-white/[0.045] sm:col-start-2 sm:row-start-1", hasDeals ? "h-2.5 sm:h-3" : "h-1.5")}>
+                      <div className={cn("overflow-hidden rounded-full bg-black/[0.08] dark:bg-white/[0.10] sm:col-start-2 sm:row-start-1", hasDeals ? "h-2.5 sm:h-3" : "h-1.5")}>
                         <div
-                          className="h-full rounded-full transition-all"
+                          className="h-full rounded-full shadow-[0_0_0_1px_rgba(0,0,0,0.04)] transition-all"
                           style={{
                             width: `${width}%`,
                             backgroundColor: bucket.color,
@@ -1042,11 +1042,11 @@ function WonDealsDialog({
                   Nenhum ganho fechado nesse período.
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className="dashboard-dialog-list overflow-hidden rounded-[8px] bg-black/[0.015] dark:bg-white/[0.025]">
                   {wonDeals.map((deal) => (
                     <div
                       key={deal.id}
-                      className="grid gap-2 rounded-lg bg-white/[0.035] p-3 text-sm transition-colors hover:bg-white/[0.055] md:grid-cols-[1.2fr_0.8fr_0.8fr_0.7fr_auto] md:items-center"
+                      className="dashboard-dialog-list-row grid gap-2 p-3 text-sm transition-colors hover:bg-black/[0.035] dark:hover:bg-white/[0.055] md:grid-cols-[1.2fr_0.8fr_0.8fr_0.7fr_auto] md:items-center"
                     >
                       <div className="min-w-0">
                         <p className="truncate font-semibold">{deal.name}</p>

@@ -27,7 +27,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { cn, getCurrentTimeForInput, getBrasiliaTime } from '@/lib/utils';
 import { useCreateScheduleEvent, useUpdateScheduleEvent, useDeleteScheduleEvent, EventType, ScheduleEvent } from '@/hooks/use-schedule-events';
-import { useUsers } from '@/hooks/use-users';
+import { useScheduleUsers } from '@/hooks/use-schedule-users';
 import { useLeads } from '@/hooks/use-leads';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 
@@ -62,7 +62,7 @@ interface EventFormProps {
 }
 
 export function EventForm({ open, onOpenChange, event, leadId, leadName, defaultUserId, defaultDate, defaultType }: EventFormProps) {
-  const { data: users = [] } = useUsers();
+  const { data: users = [] } = useScheduleUsers();
   const createEvent = useCreateScheduleEvent();
   const updateEvent = useUpdateScheduleEvent();
   const deleteEvent = useDeleteScheduleEvent();

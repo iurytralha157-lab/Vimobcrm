@@ -28,7 +28,6 @@ import {
   useDeleteCondominium,
   type PropertyCity,
   type PropertyNeighborhood,
-  type PropertyCondominium,
 } from '@/hooks/use-property-locations';
 import {
   usePropertyOwners,
@@ -323,21 +322,6 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
       city_id: neighborhood.city_id || null,
       cidade: neighborhood.city?.name || null,
       uf: neighborhood.city?.uf || null,
-    },
-  });
-
-  const condominiumAssignment = (condominium: PropertyCondominium): AssignmentTarget => ({
-    type: 'condominiums',
-    id: condominium.id,
-    title: condominium.name,
-    subtitle: condominium.neighborhood?.name || condominium.city?.name || 'Condomínio',
-    payload: {
-      condominium_id: condominium.id,
-      neighborhood_id: condominium.neighborhood_id || null,
-      city_id: condominium.city_id || null,
-      bairro: condominium.neighborhood?.name || null,
-      cidade: condominium.city?.name || null,
-      uf: condominium.city?.uf || null,
     },
   });
 
@@ -742,10 +726,6 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
                         <TableCell>{condominium.has_concierge ? condominium.concierge_type || 'Sim' : '-'}</TableCell>
                         <TableCell>
                           <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="sm" onClick={() => openAssignmentDialog(condominiumAssignment(condominium))}>
-                              <Link2 className="mr-2 h-4 w-4" />
-                              Imóveis
-                            </Button>
                             <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => deleteCondominium.mutate(condominium.id)}>
                               <Trash2 className="h-4 w-4" />
                             </Button>
