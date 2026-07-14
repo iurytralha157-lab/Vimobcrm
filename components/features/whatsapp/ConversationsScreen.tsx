@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { forwardRef, useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { MessageBox } from "@/components/ui/message-box";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent } from "@/components/ui/dropdown-menu";
 import { Search, MessageSquare, MessageCircle, User, Loader2, MoreVertical, Archive, Trash2, Users, Paperclip, Tag, UserPlus, ArrowLeft, Zap, Plus, SlidersHorizontal } from "lucide-react";
 import { StartAutomationDialog } from "@/components/features/whatsapp/StartAutomationDialog";
@@ -1450,30 +1451,23 @@ export default function Conversations() {
       )}
     </AppLayout>;
 }
-function ConversationChip({
-  children,
-  className,
-  title,
-  style,
-}: {
-  children: React.ReactNode;
-  className?: string;
-  title?: string;
-  style?: React.CSSProperties;
-}) {
-  return (
+const ConversationChip = forwardRef<HTMLSpanElement, React.HTMLAttributes<HTMLSpanElement>>(
+  ({ children, className, title, style, ...props }, ref) => (
     <span
+      ref={ref}
       title={title}
       className={cn(
         "inline-flex h-[17px] shrink-0 items-center justify-center rounded-[4px] border-0 px-1.5 text-[9px] font-medium leading-none shadow-none",
         className
       )}
       style={style}
+      {...props}
     >
       {children}
     </span>
-  );
-}
+  )
+);
+ConversationChip.displayName = "ConversationChip";
 
 function ConversationItem({
   conversation,
@@ -1505,9 +1499,10 @@ function ConversationItem({
   const leadTagIds = leadTags.map(lt => lt.tag.id);
   const unassignedTags = availableTags.filter(t => !leadTagIds.includes(t.id));
   const displayName = conversation.lead?.name || (conversation.contact_name && conversation.contact_name !== conversation.contact_phone ? conversation.contact_name : formatPhoneForDisplay(conversation.contact_phone || ""));
-  const otherAssigneeName = currentUserId && conversation.lead?.assignee?.id && conversation.lead.assignee.id !== currentUserId
-    ? conversation.lead.assignee.name
+  const otherAssignee = currentUserId && conversation.lead?.assignee?.id && conversation.lead.assignee.id !== currentUserId
+    ? conversation.lead.assignee
     : null;
+  const otherAssigneeName = otherAssignee?.name || null;
   const formatPreviewMessage = (message: string | null) => {
     if (!message) return "Sem mensagens";
     const trimmed = message.trim();
@@ -1531,7 +1526,7 @@ function ConversationItem({
     previewMessage,
   );
 
-  return <div data-tour="conversations-item" className={cn("w-full text-left p-2 grid grid-cols-[minmax(0,1fr)_30px_auto] items-center gap-1.5 hover:bg-white/[0.045] transition-colors group overflow-hidden", isSelected && "bg-white/[0.07]")}>
+  return <div data-tour="conversations-item" className={cn("grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1.5 overflow-hidden p-2 text-left transition-colors hover:bg-white/[0.045] group", isSelected && "bg-white/[0.07]")}>
       <button type="button" onClick={onClick} className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden">
         <Avatar className="h-9 w-9 shrink-0 relative">
           <AvatarImage src={getConversationAvatarUrl(conversation)} />
@@ -1540,45 +1535,15 @@ function ConversationItem({
           </AvatarFallback>
         </Avatar>
 
-        <div className="flex-1 w-0 min-w-0">
-          <div className="flex items-center justify-between gap-1.5">
-            <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-              <span className="min-w-[72px] flex-1 truncate font-sans text-[12px] font-semibold leading-[17px] text-foreground" title={displayName}>
-                {displayName}
-              </span>
-              {hasLead && (
-                <ConversationChip className="bg-emerald-500 text-white" title="Lead">
-                  Lead
-                </ConversationChip>
-              )}
-              {otherAssigneeName && (
-                <ConversationChip className="max-w-[88px] bg-amber-500/15 text-amber-700 dark:text-amber-300" title={`com ${otherAssigneeName}`}>
-                  <span className="truncate">com {otherAssigneeName}</span>
-                </ConversationChip>
-              )}
-              {leadTags.slice(0, 2).map(lt => (
-                <ConversationChip
-                  key={lt.tag.id}
-                  className="max-w-[62px] text-white"
-                  title={lt.tag.name}
-                  style={{
-                    backgroundColor: lt.tag.color,
-                    color: '#FFFFFF',
-                  }}
-                >
-                  <span className="truncate">{lt.tag.name}</span>
-                </ConversationChip>
-              ))}
-              {leadTags.length > 2 && (
-                <span className="text-[9px] text-muted-foreground shrink-0">
-                  +{leadTags.length - 2}
-                </span>
-              )}
-            </div>
+        <div className="w-0 min-w-0 flex-1">
+          <div className="flex min-w-0 items-center">
+            <span className="block min-w-0 truncate text-left font-sans text-[12px] font-semibold leading-[17px] text-foreground" title={displayName}>
+              {displayName}
+            </span>
           </div>
 
           {/* Mensagem ou Presença */}
-          <div className="flex items-center justify-between mt-0">
+          <div className="mt-0 flex min-w-0 items-center">
             {conversation.contact_presence === 'composing' ? <span className="text-[11px] text-primary truncate flex-1 text-left animate-pulse">
                 digitando...
               </span> : conversation.contact_presence === 'recording' ? <span className="text-[11px] text-primary truncate flex-1 text-left animate-pulse">
@@ -1591,10 +1556,60 @@ function ConversationItem({
         </div>
       </button>
 
-      <div className="flex w-[30px] shrink-0 flex-col items-end justify-center gap-1 overflow-hidden">
-        {conversation.unread_count > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#FF4529] px-1.5 text-[10px] font-semibold leading-none text-white">
-            {conversation.unread_count}
-          </span>}
+      <div className="flex max-w-[176px] shrink-0 flex-col items-end justify-center gap-1 overflow-hidden">
+        <div className="flex max-w-full items-center justify-end gap-1 overflow-hidden">
+          {hasLead && (
+            <ConversationChip className="bg-emerald-500 text-white" title="Lead">
+              Lead
+            </ConversationChip>
+          )}
+          {otherAssigneeName && (
+            <TooltipProvider delayDuration={120}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <ConversationChip className="max-w-[90px] bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                    <span className="truncate">{otherAssigneeName}</span>
+                  </ConversationChip>
+                </TooltipTrigger>
+                <TooltipContent side="top" align="end" className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-2 shadow-none">
+                  <div className="flex items-center gap-2">
+                    <Avatar className="h-7 w-7">
+                      <AvatarImage src={otherAssignee?.avatar_url || undefined} />
+                      <AvatarFallback className="bg-amber-500/15 text-[10px] text-amber-700 dark:text-amber-300">
+                        {otherAssigneeName[0]?.toUpperCase() || "?"}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0">
+                      <p className="max-w-[150px] truncate text-xs font-medium">{otherAssigneeName}</p>
+                      <p className="text-[10px] text-muted-foreground">Responsavel pelo lead</p>
+                    </div>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          {leadTags.slice(0, 1).map(lt => (
+            <ConversationChip
+              key={lt.tag.id}
+              className="max-w-[62px] text-white"
+              title={lt.tag.name}
+              style={{
+                backgroundColor: lt.tag.color,
+                color: '#FFFFFF',
+              }}
+            >
+              <span className="truncate">{lt.tag.name}</span>
+            </ConversationChip>
+          ))}
+          {leadTags.length > 1 && (
+            <span className="inline-flex h-[18px] shrink-0 items-center text-[9px] leading-none text-muted-foreground">
+              +{leadTags.length - 1}
+            </span>
+          )}
+          {conversation.unread_count > 0 && <span className="inline-flex h-[19px] min-w-[22px] items-center justify-center rounded-[6px] bg-[#FF4529] px-1.5 text-[10px] font-semibold leading-none text-white">
+              {conversation.unread_count}
+            </span>}
+        </div>
         <span className="whitespace-nowrap text-[10px] leading-none text-muted-foreground">
           {formatTime(conversation.last_message_at)}
         </span>
