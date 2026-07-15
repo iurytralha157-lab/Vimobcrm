@@ -957,6 +957,11 @@ func (repo Repository) generatePropertyCode(ctx context.Context, tx pgx.Tx, orga
 		return repo.generateLegacyPropertyCode(ctx, tx, organizationID, prefix)
 	}
 
+	maxExistingNumber, err := repo.maxPropertyCodeNumber(ctx, tx, organizationID, prefix)
+	if err != nil {
+		return "", err
+	}
+
 	var nextNumber int64
 	var sequenceID string
 	var currentNumber pgtype.Int8
@@ -964,15 +969,18 @@ func (repo Repository) generatePropertyCode(ctx context.Context, tx pgx.Tx, orga
 		select id::text, last_number
 		from public.property_sequences
 		where organization_id = $1::uuid
-		  and prefix = $2
+		  and upper(btrim(prefix)) = upper(btrim($2))
+		order by coalesce(last_number, 0) desc, created_at asc
+		limit 1
 		for update
 	`, organizationID, prefix).Scan(&sequenceID, &currentNumber)
 	if errors.Is(err, pgx.ErrNoRows) {
-		nextNumber = 1
-		_, err = tx.Exec(ctx, `
+		nextNumber = maxExistingNumber + 1
+		err = tx.QueryRow(ctx, `
 			insert into public.property_sequences (organization_id, prefix, last_number)
 			values ($1::uuid, $2, $3)
-		`, organizationID, prefix, nextNumber)
+			returning id::text
+		`, organizationID, prefix, nextNumber).Scan(&sequenceID)
 		if err != nil {
 			return "", err
 		}
@@ -983,6 +991,19 @@ func (repo Repository) generatePropertyCode(ctx context.Context, tx pgx.Tx, orga
 		if currentNumber.Valid {
 			nextNumber = currentNumber.Int64 + 1
 		}
+	}
+
+	if nextNumber <= maxExistingNumber {
+		nextNumber = maxExistingNumber + 1
+	}
+
+	for attempts := 0; attempts < 10_000; attempts++ {
+		code := fmt.Sprintf("%s%04d", prefix, nextNumber)
+		exists, err := repo.propertyCodeExists(ctx, tx, organizationID, code)
+		if err != nil {
+			return "", err
+		}
+
 		_, err = tx.Exec(ctx, `
 			update public.property_sequences
 			set last_number = $1
@@ -991,9 +1012,14 @@ func (repo Repository) generatePropertyCode(ctx context.Context, tx pgx.Tx, orga
 		if err != nil {
 			return "", err
 		}
+
+		if !exists {
+			return code, nil
+		}
+		nextNumber++
 	}
 
-	return fmt.Sprintf("%s%04d", prefix, nextNumber), nil
+	return "", fmt.Errorf("%w: unable to generate a unique property code", ErrInvalidInput)
 }
 
 func (repo Repository) propertySequenceUsesPrefix(ctx context.Context, tx pgx.Tx) (bool, error) {
@@ -1025,7 +1051,11 @@ func (repo Repository) generateLegacyPropertyCode(ctx context.Context, tx pgx.Tx
 		for update
 	`, organizationID).Scan(&nextNumber)
 	if errors.Is(err, pgx.ErrNoRows) {
-		number := int64(1)
+		number, err := repo.maxPropertyCodeNumber(ctx, tx, organizationID, prefix)
+		if err != nil {
+			return "", err
+		}
+		number++
 		_, err = tx.Exec(ctx, `
 			insert into public.property_sequences (organization_id, next_value)
 			values ($1::uuid, $2)
@@ -1043,17 +1073,69 @@ func (repo Repository) generateLegacyPropertyCode(ctx context.Context, tx pgx.Tx
 	if nextNumber.Valid && nextNumber.Int64 > 0 {
 		number = nextNumber.Int64
 	}
-	_, err = tx.Exec(ctx, `
-		update public.property_sequences
-		set next_value = $1,
-		    updated_at = now()
-		where organization_id = $2::uuid
-	`, number+1, organizationID)
+
+	maxExistingNumber, err := repo.maxPropertyCodeNumber(ctx, tx, organizationID, prefix)
 	if err != nil {
 		return "", err
 	}
+	if number <= maxExistingNumber {
+		number = maxExistingNumber + 1
+	}
 
-	return fmt.Sprintf("%s%04d", prefix, number), nil
+	for attempts := 0; attempts < 10_000; attempts++ {
+		code := fmt.Sprintf("%s%04d", prefix, number)
+		exists, err := repo.propertyCodeExists(ctx, tx, organizationID, code)
+		if err != nil {
+			return "", err
+		}
+
+		_, err = tx.Exec(ctx, `
+			update public.property_sequences
+			set next_value = $1,
+			    updated_at = now()
+			where organization_id = $2::uuid
+		`, number+1, organizationID)
+		if err != nil {
+			return "", err
+		}
+
+		if !exists {
+			return code, nil
+		}
+		number++
+	}
+
+	return "", fmt.Errorf("%w: unable to generate a unique property code", ErrInvalidInput)
+}
+
+func (repo Repository) maxPropertyCodeNumber(ctx context.Context, tx pgx.Tx, organizationID string, prefix string) (int64, error) {
+	var maxNumber pgtype.Int8
+	err := tx.QueryRow(ctx, `
+		select max((regexp_match(code, '^' || $2 || '([0-9]+)$'))[1]::bigint)
+		from public.properties
+		where organization_id = $1::uuid
+		  and code ~ ('^' || $2 || '[0-9]+$')
+	`, organizationID, prefix).Scan(&maxNumber)
+	if err != nil {
+		return 0, err
+	}
+	if !maxNumber.Valid || maxNumber.Int64 < 0 {
+		return 0, nil
+	}
+	return maxNumber.Int64, nil
+}
+
+func (repo Repository) propertyCodeExists(ctx context.Context, tx pgx.Tx, organizationID string, code string) (bool, error) {
+	var exists bool
+	err := tx.QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.properties
+			where organization_id = $1::uuid
+			  and lower(btrim(code)) = lower(btrim($2))
+		)
+	`, organizationID, code).Scan(&exists)
+	return exists, err
 }
 
 func (repo Repository) insertPropertyCreatedActivity(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, property Property) error {

@@ -98,6 +98,61 @@ func TestCanUpdateAssignedLeadStatusRejectsNonStatusFields(t *testing.T) {
 	}
 }
 
+func TestCanUpdateAssignedLeadStatusAllowsTeamLeaderForLedUser(t *testing.T) {
+	leaderID := "10000000-0000-0000-0000-000000000001"
+	assignedUserID := "10000000-0000-0000-0000-000000000002"
+	status := "open"
+
+	current := leadSnapshot{
+		AssignedUserID: assignedUserID,
+		DealStatus:     "won",
+	}
+	input := updateInput{
+		DealStatus: patchString{Set: true, Value: &status},
+		LostReason: patchString{Set: true, Value: nil},
+	}
+	tenantContext := tenant.Context{
+		UserID:         leaderID,
+		OrganizationID: "30000000-0000-0000-0000-000000000001",
+		MemberRole:     "user",
+		Permissions:    []string{"lead_view_team"},
+		IsTeamLeader:   true,
+		LedUserIDs:     []string{assignedUserID},
+	}
+
+	if !canUpdateAssignedLeadStatus(tenantContext, current, input) {
+		t.Fatal("expected team leader to update status for a led user's lead")
+	}
+}
+
+func TestCanUpdateAssignedLeadStatusRejectsTeamLeaderPropertyPatch(t *testing.T) {
+	leaderID := "10000000-0000-0000-0000-000000000001"
+	assignedUserID := "10000000-0000-0000-0000-000000000002"
+	propertyID := "20000000-0000-0000-0000-000000000001"
+	status := "won"
+
+	current := leadSnapshot{
+		AssignedUserID: assignedUserID,
+		DealStatus:     "open",
+	}
+	input := updateInput{
+		DealStatus:         patchString{Set: true, Value: &status},
+		InterestPropertyID: patchString{Set: true, Value: &propertyID},
+	}
+	tenantContext := tenant.Context{
+		UserID:         leaderID,
+		OrganizationID: "30000000-0000-0000-0000-000000000001",
+		MemberRole:     "user",
+		Permissions:    []string{"lead_view_team"},
+		IsTeamLeader:   true,
+		LedUserIDs:     []string{assignedUserID},
+	}
+
+	if canUpdateAssignedLeadStatus(tenantContext, current, input) {
+		t.Fatal("expected team leader status scope to reject property edits")
+	}
+}
+
 func TestCanUpdateAssignedLeadOperationalPatchAllowsFeedbackOnOwnLead(t *testing.T) {
 	userID := "10000000-0000-0000-0000-000000000001"
 	feedback := "Nao atendeu, tentar novamente amanha"
@@ -214,6 +269,39 @@ func TestCanUpdateVisibleLeadPropertyInterestRejectsLeadDataEdit(t *testing.T) {
 
 	if canUpdateVisibleLeadPropertyInterest(true, input) {
 		t.Fatal("expected visible lead property interest permission to reject lead data edits")
+	}
+}
+
+func TestCanUpdateVisibleLeadStatusAllowsReopen(t *testing.T) {
+	status := "open"
+	current := leadSnapshot{
+		AssignedUserID: "10000000-0000-0000-0000-000000000002",
+		DealStatus:     "won",
+	}
+	input := updateInput{
+		DealStatus: patchString{Set: true, Value: &status},
+		LostReason: patchString{Set: true, Value: nil},
+	}
+
+	if !canUpdateVisibleLeadStatus(true, current, input) {
+		t.Fatal("expected visible lead status scope to allow reopening")
+	}
+}
+
+func TestCanUpdateVisibleLeadStatusRejectsPropertyPatch(t *testing.T) {
+	status := "won"
+	propertyID := "20000000-0000-0000-0000-000000000001"
+	current := leadSnapshot{
+		AssignedUserID: "10000000-0000-0000-0000-000000000002",
+		DealStatus:     "open",
+	}
+	input := updateInput{
+		DealStatus:         patchString{Set: true, Value: &status},
+		InterestPropertyID: patchString{Set: true, Value: &propertyID},
+	}
+
+	if canUpdateVisibleLeadStatus(true, current, input) {
+		t.Fatal("expected visible lead status scope to reject property edits")
 	}
 }
 

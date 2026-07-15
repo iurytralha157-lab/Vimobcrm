@@ -13,6 +13,16 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -713,7 +723,11 @@ export function LeadDetailDialog({
   const [selectedAttachment, setSelectedAttachment] = useState<LeadAttachment | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const reopenStatusConfirmationRef = useRef<{ leadId: string; fromStatus: string; expiresAt: number } | null>(null);
+  const [reopenStatusConfirmation, setReopenStatusConfirmation] = useState<{
+    leadId: string;
+    leadName: string;
+    fromStatus: 'won' | 'lost' | string;
+  } | null>(null);
   const v2LeadInfoScrollRef = useRef<HTMLDivElement>(null);
   const v2LeadWorkScrollRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
@@ -1059,11 +1073,7 @@ export function LeadDetailDialog({
   );
   const canTransferLead = accessScope.canTransferAnyLead || canTransferOwnLead || canTransferTeamLead;
   const canUnassignLead = accessScope.canTransferAnyLead || canTransferTeamLead;
-  const assignableUsers = accessScope.canTransferAnyLead || canTransferOwnLead
-    ? safeAllUsers
-    : canTransferTeamLead
-      ? safeAllUsers.filter((candidate) => accessScope.ledUserIds.includes(candidate.id))
-      : [];
+  const assignableUsers = canTransferLead ? safeAllUsers : [];
   const safeLeadTasks = Array.isArray(leadTasks) ? leadTasks.filter(Boolean) : [];
   const safeCadenceTemplates = Array.isArray(cadenceTemplates) ? cadenceTemplates.filter(Boolean) : [];
   const originLabels = {
@@ -1605,40 +1615,29 @@ export function LeadDetailDialog({
   };
 
   // Centralized handler for deal status changes
-  const handleDealStatusChange = async (newStatus: string) => {
-    const previousStatus = localLead?.deal_status || 'open';
+  const handleDealStatusChange = async (
+    newStatus: string,
+    options?: { skipReopenConfirmation?: boolean; previousStatusOverride?: string },
+  ) => {
+    const previousStatus = options?.previousStatusOverride || localLead?.deal_status || 'open';
     if (newStatus === previousStatus) return;
 
     // Intercept "lost" -> ask for reason via dialog
     if (newStatus === 'lost') {
-      reopenStatusConfirmationRef.current = null;
+      setReopenStatusConfirmation(null);
       setLostReasonDialogOpen(true);
       return;
     }
 
-    if (newStatus === 'open' && previousStatus !== 'open') {
-      const pending = reopenStatusConfirmationRef.current;
-      const isConfirmed =
-        pending?.leadId === lead.id &&
-        pending.fromStatus === previousStatus &&
-        pending.expiresAt > Date.now();
-
-      if (!isConfirmed) {
-        reopenStatusConfirmationRef.current = {
-          leadId: lead.id,
-          fromStatus: previousStatus,
-          expiresAt: Date.now() + 8000,
-        };
-        toast.warning('Confirme a reabertura do lead', {
-          description: 'Selecione Aberto novamente para tirar este lead de ganho/perdido.',
-          duration: 6000,
-        });
-        return;
-      }
-
-      reopenStatusConfirmationRef.current = null;
+    if (newStatus === 'open' && previousStatus !== 'open' && !options?.skipReopenConfirmation) {
+      setReopenStatusConfirmation({
+        leadId: lead.id,
+        leadName: localLead?.name || lead.name || 'Lead',
+        fromStatus: previousStatus,
+      });
+      return;
     } else {
-      reopenStatusConfirmationRef.current = null;
+      setReopenStatusConfirmation(null);
     }
 
     const currentLead = localLead || lead;
@@ -1653,10 +1652,16 @@ export function LeadDetailDialog({
       }
     }
 
+    const previousLead = localLead ? { ...localLead } : null;
+    const statusChangedAt = new Date().toISOString();
+
     if (localLead) {
       setLocalLead({
         ...localLead,
         deal_status: newStatus as 'open' | 'won' | 'lost',
+        lost_reason: newStatus === 'lost' ? localLead.lost_reason : null,
+        won_at: newStatus === 'won' ? statusChangedAt : null,
+        lost_at: newStatus === 'lost' ? statusChangedAt : null,
       });
     }
 
@@ -1668,7 +1673,7 @@ export function LeadDetailDialog({
         lead.property_id ||
         null;
 
-      await dealStatusChange.mutateAsync({
+      const result = await dealStatusChange.mutateAsync({
         leadId: lead.id,
         newStatus: newStatus as 'open' | 'won' | 'lost',
         organizationId: profile?.organization_id || organization?.id || '',
@@ -1679,14 +1684,16 @@ export function LeadDetailDialog({
         commissionPercentage: currentLead?.commission_percentage ?? null,
         leadName: currentLead?.name || lead.name || 'Lead',
       });
-      refetchStages();
+      const updatedLead = result.lead as Partial<LeadDetailLead>;
+      setLocalLead((current) => current ? {
+        ...current,
+        ...updatedLead,
+        assignee: updatedLead.assignee === undefined ? current.assignee : updatedLead.assignee,
+        tags: updatedLead.tags === undefined ? current.tags : updatedLead.tags,
+        stage: updatedLead.stage === undefined ? current.stage : updatedLead.stage,
+      } : current);
     } catch {
-      if (localLead) {
-        setLocalLead({
-          ...localLead,
-          deal_status: previousStatus,
-        });
-      }
+      if (previousLead) setLocalLead(previousLead);
     }
   };
 
@@ -1694,16 +1701,19 @@ export function LeadDetailDialog({
   const handleConfirmLostReason = async (reason: string) => {
     const previousStatus = localLead?.deal_status || 'open';
     const currentLead = localLead || lead;
+    const previousLead = localLead ? { ...localLead } : null;
     if (localLead) {
       setLocalLead({
         ...localLead,
         deal_status: 'lost',
         lost_reason: reason,
+        won_at: null,
+        lost_at: new Date().toISOString(),
       });
     }
 
     try {
-      await dealStatusChange.mutateAsync({
+      const result = await dealStatusChange.mutateAsync({
         leadId: lead.id,
         newStatus: 'lost',
         organizationId: profile?.organization_id || organization?.id || '',
@@ -1717,15 +1727,17 @@ export function LeadDetailDialog({
       });
       setLostReasonLocal(reason);
       setLostReasonDialogOpen(false);
-      refetchStages();
+      const updatedLead = result.lead as Partial<LeadDetailLead>;
+      setLocalLead((current) => current ? {
+        ...current,
+        ...updatedLead,
+        assignee: updatedLead.assignee === undefined ? current.assignee : updatedLead.assignee,
+        tags: updatedLead.tags === undefined ? current.tags : updatedLead.tags,
+        stage: updatedLead.stage === undefined ? current.stage : updatedLead.stage,
+      } : current);
     } catch {
-      if (localLead) {
-        setLocalLead({
-          ...localLead,
-          deal_status: previousStatus,
-          lost_reason: localLead.lost_reason,
-        });
-      }
+      if (previousLead) setLocalLead(previousLead);
+      else if (localLead) setLocalLead({ ...localLead, deal_status: previousStatus });
     }
   };
 
@@ -1958,8 +1970,8 @@ export function LeadDetailDialog({
               <div className="rounded-xl bg-white/[0.035] border border-white/[0.055] p-4 shadow-sm">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
-                    <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center">
-                      <ListTodo className="h-3.5 w-3.5 text-primary" />
+                    <div className="h-7 w-7 rounded-lg bg-primary flex items-center justify-center shadow-sm shadow-primary/20">
+                      <ListTodo className="h-3.5 w-3.5 text-primary-foreground" />
                     </div>
                     <h3 className="font-medium text-sm">Cadência de atividades</h3>
                   </div>
@@ -1992,8 +2004,8 @@ export function LeadDetailDialog({
                           )}
                         >
                           <div className={cn(
-                            "h-8 w-8 rounded-lg flex items-center justify-center shrink-0",
-                            isDone ? "bg-gradient-to-br from-green-500 to-emerald-600" : "bg-gradient-to-br from-primary/80 to-primary"
+                            "h-8 w-8 rounded-lg flex items-center justify-center shrink-0 shadow-sm",
+                            isDone ? "bg-emerald-500 shadow-emerald-500/20" : "bg-primary shadow-primary/20"
                           )}>
                             {isDone ? <Check className="h-3.5 w-3.5 text-white" /> : <TaskIcon className="h-3.5 w-3.5 text-white" />}
                           </div>
@@ -2983,7 +2995,7 @@ export function LeadDetailDialog({
                               isDone && 'opacity-65',
                             )}
                           >
-                            <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]', isDone ? 'bg-emerald-500/18 text-emerald-500' : 'bg-primary/12 text-primary')}>
+                            <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] shadow-sm', isDone ? 'bg-emerald-500 text-white shadow-emerald-500/20' : 'bg-primary text-primary-foreground shadow-primary/20')}>
                               {isDone ? <Check className="h-3 w-3" /> : <TaskIcon className="h-3 w-3" />}
                             </span>
                             <span className="min-w-0 flex-1">
@@ -3376,7 +3388,7 @@ export function LeadDetailDialog({
                               isDone && 'opacity-65',
                             )}
                           >
-                            <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px]', isDone ? 'bg-emerald-500/18 text-emerald-500' : 'bg-primary/12 text-primary')}>
+                            <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] shadow-sm', isDone ? 'bg-emerald-500 text-white shadow-emerald-500/20' : 'bg-primary text-primary-foreground shadow-primary/20')}>
                               {isDone ? <Check className="h-3 w-3" /> : <TaskIcon className="h-3 w-3" />}
                             </span>
                             <span className="min-w-0 flex-1">
@@ -3767,8 +3779,8 @@ export function LeadDetailDialog({
                           onClick={() => handleCadenceTaskClick(task)}
                         >
                           <div className={cn(
-                            "h-9 w-9 rounded-xl flex items-center justify-center shrink-0 transition-transform group-hover:scale-105",
-                            isDone ? "bg-gradient-to-br from-green-500 to-emerald-600" : "bg-gradient-to-br from-primary/80 to-primary"
+                            "h-9 w-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm transition-transform group-hover:scale-105",
+                            isDone ? "bg-emerald-500 shadow-emerald-500/20" : "bg-primary shadow-primary/20"
                           )}>
                             {isDone ? <Check className="h-4 w-4 text-white" /> : <TaskIcon className="h-4 w-4 text-white" />}
                           </div>
@@ -4459,6 +4471,62 @@ export function LeadDetailDialog({
     </>
   );
 
+  const ReopenLeadDialog = () => {
+    const fromStatusLabel = reopenStatusConfirmation?.fromStatus === 'won'
+      ? 'ganho'
+      : reopenStatusConfirmation?.fromStatus === 'lost'
+        ? 'perdido'
+        : 'finalizado';
+
+    return (
+      <AlertDialog
+        open={Boolean(reopenStatusConfirmation)}
+        onOpenChange={(open) => {
+          if (!open) setReopenStatusConfirmation(null);
+        }}
+      >
+        <AlertDialogContent className="w-[calc(100vw-2rem)] max-w-md rounded-[8px] border-0 bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] shadow-none">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar reabertura do lead?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {reopenStatusConfirmation?.leadName || 'Este lead'} está marcado como {fromStatusLabel}. Ao confirmar, ele volta para Aberto e pode entrar novamente no fluxo comercial.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              className="rounded-[6px] border-0 bg-black/[0.06] font-normal text-[var(--app-text-secondary)] hover:bg-black/[0.1] hover:text-[var(--app-text-primary)] dark:bg-white/[0.08] dark:hover:bg-white/[0.12]"
+              disabled={dealStatusChange.isPending}
+            >
+              Não reabrir
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="rounded-[6px] bg-primary font-normal tracking-normal text-primary-foreground antialiased hover:bg-primary/90"
+              disabled={dealStatusChange.isPending || !reopenStatusConfirmation}
+              onClick={() => {
+                const confirmation = reopenStatusConfirmation;
+                if (!confirmation) return;
+
+                void handleDealStatusChange('open', {
+                  skipReopenConfirmation: true,
+                  previousStatusOverride: confirmation.fromStatus,
+                });
+              }}
+            >
+              {dealStatusChange.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Reabrindo...
+                </>
+              ) : (
+                'Sim, reabrir lead'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    );
+  };
+
   // Render mobile or desktop version - use JSX directly instead of component functions
   if (isMobile) {
     return (
@@ -4487,6 +4555,7 @@ export function LeadDetailDialog({
         </Drawer>
         {RoteiroDialog()}
         {OutcomeDialogComponent()}
+        {ReopenLeadDialog()}
         <LostReasonDialog
           open={lostReasonDialogOpen}
           onOpenChange={setLostReasonDialogOpen}
@@ -4539,6 +4608,7 @@ export function LeadDetailDialog({
       </Dialog>
       {RoteiroDialog()}
       {OutcomeDialogComponent()}
+      {ReopenLeadDialog()}
       <LostReasonDialog
         open={lostReasonDialogOpen}
         onOpenChange={setLostReasonDialogOpen}

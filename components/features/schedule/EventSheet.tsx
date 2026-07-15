@@ -121,7 +121,7 @@ interface EventSheetProps {
 export function EventSheet({
   open, onOpenChange, event, defaultUserId, defaultDate, defaultType, leadId, leadName,
 }: EventSheetProps) {
-  const { data: users = [] } = useScheduleUsers();
+  const { allUsers: users = [] } = useScheduleUsers();
   const { data: teams = [] } = useTeams();
   const createEvent = useCreateScheduleEvent();
   const updateEvent = useUpdateScheduleEvent();

@@ -697,7 +697,7 @@ function formatConversionDays(days: number | null): string {
   return months === 1 ? "1 mês" : `${months} meses`;
 }
 
-type LostReasonChartPoint = {
+type DistributionChartPoint = {
   key: string;
   label: string;
   count: number;
@@ -705,14 +705,32 @@ type LostReasonChartPoint = {
   color: string;
 };
 
-type LostReasonTooltipEntry = {
+type DistributionTooltipEntry = {
   value?: string | number;
   color?: string;
   fill?: string;
-  payload?: Partial<LostReasonChartPoint>;
+  payload?: Partial<DistributionChartPoint>;
 };
 
-function LostReasonTooltip({ active, payload }: { active?: boolean; payload?: LostReasonTooltipEntry[] }) {
+const WON_SOURCE_COLORS = [
+  "#10B981",
+  "#06B6D4",
+  "#3B82F6",
+  "#F59E0B",
+  "#8B5CF6",
+  "#EF4444",
+  "#14B8A6",
+];
+
+function DistributionTooltip({
+  active,
+  payload,
+  fallbackLabel,
+}: {
+  active?: boolean;
+  payload?: DistributionTooltipEntry[];
+  fallbackLabel: string;
+}) {
   if (!active || !payload?.length) return null;
 
   const entry = payload[0];
@@ -727,7 +745,7 @@ function LostReasonTooltip({ active, payload }: { active?: boolean; payload?: Lo
           className="h-2.5 w-2.5 rounded-full ring-2 ring-[var(--app-surface-solid)]"
           style={{ backgroundColor: point?.color || entry.color || entry.fill }}
         />
-        <span className="truncate text-xs font-semibold text-foreground">{point?.label || "Motivo"}</span>
+        <span className="truncate text-xs font-semibold text-foreground">{point?.label || fallbackLabel}</span>
       </div>
       <div className="flex items-end justify-between gap-4">
         <span className="text-[11px] text-muted-foreground">
@@ -739,6 +757,44 @@ function LostReasonTooltip({ active, payload }: { active?: boolean; payload?: Lo
       </div>
     </div>
   );
+}
+
+function getSourceLabel(source: string | null | undefined): string {
+  const normalizedSource = (source || "").trim();
+  const labelKey = normalizedSource.toLowerCase();
+
+  return sourceLabels[labelKey] || sourceLabels[normalizedSource] || normalizedSource || "Origem não informada";
+}
+
+function buildWonSourceBuckets(wonDeals: EnhancedDashboardStats["wonDeals"], totalWon: number): DistributionChartPoint[] {
+  const groupedSources = new Map<string, { key: string; label: string; count: number }>();
+
+  for (const deal of wonDeals) {
+    const source = (deal.source || "").trim();
+    const key = source.toLowerCase() || "sem-origem";
+    const current = groupedSources.get(key);
+
+    if (current) {
+      current.count += 1;
+      continue;
+    }
+
+    groupedSources.set(key, {
+      key,
+      label: getSourceLabel(source),
+      count: 1,
+    });
+  }
+
+  const percentageBase = totalWon > 0 ? totalWon : wonDeals.length;
+
+  return Array.from(groupedSources.values())
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "pt-BR"))
+    .map((bucket, index) => ({
+      ...bucket,
+      percentage: percentageBase > 0 ? (bucket.count / percentageBase) * 100 : 0,
+      color: WON_SOURCE_COLORS[index % WON_SOURCE_COLORS.length],
+    }));
 }
 
 function LostDealsDialog({
@@ -830,7 +886,7 @@ function LostDealsDialog({
                           ))}
                         </Pie>
                         <RechartsTooltip
-                          content={<LostReasonTooltip />}
+                          content={<DistributionTooltip fallbackLabel="Motivo" />}
                           cursor={false}
                           wrapperStyle={{ zIndex: 30, pointerEvents: "none" }}
                         />
@@ -945,6 +1001,7 @@ function WonDealsDialog({
   const totalVgv = data.totalSalesValue || 0;
   const averageTicket = totalWon > 0 ? totalVgv / totalWon : 0;
   const averageDays = data.wonAverageConversionDays;
+  const sourceBuckets = buildWonSourceBuckets(wonDeals, totalWon);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -984,51 +1041,91 @@ function WonDealsDialog({
             </div>
 
             <div className="app-card-soft overflow-hidden p-4">
-              <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div className="mb-3 flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <h3 className="text-sm font-semibold">Tempo até o ganho</h3>
-                  <p className="text-xs text-muted-foreground">Distribuição dos fechamentos pela idade do lead.</p>
+                  <h3 className="text-sm font-semibold">Origem e tempo dos ganhos</h3>
+                  <p className="text-xs text-muted-foreground">Pizza por origem e tempo até o ganho no período filtrado.</p>
                 </div>
-                <p className="text-sm font-semibold text-emerald-500 sm:text-right">{formatCurrency(totalVgv)}</p>
+                <PieChartIcon className="h-4 w-4 shrink-0 text-emerald-500" />
               </div>
 
-              <div className="space-y-3">
-                {data.wonConversionBuckets.map((bucket) => {
-                  const hasDeals = bucket.count > 0;
-                  const width = hasDeals ? Math.max(4, Math.min(100, bucket.percentage || 0)) : 0;
-
-                  return (
-                    <div
-                      key={bucket.key}
-                      className={cn(
-                        "grid gap-1.5 text-xs sm:grid-cols-[140px_1fr_70px_70px] sm:items-center sm:gap-3",
-                        !hasDeals && "opacity-55",
-                      )}
-                    >
-                      <div className="flex min-w-0 items-center justify-between gap-3 sm:contents">
-                        <span className={cn("min-w-0 truncate text-muted-foreground", !hasDeals && "text-[11px]")}>
-                          {bucket.label}
-                        </span>
-                        <div className="flex shrink-0 items-center gap-3 sm:contents">
-                          <span className={cn("text-right font-semibold tabular-nums", !hasDeals && "text-[11px]")}>{bucket.count}</span>
-                          <span className={cn("text-right font-semibold tabular-nums", !hasDeals && "text-[11px]")} style={{ color: bucket.color }}>
-                            {formatKPIValue(bucket.percentage || 0, "percent")}
-                          </span>
-                        </div>
-                      </div>
-                      <div className={cn("overflow-hidden rounded-full bg-black/[0.08] dark:bg-white/[0.10] sm:col-start-2 sm:row-start-1", hasDeals ? "h-2.5 sm:h-3" : "h-1.5")}>
-                        <div
-                          className="h-full rounded-full shadow-[0_0_0_1px_rgba(0,0,0,0.04)] transition-all"
-                          style={{
-                            width: `${width}%`,
-                            backgroundColor: bucket.color,
-                          }}
+              {sourceBuckets.length === 0 ? (
+                <div className="rounded-lg bg-white/[0.035] p-4 text-center text-sm text-muted-foreground">
+                  Nenhum ganho fechado nesse período.
+                </div>
+              ) : (
+                <div className="grid min-w-0 gap-4 xl:grid-cols-[215px_minmax(0,1fr)]">
+                  <div className="dashboard-recharts-focusless relative mx-auto h-[160px] w-full max-w-[190px] sm:h-[190px] sm:max-w-[215px]">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+                      <PieChart>
+                        <Pie
+                          data={sourceBuckets}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius="52%"
+                          outerRadius="76%"
+                          paddingAngle={3}
+                          dataKey="count"
+                          nameKey="label"
+                          stroke="transparent"
+                          strokeWidth={0}
+                        >
+                          {sourceBuckets.map((entry) => (
+                            <Cell key={entry.key} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <RechartsTooltip
+                          content={<DistributionTooltip fallbackLabel="Origem" />}
+                          cursor={false}
+                          wrapperStyle={{ zIndex: 30, pointerEvents: "none" }}
                         />
-                      </div>
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                      <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground/70">Ganhos</span>
+                      <span className="text-3xl font-black leading-tight text-foreground">{totalWon}</span>
                     </div>
-                  );
-                })}
-              </div>
+                  </div>
+
+                  <div className="min-w-0 space-y-3">
+                    {data.wonConversionBuckets.map((bucket) => {
+                      const hasDeals = bucket.count > 0;
+                      const width = hasDeals ? Math.max(4, Math.min(100, bucket.percentage || 0)) : 0;
+
+                      return (
+                        <div
+                          key={bucket.key}
+                          className={cn(
+                            "grid gap-1.5 text-xs sm:grid-cols-[140px_1fr_70px_70px] sm:items-center sm:gap-3",
+                            !hasDeals && "opacity-55",
+                          )}
+                        >
+                          <div className="flex min-w-0 items-center justify-between gap-3 sm:contents">
+                            <span className={cn("min-w-0 truncate text-muted-foreground", !hasDeals && "text-[11px]")}>
+                              {bucket.label}
+                            </span>
+                            <div className="flex shrink-0 items-center gap-3 sm:contents">
+                              <span className={cn("text-right font-semibold tabular-nums", !hasDeals && "text-[11px]")}>{bucket.count}</span>
+                              <span className={cn("text-right font-semibold tabular-nums", !hasDeals && "text-[11px]")} style={{ color: bucket.color }}>
+                                {formatKPIValue(bucket.percentage || 0, "percent")}
+                              </span>
+                            </div>
+                          </div>
+                          <div className={cn("overflow-hidden rounded-full bg-black/[0.08] dark:bg-white/[0.10] sm:col-start-2 sm:row-start-1", hasDeals ? "h-2.5 sm:h-3" : "h-1.5")}>
+                            <div
+                              className="h-full rounded-full shadow-[0_0_0_1px_rgba(0,0,0,0.04)] transition-all"
+                              style={{
+                                width: `${width}%`,
+                                backgroundColor: bucket.color,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="app-card-soft overflow-hidden p-4">

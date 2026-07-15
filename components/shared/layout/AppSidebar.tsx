@@ -17,7 +17,6 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
-import { useUserAccessScope } from '@/hooks/use-user-access-scope';
 import { useSidebar } from '@/contexts/SidebarContext';
 import { useSystemSettings } from '@/hooks/use-system-settings';
 import { useTheme } from 'next-themes';
@@ -275,7 +274,6 @@ export const AppSidebar = React.memo(function AppSidebar() {
   const { t } = useLanguage();
   const { hasModule } = useOrganizationModules();
   const { hasPermission } = useUserPermissions();
-  const { isTeamLeader } = useUserAccessScope();
   const { collapsed, toggleCollapsed } = useSidebar();
   const { data: systemSettings } = useSystemSettings();
   const { resolvedTheme } = useTheme();
@@ -298,6 +296,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
     ? tenantContext.memberRole
     : undefined;
   const activeMemberRole = activeOrganizationMembership?.member_role || fallbackMemberRole;
+  const isTeamLeader = Boolean(tenantContext?.isTeamLeader);
   const canAccessFinancialModule = canUseFinancialModule({
     id: activeOrganizationId,
     name: organization?.name || activeOrganizationMembership?.organization_name,

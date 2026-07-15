@@ -1526,9 +1526,8 @@ export default function Pipelines() {
                 lostReason: reason,
               });
               setLostReasonLead(null);
-              refetch();
-            } catch (err) {
-              console.error(err);
+            } catch {
+              // The mutation hook already restores optimistic state and shows the toast.
             }
           }}
           leadName={lostReasonLead?.name}

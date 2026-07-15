@@ -286,12 +286,13 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	}
 
 	canOperationalPatch := canUpdateAssignedLeadOperationalPatch(tenantContext, current, input)
-	if !canEdit && !canOperationalPatch && isLeadPropertyInterestPatch(input) {
+	if !canEdit && !canOperationalPatch && (isLeadPropertyInterestPatch(input) || isLeadStatusPatch(current, input)) {
 		canViewLead, err := canViewExistingLeadWithQuerier(ctx, tx, tenantContext, current.AssignedUserID)
 		if err != nil {
 			return Lead{}, err
 		}
-		canOperationalPatch = canUpdateVisibleLeadPropertyInterest(canViewLead, input)
+		canOperationalPatch = canUpdateVisibleLeadPropertyInterest(canViewLead, input) ||
+			canUpdateVisibleLeadStatus(canViewLead, current, input)
 	}
 	if !canEdit && !canOperationalPatch {
 		return Lead{}, tenant.ErrOrganizationAccessDenied
@@ -3151,21 +3152,38 @@ func canMoveLead(tenantContext tenant.Context, assignedUserID string) bool {
 }
 
 func canUpdateAssignedLeadOperationalPatch(tenantContext tenant.Context, current leadSnapshot, input updateInput) bool {
-	if !canMoveLead(tenantContext, current.AssignedUserID) {
-		return false
+	if canMoveLead(tenantContext, current.AssignedUserID) {
+		return isLeadStatusPatch(current, input) || isLeadFeedbackPatch(input) || isLeadPropertyInterestPatch(input)
 	}
-	return isLeadStatusPatch(current, input) || isLeadFeedbackPatch(input) || isLeadPropertyInterestPatch(input)
+
+	return canUpdateLedLeadStatus(tenantContext, current, input)
 }
 
 func canUpdateVisibleLeadPropertyInterest(canViewLead bool, input updateInput) bool {
 	return canViewLead && isLeadPropertyInterestPatch(input)
 }
 
+func canUpdateVisibleLeadStatus(canViewLead bool, current leadSnapshot, input updateInput) bool {
+	return canViewLead &&
+		isLeadStatusPatch(current, input) &&
+		!input.PropertyID.Set &&
+		!input.InterestPropertyID.Set &&
+		!input.IsOwnResource.Set
+}
+
 func canUpdateAssignedLeadStatus(tenantContext tenant.Context, current leadSnapshot, input updateInput) bool {
-	if !canMoveLead(tenantContext, current.AssignedUserID) {
-		return false
-	}
-	return isLeadStatusPatch(current, input)
+	return canMoveLead(tenantContext, current.AssignedUserID) && isLeadStatusPatch(current, input) ||
+		canUpdateLedLeadStatus(tenantContext, current, input)
+}
+
+func canUpdateLedLeadStatus(tenantContext tenant.Context, current leadSnapshot, input updateInput) bool {
+	return tenantContext.IsTeamLeader &&
+		tenantContext.HasPermission("lead_view_team") &&
+		tenantContext.LeadsUser(current.AssignedUserID) &&
+		isLeadStatusPatch(current, input) &&
+		!input.PropertyID.Set &&
+		!input.InterestPropertyID.Set &&
+		!input.IsOwnResource.Set
 }
 
 func isLeadStatusPatch(current leadSnapshot, input updateInput) bool {

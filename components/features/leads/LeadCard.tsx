@@ -229,6 +229,7 @@ export const LeadCard = memo(function LeadCard({
   const isRecentlyCreated = lead.created_at &&
     !lead.assigned_user_id &&
     (Date.now() - new Date(lead.created_at).getTime()) < 10000;
+  const isAssigneeHydrating = Boolean(lead.assigned_user_id && !lead.assignee);
 
   return <>
     <Draggable draggableId={lead.id} index={index} isDragDisabled={isDragDisabled}>
@@ -381,7 +382,18 @@ export const LeadCard = memo(function LeadCard({
                   <TooltipContent side="bottom" className="text-xs">
                     {lead.assignee.name}
                   </TooltipContent>
-                </Tooltip> : isRecentlyCreated ? (
+                </Tooltip> : isAssigneeHydrating ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge variant="secondary" className="text-[9px] px-1.5 py-0.5 bg-[var(--app-surface-soft)] text-muted-foreground">
+                        ResponsÃ¡vel
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="text-xs">
+                      Carregando responsÃ¡vel
+                    </TooltipContent>
+                  </Tooltip>
+                ) : isRecentlyCreated ? (
                   <Badge variant="secondary" className="text-[9px] px-1.5 py-0.5 animate-pulse">
                     <Loader2 className="h-2 w-2 mr-1 animate-spin" />
                     Atribuindo...

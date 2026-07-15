@@ -256,6 +256,8 @@ export function FloatingChat() {
   }, [profile?.id, organization?.id, profile?.organization_id]);
   const activeConversationId = activeConversation?.id;
   const activeConversationLead = activeConversation?.lead;
+  const activeConversationLeadId = activeConversation?.lead_id || activeConversationLead?.id || null;
+  const currentUserId = profile?.id || null;
   const activeConversationUnreadCount = activeConversation?.unread_count ?? 0;
   const activeConversationSessionId = activeConversation?.session_id;
   const activeConversationRemoteJid = activeConversation?.remote_jid;
@@ -322,7 +324,9 @@ export function FloatingChat() {
   useWhatsAppRealtimeConversations(
     shouldSyncFloatingChat,
     loadingSessions ? undefined : sessions?.map((session) => session.id) || [],
-    (conversations || []).map((conversation) => conversation.lead_id || conversation.lead?.id || ""),
+    activeConversationLeadId && activeConversationLead?.assignee?.id === currentUserId
+      ? [activeConversationLeadId]
+      : [],
   );
 
   const getLeadPipelineUrl = (leadId: string) => {

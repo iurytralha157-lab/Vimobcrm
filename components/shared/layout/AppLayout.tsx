@@ -1,4 +1,4 @@
-import { ReactNode, useEffect } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { AppSidebar } from './AppSidebar';
@@ -19,10 +19,15 @@ import { usePushNotifications } from '@/hooks/use-push-notifications';
 import { usePhoneReminder } from '@/hooks/use-phone-reminder';
 import { useWhatsAppSound } from '@/hooks/use-whatsapp-sound';
 import { useSystemSettings } from '@/hooks/use-system-settings';
+import { useOrganizationModules } from '@/hooks/use-organization-modules';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useAuth } from '@/contexts/AuthContext';
 import { VimobLoader } from '@/components/shared/loading';
 import { Wrench } from 'lucide-react';
 import { canManageOrganization } from '@/lib/access/organization';
+
+const INITIAL_SIDEBAR_BOOT_FALLBACK_MS = 1400;
+let hasCompletedInitialAppShellBoot = false;
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -123,12 +128,30 @@ export function AppLayout({ children, title, disableMainScroll = false, borderle
     authInitialized,
     organizationsLoaded,
     isInitializingOrg,
+    profile,
+    tenantContext,
     userOrganizations,
   } = useAuth();
+  const { isLoading: modulesLoading } = useOrganizationModules();
+  const { isLoading: permissionsLoading } = useUserPermissions();
+  const { isLoading: systemSettingsLoading } = useSystemSettings();
+  const [initialShellReady, setInitialShellReady] = useState(hasCompletedInitialAppShellBoot);
   const router = useRouter();
   const pathname = usePathname();
   const allowDashboardShell = Boolean(user && authInitialized && !loading && pathname?.startsWith('/dashboard'));
   const allowRender = !!organization || isSuperAdmin || !!impersonating || allowDashboardShell;
+  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const hasSidebarTenantContext = Boolean(
+    isSuperAdmin ||
+      impersonating ||
+      (activeOrganizationId && tenantContext?.organizationId === activeOrganizationId),
+  );
+  const sidebarBootReady =
+    allowRender &&
+    hasSidebarTenantContext &&
+    !modulesLoading &&
+    !permissionsLoading &&
+    !systemSettingsLoading;
 
   useEffect(() => {
     if (allowRender || loading || !authInitialized || !organizationsLoaded || isInitializingOrg) return;
@@ -150,10 +173,37 @@ export function AppLayout({ children, title, disableMainScroll = false, borderle
     userOrganizations,
   ]);
 
+  useEffect(() => {
+    if (initialShellReady || !allowRender) return;
+
+    if (sidebarBootReady) {
+      const readyTimer = window.setTimeout(() => {
+        hasCompletedInitialAppShellBoot = true;
+        setInitialShellReady(true);
+      }, 0);
+      return () => window.clearTimeout(readyTimer);
+    }
+
+    const fallbackTimer = window.setTimeout(() => {
+      hasCompletedInitialAppShellBoot = true;
+      setInitialShellReady(true);
+    }, INITIAL_SIDEBAR_BOOT_FALLBACK_MS);
+
+    return () => window.clearTimeout(fallbackTimer);
+  }, [allowRender, initialShellReady, sidebarBootReady]);
+
   if (!allowRender) {
     return (
       <div className="h-screen flex items-center justify-center bg-background">
         <VimobLoader size="lg" label="Carregando ambiente..." />
+      </div>
+    );
+  }
+
+  if (!initialShellReady) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <VimobLoader size="lg" label="Preparando menu..." />
       </div>
     );
   }

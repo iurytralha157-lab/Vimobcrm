@@ -17,7 +17,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
-import { useUserAccessScope } from '@/hooks/use-user-access-scope';
 import { canUseFinancialModule } from '@/lib/financial-access';
 import { canManageOrganization } from '@/lib/access/organization';
 import {
@@ -188,14 +187,14 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
   const router = useRouter();
   const pathname = usePathname() || '';
   const searchParams = useSearchParams();
-  const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
+  const { profile, isSuperAdmin, organization, tenantContext, userOrganizations } = useAuth();
   const { t } = useLanguage();
   const { hasModule } = useOrganizationModules();
   const { hasPermission } = useUserPermissions();
-  const { isTeamLeader } = useUserAccessScope();
   const activeOrganizationId = organization?.id || profile?.organization_id;
   const activeOrganizationMembership = userOrganizations.find(org => org.organization_id === activeOrganizationId);
   const activeMemberRole = activeOrganizationMembership?.member_role;
+  const isTeamLeader = Boolean(tenantContext?.isTeamLeader);
   const canAccessFinancialModule = canUseFinancialModule({
     id: activeOrganizationId,
     name: organization?.name || activeOrganizationMembership?.organization_name,

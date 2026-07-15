@@ -296,6 +296,13 @@ export default function Conversations() {
   const selectedLeadId = activePlatform === "whatsapp"
     ? selectedConversation?.lead_id || selectedConversation?.lead?.id || null
     : selectedConversation?.lead?.id || null;
+  const selectedRealtimeLeadIds = useMemo(
+    () => {
+      if (activePlatform !== "whatsapp" || !selectedLeadId || !currentUserId) return [];
+      return selectedConversation?.lead?.assignee?.id === currentUserId ? [selectedLeadId] : [];
+    },
+    [activePlatform, currentUserId, selectedConversation?.lead?.assignee?.id, selectedLeadId],
+  );
 
   const {
     messages: whatsappMessages,
@@ -351,7 +358,7 @@ export default function Conversations() {
   useWhatsAppRealtimeConversations(
     true,
     loadingSessions ? undefined : accessibleSessionIds,
-    (conversations || []).map((conversation) => conversation.lead_id || conversation.lead?.id || ""),
+    selectedRealtimeLeadIds,
   );
 
   const handleChannelChange = (value: string) => {

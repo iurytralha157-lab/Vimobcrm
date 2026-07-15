@@ -941,7 +941,7 @@ export function useWhatsAppRealtimeConversations(
 ) {
   const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
-  const accessibleSessionKey = accessibleSessionIds ? accessibleSessionIds.join("|") : null;
+  const accessibleSessionKey = accessibleSessionIds ? [...accessibleSessionIds].sort().join("|") : null;
   const leadKey = [...new Set(leadIds.filter(Boolean))].sort().join("|");
 
   useEffect(() => {
