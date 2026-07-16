@@ -24,8 +24,9 @@ alter table public.user_permission_overrides enable row level security;
 -- Authorization is served by the Go API. Keep this table out of the Data API.
 revoke all on table public.user_permission_overrides from anon, authenticated, public;
 
-insert into public.available_permissions (key, label, description, domain)
-values
+insert into public.available_permissions (key, name, label, description, category, domain)
+select key, label, label, description, domain, domain
+from (values
   ('dashboard_view', 'Ver dashboard geral', 'Acessar o painel comercial no escopo permitido', 'dashboard'),
   ('dashboard_site_view', 'Ver dashboard do site', 'Acessar metricas e analises do site', 'dashboard'),
   ('dashboard_campaigns_view', 'Ver dashboard de campanhas', 'Acessar metricas e analises de campanhas', 'dashboard'),
@@ -63,7 +64,10 @@ values
   ('settings_ai', 'Gerenciar IA', 'Configurar agentes e regras de inteligencia artificial', 'settings'),
   ('settings_site', 'Gerenciar site', 'Configurar o site da organizacao', 'settings'),
   ('settings_billing', 'Gerenciar cobranca', 'Alterar plano e dados de cobranca', 'settings')
+) as seed(key, label, description, domain)
 on conflict (key) do update set
+  name = excluded.name,
   label = excluded.label,
   description = excluded.description,
+  category = excluded.category,
   domain = excluded.domain;
