@@ -14,16 +14,26 @@ func TestCanCreatePropertyOwners(t *testing.T) {
 		MemberRole:     "user",
 	}
 
-	if !canCreatePropertyOwners(userContext) {
-		t.Fatal("regular organization users should be able to create property owners")
+	if canCreatePropertyOwners(userContext) {
+		t.Fatal("property_view alone must not create property owners")
 	}
 
-	if !canCreateProperties(userContext) {
-		t.Fatal("regular organization users should be able to create properties")
+	if canCreateProperties(userContext) {
+		t.Fatal("property_view alone must not create properties")
 	}
 
 	if canManageProperties(userContext) {
 		t.Fatal("regular organization users should not receive full property management access")
+	}
+
+	managerContext := tenant.Context{
+		UserID:         "user-2",
+		OrganizationID: "org-1",
+		MemberRole:     "user",
+		Permissions:    []string{"property_manage"},
+	}
+	if !canCreatePropertyOwners(managerContext) || !canCreateProperties(managerContext) {
+		t.Fatal("property_manage must allow creating properties and owners")
 	}
 }
 
@@ -68,10 +78,10 @@ func TestCanAssignPropertiesRequiresManagerPermission(t *testing.T) {
 		UserID:         "manager-1",
 		OrganizationID: "org-1",
 		MemberRole:     "user",
-		Permissions:    []string{"property_assign"},
+		Permissions:    []string{"property_manage"},
 	}
 	if !canAssignProperties(customPermissionContext) {
-		t.Fatal("explicit property_assign permission should allow transfers")
+		t.Fatal("property_manage permission should allow transfers")
 	}
 }
 
@@ -88,14 +98,14 @@ func TestPropertyVisibilitySQLIncludesOwnAndTeamPredicates(t *testing.T) {
 	}
 }
 
-func TestCanViewAllPropertiesHonorsManagersAndExplicitPermission(t *testing.T) {
+func TestCanViewAllPropertiesHonorsExplicitPermission(t *testing.T) {
 	managerContext := tenant.Context{
 		UserID:         "manager-1",
 		OrganizationID: "org-1",
 		MemberRole:     "manager",
 	}
-	if !canViewAllProperties(managerContext) {
-		t.Fatal("managers should see all organization properties")
+	if canViewAllProperties(managerContext) {
+		t.Fatal("manager role must not bypass the effective permission set")
 	}
 
 	userContext := tenant.Context{
@@ -157,7 +167,7 @@ func TestPropertyAssignmentChangeDetection(t *testing.T) {
 	}
 }
 
-func TestCanEditPropertyRequiresManagerOrOwnership(t *testing.T) {
+func TestCanEditPropertyRequiresPropertyManage(t *testing.T) {
 	userContext := tenant.Context{
 		UserID:         "user-1",
 		OrganizationID: "org-1",
@@ -168,12 +178,12 @@ func TestCanEditPropertyRequiresManagerOrOwnership(t *testing.T) {
 		t.Fatal("regular organization users should not edit another user's property details")
 	}
 
-	if !canEditProperty(userContext, "user-1", "another-user") {
-		t.Fatal("property creator should edit property details")
+	if canEditProperty(userContext, "user-1", "another-user") {
+		t.Fatal("ownership must not bypass a denied property_manage permission")
 	}
 
-	if !canEditProperty(userContext, "other-user", "user-1") {
-		t.Fatal("responsible user should edit property details")
+	if canEditProperty(userContext, "other-user", "user-1") {
+		t.Fatal("responsibility must not bypass a denied property_manage permission")
 	}
 
 	adminContext := tenant.Context{
@@ -191,6 +201,7 @@ func TestCanUpdatePropertyAvailabilityAllowsOnlyStatusAndPublication(t *testing.
 		UserID:         "user-1",
 		OrganizationID: "org-1",
 		MemberRole:     "user",
+		Permissions:    []string{"property_manage"},
 	}
 
 	if !canUpdatePropertyAvailability(userContext, propertyRequest{
@@ -217,5 +228,13 @@ func TestCanUpdatePropertyAvailabilityAllowsOnlyStatusAndPublication(t *testing.
 		"status": "reserved",
 	}) {
 		t.Fatal("availability update requires organization context")
+	}
+
+	if canUpdatePropertyAvailability(tenant.Context{
+		UserID:         "user-2",
+		OrganizationID: "org-1",
+		MemberRole:     "user",
+	}, propertyRequest{"status": "reserved"}) {
+		t.Fatal("availability update requires property_manage")
 	}
 }

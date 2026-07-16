@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AppLayout } from '@/components/shared/layout/AppLayout';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
@@ -14,10 +14,12 @@ import { IntegrationsTab } from '@/components/features/settings/IntegrationsTab'
 import { PropertySettingsTab } from '@/components/features/settings/PropertySettingsTab';
 import { isBillingBlockedStatus } from '@/lib/billing-access';
 import { canManageOrganization as canManageOrganizationAccess } from '@/lib/access/organization';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
 
 export default function Settings() {
   const { profile, isSuperAdmin, organization, userOrganizations, loading, organizationsLoaded } = useAuth();
   const { hasModule } = useOrganizationModules();
+  const { hasPermission } = useUserPermissions();
   const { t } = useLanguage();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -37,14 +39,28 @@ export default function Settings() {
     isSuperAdmin,
     memberRole: activeMemberRole,
   });
+  const canAccessUsers = canManageOrganization || hasPermission('users_manage') || hasPermission('permissions_manage');
+  const canManageIntegrations = canManageOrganization || hasPermission('settings_integrations');
+  const canManageWhatsApp = canManageOrganization || hasPermission('whatsapp_manage');
+  const canManageAI = canManageOrganization || hasPermission('settings_ai');
+  const canManageBilling = canManageOrganization || hasPermission('settings_billing');
+  const canManageProperties = canManageOrganization || hasPermission('property_manage');
+  const canAccessIntegrations = canManageIntegrations || canManageWhatsApp || canManageAI;
   const accessReady = !!profile && (canManageOrganization || (!loading && organizationsLoaded));
-  const legacyIntegrationTabs = !accessReady || canManageOrganization
-    ? ['webhooks', 'meta', 'grupo-olx', 'whatsapp', 'api', 'ai']
-    : ['webhooks', 'meta', 'whatsapp', 'api'];
-  const isUnauthorizedAIRequest = accessReady && normalizedRequestedTab === 'ai' && !canManageOrganization;
+  const legacyIntegrationTabs = useMemo(() => [
+    ...(canManageIntegrations ? ['webhooks', 'meta', 'grupo-olx', 'api'] : []),
+    ...(canManageWhatsApp ? ['whatsapp'] : []),
+    ...(canManageAI ? ['ai'] : []),
+  ], [canManageAI, canManageIntegrations, canManageWhatsApp]);
+  const isUnauthorizedAIRequest = accessReady && normalizedRequestedTab === 'ai' && !canManageAI;
+  const isUnauthorizedIntegrationsRequest = accessReady && normalizedRequestedTab === 'integrations' && !canAccessIntegrations;
   const initialIntegration =
     !isUnauthorizedAIRequest && legacyIntegrationTabs.includes(normalizedRequestedTab) ? normalizedRequestedTab : undefined;
-  const initialTab = isUnauthorizedAIRequest ? 'account' : initialIntegration ? 'integrations' : requestedTab;
+  const initialTab = isUnauthorizedAIRequest || isUnauthorizedIntegrationsRequest
+    ? 'account'
+    : initialIntegration
+      ? 'integrations'
+      : requestedTab;
   const [activeTab, setActiveTab] = useState(initialTab);
 
   // Sync tab when URL query param changes (e.g. external navigation)
@@ -64,7 +80,7 @@ export default function Settings() {
 
     const rawTab = searchParams.get('tab');
     const t = rawTab === 'webhook' ? 'webhooks' : rawTab;
-    if (t === 'ai' && !canManageOrganization) {
+    if (t === 'ai' && !canManageAI) {
       if (activeTab !== 'account') setActiveTab('account');
       const next = new URLSearchParams(searchParams);
       next.set('tab', 'account');
@@ -72,7 +88,24 @@ export default function Settings() {
       return;
     }
     const normalizedTab = t && legacyIntegrationTabs.includes(t) ? 'integrations' : t;
-    if (normalizedTab && !canManageOrganization && ['team', 'subscription', 'properties'].includes(normalizedTab)) {
+    if (normalizedTab === 'integrations' && !canAccessIntegrations) {
+      if (activeTab !== 'account') setActiveTab('account');
+      const next = new URLSearchParams(searchParams);
+      next.set('tab', 'account');
+      replaceSearchParams(next);
+      return;
+    }
+    if (normalizedTab === 'team' && !canAccessUsers) {
+      if (activeTab !== 'account') setActiveTab('account');
+      const next = new URLSearchParams(searchParams);
+      next.set('tab', 'account');
+      replaceSearchParams(next);
+      return;
+    }
+    if (
+      (normalizedTab === 'subscription' && !canManageBilling) ||
+      (normalizedTab === 'properties' && !canManageProperties)
+    ) {
       if (activeTab !== 'account') setActiveTab('account');
       const next = new URLSearchParams(searchParams);
       next.set('tab', 'account');
@@ -82,8 +115,7 @@ export default function Settings() {
     if (normalizedTab && normalizedTab !== activeTab) {
       setActiveTab(normalizedTab);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, isBillingBlocked, activeTab, replaceSearchParams, canManageOrganization, accessReady]);
+  }, [searchParams, isBillingBlocked, activeTab, replaceSearchParams, canAccessIntegrations, canAccessUsers, canManageAI, canManageBilling, canManageProperties, accessReady, legacyIntegrationTabs]);
 
   const handleTabChange = (value: string) => {
     if (isBillingBlocked && value !== 'subscription') return;
@@ -94,7 +126,7 @@ export default function Settings() {
   };
 
   const hasWhatsAppModule = hasModule('whatsapp');
-  const hasAIModule = canManageOrganization && hasModule('ai_agent');
+  const hasAIModule = canManageAI && hasModule('ai_agent');
   const hasWebhooksModule = hasModule('webhooks');
   const hasAPIModule = hasModule('api');
   const hasPortalsModule = hasModule('portals');
@@ -113,30 +145,35 @@ export default function Settings() {
             </TabsContent>
           )}
 
-          {accessReady && canManageOrganization && (
+          {accessReady && canAccessUsers && (
             <TabsContent value="team">
               <TeamTab />
             </TabsContent>
           )}
 
-          <TabsContent value="integrations">
-            <IntegrationsTab
-              defaultIntegration={initialIntegration}
-              hasWhatsAppModule={hasWhatsAppModule}
-              hasAIModule={hasAIModule}
-              hasWebhooksModule={hasWebhooksModule}
-              hasAPIModule={hasAPIModule}
-              hasPortalsModule={hasPortalsModule}
-            />
-          </TabsContent>
+          {accessReady && canAccessIntegrations && (
+            <TabsContent value="integrations">
+              <IntegrationsTab
+                defaultIntegration={initialIntegration}
+                hasWhatsAppModule={hasWhatsAppModule}
+                hasAIModule={hasAIModule}
+                hasWebhooksModule={hasWebhooksModule}
+                hasAPIModule={hasAPIModule}
+                hasPortalsModule={hasPortalsModule}
+                canManageIntegrations={canManageIntegrations}
+                canManageWhatsApp={canManageWhatsApp}
+                canManageAI={canManageAI}
+              />
+            </TabsContent>
+          )}
 
-          {accessReady && canManageOrganization && (
+          {accessReady && canManageProperties && (
             <TabsContent value="properties">
               <PropertySettingsTab />
             </TabsContent>
           )}
 
-          {accessReady && (canManageOrganization || isBillingBlocked) && (
+          {accessReady && (canManageBilling || isBillingBlocked) && (
             <TabsContent value="subscription">
               <SubscriptionTab />
             </TabsContent>

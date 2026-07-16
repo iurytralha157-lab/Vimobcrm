@@ -3,12 +3,12 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
-import type { Tables } from '@/integrations/supabase/types';
 import { logAuditAction } from '@/hooks/use-audit-logs';
 import { performanceTracker } from '@/lib/performance';
 import { performFullCacheClear } from '@/lib/cache-utils';
 import { ROUTES, getPublicAppUrl } from '@/config/constants';
 import { meAPI, type TenantContext } from '@/lib/api/me';
+import { usersAPI } from '@/lib/api/users';
 import { VimobAPIError } from '@/lib/api/vimob-client';
 
 const isAuthDebugEnabled =
@@ -91,14 +91,6 @@ interface Organization {
   property_edit_policy?: 'everyone' | 'responsible_or_admin' | null;
   property_owner_contact_visibility?: 'visible' | 'hidden' | null;
 }
-
-type OrganizationSummary = Pick<Tables<'organizations'>, 'id' | 'name' | 'logo_url'>;
-type OrganizationMemberWithOrganization = Pick<
-  Tables<'organization_members'>,
-  'organization_id' | 'role' | 'is_active' | 'joined_at' | 'updated_at'
-> & {
-  organizations: OrganizationSummary | OrganizationSummary[] | null;
-};
 
 const normalizeProfileRole = (role: string | null | undefined): UserProfile['role'] => {
   if (role === 'admin' || role === 'super_admin') return role;
@@ -209,6 +201,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const profileRef = useRef<UserProfile | null>(null);
   const [organization, setOrganization] = useState<Organization | null>(null);
   const organizationRef = useRef<Organization | null>(null);
+  const fetchProfileRequestRef = useRef(0);
   const [tenantContext, setTenantContext] = useState<TenantContext | null>(null);
   const [loading, setLoading] = useState(true);
   const [authInitialized, setAuthInitialized] = useState(false);
@@ -253,29 +246,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return null;
   });
 
-  const checkSuperAdmin = async (userId: string): Promise<boolean> => {
-    return performanceTracker.trackTimed('checkSuperAdmin', async () => {
-      // Check both user_roles table AND users.role field for super_admin
-      const [rolesResult, usersResult] = await Promise.all([
-        supabase
-          .from('user_roles')
-          .select('role')
-          .eq('user_id', userId)
-          .eq('role', 'super_admin')
-          .maybeSingle(),
-        supabase
-          .from('users')
-          .select('role')
-          .eq('id', userId)
-          .eq('role', 'super_admin')
-          .maybeSingle()
-      ]);
-
-      return !!(rolesResult.data || usersResult.data);
-    });
-  };
-
   const fetchProfile = async (userId: string): Promise<boolean> => {
+    const requestId = ++fetchProfileRequestRef.current;
     return performanceTracker.trackTimed('fetchProfile', async () => {
       try {
         const storedImpersonating = localStorage.getItem('impersonating');
@@ -285,6 +257,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const preferredOrganizationId = activeImpersonation?.orgId
           || localStorage.getItem(`vimob_active_organization_${userId}`);
         const response = await meAPI.getProfile(preferredOrganizationId);
+        if (requestId !== fetchProfileRequestRef.current) return true;
         const superAdmin = response.context.isSuperAdmin;
         const profileData: UserProfile = {
           ...response.profile,
@@ -320,9 +293,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           );
         }
 
-        fetchFullProfile(userId);
         return true;
       } catch (error) {
+        if (requestId !== fetchProfileRequestRef.current) return true;
         console.error('Error fetching profile:', error);
         if (isExpiredAPISessionError(error)) {
           isLoggingOutRef.current = true;
@@ -353,26 +326,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const fetchFullProfile = async (userId: string) => {
-    try {
-      const { data } = await supabase
-        .from('users')
-        .select('theme_mode, whatsapp, cpf')
-        .eq('id', userId)
-        .single();
-      
-      if (data) {
-        setProfile(prev => {
-          const next = prev ? { ...prev, ...data } : null;
-          profileRef.current = next;
-          return next;
-        });
-      }
-    } catch (error) {
-      console.error('Error fetching full profile:', error);
-    }
-  };
-
   const startImpersonate = async (orgId: string, orgName: string) => {
     if (!user) return;
 
@@ -388,17 +341,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('impersonating', JSON.stringify(impersonateSession));
     setImpersonating(impersonateSession);
 
-    // Buscar e setar a org impersonada em memória (sem tocar o banco)
-    const { data: orgData } = await supabase
-      .from('organizations')
-      .select('*')
-      .eq('id', orgId)
-      .single();
-
-    if (orgData) {
-      organizationRef.current = orgData as Organization;
-      setOrganization(orgData as Organization);
-    }
+    await fetchProfile(user.id);
   };
 
   const stopImpersonate = async () => {
@@ -430,39 +373,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await meAPI.switchOrganization(orgId);
     localStorage.setItem(`vimob_active_organization_${activeUser.id}`, orgId);
 
-    const { data: orgData } = await supabase
-      .from('organizations')
-      .select('*')
-      .eq('id', orgId)
-      .single();
-
-    if (orgData) {
-      organizationRef.current = orgData as Organization;
-      setOrganization(orgData as Organization);
-    }
-
-    const { data: memberData } = await supabase
-      .from('organization_members')
-      .select('role')
-      .eq('user_id', activeUser.id)
-      .eq('organization_id', orgId)
-      .single();
-
-    if (memberData) {
-      const memberRole = memberData.role;
-      const newRole = normalizeProfileRole(memberRole);
-      setProfile(prev => {
-        const next = prev ? { ...prev, organization_id: orgId, role: newRole } : prev;
-        profileRef.current = next;
-        return next;
-      });
-    } else {
-      setProfile(prev => {
-        const next = prev ? { ...prev, organization_id: orgId } : prev;
-        profileRef.current = next;
-        return next;
-      });
-    }
+    await fetchProfile(activeUser.id);
   };
 
   const checkMultiOrg = async (
@@ -473,46 +384,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         authDebug('[AuthContext] checking organizations for userId:', userId);
 
-        const { data, error } = await supabase
-          .from('organization_members')
-          .select(`
-            organization_id,
-            role,
-            is_active,
-            joined_at,
-            updated_at,
-            organizations:organization_id (
-              id,
-              name,
-              logo_url
-            )
-          `)
-          .eq('user_id', userId)
-          .eq('is_active', true);
-
-        if (error) {
-          console.error('[AuthContext] Error fetching accessible organizations:', error);
-          setOrganizationsLoaded(true);
-          return;
-        }
-
-        const orgsMap = new Map<string, UserOrganization>();
-        ((data || []) as OrganizationMemberWithOrganization[]).forEach((item) => {
-          const orgData = Array.isArray(item.organizations) ? item.organizations[0] : item.organizations;
-          if (orgData && !orgsMap.has(item.organization_id)) {
-            orgsMap.set(item.organization_id, {
-              organization_id: item.organization_id,
-              organization_name: orgData.name || 'Organização',
-              organization_logo: orgData.logo_url || null,
-              member_role: item.role,
-              is_active: item.is_active,
-              joined_at: item.joined_at,
-              last_accessed_at: item.updated_at || null,
-            });
-          }
-        });
-
-        const uniqueOrgs = Array.from(orgsMap.values());
+        const uniqueOrgs = await usersAPI.listUserOrganizations();
         setUserOrganizations(uniqueOrgs);
         const count = uniqueOrgs.length;
         const currentOrganizationId =
@@ -808,7 +680,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signIn = async (email: string, password: string) => {
     const { error, data } = await supabase.auth.signInWithPassword({ email, password });
-    const signedInIsSuperAdmin = !error && data.user ? await checkSuperAdmin(data.user.id) : false;
+    let signedInIsSuperAdmin = false;
+    if (!error && data.user) {
+      try {
+        const response = await meAPI.getMe();
+        signedInIsSuperAdmin = response.context.isSuperAdmin;
+      } catch (contextError) {
+        authDebugWarn('[AuthContext] could not resolve tenant immediately after sign-in:', contextError);
+      }
+    }
 
     // Log successful login (async to avoid blocking)
     if (!error && data.user) {

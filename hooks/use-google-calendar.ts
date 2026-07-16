@@ -49,7 +49,7 @@ async function invokeGoogleCalendar<T>(body: Record<string, unknown>) {
   return data;
 }
 
-export function useGoogleCalendarStatus() {
+export function useGoogleCalendarStatus(options: { enabled?: boolean } = {}) {
   const { profile } = useAuth();
 
   return useQuery({
@@ -60,7 +60,7 @@ export function useGoogleCalendarStatus() {
       const data = await invokeGoogleCalendar<{ connection: GoogleCalendarConnectionStatus | null }>({ action: "status" });
       return data.connection;
     },
-    enabled: !!profile?.id && FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION,
+    enabled: options.enabled !== false && !!profile?.id && FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION,
     staleTime: 1000 * 60,
   });
 }

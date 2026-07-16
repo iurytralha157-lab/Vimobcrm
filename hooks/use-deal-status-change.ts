@@ -6,6 +6,7 @@ import { lostReasonSchema } from '@/lib/validation';
 import type { PipelineLead, StageWithLeads } from '@/hooks/use-stages';
 import type { Lead } from '@/hooks/use-leads';
 import type { UnifiedHistoryEvent } from '@/hooks/use-lead-history';
+import { appendOptimisticHistoryEvent, invalidateLeadHistorySoon } from '@/hooks/use-optimistic-lead-history';
 
 interface ChangeDealStatusParams {
   leadId: string;
@@ -186,18 +187,6 @@ function optimisticHistoryEvent(
   };
 }
 
-function upsertOptimisticHistory(
-  current: UnifiedHistoryEvent[] | undefined,
-  event: UnifiedHistoryEvent,
-  leadId: string,
-) {
-  if (!Array.isArray(current)) return current;
-  return [
-    ...current.filter((item) => !String(item.id).startsWith(`optimistic-status-${leadId}-`)),
-    event,
-  ];
-}
-
 function restoreSnapshots(queryClient: ReturnType<typeof useQueryClient>, snapshots?: MutationSnapshots) {
   if (!snapshots) return;
 
@@ -275,7 +264,7 @@ export function useDealStatusChange() {
       });
       snapshots.history.forEach(([queryKey]) => {
         queryClient.setQueryData<UnifiedHistoryEvent[]>(queryKey, (current) =>
-          upsertOptimisticHistory(current, historyEvent, variables.leadId),
+          appendOptimisticHistoryEvent(current, historyEvent),
         );
       });
 
@@ -300,7 +289,7 @@ export function useDealStatusChange() {
       queryClient.invalidateQueries({ queryKey: ['stages-with-leads'], refetchType: 'inactive' });
       queryClient.invalidateQueries({ queryKey: ['leads'], refetchType: 'inactive' });
       queryClient.invalidateQueries({ queryKey: ['lead'], refetchType: 'inactive' });
-      queryClient.invalidateQueries({ queryKey: ['lead-history-v2', variables.leadId] });
+      invalidateLeadHistorySoon(queryClient, variables.leadId);
       queryClient.invalidateQueries({ queryKey: ['activities'], refetchType: 'inactive' });
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'], refetchType: 'inactive' });
       queryClient.invalidateQueries({ queryKey: ['enhanced-dashboard-stats'], refetchType: 'inactive' });

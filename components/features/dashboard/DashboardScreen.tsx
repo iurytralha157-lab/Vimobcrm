@@ -39,6 +39,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 // Hooks e Contextos
 import { useSharedFilters } from "@/hooks/use-shared-filters";
+import { useFilterOptionsPipelineId } from "@/hooks/use-filter-options-pipeline-id";
 import {
   type EnhancedDashboardStats,
   useEnhancedDashboardStats,
@@ -89,6 +90,7 @@ export default function Dashboard() {
   const [shouldLoadFilterOptions, setShouldLoadFilterOptions] = useState(false);
   const { organization, profile } = useAuth();
   const activeOrganizationId = organization?.id ?? profile?.organization_id;
+  const filterOptionsPipelineId = useFilterOptionsPipelineId();
 
   const {
     filters,
@@ -125,7 +127,7 @@ export default function Dashboard() {
     isLoadingCampaigns,
     isLoadingAdSets,
     isLoadingAds,
-  } = useSharedFilters({ loadDynamicOptions: shouldLoadFilterOptions });
+  } = useSharedFilters({ loadDynamicOptions: shouldLoadFilterOptions, pipelineId: filterOptionsPipelineId });
 
   // Mapeamento de strings de data para chaves de cache estáveis
   const dateFromStr = filters.dateRange.from.toISOString();
@@ -145,12 +147,22 @@ export default function Dashboard() {
   }), [filters]);
 
   // Data hooks - Imobiliário
-  const { data: stats, isLoading: statsLoading } = useEnhancedDashboardStats(dashboardFilters);
+  const {
+    data: stats,
+    isLoading: statsLoading,
+    isError: statsError,
+    refetch: refetchStats,
+  } = useEnhancedDashboardStats(dashboardFilters);
   const { data: evolutionData = [], isLoading: evolutionLoading } = useDealsEvolutionData(dashboardFilters);
   const { data: sourcesData = [], isLoading: sourcesLoading } = useLeadSourcesData(dashboardFilters);
   const hasOrganization = Boolean(activeOrganizationId);
 
-  const { data: extraCounts, isLoading: extraCountsLoading } = useQuery({
+  const {
+    data: extraCounts,
+    isLoading: extraCountsLoading,
+    isError: extraCountsError,
+    refetch: refetchExtraCounts,
+  } = useQuery({
     queryKey: [
       "dashboard-extra-counts",
       activeOrganizationId,
@@ -175,6 +187,7 @@ export default function Dashboard() {
   const siteVisits = extraCounts?.siteVisits ?? 0;
   const scheduledVisitsCount = extraCounts?.scheduledVisits ?? 0;
   const kpisLoading = !hasOrganization || statsLoading || extraCountsLoading;
+  const kpisError = statsError || extraCountsError;
   const evolutionDataLoading = !hasOrganization || evolutionLoading;
   const sourcesDataLoading = !hasOrganization || sourcesLoading;
 
@@ -186,6 +199,11 @@ export default function Dashboard() {
 
   const funnelComponent = <SalesFunnelWithPipeline filters={dashboardFilters} />;
   const periodLabel = datePresetOptions.find((o) => o.value === datePreset)?.label || "Período selecionado";
+
+  const retryKpis = () => {
+    void refetchStats();
+    void refetchExtraCounts();
+  };
 
   const kpiData: EnhancedDashboardStats = stats || {
     totalLeads: 0,
@@ -269,17 +287,21 @@ export default function Dashboard() {
         <div className="hidden lg:grid lg:grid-cols-12 gap-2 md:gap-3 flex-1 min-h-0 overflow-y-auto app-scrollbar">
           <div className="col-span-8 flex flex-col gap-3 min-h-0">
             <div className="flex-shrink-0">
-              <KPICardsGrid
-                data={kpiData}
-                isLoading={kpisLoading}
-                periodLabel={periodLabel}
-                propertyCount={propertyCount}
-                siteVisits={siteVisits}
-                scheduledVisits={scheduledVisitsCount}
-                layout="top"
-                onLostClick={() => setLostDialogOpen(true)}
-                onWonClick={() => setWonDialogOpen(true)}
-              />
+              {kpisError ? (
+                <DashboardDataError onRetry={retryKpis} />
+              ) : (
+                <KPICardsGrid
+                  data={kpiData}
+                  isLoading={kpisLoading}
+                  periodLabel={periodLabel}
+                  propertyCount={propertyCount}
+                  siteVisits={siteVisits}
+                  scheduledVisits={scheduledVisitsCount}
+                  layout="top"
+                  onLostClick={() => setLostDialogOpen(true)}
+                  onWonClick={() => setWonDialogOpen(true)}
+                />
+              )}
             </div>
 
             <div data-tour="dashboard-evolution" className="flex-1 min-h-0">
@@ -302,16 +324,20 @@ export default function Dashboard() {
 
         {/* ===== MOBILE LAYOUT ===== */}
         <div className={cn("scrollbar-hidden lg:hidden flex flex-col gap-4 overflow-y-auto", !isMobile ? "flex-1 min-h-0" : "")}>
-          <KPICards
-            data={kpiData}
-            isLoading={kpisLoading}
-            periodLabel={periodLabel}
-            scheduledVisits={scheduledVisitsCount}
-            propertyCount={propertyCount}
-            siteVisits={siteVisits}
-            onLostClick={() => setLostDialogOpen(true)}
-            onWonClick={() => setWonDialogOpen(true)}
-          />
+          {kpisError ? (
+            <DashboardDataError onRetry={retryKpis} />
+          ) : (
+            <KPICards
+              data={kpiData}
+              isLoading={kpisLoading}
+              periodLabel={periodLabel}
+              scheduledVisits={scheduledVisitsCount}
+              propertyCount={propertyCount}
+              siteVisits={siteVisits}
+              onLostClick={() => setLostDialogOpen(true)}
+              onWonClick={() => setWonDialogOpen(true)}
+            />
+          )}
 
           <Tabs
             value={mobileChartTab}
@@ -394,6 +420,31 @@ function formatKPIValue(value: string | number, format: KPIFormat): string {
     default:
       return value.toLocaleString("pt-BR");
   }
+}
+
+function DashboardDataError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <Card className="border-destructive/25 bg-destructive/[0.04]">
+      <CardContent className="flex min-h-[96px] items-center justify-between gap-3 p-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-destructive/10 text-destructive">
+            <XCircle className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-foreground">Nao foi possivel carregar os dados.</p>
+            <p className="text-xs text-muted-foreground">Os numeros foram preservados fora da tela ate a consulta responder corretamente.</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="h-9 shrink-0 rounded-[6px] bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+        >
+          Tentar novamente
+        </button>
+      </CardContent>
+    </Card>
+  );
 }
 
 interface KPICardsGridProps {
@@ -603,12 +654,12 @@ function KPICardsGrid({
             >
               <CardContent className={cn("relative h-full p-3 sm:p-4", kpi.compact ? "min-h-[78px] sm:min-h-[82px]" : "min-h-[96px]")}>
                 <div className="min-w-0">
-                    <p className="mb-1 truncate pr-9 text-[10px] font-medium uppercase leading-tight tracking-wider text-muted-foreground sm:pr-11 sm:text-xs">
+                    <p className="mb-1 truncate pr-9 text-[12px] font-light leading-tight text-muted-foreground sm:pr-11">
                       {kpi.title}
                     </p>
                     <p
                       className={cn(
-                        "font-bold leading-tight",
+                        "font-medium leading-tight text-[#232323]",
                         isCurrency ? "text-sm sm:text-lg xl:text-xl break-words" : "text-lg sm:text-2xl truncate",
                       )}
                     >
@@ -623,7 +674,7 @@ function KPICardsGrid({
                         )}
                         <span
                           className={cn(
-                            "text-[10px] sm:text-xs font-medium",
+                            "text-[10px] font-light",
                             isPositive ? "text-emerald-500" : "text-destructive",
                           )}
                         >
@@ -633,7 +684,7 @@ function KPICardsGrid({
                       </div>
                     )}
                     {kpi.rate !== undefined && (
-                      <div className={cn("mt-1 max-w-full whitespace-nowrap text-[10px] font-medium leading-tight sm:text-xs", rateColorClass)}>
+                      <div className={cn("mt-1 max-w-full whitespace-nowrap text-[10px] font-light leading-tight", rateColorClass)}>
                         {formatKPIValue(kpi.rate, "percent")}{kpi.rateLabel ? ` ${kpi.rateLabel}` : ""}
                       </div>
                     )}
@@ -648,8 +699,8 @@ function KPICardsGrid({
               </CardContent>
             </Card>
           </TooltipTrigger>
-          <TooltipContent>
-            <p className="text-xs">{kpi.tooltip}</p>
+          <TooltipContent className="text-[#272727]">
+            <p className="text-[11px] font-light leading-snug">{kpi.tooltip}</p>
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
@@ -697,6 +748,37 @@ function formatConversionDays(days: number | null): string {
   return months === 1 ? "1 mês" : `${months} meses`;
 }
 
+function getInitials(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+}
+
+function DashboardAssigneeAvatar({ name }: { name?: string | null }) {
+  const label = name?.trim() || "Sem responsável";
+
+  return (
+    <TooltipProvider delayDuration={120}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="flex w-9 justify-end md:w-[34px]" aria-label={label}>
+            <div className="flex h-7 w-7 items-center justify-center rounded-[7px] bg-[#ff4a2f] text-[9px] font-light text-white ring-1 ring-[#ff4a2f]/20">
+              {name ? getInitials(name) : "--"}
+            </div>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-xs">
+          {label}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 type DistributionChartPoint = {
   key: string;
   label: string;
@@ -739,19 +821,19 @@ function DistributionTooltip({
   const leadLabel = count === 1 ? "lead" : "leads";
 
   return (
-    <div className="min-w-[160px] rounded-xl border-0 bg-[var(--app-surface-solid)] px-3 py-2.5 text-[var(--app-text-primary)] shadow-[0_8px_20px_rgba(0,0,0,0.22)]">
+    <div className="min-w-[160px] rounded-xl border-0 bg-[var(--app-surface-solid)] px-3 py-2.5 text-[#232323] shadow-[0_8px_20px_rgba(0,0,0,0.18)]">
       <div className="mb-1 flex items-center gap-2">
         <span
           className="h-2.5 w-2.5 rounded-full ring-2 ring-[var(--app-surface-solid)]"
           style={{ backgroundColor: point?.color || entry.color || entry.fill }}
         />
-        <span className="truncate text-xs font-semibold text-foreground">{point?.label || fallbackLabel}</span>
+        <span className="truncate text-[11px] font-light text-[#272727]">{point?.label || fallbackLabel}</span>
       </div>
       <div className="flex items-end justify-between gap-4">
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-[11px] font-light text-[#272727]/70">
           {count} {leadLabel}
         </span>
-        <span className="rounded-full bg-white/[0.055] px-2 py-0.5 text-[11px] font-bold tabular-nums text-foreground">
+        <span className="rounded-full bg-[#232323]/5 px-2 py-0.5 text-[11px] font-medium tabular-nums text-[#232323]">
           {formatKPIValue(point?.percentage || 0, "percent")}
         </span>
       </div>
@@ -865,7 +947,7 @@ function LostDealsDialog({
                   Nenhuma perda registrada nesse período.
                 </div>
               ) : (
-                <div className="grid min-w-0 gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
+                <div className="grid min-w-0 gap-4 md:grid-cols-[280px_minmax(0,1fr)]">
                   <div className="dashboard-recharts-focusless relative mx-auto h-[210px] w-full max-w-[240px] sm:h-[240px] sm:max-w-[280px]">
                     <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                       <PieChart>
@@ -941,27 +1023,26 @@ function LostDealsDialog({
                   {lostDeals.map((deal) => (
                     <div
                       key={deal.id}
-                      className="dashboard-dialog-list-row grid gap-2 p-3 text-sm transition-colors hover:bg-black/[0.035] dark:hover:bg-white/[0.055] md:grid-cols-[1.1fr_1fr_0.8fr_0.7fr_auto] md:items-center"
+                      className="dashboard-dialog-list-row grid gap-y-2 gap-x-2 p-3 text-[12px] transition-colors hover:bg-black/[0.035] dark:hover:bg-white/[0.055] md:grid-cols-[0.78fr_1.45fr_34px_108px_auto] md:items-center"
                     >
                       <div className="min-w-0">
-                        <p className="truncate font-semibold">{deal.name}</p>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="truncate text-[12px] font-medium text-[#232323]">{deal.name}</p>
+                        <p className="text-[11px] font-light text-[#272727]/70">
                           {sourceLabels[deal.source || ""] || deal.source || "Origem não informada"}
                         </p>
                       </div>
                       <div className="min-w-0">
-                        <p className="text-xs text-muted-foreground">Motivo</p>
-                        <p className="truncate font-medium text-destructive">{deal.lostReasonGroup}</p>
-                        <p className="break-words text-xs text-muted-foreground">{deal.lostReason}</p>
+                        <p className="text-[11px] font-light text-[#272727]/70">Motivo</p>
+                        <p className="truncate text-[12px] font-medium text-destructive">{deal.lostReasonGroup}</p>
+                        <p className="break-words text-[11px] font-light text-[#272727]/70">{deal.lostReason}</p>
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-xs text-muted-foreground">Responsável</p>
-                        <p className="truncate font-medium">{deal.assignedUserName}</p>
+                      <div className="flex items-center md:justify-center">
+                        <DashboardAssigneeAvatar name={deal.assignedUserName} />
                       </div>
                       <div className="md:text-right">
-                        <p className="text-xs text-muted-foreground">Entrada / perda</p>
-                        <p className="font-medium">{formatDateTime(deal.createdAt)}</p>
-                        <p className="text-xs text-destructive">{formatDateTime(deal.lostAt)}</p>
+                        <p className="text-[11px] font-light text-[#272727]/70">Entrada / perda</p>
+                        <p className="text-[12px] font-medium text-[#232323]">{formatDateTime(deal.createdAt)}</p>
+                        <p className="text-[11px] font-light text-destructive">{formatDateTime(deal.lostAt)}</p>
                       </div>
                       <button
                         type="button"
@@ -1054,7 +1135,7 @@ function WonDealsDialog({
                   Nenhum ganho fechado nesse período.
                 </div>
               ) : (
-                <div className="grid min-w-0 gap-4 xl:grid-cols-[215px_minmax(0,1fr)]">
+                <div className="grid min-w-0 gap-4 md:grid-cols-[215px_minmax(0,1fr)]">
                   <div className="dashboard-recharts-focusless relative mx-auto h-[160px] w-full max-w-[190px] sm:h-[190px] sm:max-w-[215px]">
                     <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                       <PieChart>
@@ -1143,26 +1224,25 @@ function WonDealsDialog({
                   {wonDeals.map((deal) => (
                     <div
                       key={deal.id}
-                      className="dashboard-dialog-list-row grid gap-2 p-3 text-sm transition-colors hover:bg-black/[0.035] dark:hover:bg-white/[0.055] md:grid-cols-[1.2fr_0.8fr_0.8fr_0.7fr_auto] md:items-center"
+                      className="dashboard-dialog-list-row grid gap-y-2 gap-x-2 p-3 text-[12px] transition-colors hover:bg-black/[0.035] dark:hover:bg-white/[0.055] md:grid-cols-[1.02fr_34px_0.85fr_0.75fr_auto] md:items-center"
                     >
                       <div className="min-w-0">
-                        <p className="truncate font-semibold">{deal.name}</p>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="truncate text-[12px] font-medium text-[#232323]">{deal.name}</p>
+                        <p className="text-[11px] font-light text-[#272727]/70">
                           {sourceLabels[deal.source || ""] || deal.source || "Origem não informada"}
                         </p>
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-xs text-muted-foreground">Responsável</p>
-                        <p className="truncate font-medium">{deal.assignedUserName}</p>
+                      <div className="flex items-center md:justify-center">
+                        <DashboardAssigneeAvatar name={deal.assignedUserName} />
                       </div>
                       <div>
-                        <p className="text-xs text-muted-foreground">Entrada / ganho</p>
-                        <p className="font-medium">{formatDateTime(deal.createdAt)}</p>
-                        <p className="text-xs text-emerald-500">{formatDateTime(deal.wonAt)}</p>
+                        <p className="text-[11px] font-light text-[#272727]/70">Entrada / ganho</p>
+                        <p className="text-[12px] font-medium text-[#232323]">{formatDateTime(deal.createdAt)}</p>
+                        <p className="text-[11px] font-light text-emerald-500">{formatDateTime(deal.wonAt)}</p>
                       </div>
                       <div className="md:text-right">
-                        <p className="font-semibold text-emerald-500">{formatCurrency(deal.value)}</p>
-                        <p className="text-xs text-muted-foreground">{formatConversionDays(deal.conversionDays)}</p>
+                        <p className="text-[12px] font-medium text-emerald-500">{formatCurrency(deal.value)}</p>
+                        <p className="text-[11px] font-light text-[#272727]/70">{formatConversionDays(deal.conversionDays)}</p>
                       </div>
                       <button
                         type="button"

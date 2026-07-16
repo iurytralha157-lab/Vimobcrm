@@ -3,15 +3,44 @@ package leads
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
-var numericMetaFilter = regexp.MustCompile(`^\d+$`)
+func addLeadMetaFilterCondition(args *[]any, conditions *[]string, leadAlias string, metaAlias string, leadColumns []string, idColumn string, nameColumn string, value string) {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "all" {
+		return
+	}
+
+	*args = append(*args, value)
+	index := len(*args)
+
+	directConditions := []string{}
+	for _, column := range leadColumns {
+		column = strings.TrimSpace(column)
+		if column == "" {
+			continue
+		}
+		directConditions = append(directConditions, fmt.Sprintf("%s.%s = $%d", leadAlias, column, index))
+	}
+	directSQL := strings.Join(directConditions, " or ")
+	if directSQL != "" {
+		directSQL += " or "
+	}
+
+	*conditions = append(*conditions, fmt.Sprintf(`(%sexists (
+		select 1
+		from public.lead_meta %s
+		where %s.organization_id = $1::uuid
+		  and %s.lead_id = %s.id
+		  and (%s.%s = $%d or %s.%s = $%d)
+	))`, directSQL, metaAlias, metaAlias, metaAlias, leadAlias, metaAlias, idColumn, index, metaAlias, nameColumn, index))
+}
 
 func (repo Repository) GetPipelineBoard(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) ([]PipelineBoardStage, error) {
 	pipelineID, err := repo.resolvePipelineBoardPipelineID(ctx, tenantContext, filter.PipelineID)
@@ -161,8 +190,9 @@ func (repo Repository) CountPipelineStageLeads(ctx context.Context, tenantContex
 
 func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) (LeadMetaFilters, error) {
 	where, args, err := buildPipelineLeadWhere(tenantContext, PipelineBoardFilter{
-		DateFrom: filter.DateFrom,
-		DateTo:   filter.DateTo,
+		PipelineID: filter.PipelineID,
+		DateFrom:   filter.DateFrom,
+		DateTo:     filter.DateTo,
 	})
 	if err != nil {
 		return LeadMetaFilters{}, err
@@ -170,16 +200,31 @@ func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext te
 
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
-			lm.campaign_name,
-			lm.campaign_id,
-			lm.adset_name,
-			lm.adset_id,
-			lm.ad_name,
-			lm.ad_id
-		from public.lead_meta lm
-		join public.leads l on l.id = lm.lead_id
-		where lm.organization_id = $1::uuid
-		  and `+strings.Join(where, " and ")+`
+			coalesce(
+				nullif(lm.campaign_name, ''),
+				nullif(l.utm_campaign, ''),
+				nullif(lm.raw_payload->>'campaign_name', ''),
+				nullif(lm.raw_payload->>'campaignName', ''),
+				nullif(lm.raw_payload#>>'{campaign,name}', ''),
+				nullif(lm.payload->>'campaign_name', ''),
+				nullif(lm.payload->>'campaignName', ''),
+				nullif(lm.payload#>>'{campaign,name}', ''),
+				nullif(mci.campaign_name, '')
+			),
+			coalesce(nullif(lm.campaign_id, ''), nullif(l.meta_campaign_id, ''), nullif(lm.campaign_name, ''), nullif(l.utm_campaign, '')),
+			coalesce(nullif(lm.adset_name, ''), nullif(l.meta_adset_id, '')),
+			coalesce(nullif(lm.adset_id, ''), nullif(l.meta_adset_id, ''), nullif(lm.adset_name, '')),
+			coalesce(nullif(lm.ad_name, ''), nullif(l.meta_ad_id, '')),
+			coalesce(nullif(lm.ad_id, ''), nullif(l.meta_ad_id, ''), nullif(lm.ad_name, ''))
+		from public.leads l
+		left join public.lead_meta lm on lm.lead_id = l.id and lm.organization_id = l.organization_id
+		left join lateral (
+			select max(nullif(mi.campaign_name, '')) as campaign_name
+			from public.meta_campaign_insights mi
+			where mi.organization_id = l.organization_id
+			  and mi.campaign_id = coalesce(nullif(lm.campaign_id, ''), nullif(l.meta_campaign_id, ''))
+		) mci on true
+		where `+strings.Join(where, " and ")+`
 	`, args...)
 	if err != nil {
 		return LeadMetaFilters{}, err
@@ -540,7 +585,7 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 	}
 	where := []string{
 		"l.organization_id = $1::uuid",
-		leadVisibilitySQL("$2", "$3", "$4"),
+		leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn)),
 	}
 
 	add := func(clause string, value any) {
@@ -645,32 +690,12 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 		)`, tagID)
 	}
 
-	metaConditions := []string{}
-	addMetaCondition := func(idColumn string, nameColumn string, value string) {
-		value = strings.TrimSpace(value)
-		if value == "" || value == "all" {
-			return
-		}
-		args = append(args, value)
-		index := len(args)
-		column := nameColumn
-		if numericMetaFilter.MatchString(value) {
-			column = idColumn
-		}
-		metaConditions = append(metaConditions, fmt.Sprintf("lm.%s = $%d", column, index))
+	addMetaCondition := func(leadColumns []string, idColumn string, nameColumn string, value string) {
+		addLeadMetaFilterCondition(&args, &where, "l", "lm", leadColumns, idColumn, nameColumn, value)
 	}
-	addMetaCondition("campaign_id", "campaign_name", filter.FilterCampaign)
-	addMetaCondition("adset_id", "adset_name", filter.FilterAdSet)
-	addMetaCondition("ad_id", "ad_name", filter.FilterAd)
-	if len(metaConditions) > 0 {
-		where = append(where, `exists (
-			select 1
-			from public.lead_meta lm
-			where lm.organization_id = $1::uuid
-			  and lm.lead_id = l.id
-			  and `+strings.Join(metaConditions, " and ")+`
-		)`)
-	}
+	addMetaCondition([]string{"meta_campaign_id", "utm_campaign"}, "campaign_id", "campaign_name", filter.FilterCampaign)
+	addMetaCondition([]string{"meta_adset_id"}, "adset_id", "adset_name", filter.FilterAdSet)
+	addMetaCondition([]string{"meta_ad_id"}, "ad_id", "ad_name", filter.FilterAd)
 
 	return where, args, nil
 }

@@ -51,21 +51,23 @@ const allNavItems: NavItem[] = [
     icon: LayoutDashboard,
     labelKey: 'dashboard',
     path: '/dashboard',
+    anyPermissions: ['dashboard_view', 'dashboard_site_view', 'dashboard_campaigns_view'],
     children: [{
       icon: LayoutDashboard,
       labelKey: 'dashboardGeneral',
-      path: '/dashboard'
+      path: '/dashboard',
+      permission: 'dashboard_view'
     }, {
       icon: Globe,
       labelKey: 'dashboardSite',
       path: '/dashboard/site',
-      adminOnly: true,
+      permission: 'dashboard_site_view',
       module: 'site'
     }, {
       icon: Megaphone,
       labelKey: 'dashboardCampaigns',
       path: '/dashboard/campaigns',
-      adminOnly: true
+      permission: 'dashboard_campaigns_view'
     }]
   }, {
     icon: Kanban,
@@ -95,27 +97,27 @@ const allNavItems: NavItem[] = [
     labelKey: 'crmManagement',
     path: '/crm/management',
     module: 'crm',
-    anyPermissions: ['settings_teams', 'settings_users', 'settings_pipelines'],
+    anyPermissions: ['team_manage', 'distribution_manage', 'pipeline_manage', 'tag_manage'],
     children: [{
       icon: Users,
       labelKey: 'managementTeams',
       path: '/crm/management?tab=teams',
-      anyPermissions: ['settings_teams', 'settings_users']
+      anyPermissions: ['team_manage']
     }, {
       icon: Shuffle,
       labelKey: 'managementDistribution',
       path: '/crm/management?tab=distribution',
-      anyPermissions: ['settings_teams', 'settings_users']
+      permission: 'distribution_manage'
     }, {
       icon: Kanban,
       labelKey: 'managementPipelines',
       path: '/crm/management?tab=pipelines',
-      permission: 'settings_pipelines'
+      permission: 'pipeline_manage'
     }, {
       icon: Tags,
       labelKey: 'managementTags',
       path: '/crm/management?tab=tags',
-      permission: 'settings_pipelines'
+      permission: 'tag_manage'
     }]
   }, {
     icon: Building2,
@@ -159,7 +161,7 @@ const allNavItems: NavItem[] = [
       icon: FileText,
       labelKey: 'automationTemplates',
       path: '/automations?tab=templates',
-      permission: 'automations_edit'
+      permission: 'automations_manage'
     }, {
       icon: Activity,
       labelKey: 'automationHistory',
@@ -171,7 +173,7 @@ const allNavItems: NavItem[] = [
     labelKey: 'financial',
     path: '/financeiro',
     module: 'financial',
-    adminOnly: true,
+    permission: 'financial_view',
     children: [{
       icon: TrendingUp,
       labelKey: 'financialDashboard',
@@ -218,7 +220,7 @@ const allNavItems: NavItem[] = [
       icon: Settings,
       labelKey: 'arenaSettings',
       path: '/gamificacao#config',
-      adminOnly: true
+      permission: 'gamification_manage'
     }]
   }
 ];
@@ -236,32 +238,33 @@ const bottomItems: NavItem[] = [
       icon: Users,
       labelKey: 'settingsUsers',
       path: '/settings?tab=team',
-      adminOnly: true
+      anyPermissions: ['users_manage', 'permissions_manage']
     }, {
       icon: CreditCard,
       labelKey: 'settingsBilling',
       path: '/settings?tab=subscription',
-      adminOnly: true
+      permission: 'settings_billing'
     }, {
       icon: Plug,
       labelKey: 'settingsIntegrations',
-      path: '/settings?tab=integrations'
+      path: '/settings?tab=integrations',
+      anyPermissions: ['settings_integrations', 'whatsapp_manage', 'settings_ai']
     }, {
       icon: Bot,
       labelKey: 'settingsAI',
       path: '/settings?tab=ai',
-      adminOnly: true,
+      permission: 'settings_ai',
       module: 'ai_agent'
     }, {
       icon: Building2,
       labelKey: 'settingsProperties',
       path: '/settings?tab=properties',
-      adminOnly: true
+      permission: 'property_manage'
     }, {
       icon: Globe,
       labelKey: 'site',
       path: '/settings/site',
-      adminOnly: true,
+      permission: 'settings_site',
       module: 'site'
     }]
   }

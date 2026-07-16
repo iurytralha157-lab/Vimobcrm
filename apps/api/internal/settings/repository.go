@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -104,7 +105,7 @@ func (repo Repository) UpdateProfile(ctx context.Context, tenantContext tenant.C
 }
 
 func (repo Repository) UpdateOrganization(ctx context.Context, tenantContext tenant.Context, request UpdateOrganizationRequest) error {
-	if !canManageSettings(tenantContext) {
+	if !canManageSetting(tenantContext, permissions.SettingsOrganization) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 
@@ -200,7 +201,7 @@ func (repo Repository) UploadProfileAvatar(ctx context.Context, tenantContext te
 }
 
 func (repo Repository) UploadOrganizationLogo(ctx context.Context, tenantContext tenant.Context, contentType string, size int64, body io.Reader) (AssetUpload, error) {
-	if !canManageSettings(tenantContext) {
+	if !canManageSetting(tenantContext, permissions.SettingsOrganization) {
 		return AssetUpload{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -321,7 +322,7 @@ func (repo Repository) PasswordStatus(ctx context.Context, tenantContext tenant.
 }
 
 func (repo Repository) ListAPIKeys(ctx context.Context, tenantContext tenant.Context) ([]APIKey, error) {
-	if !canManageSettings(tenantContext) {
+	if !canManageSetting(tenantContext, permissions.SettingsIntegrations) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -656,7 +657,7 @@ func (repo Repository) deactivateLegacyPushToken(ctx context.Context, userID str
 }
 
 func (repo Repository) CreateAPIKey(ctx context.Context, tenantContext tenant.Context, input CreateAPIKeyInput) (CreateAPIKeyResult, error) {
-	if !canManageSettings(tenantContext) {
+	if !canManageSetting(tenantContext, permissions.SettingsIntegrations) {
 		return CreateAPIKeyResult{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -700,7 +701,7 @@ func (repo Repository) CreateAPIKey(ctx context.Context, tenantContext tenant.Co
 }
 
 func (repo Repository) DeleteAPIKey(ctx context.Context, tenantContext tenant.Context, apiKeyID string) error {
-	if !canManageSettings(tenantContext) {
+	if !canManageSetting(tenantContext, permissions.SettingsIntegrations) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 
@@ -747,7 +748,7 @@ func (repo Repository) GetSubscriptionOverview(ctx context.Context, tenantContex
 }
 
 func (repo Repository) UpdateSubscriptionBilling(ctx context.Context, tenantContext tenant.Context, request UpdateBillingRequest) (SubscriptionOverview, error) {
-	if !canManageSettings(tenantContext) {
+	if !canManageSetting(tenantContext, permissions.SettingsBilling) {
 		return SubscriptionOverview{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -788,7 +789,7 @@ func (repo Repository) UpdateSubscriptionBilling(ctx context.Context, tenantCont
 }
 
 func (repo Repository) SelectSubscriptionPlan(ctx context.Context, tenantContext tenant.Context, planID string) (SubscriptionOverview, error) {
-	if !canManageSettings(tenantContext) {
+	if !canManageSetting(tenantContext, permissions.SettingsBilling) {
 		return SubscriptionOverview{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -1140,8 +1141,8 @@ func cleanLanguage(value *string) *string {
 	}
 }
 
-func canManageSettings(tenantContext tenant.Context) bool {
+func canManageSetting(tenantContext tenant.Context, permission string) bool {
 	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin", "manager") ||
-		tenantContext.HasPermission("settings_manage")
+		tenantContext.HasRole("owner", "admin") ||
+		tenantContext.HasPermission(permission)
 }

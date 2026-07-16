@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/authorization"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -336,25 +338,19 @@ func validItemStatus(value string) bool {
 
 func canManagePolicies(context tenant.Context) bool {
 	return context.IsSuperAdmin ||
-		context.HasRole("owner", "admin", "manager") ||
-		context.HasPermission("settings_manage") ||
-		context.HasPermission("settings_pipelines") ||
-		context.HasPermission("pipeline_edit") ||
-		context.HasPermission("automations_edit") ||
-		context.HasPermission("lead_manage")
+		context.HasRole("owner", "admin") ||
+		context.HasPermission(permissions.PipelineManage) ||
+		context.HasPermission(permissions.AutomationsManage)
 }
 
 func canViewOrganizationAttention(context tenant.Context) bool {
 	return context.IsSuperAdmin ||
-		context.HasRole("owner", "admin", "manager") ||
-		context.HasPermission("lead_view_all") ||
-		context.HasPermission("lead_manage")
+		context.HasRole("owner", "admin") ||
+		context.HasPermission(permissions.LeadViewAll)
 }
 
 func canActOnItem(context tenant.Context, assignedUserID string) bool {
-	return canViewOrganizationAttention(context) ||
-		strings.EqualFold(strings.TrimSpace(context.UserID), strings.TrimSpace(assignedUserID)) ||
-		context.LeadsUser(assignedUserID)
+	return authorization.CanOperateLead(context, authorization.LeadResource{AssignedUserID: assignedUserID})
 }
 
 func cleanOptionalString(value *string) *string {

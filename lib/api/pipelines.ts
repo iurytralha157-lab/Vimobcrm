@@ -1,5 +1,4 @@
 import type { Tables } from '@/integrations/supabase/types'
-import { supabase } from '@/integrations/supabase/client'
 import {
   apiPipelineListResponseSchema,
   apiPipelineResponseSchema,
@@ -16,7 +15,6 @@ import {
   validateDomainResponse,
 } from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
-import { VimobAPIError } from './vimob-client'
 
 type PipelineRow = Tables<'pipelines'> & {
   is_active?: boolean | null
@@ -71,19 +69,14 @@ type StageOrderItem = {
 
 export const pipelinesAPI = {
   async getPipelines(organizationId?: string) {
-    try {
-      const response = await vimobAPIRequest<APIListResponse<APIPipeline>>('/v1/pipelines', {
-        organizationId,
-        timeoutMs: 4_000,
-        skipTelemetry: true,
-      })
-      validateDomainResponse(apiPipelineListResponseSchema, response, 'pipelines.list')
+    const response = await vimobAPIRequest<APIListResponse<APIPipeline>>('/v1/pipelines', {
+      organizationId,
+      timeoutMs: 4_000,
+      skipTelemetry: true,
+    })
+    validateDomainResponse(apiPipelineListResponseSchema, response, 'pipelines.list')
 
-      return response.data.map(toLegacyPipeline)
-    } catch (error) {
-      if (!isReadAPIUnavailable(error)) throw error
-      return getPipelinesFromSupabase(organizationId)
-    }
+    return response.data.map(toLegacyPipeline)
   },
 
   async createPipeline(input: { name: string; isDefault?: boolean }, organizationId?: string) {
@@ -118,20 +111,15 @@ export const pipelinesAPI = {
   },
 
   async getStages(pipelineId?: string, organizationId?: string) {
-    try {
-      const response = await vimobAPIRequest<APIListResponse<APIStage>>('/v1/stages', {
-        organizationId,
-        query: { pipelineId },
-        timeoutMs: 4_000,
-        skipTelemetry: true,
-      })
-      validateDomainResponse(apiStageListResponseSchema, response, 'stages.list')
+    const response = await vimobAPIRequest<APIListResponse<APIStage>>('/v1/stages', {
+      organizationId,
+      query: { pipelineId },
+      timeoutMs: 4_000,
+      skipTelemetry: true,
+    })
+    validateDomainResponse(apiStageListResponseSchema, response, 'stages.list')
 
-      return response.data.map(toLegacyStage)
-    } catch (error) {
-      if (!isReadAPIUnavailable(error)) throw error
-      return getStagesFromSupabase(pipelineId, organizationId)
-    }
+    return response.data.map(toLegacyStage)
   },
 
   async createStage(input: { pipelineId: string; name: string; color?: string }, organizationId?: string) {
@@ -196,40 +184,6 @@ export const pipelinesAPI = {
 
     return toLegacyPipeline(response.data)
   },
-}
-
-function isReadAPIUnavailable(error: unknown) {
-  return error instanceof VimobAPIError && ['api_timeout', 'api_unavailable'].includes(error.code)
-}
-
-async function getPipelinesFromSupabase(organizationId?: string): Promise<PipelineRow[]> {
-  if (!organizationId) return []
-
-  const { data, error } = await supabase
-    .from('pipelines')
-    .select('*')
-    .eq('organization_id', organizationId)
-    .order('is_default', { ascending: false })
-    .order('created_at', { ascending: true })
-
-  if (error) throw error
-  return (data ?? []) as PipelineRow[]
-}
-
-async function getStagesFromSupabase(pipelineId?: string, organizationId?: string): Promise<StageRow[]> {
-  if (!organizationId || !pipelineId) return []
-
-  const { data, error } = await supabase
-    .from('stages')
-    .select('*')
-    .eq('organization_id', organizationId)
-    .eq('pipeline_id', pipelineId)
-    .eq('is_active', true)
-    .order('position', { ascending: true })
-    .order('created_at', { ascending: true })
-
-  if (error) throw error
-  return data ?? []
 }
 
 function toLegacyPipeline(pipeline: APIPipeline): PipelineRow {

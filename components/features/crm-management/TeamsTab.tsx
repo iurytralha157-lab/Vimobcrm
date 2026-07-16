@@ -23,6 +23,7 @@ import { MemberAvailabilityDialog } from '@/components/features/teams/MemberAvai
 import { useTeams, useDeleteTeam, useUpdateTeamStatus, Team } from '@/hooks/use-teams';
 import { useTeamMembersAvailability, formatAvailabilitySummary } from '@/hooks/use-member-availability';
 import { useUserAccessScope } from '@/hooks/use-user-access-scope';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
 
 export function TeamsTab() {
   const [teamDialogOpen, setTeamDialogOpen] = useState(false);
@@ -39,7 +40,9 @@ export function TeamsTab() {
   const deleteTeam = useDeleteTeam();
   const updateTeamStatus = useUpdateTeamStatus();
   const accessScope = useUserAccessScope();
-  const visibleTeams = accessScope.isAdmin ? teams : teams.filter((team) => accessScope.ledTeamIds.includes(team.id));
+  const { hasPermission } = useUserPermissions();
+  const canManageAllTeams = accessScope.isAdmin || (!accessScope.isTeamLeader && hasPermission('team_manage'));
+  const visibleTeams = canManageAllTeams ? teams : teams.filter((team) => accessScope.ledTeamIds.includes(team.id));
 
   const allMemberIds = visibleTeams.flatMap((team) => team.members?.map((member) => member.id) || []);
   const { data: allAvailability = [] } = useTeamMembersAvailability(allMemberIds);
@@ -73,14 +76,14 @@ export function TeamsTab() {
 
   useEffect(() => {
     const handleMobileCreate = () => {
-      if (!accessScope.isAdmin) return;
+      if (!canManageAllTeams) return;
       setSelectedTeam(null);
       setTeamDialogOpen(true);
     };
 
     window.addEventListener('vimob:mobile-create-team', handleMobileCreate);
     return () => window.removeEventListener('vimob:mobile-create-team', handleMobileCreate);
-  }, [accessScope.isAdmin]);
+  }, [canManageAllTeams]);
 
   const openAvailability = (member: NonNullable<Team['members']>[number]) => {
     setAvailabilityMember({
@@ -129,7 +132,7 @@ export function TeamsTab() {
               {activeTeams === 1 ? 'ativa' : 'ativas'} · {totalMembers} {totalMembers === 1 ? 'membro' : 'membros'}
             </p>
           </div>
-          {accessScope.isAdmin && (
+          {canManageAllTeams && (
             <Button data-tour="management-team-new" onClick={handleNewTeam} className="gap-2">
               <Plus className="h-4 w-4" />
               Nova Equipe
@@ -146,7 +149,7 @@ export function TeamsTab() {
             <p className="text-muted-foreground mb-6 max-w-sm mx-auto">
               Organize seus corretores em equipes e configure a disponibilidade de cada um.
             </p>
-            {accessScope.isAdmin && (
+            {canManageAllTeams && (
               <Button onClick={handleNewTeam} size="lg" className="gap-2">
                 <Plus className="h-4 w-4" />
                 Nova Equipe
@@ -178,7 +181,7 @@ export function TeamsTab() {
                       onClick={() => handleEdit(team)}
                     >
                       <TableCell className="px-3 md:px-4" onClick={(event) => event.stopPropagation()}>
-                        {accessScope.isAdmin ? (
+                        {canManageAllTeams ? (
                           <Switch
                             checked={team.is_active !== false}
                             onCheckedChange={(checked) => updateTeamStatus.mutate({ id: team.id, is_active: checked })}
@@ -280,7 +283,7 @@ export function TeamsTab() {
                           <Button variant="ghost" size="icon" onClick={() => handleEdit(team)}>
                             <Pencil className="h-4 w-4" />
                           </Button>
-                          {accessScope.isAdmin && (
+                          {canManageAllTeams && (
                             <Button
                               variant="ghost"
                               size="icon"
@@ -304,7 +307,7 @@ export function TeamsTab() {
           open={teamDialogOpen}
           onOpenChange={setTeamDialogOpen}
           team={selectedTeam}
-          canEditLeadership={accessScope.isAdmin}
+          canEditLeadership={canManageAllTeams}
         />
 
         {availabilityMember && (

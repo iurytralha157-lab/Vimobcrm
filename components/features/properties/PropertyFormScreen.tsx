@@ -206,13 +206,83 @@ const formatCurrencyDisplay = (value: string): string => {
 
 const parseCurrencyInput = (value: string): string => normalizeLocaleNumberString(value, 2);
 const parseDecimalInput = (value: string): string => value.replace(/[^\d,.]/g, '');
+
+function CurrencyInput({
+  value,
+  onValueChange,
+  className,
+  disabled,
+}: {
+  value: string;
+  onValueChange: (value: string) => void;
+  className?: string;
+  disabled?: boolean;
+}) {
+  const [isFocused, setIsFocused] = useState(false);
+  const [draft, setDraft] = useState(() => formatCurrencyEditable(value));
+
+  useEffect(() => {
+    if (isFocused) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setDraft(formatCurrencyEditable(value));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isFocused, value]);
+
+  return (
+    <div className="relative">
+      <span className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-sm text-muted-foreground">
+        R$
+      </span>
+      <Input
+        value={draft}
+        onChange={(event) => {
+          const nextDraft = event.target.value.replace(/[^\d,.]/g, '');
+          setDraft(nextDraft);
+          onValueChange(parseCurrencyInput(nextDraft));
+        }}
+        onFocus={(event) => {
+          setDraft(formatCurrencyEditable(value));
+          setIsFocused(true);
+          event.currentTarget.select();
+        }}
+        onBlur={() => {
+          const normalized = parseCurrencyInput(draft);
+          onValueChange(normalized);
+          setDraft(formatCurrencyEditable(normalized));
+          setIsFocused(false);
+        }}
+        inputMode="decimal"
+        placeholder="1,00"
+        className={cn('pl-9', className)}
+        disabled={disabled}
+      />
+    </div>
+  );
+}
+
+function formatCurrencyEditable(value: string) {
+  if (!value) return '';
+  const normalized = normalizeLocaleNumberString(value, 2);
+  if (!normalized) return '';
+
+  const [integer = '0', fraction] = normalized.split('.');
+  const formattedInteger = Number(integer || '0').toLocaleString('pt-BR', {
+    maximumFractionDigits: 0,
+  });
+  return fraction === undefined ? formattedInteger : `${formattedInteger},${fraction}`;
+}
+
 const onlyCepDigits = (value: string) => value.replace(/\D/g, '').slice(0, 8);
 const formatCep = (value: string) => {
   const digits = onlyCepDigits(value);
   return digits.length > 5 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : digits;
 };
 
-const DRAFT_KEY = 'property-form-draft';
+const DRAFT_KEY_PREFIX = 'property-form-draft';
 
 const RequiredMark = () => <span className="ml-0.5 text-primary">*</span>;
 const togglePanelClass = "flex items-center justify-between gap-3 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-3 text-[var(--app-text-primary)] transition-colors hover:bg-[var(--app-surface-hover)]";
@@ -374,12 +444,21 @@ function propertyToFormData(p: Property): PropertyFormData {
   };
 }
 
-function saveDraft(data: PropertyFormData) {
-  localStorage.setItem(DRAFT_KEY, JSON.stringify(data));
+function propertyDraftKey(organizationId?: string | null, userId?: string | null) {
+  return `${DRAFT_KEY_PREFIX}:${organizationId || 'no-organization'}:${userId || 'anonymous'}`;
 }
 
-function clearDraft() {
-  localStorage.removeItem(DRAFT_KEY);
+function readDraft(draftKey: string) {
+  const raw = localStorage.getItem(draftKey);
+  return raw ? { ...initialFormData, ...JSON.parse(raw) } as PropertyFormData : null;
+}
+
+function saveDraft(draftKey: string, data: PropertyFormData) {
+  localStorage.setItem(draftKey, JSON.stringify(data));
+}
+
+function clearDraft(draftKey: string) {
+  localStorage.removeItem(draftKey);
 }
 
 export default function PropertyForm() {
@@ -389,27 +468,25 @@ export default function PropertyForm() {
   const propertyId = Array.isArray(rawId) ? rawId[0] ?? null : rawId ?? null;
   const isEditing = !!propertyId;
   const { user, profile, organization, tenantContext, isSuperAdmin } = useAuth();
+  const draftKey = propertyDraftKey(
+    organization?.id ?? profile?.organization_id,
+    user?.id ?? profile?.id,
+  );
 
   const [formData, setFormData] = useState<PropertyFormData>(() => {
     if (!propertyId && typeof window !== "undefined") {
       try {
-        const raw = localStorage.getItem(DRAFT_KEY);
-        if (raw) {
-          return {
-            ...initialFormData,
-            ...JSON.parse(raw)
-          };
-        }
+        return readDraft(draftKey) ?? initialFormData;
       } catch {
         // noop
       }
     }
     return initialFormData;
   });
-  const [hasDraft] = useState(() =>
+  const [hasDraft, setHasDraft] = useState(() =>
     !propertyId &&
     typeof window !== "undefined" &&
-    !!localStorage.getItem(DRAFT_KEY)
+    !!localStorage.getItem(draftKey)
   );
   const [activeTab, setActiveTab] = useState('owner');
   const [hasTriedSubmit, setHasTriedSubmit] = useState(false);
@@ -434,6 +511,28 @@ export default function PropertyForm() {
   const [newCondominiumConciergeType, setNewCondominiumConciergeType] = useState('');
   const [isCepLoading, setIsCepLoading] = useState(false);
   const lastCepLookupRef = useRef('');
+
+  useEffect(() => {
+    if (isEditing || typeof window === 'undefined') return;
+
+    let isActive = true;
+    let draft: PropertyFormData | null = null;
+    try {
+      draft = readDraft(draftKey);
+    } catch {
+      draft = null;
+    }
+
+    queueMicrotask(() => {
+      if (!isActive) return;
+      setFormData(draft ?? initialFormData);
+      setHasDraft(!!draft);
+    });
+
+    return () => {
+      isActive = false;
+    };
+  }, [draftKey, isEditing]);
 
   const { data: property, isLoading: loadingProperty } = useProperty(propertyId);
   const { data: propertyTypes = [] } = usePropertyTypes();
@@ -613,10 +712,10 @@ export default function PropertyForm() {
   // Auto-save draft for new properties
   useEffect(() => {
     if (!isEditing) {
-      const timer = setTimeout(() => saveDraft(formData), 2000);
+      const timer = setTimeout(() => saveDraft(draftKey, formData), 2000);
       return () => clearTimeout(timer);
     }
-  }, [formData, isEditing]);
+  }, [draftKey, formData, isEditing]);
 
   useEffect(() => {
     if (property && isEditing) {
@@ -780,7 +879,7 @@ export default function PropertyForm() {
       } else {
         await createProperty.mutateAsync(propertyData);
       }
-      clearDraft();
+      clearDraft(draftKey);
       router.push('/properties');
     } catch {
       // errors handled by mutation
@@ -1006,7 +1105,7 @@ export default function PropertyForm() {
                 type="button"
                 variant="ghost"
                 className="min-w-0 border-0 bg-[var(--app-surface-soft)] text-foreground hover:bg-[var(--app-surface-hover)] h-11 px-4 rounded-[6px]"
-                onClick={() => { clearDraft(); router.push('/properties'); }}
+                onClick={() => { clearDraft(draftKey); router.push('/properties'); }}
               >
                 Cancelar
               </Button>
@@ -1198,7 +1297,7 @@ export default function PropertyForm() {
                         <span className="truncate font-medium text-foreground">{formData.tipo_de_imovel || 'Tipo não informado'}</span>
                       </div>
                     ) : (
-                      <Select value={formData.tipo_de_imovel || undefined} onValueChange={v => set('tipo_de_imovel', v)}>
+                    <Select value={formData.tipo_de_imovel} onValueChange={v => set('tipo_de_imovel', v)}>
                         <SelectTrigger><span className="truncate">{formData.tipo_de_imovel || 'Selecione'}</span></SelectTrigger>
                         <SelectContent>
                           {propertyTypes.map(type => <SelectItem key={type} value={type}>{type}</SelectItem>)}
@@ -1501,7 +1600,7 @@ export default function PropertyForm() {
 
           {/* 4. Características */}
           <TabsContent value="characteristics">
-            <div className="space-y-4">
+            <div data-tour="property-characteristics-section" className="space-y-4">
               {/* Detalhes do imóvel */}
               <Card className="app-card">
                 <CardHeader><CardTitle className="text-lg">Detalhes do Imóvel</CardTitle></CardHeader>
@@ -1510,7 +1609,7 @@ export default function PropertyForm() {
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <div className="space-y-2">
                         <Label>Quartos <RequiredMark /></Label>
-                        <Select value={formData.quartos || undefined} onValueChange={v => set('quartos', v)}>
+                        <Select value={formData.quartos} onValueChange={v => set('quartos', v)}>
                           <SelectTrigger><SelectValue placeholder="Qtd" /></SelectTrigger>
                           <SelectContent>
                             {[0,1,2,3,4,5,6,7,8,9,10].map(n => <SelectItem key={n} value={String(n)}>{n === 10 ? '10+' : String(n)}</SelectItem>)}
@@ -1613,7 +1712,7 @@ export default function PropertyForm() {
                   </div>
                   <div className="space-y-2">
                     <Label>Mobília</Label>
-                    <Select value={formData.mobilia || undefined} onValueChange={v => set('mobilia', v)}>
+                    <Select value={formData.mobilia} onValueChange={v => set('mobilia', v)}>
                       <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="Mobiliado">Mobiliado</SelectItem>
@@ -1664,7 +1763,7 @@ export default function PropertyForm() {
 
           {/* 5. Extras (Features/Proximities) */}
           <TabsContent value="extras">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div data-tour="property-extras-section" className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <Card className="app-card">
                 <CardContent className="pt-6">
                   <FeatureSelector
@@ -1701,24 +1800,19 @@ export default function PropertyForm() {
                   {isSale && (
                     <div className="space-y-2">
                       <Label>Preço de venda (R$) <RequiredMark /></Label>
-                      <Input value={formatCurrencyDisplay(formData.preco)} onChange={e => set('preco', parseCurrencyInput(e.target.value))} placeholder="R$ 1" className="text-lg font-semibold" />
+                      <CurrencyInput value={formData.preco} onValueChange={value => set('preco', value)} className="text-lg font-semibold" />
                     </div>
                   )}
                   {isRental && (
                     <div className="space-y-2">
                       <Label>Valor de locação (R$) <RequiredMark /></Label>
-                      <Input value={formatCurrencyDisplay(formData.valor_locacao)} onChange={e => set('valor_locacao', parseCurrencyInput(e.target.value))} placeholder="R$ 1" className="text-lg font-semibold" />
+                      <CurrencyInput value={formData.valor_locacao} onValueChange={value => set('valor_locacao', value)} className="text-lg font-semibold" />
                     </div>
                   )}
                   <div className="space-y-2">
                     <Label>Condomínio (R$)</Label>
                     <div className="grid grid-cols-[minmax(0,1fr)_78px] gap-2">
-                      <Input
-                        value={formatCurrencyDisplay(formData.condominio)}
-                        onChange={e => set('condominio', parseCurrencyInput(e.target.value))}
-                        placeholder="R$ 1"
-                        disabled={formData.condominio_isento}
-                      />
+                      <CurrencyInput value={formData.condominio} onValueChange={value => set('condominio', value)} disabled={formData.condominio_isento} />
                       <label className="flex h-10 cursor-pointer items-center justify-center gap-1.5 rounded-[6px] px-1 text-xs text-muted-foreground">
                         <Switch checked={formData.condominio_isento} onCheckedChange={v => set('condominio_isento', v)} />
                         Isento
@@ -1731,12 +1825,7 @@ export default function PropertyForm() {
                   <div className="space-y-2">
                     <Label>IPTU (R$)</Label>
                     <div className="grid grid-cols-[minmax(0,1fr)_78px] gap-2">
-                      <Input
-                        value={formatCurrencyDisplay(formData.iptu)}
-                        onChange={e => set('iptu', parseCurrencyInput(e.target.value))}
-                        placeholder="R$ 1"
-                        disabled={formData.iptu_isento}
-                      />
+                      <CurrencyInput value={formData.iptu} onValueChange={value => set('iptu', value)} disabled={formData.iptu_isento} />
                       <label className="flex h-10 cursor-pointer items-center justify-center gap-1.5 rounded-[6px] px-1 text-xs text-muted-foreground">
                         <Switch checked={formData.iptu_isento} onCheckedChange={v => set('iptu_isento', v)} />
                         Isento
@@ -1759,26 +1848,26 @@ export default function PropertyForm() {
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
                   <div className="space-y-2">
                     <Label>ITR rural (R$)</Label>
-                    <Input value={formatCurrencyDisplay(formData.valor_itr)} onChange={e => set('valor_itr', parseCurrencyInput(e.target.value))} placeholder="R$ 1" />
+                    <CurrencyInput value={formData.valor_itr} onValueChange={value => set('valor_itr', value)} />
                   </div>
                   <div className="space-y-2">
                     <Label>Seguro incêndio (R$)</Label>
-                    <Input value={formatCurrencyDisplay(formData.seguro_incendio)} onChange={e => set('seguro_incendio', parseCurrencyInput(e.target.value))} placeholder="R$ 1" />
+                    <CurrencyInput value={formData.seguro_incendio} onValueChange={value => set('seguro_incendio', value)} />
                   </div>
                   <div className="space-y-2">
                     <Label>Taxa de limpeza/serviço (R$)</Label>
-                    <Input value={formatCurrencyDisplay(formData.taxa_de_servico)} onChange={e => set('taxa_de_servico', parseCurrencyInput(e.target.value))} placeholder="R$ 1" />
+                    <CurrencyInput value={formData.taxa_de_servico} onValueChange={value => set('taxa_de_servico', value)} />
                   </div>
                   {isSale && (
                     <div className="space-y-2">
                       <Label>Valor venda avaliado (R$)</Label>
-                      <Input value={formatCurrencyDisplay(formData.valor_venda_avaliado)} onChange={e => set('valor_venda_avaliado', parseCurrencyInput(e.target.value))} placeholder="R$ 1" />
+                      <CurrencyInput value={formData.valor_venda_avaliado} onValueChange={value => set('valor_venda_avaliado', value)} />
                     </div>
                   )}
                   {isRental && (
                     <div className="space-y-2">
                       <Label>Valor locação avaliado (R$)</Label>
-                      <Input value={formatCurrencyDisplay(formData.valor_locacao_avaliado)} onChange={e => set('valor_locacao_avaliado', parseCurrencyInput(e.target.value))} placeholder="R$ 1" />
+                      <CurrencyInput value={formData.valor_locacao_avaliado} onValueChange={value => set('valor_locacao_avaliado', value)} />
                     </div>
                   )}
                 </div>
@@ -1787,7 +1876,7 @@ export default function PropertyForm() {
                   {supportsRentalContractTerms && (
                     <div className="space-y-2">
                       <Label>Seguro fiança (R$)</Label>
-                      <Input value={formatCurrencyDisplay(formData.valor_seguro_fianca)} onChange={e => set('valor_seguro_fianca', parseCurrencyInput(e.target.value))} placeholder="R$ 1" />
+                      <CurrencyInput value={formData.valor_seguro_fianca} onValueChange={value => set('valor_seguro_fianca', value)} />
                     </div>
                   )}
                   {supportsRentalContractTerms && (

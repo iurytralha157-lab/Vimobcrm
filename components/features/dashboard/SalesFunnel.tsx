@@ -153,7 +153,7 @@ export function SalesFunnel({ data, isLoading }: SalesFunnelProps) {
                           <span className="text-sm font-bold drop-shadow-sm">
                             {item.value}
                           </span>
-                          <span className="text-[9px] opacity-80 font-medium bg-white/20 px-1 py-0.5 rounded-full">
+                          <span className="min-w-[26px] rounded-[6px] bg-white/20 px-1.5 py-0.5 text-center text-[9px] font-medium tabular-nums opacity-80">
                             {item.percentage}%
                           </span>
                         </div>

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,21 +36,16 @@ import {
   Trash2, 
   Loader2,
   Mail,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useDeleteUser, useDeleteUserImpact, useOrganizationUsers, useUpdateUser } from '@/hooks/use-users';
 import { useCreateInvitation, useDeleteInvitation, useInvitations } from '@/hooks/use-invitations';
-import { 
-  useOrganizationRoles, 
-  useUserOrganizationRoles, 
-  useAssignUserRole,
-  OrganizationRole
-} from '@/hooks/use-organization-roles';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
-import { RolesTab } from './RolesTab';
 import { canManageOrganization } from '@/lib/access/organization';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
 
 const getErrorMessage = (error: unknown, fallback: string) => {
   if (error instanceof Error) return error.message;
@@ -60,16 +56,14 @@ export function TeamTab() {
   const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
   const { t } = useLanguage();
   const queryClient = useQueryClient();
+  const { hasPermission } = useUserPermissions();
   
   const { data: users = [], isLoading: usersLoading } = useOrganizationUsers();
   const { data: invitations = [], isLoading: invitationsLoading } = useInvitations();
-  const { data: organizationRoles = [] } = useOrganizationRoles();
-  const { data: userOrgRoles = [] } = useUserOrganizationRoles();
   
   const updateUser = useUpdateUser();
   const deleteUser = useDeleteUser();
   const deleteInvitation = useDeleteInvitation();
-  const assignUserRole = useAssignUserRole();
   const createInvitation = useCreateInvitation();
 
   const [userDialogOpen, setUserDialogOpen] = useState(false);
@@ -89,6 +83,8 @@ export function TeamTab() {
     isSuperAdmin,
     memberRole: activeMemberRole,
   });
+  const canManageUsers = isAdmin || hasPermission('users_manage');
+  const canManagePermissions = isAdmin || hasPermission('permissions_manage');
   const { data: deleteImpact, isLoading: deleteImpactLoading, isError: deleteImpactFailed } = useDeleteUserImpact(
     userToDelete?.id,
     deleteUserDialogOpen && !!userToDelete,
@@ -110,16 +106,6 @@ export function TeamTab() {
   const pendingInvitations = invitations.filter((invitation) => !invitation.used_at);
 
   // Helper para obter a função customizada de um usuário
-  const getUserCustomRole = (userId: string): OrganizationRole | undefined => {
-    const assignment = userOrgRoles.find(uor => uor.user_id === userId);
-    if (!assignment) return undefined;
-    return organizationRoles.find(r => r.id === assignment.organization_role_id);
-  };
-
-  const handleAssignRole = async (userId: string, roleId: string | null) => {
-    await assignUserRole.mutateAsync({ userId, roleId });
-  };
-
   const handleToggleUserActive = async (userId: string, currentValue: boolean) => {
     await updateUser.mutateAsync({ id: userId, is_active: !currentValue });
   };
@@ -184,7 +170,7 @@ export function TeamTab() {
 
   return (
     <div className="space-y-6">
-      <div className={`grid gap-6 ${isAdmin ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
+      <div className="grid grid-cols-1 gap-6">
         {/* LEFT: Users List */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
@@ -192,7 +178,7 @@ export function TeamTab() {
               <CardTitle className="text-xl font-semibold text-foreground">{t.settings.users.title}</CardTitle>
               <CardDescription className="mt-0.5 text-sm text-muted-foreground">{t.settings.users.description}</CardDescription>
             </div>
-            {isAdmin && (
+            {canManageUsers && (
               <Sheet open={userDialogOpen} onOpenChange={(open) => {
                 setUserDialogOpen(open);
                 if (!open) resetNewUserForm();
@@ -285,7 +271,7 @@ export function TeamTab() {
                         </p>
                       </div>
                     </div>
-                    {isAdmin && (
+                    {canManageUsers && (
                       <Button
                         variant="ghost"
                         size="icon"
@@ -313,29 +299,22 @@ export function TeamTab() {
                       </Avatar>
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
-                          <p className="font-medium text-sm">{user.name}</p>
+                          {canManagePermissions ? (
+                            <Link href={`/settings/users/${user.id}`} className="text-sm font-medium hover:underline">
+                              {user.name}
+                            </Link>
+                          ) : (
+                            <p className="text-sm font-medium">{user.name}</p>
+                          )}
                           {!user.is_active && (
                             <Badge variant="secondary" className="text-xs">{t.common.inactive}</Badge>
-                          )}
-                          {/* Mostrar função customizada */}
-                          {user.role !== 'admin' && getUserCustomRole(user.id) && (
-                            <Badge 
-                              variant="outline" 
-                              className="text-xs"
-                              style={{
-                                borderColor: getUserCustomRole(user.id)?.color,
-                                color: getUserCustomRole(user.id)?.color
-                              }}
-                            >
-                              {getUserCustomRole(user.id)?.name}
-                            </Badge>
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground">{user.email}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap justify-end">
-                      {isAdmin ? (
+                      {canManageUsers ? (
                         <>
                           {/* Tipo de usuÃ¡rio (admin/user) */}
                           <Select 
@@ -352,31 +331,12 @@ export function TeamTab() {
                             </SelectContent>
                           </Select>
                           
-                          {/* Função customizada (apenas para não-admins) */}
-                          {user.role !== 'admin' && organizationRoles.length > 0 && (
-                            <Select 
-                              value={getUserCustomRole(user.id)?.id || 'none'} 
-                              onValueChange={v => handleAssignRole(user.id, v === 'none' ? null : v)} 
-                              disabled={user.id === profile?.id}
-                            >
-                              <SelectTrigger data-tour="team-user-custom-role" className="w-28 h-8 text-xs">
-                                <SelectValue placeholder="Função..." />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="none">Sem função</SelectItem>
-                                {organizationRoles.map(role => (
-                                  <SelectItem key={role.id} value={role.id}>
-                                    <div className="flex items-center gap-2">
-                                      <div 
-                                        className="w-2 h-2 rounded-full" 
-                                        style={{ backgroundColor: role.color }} 
-                                      />
-                                      {role.name}
-                                    </div>
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                          {canManagePermissions && (
+                            <Button asChild variant="ghost" size="icon" className="h-8 w-8" title="Editar permissoes">
+                              <Link href={`/settings/users/${user.id}`} aria-label={`Editar permissoes de ${user.name}`}>
+                                <ShieldCheck className="h-4 w-4" />
+                              </Link>
+                            </Button>
                           )}
                           
                           <Switch
@@ -406,16 +366,12 @@ export function TeamTab() {
                           <Badge variant={user.role === 'admin' ? 'default' : 'secondary'}>
                             {user.role === 'admin' ? t.settings.users.admin : t.settings.users.user}
                           </Badge>
-                          {user.role !== 'admin' && getUserCustomRole(user.id) && (
-                            <Badge 
-                              variant="outline"
-                              style={{
-                                borderColor: getUserCustomRole(user.id)?.color,
-                                color: getUserCustomRole(user.id)?.color
-                              }}
-                            >
-                              {getUserCustomRole(user.id)?.name}
-                            </Badge>
+                          {canManagePermissions && (
+                            <Button asChild variant="ghost" size="icon" className="h-8 w-8" title="Editar permissoes">
+                              <Link href={`/settings/users/${user.id}`} aria-label={`Editar permissoes de ${user.name}`}>
+                                <ShieldCheck className="h-4 w-4" />
+                              </Link>
+                            </Button>
                           )}
                         </div>
                       )}
@@ -428,7 +384,6 @@ export function TeamTab() {
         </Card>
 
         {/* RIGHT: Roles (only for admins) */}
-        {isAdmin && <RolesTab />}
       </div>
 
       {/* Delete User Confirmation Dialog */}

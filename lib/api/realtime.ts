@@ -62,6 +62,9 @@ export function connectBackendRealtime(options: ConnectRealtimeOptions) {
 
       retryAttempt = 0
       await readSSEStream(response.body, options.onEvent, controller.signal)
+      if (active && !controller.signal.aborted) {
+        scheduleReconnect()
+      }
     } catch (error) {
       if (active && !controller?.signal.aborted) {
         options.onError?.(error)

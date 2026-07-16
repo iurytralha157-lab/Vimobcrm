@@ -37,7 +37,7 @@ export default function Automations() {
   const [editingAutomationId, setEditingAutomationId] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<FollowUpTemplate | null>(null);
   const [historyAutomationId, setHistoryAutomationId] = useState<string | undefined>(undefined);
-  const { data: canEditAutomations = false } = useHasPermission("automations_edit");
+  const { data: canEditAutomations = false } = useHasPermission("automations_manage");
 
   const requestedTab = searchParams.get("tab");
   const activeTab: AutomationTab =

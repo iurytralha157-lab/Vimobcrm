@@ -63,7 +63,7 @@ function invokeMeta<T>(endpoint: "meta-oauth" | "instagram-oauth", body: Record<
   return integrationsAPI.invokeFunction<T>(endpoint, body, organizationId);
 }
 
-export function useMetaIntegrations() {
+export function useMetaIntegrations(options: { enabled?: boolean } = {}) {
   const { profile, organization } = useAuth();
   const organizationId = organization?.id || profile?.organization_id;
 
@@ -73,7 +73,7 @@ export function useMetaIntegrations() {
       if (!organizationId) return [];
       return integrationsAPI.listMetaIntegrations(organizationId) as unknown as Promise<MetaIntegration[]>;
     },
-    enabled: !!organizationId,
+    enabled: options.enabled !== false && !!organizationId,
   });
 }
 

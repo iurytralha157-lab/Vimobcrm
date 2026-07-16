@@ -105,10 +105,13 @@ export function SharedFilters({
   tourPrefix,
 }: SharedFiltersProps) {
   const { user, isSuperAdmin } = useAuth();
-  const { data: teams = [] } = useTeams({ enabled: loadDynamicOptions });
-  const { data: users = [] } = useOrganizationUsers({ enabled: loadDynamicOptions });
-  const isMobile = useIsMobile();
   const { hasPermission } = useUserPermissions();
+  const canViewAllLeads = isSuperAdmin || hasPermission("lead_view_all");
+  const canViewTeamLeads = hasPermission("lead_view_team");
+  const canUseScopeFilters = canViewAllLeads || canViewTeamLeads;
+  const { data: teams = [] } = useTeams({ enabled: loadDynamicOptions && canUseScopeFilters });
+  const { data: users = [] } = useOrganizationUsers({ enabled: loadDynamicOptions && canUseScopeFilters });
+  const isMobile = useIsMobile();
   const currentUserId = user?.id;
 
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -197,12 +200,7 @@ export function SharedFilters({
     [commitSearch, onFiltersOpenChange],
   );
 
-  const canViewAllLeads = isSuperAdmin || hasPermission("lead_view_all");
-
-  const isTeamLeader = useMemo(
-    () => teams.some((team) => team.members?.some((member) => member.user_id === currentUserId && member.is_leader)),
-    [currentUserId, teams],
-  );
+  const isTeamLeader = canViewTeamLeads;
 
   const showUserFilter = canViewAllLeads || isTeamLeader;
 
@@ -549,10 +547,13 @@ export function SharedFilters({
                 {/* Source Filter */}
                 <Select
                   value={source || "all"}
+                  disabled={isLoadingSources}
                   onOpenChange={markInternalSelectInteraction}
                   onValueChange={(value) => onSourceChange(value === "all" ? null : value)}
                 >
                   <SelectTrigger
+                    disabled={isLoadingSources}
+                    aria-busy={isLoadingSources}
                     onPointerDown={markInternalSelectInteraction}
                     className={cn("h-9 w-full text-xs", source && "border-primary text-primary")}
                   >
@@ -628,17 +629,25 @@ export function SharedFilters({
                     <div className="space-y-1">
                       <Select
                         value={campaignId || "all"}
+                        disabled={isLoadingCampaigns}
                         onOpenChange={markInternalSelectInteraction}
                         onValueChange={(value) => onCampaignChange(value === "all" ? null : value)}
                       >
                         <SelectTrigger
+                          disabled={isLoadingCampaigns}
+                          aria-busy={isLoadingCampaigns}
                           onPointerDown={markInternalSelectInteraction}
                           className="h-8 text-xs bg-white/[0.035] border-white/[0.055]"
                         >
-                          <SelectValue placeholder={isLoadingCampaigns ? "Carregando..." : "Todas campanhas"} />
+                          <SelectValue placeholder={isLoadingCampaigns ? "Carregando campanhas..." : "Todas campanhas"} />
                         </SelectTrigger>
                         <SelectContent className={filterSelectContentClass}>
                           <SelectItem value="all">Todas campanhas</SelectItem>
+                          {isLoadingCampaigns && (
+                            <div className="p-2 text-[10px] text-center text-muted-foreground">
+                              Carregando campanhas...
+                            </div>
+                          )}
                           {campaigns.map((campaign) => (
                             <SelectItem key={campaign.id} value={campaign.id}>
                               {campaign.name}
@@ -658,10 +667,13 @@ export function SharedFilters({
                       <div className="space-y-1">
                         <Select
                           value={adSetId || "all"}
+                          disabled={isLoadingAdSets}
                           onOpenChange={markInternalSelectInteraction}
                           onValueChange={(value) => onAdSetChange(value === "all" ? null : value)}
                         >
                           <SelectTrigger
+                            disabled={isLoadingAdSets}
+                            aria-busy={isLoadingAdSets}
                             onPointerDown={markInternalSelectInteraction}
                             className="h-8 text-xs bg-white/[0.035] border-white/[0.055] animate-in fade-in slide-in-from-top-1"
                           >
@@ -684,10 +696,13 @@ export function SharedFilters({
                       <div className="space-y-1">
                         <Select
                           value={adId || "all"}
+                          disabled={isLoadingAds}
                           onOpenChange={markInternalSelectInteraction}
                           onValueChange={(value) => onAdChange(value === "all" ? null : value)}
                         >
                           <SelectTrigger
+                            disabled={isLoadingAds}
+                            aria-busy={isLoadingAds}
                             onPointerDown={markInternalSelectInteraction}
                             className="h-8 text-xs bg-white/[0.035] border-white/[0.055] animate-in fade-in slide-in-from-top-1"
                           >

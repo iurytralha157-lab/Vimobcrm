@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -31,17 +32,18 @@ func (repo Repository) ListOrganizationRoles(ctx context.Context, tenantContext 
 }
 
 func (repo Repository) ListAvailablePermissions(ctx context.Context) ([]map[string]any, error) {
-	return repo.queryJSONRows(ctx, `
-		select jsonb_build_object(
-			'id', id::text,
-			'key', key,
-			'name', label,
-			'description', description,
-			'category', domain
-		)
-		from public.available_permissions
-		order by domain, label
-	`)
+	_ = ctx
+	items := make([]map[string]any, 0, len(permissions.Catalog()))
+	for _, permission := range permissions.Catalog() {
+		items = append(items, map[string]any{
+			"id":          permission.Key,
+			"key":         permission.Key,
+			"name":        permission.Label,
+			"description": permission.Description,
+			"category":    permission.Domain,
+		})
+	}
+	return items, nil
 }
 
 func (repo Repository) ListRolePermissions(ctx context.Context, tenantContext tenant.Context, roleID string) ([]map[string]any, error) {
@@ -79,7 +81,7 @@ func (repo Repository) ListUserOrganizationRoles(ctx context.Context, tenantCont
 }
 
 func (repo Repository) CreateRole(ctx context.Context, tenantContext tenant.Context, payload map[string]any) (map[string]any, error) {
-	if !canManageSettings(tenantContext) {
+	if !canManageUserPermissions(tenantContext) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 	name := strings.TrimSpace(fmt.Sprint(payload["name"]))
@@ -119,7 +121,7 @@ func (repo Repository) CreateRole(ctx context.Context, tenantContext tenant.Cont
 }
 
 func (repo Repository) UpdateRole(ctx context.Context, tenantContext tenant.Context, roleID string, payload map[string]any) (map[string]any, error) {
-	if !canManageSettings(tenantContext) {
+	if !canManageUserPermissions(tenantContext) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 	roleID, ok := normalizeUUID(roleID)
@@ -150,7 +152,7 @@ func (repo Repository) UpdateRole(ctx context.Context, tenantContext tenant.Cont
 }
 
 func (repo Repository) DeleteRole(ctx context.Context, tenantContext tenant.Context, roleID string) error {
-	if !canManageSettings(tenantContext) {
+	if !canManageUserPermissions(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 	roleID, ok := normalizeUUID(roleID)
@@ -172,7 +174,7 @@ func (repo Repository) DeleteRole(ctx context.Context, tenantContext tenant.Cont
 }
 
 func (repo Repository) ReplaceRolePermissions(ctx context.Context, tenantContext tenant.Context, roleID string, permissions []string) error {
-	if !canManageSettings(tenantContext) {
+	if !canManageUserPermissions(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 	return repo.replaceRolePermissions(ctx, tenantContext, roleID, permissions)
@@ -218,7 +220,7 @@ func (repo Repository) replaceRolePermissions(ctx context.Context, tenantContext
 }
 
 func (repo Repository) AssignUserRole(ctx context.Context, tenantContext tenant.Context, userID string, roleID string) error {
-	if !canManageSettings(tenantContext) {
+	if !canManageUserPermissions(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 	userID, ok := normalizeUUID(userID)

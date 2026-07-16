@@ -31,10 +31,11 @@ test('remove recursos desligados da navegacao', () => {
 test('libera somente as areas de gestao permitidas ao lider de equipe', () => {
   const items: NavigationAccessItem[] = [{
     path: '/crm/management',
-    anyPermissions: ['settings_teams', 'settings_pipelines'],
+    anyPermissions: ['team_manage', 'pipeline_manage'],
     children: [
-      { path: '/crm/management?tab=teams', anyPermissions: ['settings_teams'] },
-      { path: '/crm/management?tab=pipelines', permission: 'settings_pipelines' },
+      { path: '/crm/management?tab=teams', anyPermissions: ['team_manage'] },
+      { path: '/crm/management?tab=distribution', permission: 'distribution_manage' },
+      { path: '/crm/management?tab=pipelines', permission: 'pipeline_manage' },
     ],
   }]
 
@@ -59,4 +60,24 @@ test('mantem modulos e itens administrativos sob suas regras atuais', () => {
   })
 
   assert.deepEqual(result.map((item) => item.path), ['/properties', '/financeiro'])
+})
+
+test('permissoes individuais liberam configuracoes sem depender do cargo', () => {
+  const items: NavigationAccessItem[] = [
+    { path: '/settings?tab=subscription', permission: 'settings_billing' },
+    { path: '/settings/site', permission: 'settings_site', module: 'site' },
+    { path: '/settings?tab=integrations', anyPermissions: ['settings_integrations', 'whatsapp_manage', 'settings_ai'] },
+  ]
+  const granted = new Set(['settings_site', 'whatsapp_manage'])
+
+  const result = filterNavigationItems(items, {
+    ...baseAccess,
+    hasModule: () => true,
+    hasPermission: (permission) => granted.has(permission),
+  })
+
+  assert.deepEqual(result.map((item) => item.path), [
+    '/settings/site',
+    '/settings?tab=integrations',
+  ])
 })

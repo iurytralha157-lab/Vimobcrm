@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	"golang.org/x/sync/errgroup"
 )
@@ -338,7 +339,7 @@ func (repo Repository) GetDashboardUpcomingTasks(ctx context.Context, tenantCont
 		  and lt.is_done = false
 		  and lt.due_date is not null
 		  and l.organization_id = $1::uuid
-		  and `+leadVisibilitySQL("$2", "$3", "$4")+`
+		  and `+leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn))+`
 		order by lt.due_date asc, lt.created_at asc
 		limit $5
 	`,
@@ -477,7 +478,7 @@ func (repo Repository) GetDashboardRecentActivities(ctx context.Context, tenantC
 		left join public.users u on u.id = a.user_id
 		where a.organization_id = $1::uuid
 		  and l.organization_id = $1::uuid
-		  and `+leadVisibilitySQL("$2", "$3", "$4")+`
+		  and `+leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn))+`
 		order by a.created_at desc
 		limit $5
 	`,
@@ -959,7 +960,7 @@ func (repo Repository) buildDashboardLeadWhere(tenantContext tenant.Context, fil
 	}
 	where := []string{
 		"l.organization_id = $1::uuid",
-		leadVisibilitySQL("$2", "$3", "$4"),
+		leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn)),
 	}
 
 	add := func(clause string, value any) {
@@ -1036,32 +1037,12 @@ func (repo Repository) buildDashboardLeadWhere(tenantContext tenant.Context, fil
 		where = append(where, fmt.Sprintf("(l.name ilike $%d or l.email ilike $%d or l.phone ilike $%d)", index, index, index))
 	}
 
-	metaConditions := []string{}
-	addMetaCondition := func(idColumn string, nameColumn string, value string) {
-		value = strings.TrimSpace(value)
-		if value == "" || value == "all" {
-			return
-		}
-		args = append(args, value)
-		index := len(args)
-		column := nameColumn
-		if numericMetaFilter.MatchString(value) {
-			column = idColumn
-		}
-		metaConditions = append(metaConditions, fmt.Sprintf("dlm.%s = $%d", column, index))
+	addMetaCondition := func(leadColumns []string, idColumn string, nameColumn string, value string) {
+		addLeadMetaFilterCondition(&args, &where, "l", "dlm", leadColumns, idColumn, nameColumn, value)
 	}
-	addMetaCondition("campaign_id", "campaign_name", filter.CampaignID)
-	addMetaCondition("adset_id", "adset_name", filter.AdSetID)
-	addMetaCondition("ad_id", "ad_name", filter.AdID)
-	if len(metaConditions) > 0 {
-		where = append(where, `exists (
-			select 1
-			from public.lead_meta dlm
-			where dlm.organization_id = $1::uuid
-			  and dlm.lead_id = l.id
-			  and `+strings.Join(metaConditions, " and ")+`
-		)`)
-	}
+	addMetaCondition([]string{"meta_campaign_id", "utm_campaign"}, "campaign_id", "campaign_name", filter.CampaignID)
+	addMetaCondition([]string{"meta_adset_id"}, "adset_id", "adset_name", filter.AdSetID)
+	addMetaCondition([]string{"meta_ad_id"}, "ad_id", "ad_name", filter.AdID)
 
 	return where, args, nil
 }

@@ -463,6 +463,7 @@ test('admin e dashboard rejeitam referencias inseguras', () => {
   assert.equal(safePathSegmentSchema.safeParse('../organizations').success, false)
   assert.equal(adminModuleAccessInputSchema.safeParse({ organizationId: ID, moduleName: 'crm', isEnabled: true }).success, true)
   assert.equal(dashboardFiltersSchema.safeParse({ teamId: 'invalido' }).success, false)
+  assert.equal(dashboardFiltersSchema.safeParse({ userId: 'all', teamId: '', source: 'all' }).success, true)
   assert.equal(dashboardFiltersSchema.safeParse({ datePreset: 'last30days' }).success, false)
 })
 

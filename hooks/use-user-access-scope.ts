@@ -62,7 +62,7 @@ export function useUserAccessScope() {
       ledUserIds,
       ledPipelineIds,
       canViewAllLeads: isAdmin || hasPermission('lead_view_all'),
-      canTransferAnyLead: isAdmin || hasPermission('lead_transfer') || hasPermission('lead_edit_all'),
+      canTransferAnyLead: isAdmin || (hasPermission('lead_view_all') && hasPermission('lead_operate')),
       isLoading: permissionsLoading || (shouldLoadTeams && teamsLoading) || (shouldLoadTeamPipelines && teamPipelinesLoading),
     };
   }, [hasCurrentTenantContext, hasPermission, isAdminProfile, permissionsLoading, profileId, shouldLoadTeamPipelines, shouldLoadTeams, teamPipelineRows, teamPipelinesLoading, teams, teamsLoading, tenantContext]);

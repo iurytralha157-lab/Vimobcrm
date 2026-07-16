@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -63,7 +64,7 @@ func (repo Repository) ListMedia(ctx context.Context, tenantContext tenant.Conte
 }
 
 func (repo Repository) UploadMedia(ctx context.Context, tenantContext tenant.Context, input AutomationMediaUploadInput, body io.Reader) (AutomationMediaUpload, error) {
-	if !tenantContext.HasPermission("automations_edit") {
+	if !tenantContext.HasPermission(permissions.AutomationsManage) {
 		return AutomationMediaUpload{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -121,7 +122,7 @@ func (repo Repository) UploadMedia(ctx context.Context, tenantContext tenant.Con
 }
 
 func (repo Repository) DeleteMedia(ctx context.Context, tenantContext tenant.Context, mediaType string, fileName string) error {
-	if !tenantContext.HasPermission("automations_edit") {
+	if !tenantContext.HasPermission(permissions.AutomationsManage) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 

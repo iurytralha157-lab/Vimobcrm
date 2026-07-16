@@ -52,6 +52,7 @@ interface ConversationHeaderProps {
   onCreateLead?: () => void;
   onToggleLeadPanel?: () => void;
   showLeadPanel?: boolean;
+  canOperate?: boolean;
   className?: string;
 }
 
@@ -69,6 +70,7 @@ export function ConversationHeader({
   onArchive,
   onDelete,
   onCreateLead,
+  canOperate = false,
   className,
 }: ConversationHeaderProps) {
   const displayName =
@@ -181,11 +183,11 @@ export function ConversationHeader({
               </Button>
             )}
 
-            <Button variant="ghost" size="icon" className="h-8 w-8">
+            {canOperate && <Button variant="ghost" size="icon" className="h-8 w-8">
               <Phone className="h-4 w-4" />
-            </Button>
+            </Button>}
 
-            <DropdownMenu>
+            {canOperate && <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-8 w-8">
                   <MoreVertical className="h-4 w-4" />
@@ -202,7 +204,7 @@ export function ConversationHeader({
                   Remover
                 </DropdownMenuItem>
               </DropdownMenuContent>
-            </DropdownMenu>
+            </DropdownMenu>}
           </>
         )}
       </div>

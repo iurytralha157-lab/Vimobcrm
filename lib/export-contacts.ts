@@ -556,7 +556,7 @@ async function fetchAllFilteredContacts(filters: ExportFilters, organizationId?:
       sortDir: 'desc',
       page,
       limit: pageSize,
-      mode: 'full',
+      mode: 'export',
     }, organizationId);
 
     if (pageContacts.length === 0) break;

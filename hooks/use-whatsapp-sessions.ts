@@ -73,7 +73,7 @@ function removeSessionFromCache(old: WhatsAppSession[] | undefined, sessionId: s
   return old.filter((session) => session.id !== sessionId);
 }
 
-export function useWhatsAppSessions() {
+export function useWhatsAppSessions(options: { enabled?: boolean } = {}) {
   const scope = useWhatsAppQueryScope();
 
   return useQuery({
@@ -85,7 +85,7 @@ export function useWhatsAppSessions() {
       sessions.meta = response.meta;
       return sessions;
     },
-    enabled: !!scope.organizationId && !!scope.userId,
+    enabled: options.enabled !== false && !!scope.organizationId && !!scope.userId,
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
     staleTime: 60_000,

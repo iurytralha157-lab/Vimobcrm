@@ -20,7 +20,7 @@ export const contactListQuerySchema = z.object({
   sortDir: z.enum(['asc', 'desc']).optional(),
   page: z.number().int().min(1).optional(),
   limit: z.number().int().min(1).max(500).optional(),
-  mode: z.enum(['compact', 'full']).default('compact'),
+  mode: z.enum(['compact', 'full', 'export']).default('compact'),
 }).strict()
 export const apiContactSchema = z.object({
   id: uuidSchema,

@@ -18,16 +18,15 @@ export function getAllowedManagementTabs(access: ManagementTabAccess): Managemen
   const tabs: ManagementTab[] = []
   const canManageTeams =
     access.isTeamLeader ||
-    access.hasPermission('settings_teams') ||
-    access.hasPermission('settings_users')
+    access.hasPermission('team_manage')
 
   if (canManageTeams) {
-    tabs.push('teams', 'distribution')
+    tabs.push('teams')
   }
 
-  if (access.hasPermission('settings_pipelines')) {
-    tabs.push('pipelines', 'tags')
-  }
+  if (access.hasPermission('distribution_manage')) tabs.push('distribution')
+  if (access.hasPermission('pipeline_manage')) tabs.push('pipelines')
+  if (access.hasPermission('tag_manage')) tabs.push('tags')
 
   return tabs
 }

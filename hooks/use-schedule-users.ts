@@ -31,7 +31,6 @@ export function useScheduleUsers(options?: { enabled?: boolean }) {
     isSuperAdmin ||
     memberRole === 'owner' ||
     memberRole === 'admin' ||
-    memberRole === 'manager' ||
     hasPermission(tenantContext?.permissions, 'schedule_manage')
 
   const scheduleUsers = useMemo(() => {

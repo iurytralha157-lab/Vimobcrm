@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -802,7 +803,6 @@ func textValue(value pgtype.Text) string {
 
 func canManagePipelines(tenantContext tenant.Context) bool {
 	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin", "manager") ||
-		tenantContext.HasPermission("lead_manage") ||
-		tenantContext.HasPermission("pipeline_edit")
+		tenantContext.HasRole("owner", "admin") ||
+		tenantContext.HasPermission(permissions.PipelineManage)
 }

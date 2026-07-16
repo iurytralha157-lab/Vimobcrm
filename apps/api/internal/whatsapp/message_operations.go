@@ -176,7 +176,7 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		  and send_ws.owner_user_id = $2::uuid
 		  and coalesce(send_ws.is_active, true) = true
 		  and send_ws.status = 'connected'
-		  and `+leadVisibilitySQL()+`
+		  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		for update of wc, l, current_ws, send_ws
 	`, authorizationArgs...).Scan(&lockedConversationID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -521,7 +521,7 @@ func (repo Repository) listLeadHistoryConversations(ctx context.Context, tenantC
 		left join public.pipelines pipeline on pipeline.id = l.pipeline_id
 		left join public.stages stage on stage.id = l.stage_id
 		where wc.organization_id = $1::uuid
-		  and `+leadHistoryVisibilitySQL()+`
+		  and `+leadHistoryVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		  and (
 		    wc.lead_id = $5::uuid
 		    or exists (
@@ -560,7 +560,7 @@ func (repo Repository) listLeadHistoryMessages(ctx context.Context, tenantContex
 	where := []string{
 		"wm.organization_id = $1::uuid",
 		"wc.organization_id = $1::uuid",
-		leadHistoryVisibilitySQL(),
+		leadHistoryVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext)),
 		leadHistoryMessageLeadMatchSQL(),
 	}
 	if filter.CursorAt != nil {
@@ -790,7 +790,7 @@ func (repo Repository) findConversationForLead(ctx context.Context, tenantContex
 		left join public.stages stage on stage.id = l.stage_id
 		where wc.organization_id = $1::uuid
 		  and wc.deleted_at is null
-		  and `+conversationVisibilitySQL()+`
+		  and `+conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		  and wc.lead_id = $5::uuid
 		order by wc.last_message_at desc nulls last, wc.created_at desc
 		limit 1

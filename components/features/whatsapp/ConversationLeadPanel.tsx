@@ -58,6 +58,7 @@ import { useLeadAttachments, useUploadLeadAttachment, type LeadAttachment } from
 import { useScheduleEvents, type EventType, type ScheduleEvent } from "@/hooks/use-schedule-events";
 import { useDealStatusChange } from "@/hooks/use-deal-status-change";
 import { useAuth } from "@/contexts/AuthContext";
+import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { leadsAPI } from "@/lib/api/leads";
 import type { ConversationLeadDetail } from "@/lib/api/conversation-lead-detail";
 
@@ -316,7 +317,7 @@ function CompactScheduleEventsList({
 }: {
   events: ScheduleEvent[];
   locale: Locale;
-  onEditEvent: (event: ScheduleEvent) => void;
+  onEditEvent?: (event: ScheduleEvent) => void;
 }) {
   const [currentTime] = useState(() => Date.now());
   const sortedEvents = [...events].sort((left, right) => {
@@ -351,9 +352,10 @@ function CompactScheduleEventsList({
           <button
             key={event.id}
             type="button"
-            onClick={() => onEditEvent(event)}
+            disabled={!onEditEvent}
+            onClick={() => onEditEvent?.(event)}
             className={cn(
-              "flex w-full items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-1.5 text-left transition-colors hover:bg-primary/10",
+              "flex w-full items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-1.5 text-left transition-colors hover:bg-primary/10 disabled:cursor-default disabled:hover:bg-[var(--app-surface-solid)]",
               isCompleted && "opacity-65",
             )}
           >
@@ -420,14 +422,19 @@ function getAttachmentLabel(attachment: LeadAttachment) {
 
 export function ConversationLeadPanel({ leadId, className, contactPicture }: ConversationLeadPanelProps) {
   const queryClient = useQueryClient();
-  const { profile, organization, tenantContext, isSuperAdmin } = useAuth();
+  const { profile, organization } = useAuth();
+  const { hasPermission } = useUserPermissions();
+  const canOperateLead = hasPermission("lead_operate");
+  const canViewProperties = hasPermission("property_view") || hasPermission("property_manage");
+  const canViewSchedule = hasPermission("schedule_view");
+  const canManageSchedule = canOperateLead && hasPermission("schedule_manage");
   const organizationId = profile?.organization_id || organization?.id || undefined;
   const { data: lead, isLoading } = useConversationLeadDetail(leadId);
   const { data: allTags } = useTags();
-  const { data: properties = [] } = useProperties();
+  const { data: properties = [] } = useProperties(undefined, {}, { enabled: canViewProperties });
   const { data: users = [] } = useUsers();
   const { data: attachments = [] } = useLeadAttachments(leadId);
-  const { data: scheduleEvents = [] } = useScheduleEvents({ leadId });
+  const { data: scheduleEvents = [] } = useScheduleEvents({ leadId, enabled: canViewSchedule });
   const uploadAttachment = useUploadLeadAttachment();
   const updateLead = useUpdateLead();
   const addTag = useAddLeadTag();
@@ -461,21 +468,8 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
   const selectedProperty = properties.find((property) => property.id === selectedPropertyId);
   const currentAssignee = users.find((user) => user.id === lead.assigned_user_id);
   const assigneeName = currentAssignee?.name || currentAssignee?.email || "Sem responsável";
-  const currentUserId = profile?.id || tenantContext?.userId || "";
-  const currentAssigneeId = lead.assigned_user_id || "";
-  const tenantPermissions = tenantContext?.permissions || [];
-  const hasTenantPermission = (permission: string) =>
-    tenantPermissions.includes("*") || tenantPermissions.includes(permission);
-  const canAssignAnyLead =
-    isSuperAdmin ||
-    Boolean(tenantContext?.isSuperAdmin) ||
-    ["owner", "admin", "manager"].includes(tenantContext?.memberRole || "") ||
-    hasTenantPermission("lead_manage") ||
-    hasTenantPermission("lead_assign") ||
-    hasTenantPermission("lead_transfer");
-  const canAssignCurrentLead =
-    canAssignAnyLead ||
-    (!!currentUserId && !!currentAssigneeId && currentAssigneeId === currentUserId);
+  const canAssignAnyLead = canOperateLead;
+  const canAssignCurrentLead = canOperateLead;
   const dealStatus = lead.deal_status || "open";
   const dealStatusLabel = dealStatus === "won" ? "Ganho" : dealStatus === "lost" ? "Perdido" : "Aberto";
   const phoneDigits = lead.phone?.replace(/\D/g, "") || "";
@@ -499,6 +493,7 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
   };
 
   const handleDealStatusChange = (newStatus: string) => {
+    if (!canOperateLead) return;
     if (newStatus === dealStatus) return;
 
     if (newStatus === "lost") {
@@ -523,6 +518,7 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
   };
 
   const handleConfirmLostReason = async (reason: string) => {
+    if (!canOperateLead) return;
     await dealStatusChange.mutateAsync({
       leadId,
       newStatus: "lost",
@@ -572,6 +568,7 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
   };
 
   const handlePropertySelect = async (property: { id: string; preco?: number | null; commission_percentage?: number | null }) => {
+    if (!canOperateLead || !canViewProperties) return;
     const nextUpdate: {
       id: string;
       property_id: string;
@@ -597,6 +594,7 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canOperateLead) return;
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -615,6 +613,7 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
   };
 
   const handleSaveFeedback = async () => {
+    if (!canOperateLead) return;
     const savedFeedback = feedback.trim();
     if (!savedFeedback) return;
 
@@ -629,12 +628,14 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
   };
 
   const handleOpenScheduleForm = () => {
+    if (!canManageSchedule) return;
     setEditingScheduleEvent(null);
     setScheduleDefaultType("visit");
     setScheduleFormOpen(true);
   };
 
   const handleEditScheduleEvent = (event: ScheduleEvent) => {
+    if (!canManageSchedule) return;
     setEditingScheduleEvent(event);
     setScheduleFormOpen(true);
   };
@@ -674,7 +675,8 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
                   <span className="max-w-[82px] truncate">{leadTag.tag.name || "Tag"}</span>
                   <button
                     type="button"
-                    className="rounded-[3px] p-0.5 hover:bg-black/10"
+                    disabled={!canOperateLead}
+                    className="rounded-[3px] p-0.5 hover:bg-black/10 disabled:hidden"
                     onClick={() => removeTag.mutate({ leadId, tagId: leadTag.tag.id })}
                   >
                     <X className="h-2.5 w-2.5" />
@@ -686,7 +688,7 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
                   +{leadTags.length - 4}
                 </Badge>
               )}
-              {availableTagsToAdd.length > 0 && (
+              {canOperateLead && availableTagsToAdd.length > 0 && (
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button
@@ -762,7 +764,7 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
             </PopoverContent>
           </Popover>
 
-          <Select value={dealStatus} onValueChange={handleDealStatusChange}>
+          <Select value={dealStatus} onValueChange={handleDealStatusChange} disabled={!canOperateLead}>
             <SelectTrigger className={cn("h-8 w-[92px] gap-1 rounded-[6px] px-2 text-xs font-medium", getDealStatusTriggerClass(dealStatus))}>
               <SelectValue>{dealStatusLabel}</SelectValue>
             </SelectTrigger>
@@ -827,10 +829,12 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
             properties={properties}
             selectedPropertyId={selectedPropertyId}
             onSelect={(property) => void handlePropertySelect(property)}
+            disabled={!canOperateLead || !canViewProperties}
             trigger={
               <Button
                 type="button"
                 variant="ghost"
+                disabled={!canOperateLead || !canViewProperties}
                 className="h-10 w-full min-w-0 justify-between rounded-[8px] border-0 bg-[var(--app-surface-soft)] px-3 text-xs text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
               >
                 <div className="flex min-w-0 items-center gap-2">
@@ -850,7 +854,7 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
                 variant="ghost"
                 size="sm"
                 className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]"
-                disabled={isUploading || uploadAttachment.isPending}
+                disabled={!canOperateLead || isUploading || uploadAttachment.isPending}
                 onClick={() => fileInputRef.current?.click()}
               >
                 {isUploading || uploadAttachment.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
@@ -887,6 +891,7 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
               </div>
               <Button
                 size="sm"
+                disabled={!canManageSchedule}
                 className="lead-detail-primary-action lead-agenda-action h-8 shrink-0 rounded-[6px] px-2.5"
                 onClick={handleOpenScheduleForm}
               >
@@ -897,7 +902,7 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
             <CompactScheduleEventsList
               events={scheduleEvents}
               locale={ptBR}
-              onEditEvent={handleEditScheduleEvent}
+              onEditEvent={canManageSchedule ? handleEditScheduleEvent : undefined}
             />
           </section>
 
@@ -906,10 +911,11 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
               placeholder="Registre o feedback sobre atendimento, perfil ou próximos passos..."
               value={feedback}
               onChange={(event) => setFeedback(event.target.value)}
+              disabled={!canOperateLead}
               className="min-h-[92px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"
             />
             <div className="mt-2 flex justify-end">
-              <Button className="lead-detail-primary-action h-8 rounded-[6px] px-3" disabled={!feedback.trim() || updateLead.isPending} onClick={handleSaveFeedback}>
+              <Button className="lead-detail-primary-action h-8 rounded-[6px] px-3" disabled={!canOperateLead || !feedback.trim() || updateLead.isPending} onClick={handleSaveFeedback}>
                 Registrar feedback
               </Button>
             </div>
@@ -917,7 +923,7 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
         </div>
       </ScrollArea>
 
-      <EventForm
+      {canManageSchedule && <EventForm
         open={scheduleFormOpen}
         onOpenChange={(open) => {
           if (!open) handleCloseScheduleForm();
@@ -928,7 +934,7 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
         leadName={lead.name}
         defaultUserId={lead.assigned_user_id || profile?.id || undefined}
         defaultType={scheduleDefaultType}
-      />
+      />}
 
       <LostReasonDialog
         open={lostReasonDialogOpen}

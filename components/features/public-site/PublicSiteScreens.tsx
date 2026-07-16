@@ -729,7 +729,6 @@ function buildPropertyStats(property: PublicProperty) {
 function buildPropertyExtraDetails(property: PublicProperty) {
   const items = normalizeStringList(property.detalhes_extras);
 
-  if (property.condominio_nome) items.push(`Condomínio: ${property.condominio_nome}`);
   if (property.mobiliado) items.push("Mobiliado");
   if (property.aceita_financiamento) items.push("Aceita financiamento");
   if (property.usou_fgts) items.push("Aceita FGTS");
@@ -772,7 +771,6 @@ function buildRelatedSearches(property: PublicProperty, basePath: string) {
     [type, rooms, purpose, neighborhood, city].filter(Boolean).join(" - "),
     [type, purpose, city].filter(Boolean).join(" - "),
     neighborhood ? [type, purpose, neighborhood].filter(Boolean).join(" - ") : "",
-    property.condominio_nome ? [type, property.condominio_nome, city].filter(Boolean).join(" - ") : "",
   ];
 
   return Array.from(new Set(labels.map((item) => item.trim()).filter(Boolean))).slice(0, 4).map((label) => ({

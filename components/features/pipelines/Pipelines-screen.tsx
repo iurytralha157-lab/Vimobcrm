@@ -71,6 +71,7 @@ import { useAssignLeadRoundRobin } from '@/hooks/use-assign-lead-roundrobin';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useCanEditCadences } from '@/hooks/use-can-edit-cadences';
 import { useLeadVisibility } from '@/hooks/use-lead-visibility';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
 
 import { useHasPermission } from '@/hooks/use-organization-roles';
 import { notifyLeadRealtimeChange } from '@/contexts/LeadRealtimeBus';
@@ -82,6 +83,7 @@ import { pipelinesAPI } from '@/lib/api/pipelines';
 import { getPipelineBoard } from '@/lib/api/pipeline-board';
 import { useDealStatusChange } from '@/hooks/use-deal-status-change';
 import { LostReasonDialog } from '@/components/features/leads/LostReasonDialog';
+import { useStageAutomations, type StageAutomation } from '@/hooks/use-stage-automations';
 
 const StageSettingsDialog = dynamic(
   () => import('@/components/features/pipelines/StageSettingsDialog').then((mod) => mod.StageSettingsDialog),
@@ -138,6 +140,85 @@ const mergeMovedLeadResponse = (currentLead: PipelineLead, movedLead: Partial<Pi
     stage: currentLead.stage,
   };
 };
+
+type PipelineDealStatus = 'open' | 'won' | 'lost';
+
+function isPipelineDealStatus(status: unknown): status is PipelineDealStatus {
+  return status === 'open' || status === 'won' || status === 'lost';
+}
+
+function getOptimisticDealStatusForStage(stage?: StageWithLeads | null): PipelineDealStatus | null {
+  if (stage?.is_won) return 'won';
+  return null;
+}
+
+function getOptimisticAutomationDealStatusForStage(
+  automations: StageAutomation[] | undefined,
+  stageId?: string | null,
+): PipelineDealStatus | null {
+  const automation = automations?.find((item) => {
+    const config = item.action_config || item.config || {};
+    return (
+      item.stage_id === stageId &&
+      item.is_active !== false &&
+      item.automation_type === 'change_deal_status_on_enter' &&
+      config.deal_status === 'won'
+    );
+  });
+
+  return automation ? 'won' : null;
+}
+
+function shouldKeepLeadForDealStatusFilter(status: PipelineDealStatus | null | undefined, filter?: string) {
+  return !filter || !status || filter === status;
+}
+
+function reconcileMovedLeadInBoard(
+  current: StageWithLeads[] | undefined,
+  leadId: string,
+  movedLead: Partial<PipelineLead>,
+  filterDealStatus?: string,
+) {
+  if (!current) return current;
+
+  const responseStatus = isPipelineDealStatus(movedLead.deal_status) ? movedLead.deal_status : null;
+  return current.map((stage) => {
+    if (!Array.isArray(stage.leads)) return stage;
+
+    let stageChanged = false;
+    let removedFromStage = false;
+    const nextLeads = stage.leads.reduce<PipelineLead[]>((acc, lead) => {
+      if (lead.id !== leadId) {
+        acc.push(lead);
+        return acc;
+      }
+
+      stageChanged = true;
+      if (!shouldKeepLeadForDealStatusFilter(responseStatus, filterDealStatus)) {
+        removedFromStage = true;
+        return acc;
+      }
+
+      acc.push(mergeMovedLeadResponse(lead, movedLead));
+      return acc;
+    }, []);
+
+    if (!stageChanged) return stage;
+    if (!removedFromStage) {
+      return { ...stage, leads: nextLeads };
+    }
+
+    const totalLeadCount = Number(stage.total_lead_count ?? stage.leads.length);
+    const nextTotal = Math.max(totalLeadCount - 1, 0);
+
+    return {
+      ...stage,
+      leads: nextLeads,
+      total_lead_count: nextTotal,
+      has_more: nextTotal > nextLeads.length,
+    };
+  });
+}
 
 const NO_VISIBLE_USER_ID = '00000000-0000-0000-0000-000000000000';
 const PIPELINE_AUTO_SCROLLER_OPTIONS = {
@@ -218,14 +299,12 @@ class LeadDialogErrorBoundary extends Component<LeadDialogBoundaryProps, LeadDia
 
 export default function Pipelines() {
   const router = useRouter();
-  const { profile, organization, isSuperAdmin, userOrganizations } = useAuth();
+  const { profile, organization } = useAuth();
   const [shouldLoadFilterOptions, setShouldLoadFilterOptions] = useState(false);
   const activeOrganizationId = organization?.id || profile?.organization_id;
-  const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
-  const isAdmin =
-    isSuperAdmin ||
-    activeMemberRole === 'admin' ||
-    activeMemberRole === 'owner';
+  const { hasPermission } = useUserPermissions();
+  const canOperateLeads = hasPermission('lead_operate');
+  const canCreateLeads = hasPermission('lead_create');
   const newButtonLabel = 'Novo Lead';
 
   const [selectedLead, setSelectedLead] = useState<PipelineLead | null>(null);
@@ -233,6 +312,7 @@ export default function Pipelines() {
   const dealStatusChange = useDealStatusChange();
   const [newLeadDialogOpen, setNewLeadDialogOpen] = useState(false);
   const [newLeadStageId, setNewLeadStageId] = useState<string | null>(null);
+  const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null);
   const {
     filters: sharedFilters,
     datePreset,
@@ -263,16 +343,16 @@ export default function Pipelines() {
     adSets,
     ads,
     tags: allTagsFromHook,
+    selectedTeamUserIds,
     isLoadingSources,
     isLoadingCampaigns,
     isLoadingAdSets,
     isLoadingAds,
-  } = useSharedFilters({ loadDynamicOptions: shouldLoadFilterOptions });
+  } = useSharedFilters({ loadDynamicOptions: shouldLoadFilterOptions, pipelineId: selectedPipelineId });
 
   const [editingStageId, setEditingStageId] = useState<string | null>(null);
   const [editingStageName, setEditingStageName] = useState('');
   const [settingsStage, setSettingsStage] = useState<StageWithLeads | null>(null);
-  const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null);
   const [newPipelineDialogOpen, setNewPipelineDialogOpen] = useState(false);
   const [newPipelineName, setNewPipelineName] = useState('');
   const [newStageDialogOpen, setNewStageDialogOpen] = useState(false);
@@ -359,8 +439,7 @@ export default function Pipelines() {
 
   const { isLoading: permissionLoading } = useHasPermission('lead_view_all');
   const { data: leadVisibility, isLoading: leadVisibilityLoading } = useLeadVisibility(profile?.id);
-  const { data: hasPipelineLock = false } = useHasPermission('pipeline_lock');
-  const isDragDisabled = hasPipelineLock && !isAdmin;
+  const isDragDisabled = !canOperateLeads;
 
   const scopedVisibleUserIds = useMemo(() => {
     if (!leadVisibility || leadVisibility.canViewAll) return undefined;
@@ -370,15 +449,27 @@ export default function Pipelines() {
   }, [leadVisibility]);
   const hasUserScope = Array.isArray(scopedVisibleUserIds);
   const selectedFilterUserId = filterUser === 'all' ? undefined : (filterUser || undefined);
-  const effectivePipelineFilterUser = hasUserScope
-    ? (selectedFilterUserId ? (scopedVisibleUserIds.includes(selectedFilterUserId) ? selectedFilterUserId : NO_VISIBLE_USER_ID) : undefined)
-    : selectedFilterUserId;
+  const effectivePipelineFilterUserIds = useMemo(() => {
+    if (!Array.isArray(selectedTeamUserIds)) return scopedVisibleUserIds;
+    if (!Array.isArray(scopedVisibleUserIds)) return selectedTeamUserIds;
+
+    const visibleUserIds = new Set(scopedVisibleUserIds);
+    return selectedTeamUserIds.filter((userId) => visibleUserIds.has(userId));
+  }, [scopedVisibleUserIds, selectedTeamUserIds]);
+  const selectedFilterUserAllowed = useMemo(() => {
+    if (!selectedFilterUserId) return true;
+    if (hasUserScope && !scopedVisibleUserIds.includes(selectedFilterUserId)) return false;
+    if (Array.isArray(selectedTeamUserIds) && !selectedTeamUserIds.includes(selectedFilterUserId)) return false;
+    return true;
+  }, [hasUserScope, scopedVisibleUserIds, selectedFilterUserId, selectedTeamUserIds]);
+  const effectivePipelineFilterUser = selectedFilterUserId
+    ? (selectedFilterUserAllowed ? selectedFilterUserId : NO_VISIBLE_USER_ID)
+    : undefined;
 
   useEffect(() => {
-    if (!hasUserScope || !selectedFilterUserId) return;
-    if (scopedVisibleUserIds.includes(selectedFilterUserId)) return;
-    setFilterUser(scopedVisibleUserIds.length === 1 ? scopedVisibleUserIds[0] : 'all');
-  }, [hasUserScope, selectedFilterUserId, scopedVisibleUserIds, setFilterUser]);
+    if (!selectedFilterUserId || selectedFilterUserAllowed) return;
+    setFilterUser('all');
+  }, [selectedFilterUserAllowed, selectedFilterUserId, setFilterUser]);
 
   useEffect(() => {
     if (!profile?.id || permissionLoading || leadVisibilityLoading || !leadVisibility) return;
@@ -392,6 +483,7 @@ export default function Pipelines() {
   }, [profile?.id, permissionLoading, leadVisibilityLoading, leadVisibility, filterUser, setFilterUser]);
 
   const { data: baseStages = [], isLoading: baseStagesLoading } = useStages(selectedPipelineId || undefined);
+  const { data: stageAutomations = [] } = useStageAutomations();
 
   const shouldLoadPipelineLeads = !!selectedPipelineId && filterUser !== null && !permissionLoading && !leadVisibilityLoading && !!leadVisibility;
   const deferredSearchQuery = useDeferredValue(searchQuery);
@@ -415,7 +507,7 @@ export default function Pipelines() {
       filterAdSet: filterAdSet && filterAdSet !== 'all' ? filterAdSet : undefined,
       filterAd: filterAd && filterAd !== 'all' ? filterAd : undefined,
       filterSource: filterSource && filterSource !== 'all' ? filterSource : undefined,
-      filterUserIds: scopedVisibleUserIds,
+      filterUserIds: effectivePipelineFilterUserIds,
     },
     { enabled: shouldLoadPipelineLeads }
   );
@@ -475,10 +567,10 @@ export default function Pipelines() {
         filterAdSet: filterAdSet && filterAdSet !== 'all' ? filterAdSet : undefined,
         filterAd: filterAd && filterAd !== 'all' ? filterAd : undefined,
         filterSource: filterSource && filterSource !== 'all' ? filterSource : undefined,
-        filterUserIds: scopedVisibleUserIds,
+        filterUserIds: effectivePipelineFilterUserIds,
       },
     });
-  }, [selectedPipelineId, stages, loadMoreLeads, effectivePipelineFilterUser, dateRange, filterTag, filterDealStatus, deferredSearchQuery, filterCampaign, filterAdSet, filterAd, filterSource, scopedVisibleUserIds]);
+  }, [selectedPipelineId, stages, loadMoreLeads, effectivePipelineFilterUser, dateRange, filterTag, filterDealStatus, deferredSearchQuery, filterCampaign, filterAdSet, filterAd, filterSource, effectivePipelineFilterUserIds]);
 
   useEffect(() => {
     if (!selectedLead || stages.length === 0) return;
@@ -621,6 +713,10 @@ export default function Pipelines() {
     const oldStageId = source.droppableId;
     const isSameStage = newStageId === oldStageId;
     const newStage = stages.find(s => s.id === newStageId);
+    const optimisticMovedDealStatus =
+      getOptimisticDealStatusForStage(newStage) ||
+      getOptimisticAutomationDealStatusForStage(stageAutomations, newStageId);
+    const optimisticStatusChangedAt = new Date().toISOString();
     const getLeadOrderDate = (lead: PipelineLead) => {
       const rawDate = lead?.board_order_at || lead?.stage_entered_at || lead?.created_at;
       const time = rawDate ? new Date(rawDate).getTime() : NaN;
@@ -639,14 +735,16 @@ export default function Pipelines() {
     const dateFromISO = dateRange.from.toISOString();
     const dateToISO = dateRange.to.toISOString();
     const effectiveFilterTag = filterTag !== 'all' ? filterTag : undefined;
-    const effectiveFilterDealStatus = filterDealStatus !== 'all' ? filterDealStatus : undefined;
+    const effectiveFilterDealStatus = filterDealStatus && filterDealStatus !== 'all' ? filterDealStatus : undefined;
     const effectiveSearchQuery = searchQuery || undefined;
     const effectiveFilterCampaign = filterCampaign !== 'all' ? filterCampaign : undefined;
     const effectiveFilterAdSet = filterAdSet !== 'all' ? filterAdSet : undefined;
     const effectiveFilterAd = filterAd !== 'all' ? filterAd : undefined;
     const effectiveFilterSource = filterSource !== 'all' ? filterSource : undefined;
     const effectiveFilterUser = effectivePipelineFilterUser;
-    const effectiveScopedUserIds = scopedVisibleUserIds?.join(',');
+    const effectiveScopedUserIds = effectivePipelineFilterUserIds?.join(',');
+    const shouldKeepOptimisticMovedLead =
+      isSameStage || shouldKeepLeadForDealStatusFilter(optimisticMovedDealStatus, effectiveFilterDealStatus);
 
     const queryKey = [
       'stages-with-leads',
@@ -692,12 +790,25 @@ export default function Pipelines() {
         stage_entered_at: isSameStage ? movedLead.stage_entered_at : new Date().toISOString(),
         board_order_at: nextBoardOrderAt,
         stage: newStages[destStageIndex],
+        ...(optimisticMovedDealStatus === 'won'
+          ? {
+              deal_status: 'won' as const,
+              won_at: optimisticStatusChangedAt,
+              lost_at: null,
+              lost_reason: null,
+              updated_at: optimisticStatusChangedAt,
+            }
+          : {}),
       };
 
-      newStages[destStageIndex].leads.splice(targetIndex, 0, updatedLead);
+      if (shouldKeepOptimisticMovedLead) {
+        newStages[destStageIndex].leads.splice(targetIndex, 0, updatedLead);
+      }
       if (!isSameStage) {
         newStages[sourceStageIndex].total_lead_count = Math.max((newStages[sourceStageIndex].total_lead_count || 0) - 1, 0);
-        newStages[destStageIndex].total_lead_count = (newStages[destStageIndex].total_lead_count || 0) + 1;
+        if (shouldKeepOptimisticMovedLead) {
+          newStages[destStageIndex].total_lead_count = (newStages[destStageIndex].total_lead_count || 0) + 1;
+        }
       }
       newStages[sourceStageIndex].has_more = (newStages[sourceStageIndex].total_lead_count || 0) > newStages[sourceStageIndex].leads.length;
       newStages[destStageIndex].has_more = (newStages[destStageIndex].total_lead_count || 0) > newStages[destStageIndex].leads.length;
@@ -721,17 +832,9 @@ export default function Pipelines() {
 
       const movedLeadFromRpc = updateResult.data as unknown as Partial<PipelineLead> | null;
       if (movedLeadFromRpc) {
-        queryClient.setQueryData<StageWithLeads[]>(queryKey, (old) => {
-          if (!old) return old;
-          return old.map(stage => ({
-            ...stage,
-            leads: (stage.leads || []).map((lead) =>
-              lead.id === draggableId
-                ? mergeMovedLeadResponse(lead, movedLeadFromRpc)
-                : lead
-            ),
-          }));
-        });
+        queryClient.setQueryData<StageWithLeads[]>(queryKey, (old) =>
+          reconcileMovedLeadInBoard(old, draggableId, movedLeadFromRpc, effectiveFilterDealStatus),
+        );
       }
 
       notifyLeadRealtimeChange({
@@ -793,7 +896,7 @@ export default function Pipelines() {
         isDraggingRef.current = false;
       }, 500);
     }
-  }, [stages, dateRange, filterTag, filterDealStatus, searchQuery, filterCampaign, filterAdSet, filterAd, filterSource, selectedPipelineId, activeOrganizationId, effectivePipelineFilterUser, scopedVisibleUserIds, queryClient, profile, realtimeOrganizationId]);
+  }, [stages, stageAutomations, dateRange, filterTag, filterDealStatus, searchQuery, filterCampaign, filterAdSet, filterAd, filterSource, selectedPipelineId, activeOrganizationId, effectivePipelineFilterUser, effectivePipelineFilterUserIds, queryClient, profile, realtimeOrganizationId]);
 
   const handleDragEnd = useCallback(async (result: DropResult) => {
     isDraggingRef.current = false;
@@ -822,12 +925,13 @@ export default function Pipelines() {
   }, [refetch]);
 
   const openNewLeadDialog = (stageId?: string) => {
+    if (!canCreateLeads) return;
     setNewLeadStageId(stageId || null);
     setNewLeadDialogOpen(true);
   };
 
   useEffect(() => {
-    if (searchParams.get('new') !== 'lead') return;
+    if (searchParams.get('new') !== 'lead' || !canCreateLeads) return;
 
     const cleanParams = new URLSearchParams(searchParams.toString());
     cleanParams.delete('new');
@@ -844,7 +948,7 @@ export default function Pipelines() {
     return () => {
       isActive = false;
     };
-  }, [searchParams, router]);
+  }, [canCreateLeads, searchParams, router]);
 
   const handleStageName = async (stageId: string) => {
     if (!editingStageName.trim()) {
@@ -888,7 +992,13 @@ export default function Pipelines() {
           pipelineId: selectedPipelineId,
           filters: {
             searchQuery: deferredSearch,
-            filterUserIds: hasUserScope ? scopedVisibleUserIds : undefined,
+            filterTag: filterTag && filterTag !== 'all' ? filterTag : undefined,
+            filterDealStatus: filterDealStatus && filterDealStatus !== 'all' ? filterDealStatus : undefined,
+            filterCampaign: filterCampaign && filterCampaign !== 'all' ? filterCampaign : undefined,
+            filterAdSet: filterAdSet && filterAdSet !== 'all' ? filterAdSet : undefined,
+            filterAd: filterAd && filterAd !== 'all' ? filterAd : undefined,
+            filterSource: filterSource && filterSource !== 'all' ? filterSource : undefined,
+            filterUserIds: effectivePipelineFilterUserIds,
           },
           limit: 50,
         });
@@ -904,7 +1014,7 @@ export default function Pipelines() {
 
     doSearch();
     return () => { cancelled = true; };
-  }, [activeOrganizationId, deferredSearch, hasMoreLeads, selectedPipelineId, hasUserScope, scopedVisibleUserIds]);
+  }, [activeOrganizationId, deferredSearch, hasMoreLeads, selectedPipelineId, filterTag, filterDealStatus, filterCampaign, filterAdSet, filterAd, filterSource, effectivePipelineFilterUserIds]);
 
   const filteredStages = useMemo<StageWithLeads[]>(() => {
     return stages.map(stage => {
@@ -1220,7 +1330,7 @@ export default function Pipelines() {
                 />
               </div>
 
-              {!isMobile && (
+              {!isMobile && canCreateLeads && (
                 <Button
                   data-tour="pipeline-new-lead"
                   size="sm"
@@ -1261,7 +1371,7 @@ export default function Pipelines() {
             <div className="absolute inset-0 z-30 flex items-center justify-center bg-[var(--app-bg)]/70 backdrop-blur-[2px]">
               <div className="flex items-center gap-2 rounded-[8px] bg-[var(--app-surface-solid)] px-4 py-3 text-xs font-extralight tracking-wide text-[var(--app-text-primary)] shadow-[0_18px_40px_rgb(0_0_0_/_0.18)]">
                 <Loader2 className="h-4 w-4 animate-spin text-[#FF4529]" />
-                <span>{leadsPlaceholderData ? 'Trocando pipeline...' : 'Carregando leads...'}</span>
+                <span>{leadsPlaceholderData ? 'Carregando pipeline...' : 'Carregando leads...'}</span>
               </div>
             </div>
           )}

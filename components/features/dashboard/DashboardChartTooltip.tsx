@@ -37,11 +37,11 @@ export function DashboardChartTooltip({
 
   return (
     <div className={cn(
-      "min-w-[140px] rounded-xl border-0 bg-[var(--app-surface-solid)] p-3 text-[var(--app-text-primary)] shadow-[0_8px_20px_rgba(0,0,0,0.22)] animate-in fade-in zoom-in duration-200",
+      "min-w-[140px] rounded-xl border-0 bg-[var(--app-surface-solid)] p-3 text-[#232323] shadow-[0_8px_20px_rgba(0,0,0,0.18)] animate-in fade-in zoom-in duration-200",
       className
     )}>
       {displayTitle && (
-        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">
+        <p className="mb-2 text-[10px] font-light uppercase tracking-wider text-[#272727]">
           {displayTitle}
         </p>
       )}
@@ -56,11 +56,11 @@ export function DashboardChartTooltip({
                   className="w-2 h-2 rounded-full"
                   style={{ backgroundColor: entry.color || entry.fill }}
                 />
-                <span className="text-xs text-muted-foreground font-extralight py-0 pb-0 pt-[2px]">
+                <span className="py-0 pb-0 pt-[2px] text-[11px] font-light text-[#272727]/70">
                   {nameFormatter ? nameFormatter(entryName, entry) : entryName}
                 </span>
               </div>
-              <span className="text-xs font-bold text-foreground tabular-nums pt-[2px] font-extralight">
+              <span className="pt-[2px] text-[11px] font-medium tabular-nums text-[#232323]">
                 {valueFormatter ? valueFormatter(entry.value, entry) : entry.value}
               </span>
             </div>
@@ -69,8 +69,8 @@ export function DashboardChartTooltip({
 
         {showTotal && payload.length > 1 && (
           <div className="mt-1.5 flex items-center justify-between gap-4 pt-1.5">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Total</span>
-            <span className="text-xs font-black text-foreground tabular-nums">
+            <span className="text-[11px] font-light uppercase tracking-wider text-[#272727]/70">Total</span>
+            <span className="text-[11px] font-medium tabular-nums text-[#232323]">
               {payload.reduce((acc, entry) => acc + (Number(entry.value) || 0), 0)}
             </span>
           </div>

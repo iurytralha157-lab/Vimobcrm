@@ -2,6 +2,9 @@
 -- organization. The canonical engine later enforces the composite tenant key.
 create schema if not exists private;
 
+alter table public.user_gamification_stats
+  add column if not exists season_id uuid;
+
 create table if not exists private.gamification_tenant_integrity_archive (
   archived_at timestamptz not null default now(),
   source_table text not null,

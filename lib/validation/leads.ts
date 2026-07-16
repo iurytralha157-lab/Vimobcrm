@@ -48,6 +48,7 @@ export const leadCreateInputSchema = z.object({
   uf: optionalText(2),
   rendaFamiliar: optionalText(80),
   faixaValorImovel: optionalText(80),
+  importMode: z.boolean().optional(),
 }).strict().superRefine((input, ctx) => {
   if (input.dealStatus === 'lost' && !input.lostReason) {
     ctx.addIssue({

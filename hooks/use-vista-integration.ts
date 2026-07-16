@@ -33,14 +33,14 @@ function getErrorMessage(error: unknown) {
   return 'Erro desconhecido';
 }
 
-export function useVistaIntegration() {
+export function useVistaIntegration(options: { enabled?: boolean } = {}) {
   const { profile } = useAuth();
   const orgId = profile?.organization_id;
 
   return useQuery({
     queryKey: ['vista-integration', orgId],
     queryFn: () => integrationsAPI.getVista(orgId) as Promise<VistaIntegration | null>,
-    enabled: !!orgId,
+    enabled: options.enabled !== false && !!orgId,
   });
 }
 

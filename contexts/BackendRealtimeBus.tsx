@@ -33,48 +33,85 @@ const DASHBOARD_REALTIME_QUERY_KEYS = [
 
 export function BackendRealtimeBus() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { profile, refreshProfile } = useAuth();
   const scheduleDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshProfileRef = useRef(refreshProfile);
+  const queryClientRef = useRef(queryClient);
+  const accessRefreshQueueRef = useRef<Promise<void>>(Promise.resolve());
+
+  useEffect(() => {
+    refreshProfileRef.current = refreshProfile;
+  }, [refreshProfile]);
+
+  useEffect(() => {
+    queryClientRef.current = queryClient;
+  }, [queryClient]);
 
   useEffect(() => {
     if (!profile?.organization_id) return;
 
     const organizationId = profile.organization_id;
+    const enqueueAccessRefresh = (onFailure?: () => void) => {
+      accessRefreshQueueRef.current = accessRefreshQueueRef.current
+        .catch(() => undefined)
+        .then(() => refreshCurrentUserAccess(refreshProfileRef))
+        .catch(() => {
+          onFailure?.();
+        });
+    };
 
     const disconnect = connectBackendRealtime({
       organizationId,
       onEvent: (event) => {
+        const activeQueryClient = queryClientRef.current;
         if (event.organizationId !== organizationId) return;
-        if (event.type === "realtime.connected" || event.type === "realtime.ping") return;
+        if (event.type === "realtime.connected") {
+          enqueueAccessRefresh();
+          return;
+        }
+        if (event.type === "realtime.ping") return;
+
+        if (event.type === "access.permissions.changed") {
+          const targetUserId = getString(event.data, "targetUserId") || event.userId;
+          if (targetUserId === profile.id) {
+            enqueueAccessRefresh(() => {
+              void queryClientRef.current.invalidateQueries({
+                queryKey: ["user-permissions", profile.id, organizationId],
+                refetchType: "active",
+              });
+            });
+          }
+          return;
+        }
 
         if (event.type.startsWith("lead.")) {
           handleLeadEvent(event);
-          invalidateNotificationQueries(queryClient);
+          invalidateNotificationQueries(activeQueryClient);
           return;
         }
 
         if (event.type.startsWith("schedule.")) {
-          handleScheduleEvent(event, queryClient, scheduleDebounceRef);
+          handleScheduleEvent(event, activeQueryClient, scheduleDebounceRef);
           return;
         }
 
         if (event.type.startsWith("whatsapp.")) {
-          handleWhatsAppEvent(event, queryClient);
+          handleWhatsAppEvent(event, activeQueryClient);
           return;
         }
 
         if (event.type.startsWith("site.")) {
-          invalidateDashboardRealtimeQueries(queryClient);
+          invalidateDashboardRealtimeQueries(activeQueryClient);
           return;
         }
 
         if (event.type.startsWith("webhook.")) {
-          void queryClient.invalidateQueries({ queryKey: ["webhooks"], refetchType: "active" });
+          void activeQueryClient.invalidateQueries({ queryKey: ["webhooks"], refetchType: "active" });
           return;
         }
 
         if (event.type.startsWith("notification.")) {
-          invalidateNotificationQueries(queryClient);
+          invalidateNotificationQueries(activeQueryClient);
           return;
         }
       },
@@ -90,9 +127,15 @@ export function BackendRealtimeBus() {
       }
       disconnect();
     };
-  }, [profile?.organization_id, queryClient]);
+  }, [profile?.id, profile?.organization_id]);
 
   return null;
+}
+
+async function refreshCurrentUserAccess(
+  refreshProfileRef: MutableRefObject<() => Promise<void>>,
+) {
+  await refreshProfileRef.current();
 }
 
 function handleLeadEvent(event: BackendRealtimeEvent) {

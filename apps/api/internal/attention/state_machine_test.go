@@ -115,17 +115,26 @@ func TestNotificationDedupeKeyIsCycleAndBucketScoped(t *testing.T) {
 
 func TestPolicyAndItemPermissions(t *testing.T) {
 	manager := tenant.Context{UserID: "manager", MemberRole: "manager"}
-	if !canManagePolicies(manager) || !canViewOrganizationAttention(manager) {
-		t.Fatal("manager must manage policies and organization attention")
+	if canManagePolicies(manager) || canViewOrganizationAttention(manager) {
+		t.Fatal("manager role must not bypass the effective permission set")
 	}
-	leader := tenant.Context{UserID: "leader", IsTeamLeader: true, LedUserIDs: []string{"broker"}}
+	manager.Permissions = []string{"pipeline_manage", "lead_view_all"}
+	if !canManagePolicies(manager) || !canViewOrganizationAttention(manager) {
+		t.Fatal("explicit permissions must allow policy management and organization attention")
+	}
+	leader := tenant.Context{
+		UserID:       "leader",
+		IsTeamLeader: true,
+		LedUserIDs:   []string{"broker"},
+		Permissions:  []string{"lead_view_team", "lead_operate"},
+	}
 	if canManagePolicies(leader) {
 		t.Fatal("team leader without an explicit permission must not manage policies")
 	}
 	if !canActOnItem(leader, "broker") {
 		t.Fatal("team leader must act on a led user's item")
 	}
-	broker := tenant.Context{UserID: "broker", MemberRole: "user"}
+	broker := tenant.Context{UserID: "broker", MemberRole: "user", Permissions: []string{"lead_view_own", "lead_operate"}}
 	if !canActOnItem(broker, "broker") || canActOnItem(broker, "another") {
 		t.Fatal("broker must only act on their own item")
 	}

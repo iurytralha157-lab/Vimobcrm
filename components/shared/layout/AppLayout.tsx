@@ -11,7 +11,6 @@ import { FloatingChat } from '@/components/features/chat/FloatingChat';
 import { FloatingChatButton } from '@/components/features/chat/FloatingChatButton';
 import { WhatsAppRealtimeBus } from '@/contexts/WhatsAppRealtimeBus';
 import { LeadRealtimeBus } from '@/contexts/LeadRealtimeBus';
-import { BackendRealtimeBus } from '@/contexts/BackendRealtimeBus';
 import { InstallPrompt } from '@/components/features/pwa/InstallPrompt';
 import { WebPushPrompt } from '@/components/features/pwa/WebPushPrompt';
 import { SetupGuideDialog, SetupGuideTour } from '@/components/features/setup-guide';
@@ -104,7 +103,6 @@ function AppLayoutContent({ children, title, disableMainScroll = false, borderle
       {isMobile && <MobileBottomNav />}
 
       {/* Floating WhatsApp Chat + Unified Realtime Bus */}
-      <BackendRealtimeBus />
       <LeadRealtimeBus />
       <WhatsAppRealtimeBus />
       <FloatingChatButton />

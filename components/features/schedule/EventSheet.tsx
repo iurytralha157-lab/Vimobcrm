@@ -34,6 +34,7 @@ import { useTeams } from "@/hooks/use-teams";
 import Link from "next/link";
 import { PropertyPickerDialog } from "@/components/features/properties/PropertyPickerDialog";
 import { PropertyPreviewDialog } from "@/components/features/properties/PropertyPreviewDialog";
+import { useUserPermissions } from "@/hooks/use-user-permissions";
 
 const eventTypes: { type: EventType; label: string; icon: React.ElementType; color: string }[] = [
   { type: "call", label: "Ligação", icon: Phone, color: "#6366f1" },
@@ -121,7 +122,9 @@ interface EventSheetProps {
 export function EventSheet({
   open, onOpenChange, event, defaultUserId, defaultDate, defaultType, leadId, leadName,
 }: EventSheetProps) {
-  const { allUsers: users = [] } = useScheduleUsers();
+  const { hasPermission } = useUserPermissions();
+  const canManageSchedule = hasPermission("schedule_manage");
+  const { data: users = [] } = useScheduleUsers();
   const { data: teams = [] } = useTeams();
   const createEvent = useCreateScheduleEvent();
   const updateEvent = useUpdateScheduleEvent();
@@ -131,7 +134,7 @@ export function EventSheet({
   const isCompleted = event?.status === "completed";
   const isMasked = Boolean(event?.is_masked);
   const [isEditing, setIsEditing] = useState(false);
-  const locked = isMasked || isCompleted || (isExisting && !isEditing);
+  const locked = !canManageSchedule || isMasked || isCompleted || (isExisting && !isEditing);
 
   const [selectedType, setSelectedType] = useState<EventType>("task");
   const [title, setTitle] = useState("");
@@ -308,7 +311,7 @@ export function EventSheet({
   };
 
   const handleSubmit = async () => {
-    if (isMasked) return;
+    if (!canManageSchedule || isMasked) return;
     if (!title.trim() || !date || !primaryUserId) return;
     const [hh, mm] = time.split(":").map(Number);
     const start = new Date(date);
@@ -355,13 +358,13 @@ export function EventSheet({
   };
 
   const handleDelete = async () => {
-    if (!event || isMasked) return;
+    if (!canManageSchedule || !event || isMasked) return;
     await deleteEvent.mutateAsync({ id: event.id });
     onOpenChange(false);
   };
 
   const handleSendComment = () => {
-    if (isMasked || !commentText.trim() || isAdding) return;
+    if (!canManageSchedule || isMasked || !commentText.trim() || isAdding) return;
     addComment(commentText.trim());
     setCommentText("");
   };
@@ -838,9 +841,9 @@ export function EventSheet({
                         onKeyDown={(e) => e.key === "Enter" && handleSendComment()}
                         placeholder="Comentário..."
                         className={cn("h-9 text-xs", agendaFieldClass)}
-                        disabled={isAdding}
+                        disabled={!canManageSchedule || isAdding}
                       />
-                      <Button size="icon" onClick={handleSendComment} disabled={isAdding || !commentText.trim()} className="h-9 w-9 shrink-0">
+                      <Button size="icon" onClick={handleSendComment} disabled={!canManageSchedule || isAdding || !commentText.trim()} className="h-9 w-9 shrink-0">
                         <Send size={13} />
                       </Button>
                     </div>
@@ -852,7 +855,7 @@ export function EventSheet({
         </div>
 
         <div className="flex shrink-0 items-center justify-between gap-3 px-5 py-4">
-          {isExisting && !isMasked ? (
+          {canManageSchedule && isExisting && !isMasked ? (
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="ghost" size="sm" className="gap-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 hover:text-white">
@@ -875,13 +878,13 @@ export function EventSheet({
           )}
 
           <div className="ml-auto flex flex-1 flex-wrap items-center justify-end gap-2">
-            {isExisting && !isMasked && !isCompleted && (
+            {canManageSchedule && isExisting && !isMasked && !isCompleted && (
               <Button variant="ghost" size="sm" onClick={handleMarkDone} disabled={isLoading} className="gap-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white">
                 <CheckCircle size={13} /> Concluir
               </Button>
             )}
-            <Button variant="ghost" size="sm" onClick={() => (isExisting && !isMasked ? setIsEditing((value) => !value) : onOpenChange(false))} disabled={isLoading || isCompleted} className={cn("rounded-[8px] border-0 font-semibold shadow-none", !locked ? "order-1 h-11 flex-[3] bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]" : "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground")}>
-              {isExisting && !isMasked && !isEditing ? "Editar" : "Cancelar"}
+            <Button variant="ghost" size="sm" onClick={() => (canManageSchedule && isExisting && !isMasked ? setIsEditing((value) => !value) : onOpenChange(false))} disabled={isLoading || isCompleted} className={cn("rounded-[8px] border-0 font-semibold shadow-none", !locked ? "order-1 h-11 flex-[3] bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]" : "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground")}>
+              {canManageSchedule && isExisting && !isMasked && !isEditing ? "Editar" : "Fechar"}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => (isExisting ? setIsEditing(true) : onOpenChange(false))} disabled={isLoading || isCompleted} className="hidden">
               Mais opções

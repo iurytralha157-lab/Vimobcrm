@@ -897,6 +897,25 @@ body {
   box-shadow: none !important;
 }
 
+.app-shell .dashboard-borderless .dashboard-card-title {
+  color: #272727 !important;
+  font-size: 14px !important;
+  font-weight: 300 !important;
+  line-height: 1.2 !important;
+}
+
+.app-shell .dashboard-borderless :is([data-tour="dashboard-date-filter"], [data-tour="dashboard-advanced-filters"]) {
+  color: #272727 !important;
+  font-size: 10px !important;
+  font-weight: 300 !important;
+}
+
+.app-shell .dashboard-borderless :is([data-tour="dashboard-date-filter"], [data-tour="dashboard-advanced-filters"]) :where(span) {
+  color: #272727 !important;
+  font-size: 10px !important;
+  font-weight: 300 !important;
+}
+
 .dashboard-recharts-focusless .recharts-wrapper,
 .dashboard-recharts-focusless .recharts-surface,
 .dashboard-recharts-focusless .recharts-layer,

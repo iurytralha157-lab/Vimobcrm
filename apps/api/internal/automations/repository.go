@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -37,7 +38,11 @@ type ExecutionStepFilter struct {
 }
 
 func canViewAutomations(tenantContext tenant.Context) bool {
-	return tenantContext.HasPermission("automations_view") || tenantContext.HasPermission("automations_edit")
+	return tenantContext.HasPermission(permissions.AutomationsView) || canManageAutomations(tenantContext)
+}
+
+func canManageAutomations(tenantContext tenant.Context) bool {
+	return tenantContext.HasPermission(permissions.AutomationsManage)
 }
 
 func NewRepository(db *dbpkg.Postgres, functionsConfig FunctionsConfig, storageConfig StorageConfig) Repository {
@@ -118,7 +123,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, au
 }
 
 func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context, input CreateInput) (Automation, error) {
-	if !tenantContext.HasPermission("automations_edit") {
+	if !canManageAutomations(tenantContext) {
 		return Automation{}, tenant.ErrOrganizationAccessDenied
 	}
 	if input.ParsedFlow != nil {
@@ -245,7 +250,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 }
 
 func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context, automationID string, input UpdateInput) (Automation, error) {
-	if !tenantContext.HasPermission("automations_edit") {
+	if !canManageAutomations(tenantContext) {
 		return Automation{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -368,7 +373,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 }
 
 func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context, automationID string) error {
-	if !tenantContext.HasPermission("automations_edit") {
+	if !canManageAutomations(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 
@@ -415,7 +420,7 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 }
 
 func (repo Repository) Duplicate(ctx context.Context, tenantContext tenant.Context, automationID string) (Automation, error) {
-	if !tenantContext.HasPermission("automations_edit") {
+	if !canManageAutomations(tenantContext) {
 		return Automation{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -542,7 +547,7 @@ func (repo Repository) Duplicate(ctx context.Context, tenantContext tenant.Conte
 }
 
 func (repo Repository) SaveFlow(ctx context.Context, tenantContext tenant.Context, automationID string, input SaveFlowInput) ([]AutomationNode, error) {
-	if !tenantContext.HasPermission("automations_edit") {
+	if !canManageAutomations(tenantContext) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -750,7 +755,7 @@ func (repo Repository) ListTemplates(ctx context.Context, tenantContext tenant.C
 }
 
 func (repo Repository) CreateTemplate(ctx context.Context, tenantContext tenant.Context, input CreateTemplateInput) (AutomationTemplate, error) {
-	if !tenantContext.HasPermission("automations_edit") {
+	if !canManageAutomations(tenantContext) {
 		return AutomationTemplate{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -769,7 +774,7 @@ func (repo Repository) CreateTemplate(ctx context.Context, tenantContext tenant.
 }
 
 func (repo Repository) DeleteTemplate(ctx context.Context, tenantContext tenant.Context, templateID string) error {
-	if !tenantContext.HasPermission("automations_edit") {
+	if !canManageAutomations(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 
@@ -909,7 +914,7 @@ func (repo Repository) ListExecutionSummaries(ctx context.Context, tenantContext
 }
 
 func (repo Repository) CancelExecution(ctx context.Context, tenantContext tenant.Context, executionID string) error {
-	if !tenantContext.HasPermission("automations_edit") {
+	if !canManageAutomations(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 
@@ -976,7 +981,7 @@ func (repo Repository) CancelExecution(ctx context.Context, tenantContext tenant
 }
 
 func (repo Repository) CancelAutomationExecutions(ctx context.Context, tenantContext tenant.Context, automationID string) (int, error) {
-	if !tenantContext.HasPermission("automations_edit") {
+	if !canManageAutomations(tenantContext) {
 		return 0, tenant.ErrOrganizationAccessDenied
 	}
 	automationID, ok := normalizeUUID(automationID)
@@ -1325,7 +1330,7 @@ func (repo Repository) ListRuntimeIssues(ctx context.Context, tenantContext tena
 }
 
 func (repo Repository) RetryRuntimeIssue(ctx context.Context, tenantContext tenant.Context, kind string, issueID string) error {
-	if !tenantContext.HasPermission("automations_edit") {
+	if !canManageAutomations(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 	issueID, ok := normalizeUUID(issueID)
@@ -1469,7 +1474,7 @@ func (repo Repository) Start(ctx context.Context, tenantContext tenant.Context, 
 	if !ok {
 		return StartResult{}, ErrInvalidInput
 	}
-	if !tenantContext.HasPermission("automations_edit") {
+	if !canManageAutomations(tenantContext) {
 		return StartResult{}, tenant.ErrOrganizationAccessDenied
 	}
 	if !repo.functions.isConfigured() {

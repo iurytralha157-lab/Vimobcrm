@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -848,7 +849,7 @@ func emptyMetaWebhookHealth(missing bool) map[string]any {
 }
 
 func canManageMetaIntegrations(tenantContext tenant.Context) bool {
-	return tenantContext.HasPermission("settings_manage")
+	return tenantContext.HasPermission(permissions.SettingsIntegrations)
 }
 
 const googleCalendarIntegrationEnabled = false

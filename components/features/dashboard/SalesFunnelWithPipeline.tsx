@@ -74,7 +74,7 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
     <Card className="app-card overflow-hidden h-full flex flex-col">
       <CardHeader className="pb-3 pt-4 px-4 shrink-0">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground">
+          <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[#272727]">
             <TrendingDown className="h-3.5 w-3.5 text-primary" />
             Funil de vendas
           </CardTitle>
@@ -144,13 +144,13 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
                             funnelGradients[index % funnelGradients.length]
                           )}
                         >
-                          <span className="text-[11px] font-bold truncate max-w-[60%] uppercase tracking-tight">
+                          <span className="text-[10px] font-light truncate max-w-[60%] uppercase tracking-tight">
                             {item.name}
                           </span>
 
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-black">{item.value}</span>
-                            <span className="text-[9px] font-bold bg-black/10 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
+                            <span className="min-w-[28px] rounded-[6px] bg-black/10 px-1.5 py-0.5 text-center text-[10px] font-light tabular-nums backdrop-blur-sm">
                               {item.percentage}%
                             </span>
                           </div>
@@ -163,18 +163,18 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
                     </TooltipTrigger>
                     <TooltipContent
                       side="right"
-                      className="min-w-[160px] animate-in rounded-xl border-0 bg-[var(--app-surface-solid)] p-3 text-[var(--app-text-primary)] shadow-[0_8px_20px_rgba(0,0,0,0.22)] fade-in zoom-in duration-200"
+                      className="min-w-[160px] animate-in rounded-xl border-0 bg-[var(--app-surface-solid)] p-3 text-[#232323] shadow-[0_8px_20px_rgba(0,0,0,0.18)] fade-in zoom-in duration-200"
                     >
                       <div className="space-y-2">
-                        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{item.name}</p>
+                        <p className="text-[10px] font-light uppercase tracking-wider text-[#272727]">{item.name}</p>
                         <div className="space-y-1.5 pt-2">
                           <div className="flex justify-between items-center gap-4">
-                            <span className="text-xs text-muted-foreground font-medium">Quantidade:</span>
-                            <span className="text-xs font-bold text-foreground tabular-nums">{item.value} leads</span>
+                            <span className="text-[11px] font-light text-[#272727]/70">Quantidade:</span>
+                            <span className="text-[11px] font-medium text-[#232323] tabular-nums">{item.value} leads</span>
                           </div>
                           <div className="flex justify-between items-center gap-4">
-                            <span className="text-xs text-muted-foreground font-medium">Percentual:</span>
-                            <span className="text-xs font-bold text-foreground tabular-nums">{item.percentage}% do funil</span>
+                            <span className="text-[11px] font-light text-[#272727]/70">Percentual:</span>
+                            <span className="text-[11px] font-medium text-[#232323] tabular-nums">{item.percentage}% do funil</span>
                           </div>
                         </div>
                       </div>

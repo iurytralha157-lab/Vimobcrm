@@ -28,6 +28,7 @@ import { DnsVerificationStatus } from "@/components/features/site/DnsVerificatio
 import { ImageUpload } from "@/components/ui/image-upload";
 import { cn } from "@/lib/utils";
 import { canManageOrganization } from "@/lib/access/organization";
+import { useUserPermissions } from "@/hooks/use-user-permissions";
 
 type AboutStat = {
   value: string;
@@ -163,15 +164,15 @@ export default function SiteSettings() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
+  const { hasPermission } = useUserPermissions();
   const { data: site, isLoading } = useOrganizationSite();
   const createSite = useCreateOrganizationSite();
   const updateSite = useUpdateOrganizationSite();
   const activeOrganizationId = organization?.id || profile?.organization_id;
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
-  const isAdmin = canManageOrganization({
-    isSuperAdmin,
-    memberRole: activeMemberRole,
-  });
+  const isAdmin =
+    canManageOrganization({ isSuperAdmin, memberRole: activeMemberRole }) ||
+    hasPermission('settings_site');
 
 
   const [formData, setFormData] = useState<SiteFormData>({

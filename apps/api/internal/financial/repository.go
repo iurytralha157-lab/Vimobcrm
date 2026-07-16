@@ -1108,7 +1108,7 @@ func (repo Repository) queryJSONArray(ctx context.Context, sql string, args ...a
 }
 
 func canReadFinancial(tenantContext tenant.Context) bool {
-	return tenantContext.HasPermission("financial_manage") || tenantContext.HasRole("owner", "admin", "corretor", "broker", "agent", "user")
+	return tenantContext.HasPermission("financial_view") || tenantContext.HasPermission("financial_manage")
 }
 
 func canManageFinancial(tenantContext tenant.Context) bool {

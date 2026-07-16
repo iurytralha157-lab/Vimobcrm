@@ -435,7 +435,7 @@ func (repo Repository) findConversationByExactSessionJID(ctx context.Context, te
 		left join public.stages stage on stage.id = l.stage_id
 		where wc.organization_id = $1::uuid
 		  and wc.deleted_at is null
-		  and `+conversationVisibilitySQL()+`
+		  and `+conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		  and wc.session_id = $5::uuid
 		  and (
 			wc.remote_jid = any($6::text[])
@@ -486,7 +486,7 @@ func (repo Repository) findConversationByLeadAndSession(ctx context.Context, ten
 		left join public.stages stage on stage.id = l.stage_id
 		where wc.organization_id = $1::uuid
 		  and wc.deleted_at is null
-		  and `+conversationVisibilitySQL()+`
+		  and `+conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		  and wc.lead_id = $5::uuid
 		  and wc.session_id = $6::uuid
 		order by wc.last_message_at desc nulls last, wc.created_at desc
@@ -512,7 +512,7 @@ func (repo Repository) findConversationByPhoneVariants(ctx context.Context, tena
 	where := []string{
 		"wc.organization_id = $1::uuid",
 		"wc.deleted_at is null",
-		conversationVisibilitySQL(),
+		conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext)),
 	}
 	if sessionID != "" {
 		sessionID, ok := normalizeUUID(sessionID)

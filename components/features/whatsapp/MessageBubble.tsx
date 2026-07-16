@@ -31,7 +31,7 @@ interface MessageBubbleProps {
   sentAt: string;
   senderName: string | null;
   isGroup: boolean;
-  onRetryMedia: () => void;
+  onRetryMedia?: () => void;
   messageId: string;
   leadId: string;
   leadName: string;

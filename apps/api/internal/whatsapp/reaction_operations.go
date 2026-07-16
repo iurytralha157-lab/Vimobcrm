@@ -21,7 +21,7 @@ type reactionTarget struct {
 	TargetFromMe      bool
 }
 
-func reactionTargetAuthorizationSQL() string {
+func reactionTargetAuthorizationSQL(canViewOwn bool) string {
 	return `
 		select
 			wm.id::text,
@@ -54,7 +54,7 @@ func reactionTargetAuthorizationSQL() string {
 		  and coalesce(ws.is_active, true) = true
 		  and ws.status = 'connected'
 		  and ws.owner_user_id = $2::uuid
-		  and ` + leadVisibilitySQL() + `
+		  and ` + leadVisibilitySQL(canViewOwn) + `
 		for update of wm, wc, ws, l`
 }
 
@@ -87,7 +87,7 @@ func (repo Repository) ReactToMessage(
 
 	args := append(baseConversationArgs(tenantContext), conversationID, targetMessageID)
 	target := reactionTarget{}
-	err = tx.QueryRow(ctx, reactionTargetAuthorizationSQL(), args...).Scan(
+	err = tx.QueryRow(ctx, reactionTargetAuthorizationSQL(canViewOwnWhatsAppLeads(tenantContext)), args...).Scan(
 		&target.MessageID,
 		&target.SessionID,
 		&target.ConversationID,

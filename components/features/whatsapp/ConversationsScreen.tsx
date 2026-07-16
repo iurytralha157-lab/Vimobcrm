@@ -42,6 +42,7 @@ import { getWhatsAppMessageInputState } from "@/lib/whatsapp-message-input";
 import { groupLatestWhatsAppReactions } from "@/lib/whatsapp-reactions";
 import { useAuth } from "@/contexts/AuthContext";
 import { useHasPermission } from "@/hooks/use-organization-roles";
+import { useUserPermissions } from "@/hooks/use-user-permissions";
 
 const MAX_IMAGE_DIMENSION = 1600;
 const IMAGE_QUALITY = 0.82;
@@ -195,7 +196,11 @@ async function compressImageFile(file: File): Promise<File> {
 
 export default function Conversations() {
   const { user, profile, organization } = useAuth();
-  const { data: canStartAutomations = false } = useHasPermission("automations_edit");
+  const { data: canStartAutomations = false } = useHasPermission("automations_manage");
+  const { hasPermission } = useUserPermissions();
+  const canOperateWhatsApp = hasPermission("whatsapp_operate");
+  const canManageWhatsApp = hasPermission("whatsapp_manage");
+  const canCreateLeads = hasPermission("lead_create");
   const isMobile = useIsMobile();
   const router = useRouter();
   const currentUserId = profile?.id || user?.id || null;
@@ -470,15 +475,15 @@ export default function Conversations() {
     () => getWhatsAppMessageInputState(selectedConversation, selectedSessionId, sessions),
     [selectedConversation, selectedSessionId, sessions],
   );
-  const messageInputDisabled = activePlatform === "whatsapp"
+  const messageInputDisabled = !canOperateWhatsApp || (activePlatform === "whatsapp"
     ? whatsappMessageInputState.disabled
-    : sendMetaMessage.isPending;
+    : sendMetaMessage.isPending);
   const messageInputPlaceholder = activePlatform === "whatsapp"
     ? whatsappMessageInputState.placeholder
     : "Digite sua mensagem...";
 
   const handleSendMessage = async () => {
-    if (!messageText.trim() || !selectedConversation) return;
+    if (!canOperateWhatsApp || !messageText.trim() || !selectedConversation) return;
     if (activePlatform === "whatsapp" && sendMessage.isPending) return;
     if (activePlatform === "whatsapp" && whatsappMessageInputState.disabled) {
       toast({
@@ -593,6 +598,7 @@ export default function Conversations() {
     }
   };
   const handleArchive = (conv: WhatsAppConversation) => {
+    if (!canOperateWhatsApp) return;
     archiveConversation.mutate({
       conversationId: conv.id,
       archive: !conv.archived_at
@@ -602,6 +608,7 @@ export default function Conversations() {
     }
   };
   const handleDelete = (conv: WhatsAppConversation) => {
+    if (!canOperateWhatsApp) return;
     deleteConversation.mutate(conv.id);
     if (selectedConversation?.id === conv.id) {
       setSelectedConversation(null);
@@ -730,7 +737,7 @@ export default function Conversations() {
                               sentAt={msg.sent_at}
                               senderName={msg.sender_name ?? null}
                               isGroup={selectedConversation.is_group}
-                              onRetryMedia={() => retryMediaDownload(msg.id)}
+                              onRetryMedia={canOperateWhatsApp ? () => retryMediaDownload(msg.id) : undefined}
                               messageId={msg.id}
                               leadId={selectedLeadId || ""}
                               leadName={selectedConversation.lead?.name || selectedConversation.contact_name || "Contato"}
@@ -738,7 +745,7 @@ export default function Conversations() {
                               conversationRemoteJid={selectedConversation.remote_jid}
                               conversationSessionId={selectedConversation.session_id}
                               reactions={(msg.message_id ? reactionsByMessageId.get(msg.message_id) : undefined) || reactionsByMessageId.get(msg.id) || []}
-                              onReact={activePlatform === 'whatsapp'
+                              onReact={activePlatform === 'whatsapp' && canOperateWhatsApp
                                 ? (emoji) => reactToMessage.mutateAsync({
                                     conversation: selectedConversation,
                                     targetMessage: msg as WhatsAppMessage,
@@ -933,9 +940,9 @@ export default function Conversations() {
                         <>
                           <p className="text-sm font-medium mb-1">WhatsApp não conectado</p>
                           <p className="text-xs text-muted-foreground mb-4">Conecte sua conta para ver suas conversas.</p>
-                          <Button size="sm" onClick={() => router.push('/settings?tab=whatsapp')}>
+                          {canManageWhatsApp && <Button size="sm" onClick={() => router.push('/settings?tab=whatsapp')}>
                             Conectar WhatsApp
-                          </Button>
+                          </Button>}
                         </>
                       ) : (
                         <p className="text-sm text-muted-foreground">Nenhuma conversa encontrada</p>
@@ -952,6 +959,7 @@ export default function Conversations() {
                         formatTime={formatConversationTime}
                         onArchive={() => handleArchive(conv)}
                         onDelete={() => handleDelete(conv)}
+                        canOperate={canOperateWhatsApp}
                         availableTags={availableTags || []}
                         onAddTag={tagId => conv.lead && addLeadTag.mutate({
                           leadId: conv.lead.id,
@@ -1201,6 +1209,7 @@ export default function Conversations() {
                       formatTime={formatConversationTime}
                       onArchive={() => handleArchive(conv)}
                       onDelete={() => handleDelete(conv)}
+                      canOperate={canOperateWhatsApp}
                       availableTags={availableTags || []}
                       onAddTag={tagId => conv.lead && addLeadTag.mutate({
                         leadId: conv.lead.id,
@@ -1249,6 +1258,7 @@ export default function Conversations() {
                         onAddTag={() => {}}
                         onRemoveTag={() => {}}
                         onCreateLead={() => {}}
+                        canOperate={canOperateWhatsApp}
                       />
                     );
                   })
@@ -1281,14 +1291,15 @@ export default function Conversations() {
                 remoteJid={selectedConversation.remote_jid}
                 onArchive={() => handleArchive(selectedConversation)}
                 onDelete={() => handleDelete(selectedConversation)}
-                onCreateLead={() => {
+                canOperate={canOperateWhatsApp}
+                onCreateLead={canCreateLeads ? () => {
                   setCreateLeadContact({
                     phone: selectedConversation.contact_phone || undefined,
                     name: selectedConversation.contact_name || undefined,
                     conversationId: selectedConversation.id,
                   });
                   setCreateLeadOpen(true);
-                }}
+                } : undefined}
                 onToggleLeadPanel={() => setShowLeadPanel(prev => !prev)}
                 showLeadPanel={showLeadPanel}
               />
@@ -1341,7 +1352,7 @@ export default function Conversations() {
                               sentAt={msg.sent_at}
                               senderName={msg.sender_name ?? null}
                               isGroup={selectedConversation.is_group}
-                              onRetryMedia={() => retryMediaDownload(msg.id)}
+                              onRetryMedia={canOperateWhatsApp ? () => retryMediaDownload(msg.id) : undefined}
                               messageId={msg.id}
                               leadId={selectedLeadId || ""}
                               leadName={selectedConversation.lead?.name || selectedConversation.contact_name || "Contato"}
@@ -1349,7 +1360,7 @@ export default function Conversations() {
                               conversationRemoteJid={selectedConversation.remote_jid}
                               conversationSessionId={selectedConversation.session_id}
                               reactions={(msg.message_id ? reactionsByMessageId.get(msg.message_id) : undefined) || reactionsByMessageId.get(msg.id) || []}
-                              onReact={activePlatform === 'whatsapp'
+                              onReact={activePlatform === 'whatsapp' && canOperateWhatsApp
                                 ? (emoji) => reactToMessage.mutateAsync({
                                     conversation: selectedConversation,
                                     targetMessage: msg as WhatsAppMessage,
@@ -1413,10 +1424,10 @@ export default function Conversations() {
                       <li>Crie uma nova sessão e escaneie o QR Code com seu celular.</li>
                       <li>Aguarde alguns segundos até o status ficar como &quot;Conectado&quot;.</li>
                     </ol>
-                    <Button onClick={() => router.push('/settings?tab=whatsapp')}>
+                    {canManageWhatsApp && <Button onClick={() => router.push('/settings?tab=whatsapp')}>
                       <Plus className="w-4 h-4 mr-2" />
                       Conectar WhatsApp agora
-                    </Button>
+                    </Button>}
                     <button
                       type="button"
                       onClick={() => router.push('/suporte')}
@@ -1463,7 +1474,7 @@ export default function Conversations() {
         )}
       </div>
 
-      <CreateLeadDialog open={createLeadOpen} onOpenChange={setCreateLeadOpen} contactPhone={createLeadContact.phone} contactName={createLeadContact.name} conversationId={createLeadContact.conversationId} />
+      {canCreateLeads && <CreateLeadDialog open={createLeadOpen} onOpenChange={setCreateLeadOpen} contactPhone={createLeadContact.phone} contactName={createLeadContact.name} conversationId={createLeadContact.conversationId} />}
       {selectedLeadId && selectedConversation && (
         <StartAutomationDialog
           open={showAutomationDialog}
@@ -1504,7 +1515,8 @@ function ConversationItem({
   availableTags,
   onAddTag,
   onRemoveTag,
-  onCreateLead
+  onCreateLead,
+  canOperate,
 }: {
   conversation: WhatsAppConversation;
   isSelected: boolean;
@@ -1517,6 +1529,7 @@ function ConversationItem({
   onAddTag: (tagId: string) => void;
   onRemoveTag: (tagId: string) => void;
   onCreateLead: () => void;
+  canOperate: boolean;
 }) {
   const hasLead = Boolean(conversation.lead_id || conversation.lead?.id);
   const leadTags = conversation.lead?.tags || [];
@@ -1639,7 +1652,7 @@ function ConversationItem({
         </span>
       </div>
 
-      <DropdownMenu>
+      {canOperate && <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
             <MoreVertical className="w-3.5 h-3.5" />
@@ -1692,6 +1705,6 @@ function ConversationItem({
             Remover
           </DropdownMenuItem>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>}
     </div>;
 }

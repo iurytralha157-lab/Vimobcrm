@@ -1733,26 +1733,20 @@ func canViewTeamProperties(tenantContext tenant.Context) bool {
 
 func canManageProperties(tenantContext tenant.Context) bool {
 	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin", "manager") ||
+		tenantContext.HasRole("owner", "admin") ||
 		tenantContext.HasPermission("property_manage")
 }
 
 func canCreateProperties(tenantContext tenant.Context) bool {
-	if canManageProperties(tenantContext) || tenantContext.HasPermission("property_create") {
-		return true
-	}
-	return tenantContext.IsOrganizationMember()
+	return canManageProperties(tenantContext)
 }
 
 func canCreatePropertyOwners(tenantContext tenant.Context) bool {
-	if canManageProperties(tenantContext) || tenantContext.HasPermission("property_owner_create") {
-		return true
-	}
-	return tenantContext.IsOrganizationMember()
+	return canManageProperties(tenantContext)
 }
 
 func canAssignProperties(tenantContext tenant.Context) bool {
-	return canManageProperties(tenantContext) || tenantContext.HasPermission("property_assign")
+	return canManageProperties(tenantContext)
 }
 
 func isPropertyAssignmentChange(input propertyRequest, current propertySnapshot) bool {
@@ -1782,15 +1776,11 @@ func sameOptionalUUID(value any, current string) bool {
 }
 
 func canEditProperty(tenantContext tenant.Context, creatorID string, responsibleUserID string) bool {
-	if canManageProperties(tenantContext) {
-		return true
-	}
-	return (creatorID != "" && creatorID == tenantContext.UserID) ||
-		(responsibleUserID != "" && responsibleUserID == tenantContext.UserID)
+	return canManageProperties(tenantContext)
 }
 
 func canUpdatePropertyAvailability(tenantContext tenant.Context, input propertyRequest) bool {
-	return tenantContext.IsOrganizationMember() && isPropertyAvailabilityUpdate(input)
+	return canManageProperties(tenantContext) && isPropertyAvailabilityUpdate(input)
 }
 
 func isPropertyAvailabilityUpdate(input propertyRequest) bool {
@@ -1824,7 +1814,5 @@ func isQuickPropertyStatus(status string) bool {
 }
 
 func canDeleteProperties(tenantContext tenant.Context) bool {
-	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin") ||
-		tenantContext.HasPermission("property_delete")
+	return canManageProperties(tenantContext)
 }

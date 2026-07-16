@@ -70,7 +70,7 @@ function getErrorMessage(error: unknown) {
 
 function normalizeAutomation(row: StageAutomationRow): StageAutomation {
   const config = isRecord(row.config) ? row.config : {};
-  const actionConfig = isRecord(config.action_config) ? config.action_config : null;
+  const actionConfig = isRecord(config.action_config) ? config.action_config : config;
   const automationType = asString(config.automation_type) || asString(config.action_type) || row.trigger_type;
 
   return {
@@ -104,6 +104,8 @@ export function useStageAutomations(stageId?: string) {
       return data.map(normalizeAutomation);
     },
     enabled: !!organizationId,
+    staleTime: 1000 * 60 * 10,
+    gcTime: 1000 * 60 * 60,
   });
 }
 

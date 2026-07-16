@@ -6,21 +6,28 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 type Handler struct {
-	repo Repository
+	repo      Repository
+	publisher realtime.Publisher
 }
 
 const maxSettingsImageUploadBytes = 10 << 20
 
-func NewHandler(repo Repository) Handler {
-	return Handler{repo: repo}
+func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
+	publisher := realtime.Publisher(realtime.NoopPublisher{})
+	if len(publishers) > 0 && publishers[0] != nil {
+		publisher = publishers[0]
+	}
+	return Handler{repo: repo, publisher: publisher}
 }
 
 func (handler Handler) PublicSystemSettings(w http.ResponseWriter, r *http.Request) {
@@ -379,6 +386,61 @@ func (handler Handler) ListAvailablePermissions(w http.ResponseWriter, r *http.R
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]map[string]any]{Data: items})
 }
 
+func (handler Handler) ShowUserPermissions(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	profile, err := handler.repo.GetUserPermissions(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writeSettingsError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[UserPermissionProfile]{Data: profile})
+}
+
+func (handler Handler) ReplaceUserPermissions(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	defer r.Body.Close()
+	var request ReplaceUserPermissionsRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	profile, err := handler.repo.ReplaceUserPermissions(r.Context(), tenantContext, r.PathValue("id"), request.Permissions)
+	if err != nil {
+		writeSettingsError(w, r, err)
+		return
+	}
+	handler.publishUserPermissionsChanged(tenantContext, r.PathValue("id"))
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[UserPermissionProfile]{Data: profile})
+}
+
+func (handler Handler) publishUserPermissionsChanged(tenantContext tenant.Context, userID string) {
+	handler.publisher.Publish(realtime.NewEvent(
+		"access.permissions.changed",
+		tenantContext.OrganizationID,
+		userID,
+		map[string]any{"targetUserId": userID},
+	))
+}
+
+func (handler Handler) ResetUserPermissions(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	profile, err := handler.repo.ResetUserPermissions(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writeSettingsError(w, r, err)
+		return
+	}
+	handler.publishUserPermissionsChanged(tenantContext, r.PathValue("id"))
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[UserPermissionProfile]{Data: profile})
+}
+
 func (handler Handler) ListRolePermissions(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := organizationContext(w, r)
 	if !ok {
@@ -627,9 +689,17 @@ func writeSettingsError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "settings_auth_not_configured", "Settings auth admin is not configured.")
 	case errors.Is(err, ErrAuthOperation):
 		httpserver.WriteError(w, r, http.StatusBadGateway, "settings_auth_failed", "Settings auth operation failed.")
+	case errors.Is(err, ErrPermissionStorage):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "permission_storage_unavailable", "User permission storage has not been enabled yet.")
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	default:
+		slog.Error("settings operation failed",
+			"error", err,
+			"request_id", httpserver.RequestIDFromContext(r.Context()),
+			"path", r.URL.Path,
+			"method", r.Method,
+		)
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "settings_operation_failed", "Unable to complete settings operation.")
 	}
 }

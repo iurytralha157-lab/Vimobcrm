@@ -21,6 +21,7 @@ import {
 import { useLeadMessages } from '@/hooks/use-lead-messages';
 import { useStartConversation } from '@/hooks/use-start-conversation';
 import { useAuth } from '@/contexts/AuthContext';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { toast } from 'sonner';
 import { whatsappAPI } from '@/lib/api/whatsapp';
 import { getWhatsAppMessageInputState } from '@/lib/whatsapp-message-input';
@@ -779,15 +780,18 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const lastThreadItemIdRef = useRef<string | null>(null);
   const { profile } = useAuth();
+  const { hasPermission } = useUserPermissions();
+  const canViewWhatsApp = hasPermission('whatsapp_view') || hasPermission('whatsapp_operate');
+  const canOperateWhatsApp = hasPermission('whatsapp_operate');
   const { data: history = [], isLoading: loadingHistory } = useLeadHistory(leadId);
-  const { data: sessions = [], isLoading: loadingSessions } = useAccessibleSessions();
+  const { data: sessions = [], isLoading: loadingSessions } = useAccessibleSessions({ enabled: canViewWhatsApp });
   const accessibleSessionIds = useMemo(() => sessions.map((session) => session.id), [sessions]);
   const { data: conversations = [] } = useWhatsAppConversations(
     undefined,
     { hideGroups: true },
-    loadingSessions ? undefined : accessibleSessionIds,
+    !canViewWhatsApp ? [] : loadingSessions ? undefined : accessibleSessionIds,
   );
-  useWhatsAppRealtimeConversations(true, loadingSessions ? undefined : accessibleSessionIds, [leadId]);
+  useWhatsAppRealtimeConversations(canViewWhatsApp, loadingSessions ? undefined : accessibleSessionIds, [leadId]);
 
   const conversation = useMemo<WhatsAppConversation | null>(() => {
     return conversations.find((item) => item.lead_id === leadId || item.lead?.id === leadId) || null;
@@ -800,7 +804,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     hasOlderMessages,
     loadOlderMessages,
     isLoadingOlder,
-  } = useLeadMessages(leadId, { pageSize: 40 });
+  } = useLeadMessages(leadId, { pageSize: 40, enabled: canViewWhatsApp });
   const sendMessage = useSendWhatsAppMessage();
   const reactToMessage = useReactToWhatsAppMessage();
   const startConversation = useStartConversation();
@@ -839,7 +843,8 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     [messageInputConversation, sessions],
   );
   const canSendMessage = Boolean(
-    hasLeadPhone &&
+    canOperateWhatsApp &&
+      hasLeadPhone &&
       !leadHasNoWhatsApp &&
       !whatsappMessageInputState.disabled,
   );
@@ -1152,7 +1157,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                         : undefined)
                         || reactionsByMessageId.get(item.message.id)
                         || []}
-                      onReact={(emoji) => reactToMessage.mutateAsync({
+                      onReact={canOperateWhatsApp ? (emoji) => reactToMessage.mutateAsync({
                         conversation: {
                           ...(conversation || {}),
                           id: item.message.conversation_id,
@@ -1162,7 +1167,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                         } as WhatsAppConversation,
                         targetMessage: item.message as WhatsAppMessage,
                         emoji,
-                      })}
+                      }) : undefined}
                       isReacting={reactToMessage.isPending}
                     />
                   </MessageErrorBoundary>
@@ -1173,7 +1178,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
           <div ref={bottomRef} />
         </div>
 
-        <div className="bg-transparent px-3 pb-3 pt-2">
+        {canViewWhatsApp && <div className="bg-transparent px-3 pb-3 pt-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -1217,7 +1222,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
               }
             />
           </div>
-        </div>
+        </div>}
       </div>
     </section>
   );

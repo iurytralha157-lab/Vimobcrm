@@ -21,8 +21,6 @@ import { useVistaIntegration } from "@/hooks/use-vista-integration";
 import { useImoviewIntegration } from "@/hooks/use-imoview-integration";
 import { useGoogleCalendarStatus } from "@/hooks/use-google-calendar";
 import { useGrupoOLXIntegration } from "@/hooks/use-grupo-olx-integration";
-import { useAuth } from "@/contexts/AuthContext";
-import { canManageOrganization } from "@/lib/access/organization";
 import { FEATURES } from "@/config/constants";
 
 type IntegrationKey = "whatsapp" | "ai" | "meta" | "grupo-olx" | "google-calendar" | "vista" | "imoview" | "webhooks" | "api";
@@ -100,6 +98,9 @@ interface IntegrationsTabProps {
   hasWebhooksModule: boolean;
   hasAPIModule: boolean;
   hasPortalsModule: boolean;
+  canManageIntegrations: boolean;
+  canManageWhatsApp: boolean;
+  canManageAI: boolean;
 }
 
 export function IntegrationsTab({
@@ -109,31 +110,29 @@ export function IntegrationsTab({
   hasWebhooksModule,
   hasAPIModule,
   hasPortalsModule,
+  canManageIntegrations,
+  canManageWhatsApp,
+  canManageAI,
 }: IntegrationsTabProps) {
-  const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
-  const activeOrganizationId = organization?.id || profile?.organization_id;
-  const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
-  const canManageAdminIntegrations = canManageOrganization({
-    isSuperAdmin,
-    memberRole: activeMemberRole,
-  });
+  const canManageAdminIntegrations = canManageIntegrations;
   const defaultIntegrationKey = isIntegrationKey(defaultIntegration) ? defaultIntegration : null;
-  const { data: metaIntegrations = [], refetch: refetchMetaIntegrations } = useMetaIntegrations();
-  const { data: whatsappSessions = [] } = useWhatsAppSessions();
-  const { data: vistaIntegration } = useVistaIntegration();
-  const { data: imoviewIntegration } = useImoviewIntegration();
-  const { data: googleCalendarStatus } = useGoogleCalendarStatus();
-  const { data: grupoOLXIntegration } = useGrupoOLXIntegration({ enabled: hasPortalsModule });
+  const { data: metaIntegrations = [], refetch: refetchMetaIntegrations } = useMetaIntegrations({ enabled: canManageIntegrations });
+  const { data: whatsappSessions = [] } = useWhatsAppSessions({ enabled: canManageWhatsApp });
+  const { data: vistaIntegration } = useVistaIntegration({ enabled: canManageIntegrations });
+  const { data: imoviewIntegration } = useImoviewIntegration({ enabled: canManageIntegrations });
+  const { data: googleCalendarStatus } = useGoogleCalendarStatus({ enabled: canManageIntegrations });
+  const { data: grupoOLXIntegration } = useGrupoOLXIntegration({ enabled: canManageIntegrations && hasPortalsModule });
   const whatsappQuota = whatsappSessions.meta;
   const hasWhatsAppAccess = hasWhatsAppModule || whatsappQuota?.maxSessions !== undefined;
   const isIntegrationEnabled = useCallback((key: IntegrationKey) => {
-    if (key === "whatsapp") return hasWhatsAppAccess;
-    if (key === "ai") return hasAIModule;
+    if (key === "whatsapp") return canManageWhatsApp && hasWhatsAppAccess;
+    if (key === "ai") return canManageAI && hasAIModule;
+    if (!canManageIntegrations) return false;
     if (key === "webhooks") return hasWebhooksModule;
     if (key === "api") return hasAPIModule;
     if (key === "grupo-olx") return hasPortalsModule;
     return true;
-  }, [hasAIModule, hasAPIModule, hasPortalsModule, hasWebhooksModule, hasWhatsAppAccess]);
+  }, [canManageAI, canManageIntegrations, canManageWhatsApp, hasAIModule, hasAPIModule, hasPortalsModule, hasWebhooksModule, hasWhatsAppAccess]);
   const defaultIntegrationUnavailable =
     defaultIntegrationKey !== null &&
     (!isIntegrationEnabled(defaultIntegrationKey) || TEMPORARILY_DISABLED_INTEGRATIONS.has(defaultIntegrationKey));
@@ -297,7 +296,7 @@ export function IntegrationsTab({
         key: "whatsapp" as const,
         title: "WhatsApp",
         description: "Conecte números, gerencie permissões, etiquetas e sincronizações.",
-        enabled: hasWhatsAppAccess,
+        enabled: canManageWhatsApp && hasWhatsAppAccess,
         connected: whatsappConnected,
         detail: `${whatsappSessions.length} ${whatsappSessions.length === 1 ? "conexão" : "conexões"}`,
         icon: <MessageCircle className="h-7 w-7 text-primary" />,
@@ -306,7 +305,7 @@ export function IntegrationsTab({
         key: "ai" as const,
         title: "IA de atendimento",
         description: "Atenda, qualifique e direcione leads no WhatsApp com contexto do CRM.",
-        enabled: hasAIModule,
+        enabled: canManageAI && hasAIModule,
         connected: whatsappSessions.some((item) => {
           const settings = item.advanced_settings;
           return !!settings && typeof settings === "object" && !Array.isArray(settings) && settings.ai_auto_reply_enabled === true;
@@ -318,7 +317,7 @@ export function IntegrationsTab({
         key: "meta" as const,
         title: "Facebook / Meta",
         description: "Receba leads de formulários do Facebook e Instagram no CRM.",
-        enabled: true,
+        enabled: canManageIntegrations,
         requiresAdmin: true,
         connected: metaConnected,
         detail: `${metaIntegrations.length} página${metaIntegrations.length === 1 ? "" : "s"}`,
@@ -328,7 +327,7 @@ export function IntegrationsTab({
         key: "grupo-olx" as const,
         title: "Grupo OLX / Canal Pro",
         description: "Publique imóveis no ZAP, Viva Real e OLX e receba leads no CRM.",
-        enabled: hasPortalsModule,
+        enabled: canManageIntegrations && hasPortalsModule,
         requiresAdmin: true,
         connected: grupoOLXConnected,
         detail: grupoOLXIntegration?.status === "pending_setup" ? "Aguardando Canal Pro" : "Portais imobiliários",
@@ -338,7 +337,7 @@ export function IntegrationsTab({
         key: "google-calendar" as const,
         title: "Google Agenda",
         description: "Sincronize atividades e compromissos com sua agenda.",
-        enabled: true,
+        enabled: canManageIntegrations,
         connected: googleCalendarConnected,
         detail: googleCalendarStatus?.account_email || "Agenda",
         icon: <LogoImage src="https://cdn.simpleicons.org/googlecalendar/4285F4" alt="Google Agenda" />,
@@ -347,7 +346,7 @@ export function IntegrationsTab({
         key: "vista" as const,
         title: "Portal Vista",
         description: "Conecte o Vista para importar e sincronizar sua carteira de imóveis.",
-        enabled: true,
+        enabled: canManageIntegrations,
         requiresAdmin: true,
         connected: !!vistaIntegration,
         detail: "Imóveis",
@@ -357,7 +356,7 @@ export function IntegrationsTab({
         key: "imoview" as const,
         title: "Imoview",
         description: "Conecte o Imoview para trazer seus imóveis para o CRM.",
-        enabled: true,
+        enabled: canManageIntegrations,
         requiresAdmin: true,
         connected: !!imoviewIntegration,
         detail: "Imóveis",
@@ -367,7 +366,7 @@ export function IntegrationsTab({
         key: "webhooks" as const,
         title: "Webhook",
         description: "Receba leads de sistemas externos por URLs seguras.",
-        enabled: hasWebhooksModule,
+        enabled: canManageIntegrations && hasWebhooksModule,
         connected: false,
         detail: "Entrada de dados",
         icon: <Webhook className="h-7 w-7 text-primary" />,
@@ -376,13 +375,13 @@ export function IntegrationsTab({
         key: "api" as const,
         title: "API",
         description: "Gere chaves para integrações externas autenticadas.",
-        enabled: hasAPIModule,
+        enabled: canManageIntegrations && hasAPIModule,
         connected: false,
         detail: "Chaves",
         icon: <Key className="h-7 w-7 text-primary" />,
       },
     ].filter((item) => item.enabled);
-  }, [googleCalendarStatus, grupoOLXIntegration, hasAIModule, hasAPIModule, hasPortalsModule, hasWebhooksModule, hasWhatsAppAccess, imoviewIntegration, metaIntegrations, vistaIntegration, whatsappSessions]);
+  }, [canManageAI, canManageIntegrations, canManageWhatsApp, googleCalendarStatus, grupoOLXIntegration, hasAIModule, hasAPIModule, hasPortalsModule, hasWebhooksModule, hasWhatsAppAccess, imoviewIntegration, metaIntegrations, vistaIntegration, whatsappSessions]);
 
   const filteredIntegrations = integrations.filter((item) => {
     const query = search.trim().toLowerCase();

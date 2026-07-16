@@ -378,21 +378,36 @@ export const apiGamificationMissionResponseSchema = apiEnvelopeSchema(apiGamific
 export const apiGamificationManualEntryResponseSchema = apiEnvelopeSchema(apiGamificationManualEntrySchema)
 export const apiGamificationSeasonResponseSchema = apiEnvelopeSchema(apiGamificationSeasonSchema)
 
+function emptyOrAllToNull(value: unknown) {
+  if (typeof value !== 'string') return value
+  const trimmed = value.trim()
+  return trimmed === '' || trimmed === 'all' ? null : trimmed
+}
+
+function emptyToNull(value: unknown) {
+  if (typeof value !== 'string') return value
+  const trimmed = value.trim()
+  return trimmed === '' ? null : trimmed
+}
+
 const dashboardNumberSchema = z.number().finite()
+const dashboardOptionalUuidFilterSchema = z.preprocess(emptyOrAllToNull, uuidSchema.nullish())
+const dashboardOptionalTextFilterSchema = (max: number) => z.preprocess(emptyOrAllToNull, z.string().trim().max(max).nullish())
+const dashboardSearchSchema = z.preprocess(emptyToNull, z.string().trim().max(180).nullish())
 export const dashboardFiltersSchema = z.object({
   dateRange: z.object({ from: z.date(), to: z.date() }).nullable().optional(),
   granularity: z.enum(['hour', 'day', 'week', 'month']).nullable().optional(),
-  teamId: uuidSchema.nullish(),
-  userId: uuidSchema.nullish(),
-  source: z.string().trim().max(180).nullish(),
-  campaignId: z.string().trim().max(255).nullish(),
-  adSetId: z.string().trim().max(255).nullish(),
-  adId: z.string().trim().max(255).nullish(),
-  tagId: uuidSchema.nullish(),
-  dealStatus: z.string().trim().max(80).nullish(),
-  searchQuery: z.string().trim().max(180).nullish(),
+  teamId: dashboardOptionalUuidFilterSchema,
+  userId: dashboardOptionalUuidFilterSchema,
+  source: dashboardOptionalTextFilterSchema(180),
+  campaignId: dashboardOptionalTextFilterSchema(255),
+  adSetId: dashboardOptionalTextFilterSchema(255),
+  adId: dashboardOptionalTextFilterSchema(255),
+  tagId: dashboardOptionalUuidFilterSchema,
+  dealStatus: dashboardOptionalTextFilterSchema(80),
+  searchQuery: dashboardSearchSchema,
 }).strict()
-export const dashboardOptionalIdSchema = uuidSchema.nullish()
+export const dashboardOptionalIdSchema = dashboardOptionalUuidFilterSchema
 export const dashboardLimitSchema = z.number().int().min(1).max(500).optional()
 export const apiDashboardStatsSchema = z.object({
   totalLeads: nonNegativeIntegerSchema,

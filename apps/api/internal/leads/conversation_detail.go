@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -136,7 +137,7 @@ func (repo Repository) GetConversationDetail(ctx context.Context, tenantContext 
 		left join public.stages s on s.id = l.stage_id
 		left join public.pipelines p on p.id = l.pipeline_id
 		where l.organization_id = $1::uuid
-		  and ` + leadVisibilitySQL("$2", "$3", "$4") + `
+		  and ` + leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn)) + `
 		  and l.id = $5::uuid
 		limit 1`
 

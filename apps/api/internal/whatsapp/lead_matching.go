@@ -68,7 +68,7 @@ func resolveAccessibleLeadContact(
 		  coalesce(l.assigned_user_id::text, '')
 		from public.leads l
 		where l.organization_id = $1::uuid
-		  and `+leadVisibilitySQL()+`
+		  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		  and l.id = $5::uuid
 		  and (
 		    (
@@ -164,7 +164,7 @@ func (repo Repository) findLeadByPhone(ctx context.Context, tenantContext tenant
 		from public.leads l
 		left join public.users u on u.id = l.assigned_user_id
 		where l.organization_id = $1::uuid
-		  and `+leadVisibilitySQL()+`
+		  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		  and exists (
 			select 1
 			from unnest($5::text[]) as candidate(value)

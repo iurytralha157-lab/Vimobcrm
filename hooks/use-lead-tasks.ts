@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import { leadTasksAPI } from '@/lib/api/lead-tasks';
+import type { UnifiedHistoryEvent } from '@/hooks/use-lead-history';
+import { appendOptimisticHistoryEvent, invalidateLeadHistorySoon } from '@/hooks/use-optimistic-lead-history';
 
 export type LeadTask = {
   id: string;
@@ -24,7 +26,7 @@ function invalidateLeadTaskCaches(queryClient: ReturnType<typeof useQueryClient>
   queryClient.invalidateQueries({ queryKey: ['activities'] });
   queryClient.invalidateQueries({ queryKey: ['recent-activities'] });
   if (leadId) {
-    queryClient.invalidateQueries({ queryKey: ['lead-history-v2', leadId] });
+    invalidateLeadHistorySoon(queryClient, leadId);
     queryClient.invalidateQueries({ queryKey: ['lead-timeline', leadId] });
   }
 }
@@ -34,6 +36,9 @@ export function useLeadTasks(leadId?: string) {
     queryKey: ['lead-tasks', leadId],
     queryFn: () => (leadId ? leadTasksAPI.list(leadId) : Promise.resolve([])),
     enabled: !!leadId,
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -90,8 +95,13 @@ export function useCompleteCadenceTask() {
     }) => leadTasksAPI.completeCadence(input),
     onMutate: async (input) => {
       const queryKey = ['lead-tasks', input.leadId] as const;
-      await queryClient.cancelQueries({ queryKey });
+      const historyQueryKey = ['lead-history-v2', input.leadId] as const;
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey }),
+        queryClient.cancelQueries({ queryKey: historyQueryKey }),
+      ]);
       const previous = queryClient.getQueryData<LeadTask[]>(queryKey) || [];
+      const previousHistory = queryClient.getQueryData<UnifiedHistoryEvent[]>(historyQueryKey);
       const now = new Date().toISOString();
       let matched = false;
       const optimistic = previous.map((task) => {
@@ -123,13 +133,35 @@ export function useCompleteCadenceTask() {
         });
       }
       queryClient.setQueryData(queryKey, optimistic);
-      return { previous, queryKey };
+      queryClient.setQueryData<UnifiedHistoryEvent[]>(historyQueryKey, (current) =>
+        appendOptimisticHistoryEvent(current, {
+          id: `optimistic-cadence-${input.leadId}-${input.templateTaskId}-${now}`,
+          type: 'task_completed',
+          label: 'Tarefa concluida',
+          content: `Cadencia concluida: ${input.title}`,
+          timestamp: now,
+          actor: null,
+          source: 'activity',
+          metadata: {
+            task_id: `optimistic-${input.templateTaskId}`,
+            template_task_id: input.templateTaskId,
+            task_type: input.type,
+            day_offset: input.dayOffset,
+            outcome: input.outcome || null,
+            outcome_notes: input.outcomeNotes || null,
+          },
+        }),
+      );
+      return { previous, queryKey, previousHistory, historyQueryKey };
     },
     onSuccess: (data) => {
       invalidateLeadTaskCaches(queryClient, data?.lead_id);
     },
     onError: (error, _input, context) => {
-      if (context) queryClient.setQueryData(context.queryKey, context.previous);
+      if (context) {
+        queryClient.setQueryData(context.queryKey, context.previous);
+        queryClient.setQueryData(context.historyQueryKey, context.previousHistory);
+      }
       toast.error('Erro ao completar tarefa: ' + error.message);
     },
   });

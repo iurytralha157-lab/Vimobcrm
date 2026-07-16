@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -24,8 +25,7 @@ func NewRepository(db *dbpkg.Postgres) Repository {
 func canManageAI(tenantContext tenant.Context) bool {
 	return tenantContext.IsSuperAdmin ||
 		tenantContext.HasRole("owner", "admin") ||
-		tenantContext.HasPermission("settings_manage") ||
-		tenantContext.HasPermission("ai_manage")
+		tenantContext.HasPermission(permissions.SettingsAI)
 }
 
 func (repo Repository) ListAgents(ctx context.Context, tenantContext tenant.Context) ([]Agent, error) {

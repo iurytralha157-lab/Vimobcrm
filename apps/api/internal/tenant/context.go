@@ -3,6 +3,8 @@ package tenant
 import (
 	"context"
 	"strings"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 )
 
 type contextKey string
@@ -60,15 +62,7 @@ func (ctx Context) HasPermission(permission string) bool {
 		return true
 	}
 
-	permission = strings.TrimSpace(permission)
-	for _, candidate := range ctx.Permissions {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "*" || candidate == permission {
-			return true
-		}
-	}
-
-	return false
+	return permissions.Has(ctx.Permissions, permission)
 }
 
 func (ctx Context) HasModule(module string) bool {

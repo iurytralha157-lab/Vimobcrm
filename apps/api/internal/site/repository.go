@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -1278,13 +1279,6 @@ func publicPropertyWhereClauses(values url.Values, mode string, args *[]any) []s
 			or p.code ilike $%[1]d
 			or p.bairro ilike $%[1]d
 			or p.cidade ilike $%[1]d
-			or p.endereco ilike $%[1]d
-			or exists (
-				select 1
-				from public.property_condominiums co
-				where co.id = p.condominium_id
-				  and co.name ilike $%[1]d
-			)
 		)`, placeholder))
 	}
 	if tipo := strings.TrimSpace(values.Get("tipo")); tipo != "" {
@@ -1304,14 +1298,6 @@ func publicPropertyWhereClauses(values url.Values, mode string, args *[]any) []s
 	}
 	if ids := parsePublicUUIDList(values.Get("ids"), 60); len(ids) > 0 {
 		add(ids, "p.id::text = any($%d::text[])")
-	}
-	if condominium := strings.TrimSpace(values.Get("condominio")); condominium != "" {
-		add(condominium, `exists (
-			select 1
-			from public.property_condominiums co
-			where co.id = p.condominium_id
-			  and lower(trim(co.name)) = lower(trim($%d::text))
-		)`)
 	}
 	if minPrice, ok := parsePublicDecimal(values.Get("min_price")); ok {
 		add(minPrice, "coalesce(p.preco, p.valor_locacao, 0) >= $%d")
@@ -1455,7 +1441,7 @@ func publicPropertyJSONSQL() string {
 		'id', p.id::text,
 		'codigo', coalesce(p.code, p.id::text),
 		'titulo', p.title,
-		'descricao', coalesce(p.descricao_site, p.descricao),
+		'descricao', p.descricao_site,
 		'tipo_imovel', p.tipo,
 		'finalidade', p.finalidade,
 		'valor_venda', p.preco,
@@ -1474,18 +1460,9 @@ func publicPropertyJSONSQL() string {
 		'area_total', p.area_total,
 		'area_construida', p.area_util,
 		'andar', p.andar,
-		'endereco', case when p.address_visibility = 'full' then p.endereco else null end,
-		'public_address_visibility', p.address_visibility,
 		'bairro', p.bairro,
 		'cidade', p.cidade,
 		'estado', p.uf,
-		'condominio_nome', (
-			select co.name
-			from public.property_condominiums co
-			where co.id = p.condominium_id
-			limit 1
-		),
-		'cep', case when p.address_visibility = 'full' then p.cep else null end,
 		'imagem_principal', (
 			select img.url
 			from unnest(array_remove(array_prepend(nullif(p.imagem_principal, ''), array_cat(
@@ -2037,7 +2014,7 @@ func seedDefaultSiteSearchFilters(ctx context.Context, exec execer, organization
 }
 
 func canManageSite(tenantContext tenant.Context) bool {
-	return tenantContext.HasPermission("settings_manage") || tenantContext.HasPermission("site_manage")
+	return tenantContext.HasPermission(permissions.SettingsSite)
 }
 
 func cleanRequired(value *string) string {

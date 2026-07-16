@@ -24,7 +24,7 @@ export interface ContactListFilters {
   sortDir?: 'asc' | 'desc';
   page?: number;
   limit?: number;
-  mode?: 'compact' | 'full';
+  mode?: 'compact' | 'full' | 'export';
 }
 
 export interface ContactTag {
@@ -148,5 +148,8 @@ export function useContactsList(filters: ContactListFilters) {
     staleTime: CONTACTS_STALE_TIME_MS,
     gcTime: CONTACTS_CACHE_TIME_MS,
     refetchOnMount: true,
+    refetchOnWindowFocus: false,
+    retry: (failureCount) => failureCount < 1,
+    retryDelay: (attemptIndex) => Math.min(800 * 2 ** attemptIndex, 8000),
   });
 }

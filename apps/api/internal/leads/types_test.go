@@ -297,7 +297,7 @@ func TestStoragePathFromPublicURL(t *testing.T) {
 }
 
 func TestLeadPermissionHelpers(t *testing.T) {
-	manager := tenant.Context{MemberRole: "manager"}
+	manager := tenant.Context{UserID: "manager-1", MemberRole: "manager", OrganizationID: "org-1", Permissions: []string{"lead_view_all", "lead_operate", "lead_create"}}
 	if !canViewAllLeads(manager) || !canManageLeads(manager) || !canCreateLeads(manager) {
 		t.Fatal("manager should view all leads, manage leads and create leads")
 	}
@@ -310,12 +310,12 @@ func TestLeadPermissionHelpers(t *testing.T) {
 		t.Fatal("lead_view_all permission should not manage leads")
 	}
 
-	manage := tenant.Context{Permissions: []string{"lead_manage"}}
+	manage := tenant.Context{Permissions: []string{"lead_view_all", "lead_operate"}}
 	if !canManageLeads(manage) {
-		t.Fatal("lead_manage permission should manage leads")
+		t.Fatal("lead view-all and operate permissions should manage leads")
 	}
 
-	regular := tenant.Context{UserID: "user-1", OrganizationID: "org-1", MemberRole: "user"}
+	regular := tenant.Context{UserID: "user-1", OrganizationID: "org-1", MemberRole: "user", Permissions: []string{"lead_create"}}
 	if !canCreateLeads(regular) {
 		t.Fatal("regular organization users should create leads")
 	}
@@ -327,7 +327,7 @@ func TestLeadPermissionHelpers(t *testing.T) {
 		t.Fatal("users without organization context should not create leads")
 	}
 
-	createPermission := tenant.Context{Permissions: []string{"lead_create"}}
+	createPermission := tenant.Context{UserID: "user-1", OrganizationID: "org-1", Permissions: []string{"lead_create"}}
 	if !canCreateLeads(createPermission) {
 		t.Fatal("lead_create permission should create leads")
 	}

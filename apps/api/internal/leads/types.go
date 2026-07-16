@@ -132,6 +132,7 @@ type CreateRequest struct {
 	UF               string   `json:"uf,omitempty"`
 	RendaFamiliar    string   `json:"rendaFamiliar,omitempty"`
 	FaixaValorImovel string   `json:"faixaValorImovel,omitempty"`
+	ImportMode       bool     `json:"importMode,omitempty"`
 }
 
 type createInput struct {
@@ -162,6 +163,7 @@ type createInput struct {
 	UF               *string
 	RendaFamiliar    *string
 	FaixaValorImovel *string
+	ImportMode       bool
 }
 
 type patchString struct {
@@ -367,6 +369,7 @@ func (request CreateRequest) Validate() (createInput, error) {
 		UF:               optionalString(strings.ToUpper(request.UF), 2),
 		RendaFamiliar:    optionalString(request.RendaFamiliar, 80),
 		FaixaValorImovel: optionalString(request.FaixaValorImovel, 80),
+		ImportMode:       request.ImportMode,
 	}
 
 	if input.Name == "" || len([]rune(input.Name)) < 2 {

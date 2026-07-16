@@ -814,7 +814,10 @@ function buildLabel(type: string, metadata: HistoryMetadata): string {
       return `Lead reentrou via ${metadata?.source || 'sistema'}`;
     }
     case 'status_change': {
-      const from = metadataString(metadata?.from_status);
+      const from =
+        metadataString(metadata?.from_status) ||
+        metadataString(metadata?.previous_status) ||
+        metadataString(metadata?.old_status);
       const to = metadataString(metadata?.to_status);
       const statusMap: Record<string, string> = { open: 'Aberto', won: 'Ganho', lost: 'Perdido' };
       if (from && to) return `Status: ${statusMap[from] || from} → ${statusMap[to] || to}`;
@@ -1643,7 +1646,8 @@ export function useLeadHistory(leadId: string | null) {
       );
     },
     enabled: !!leadId,
-    staleTime: 30_000,
+    staleTime: 60_000,
+    gcTime: 10 * 60_000,
     refetchOnWindowFocus: false,
   });
 }

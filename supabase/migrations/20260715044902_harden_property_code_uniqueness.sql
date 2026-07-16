@@ -2,6 +2,66 @@
 -- The data repair keeps the oldest property for each code and moves later
 -- duplicates to the next available number for the same prefix.
 
+alter table public.property_sequences
+  add column if not exists id uuid default gen_random_uuid(),
+  add column if not exists prefix text,
+  add column if not exists last_number bigint,
+  add column if not exists created_at timestamptz not null default now();
+
+do $migrate_legacy_property_sequences$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'property_sequences'
+      and column_name = 'next_value'
+  ) then
+    execute $sql$
+      update public.property_sequences
+      set prefix = coalesce(nullif(upper(btrim(prefix)), ''), 'IM'),
+          last_number = coalesce(last_number, greatest(coalesce(next_value, 1) - 1, 0))
+    $sql$;
+  else
+    update public.property_sequences
+    set prefix = coalesce(nullif(upper(btrim(prefix)), ''), 'IM'),
+        last_number = coalesce(last_number, 0);
+  end if;
+
+  if exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.property_sequences'::regclass
+      and contype = 'p'
+      and pg_get_constraintdef(oid) <> 'PRIMARY KEY (id)'
+  ) then
+    execute (
+      select format('alter table public.property_sequences drop constraint %I', conname)
+      from pg_constraint
+      where conrelid = 'public.property_sequences'::regclass
+        and contype = 'p'
+      limit 1
+    );
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.property_sequences'::regclass
+      and contype = 'p'
+  ) then
+    alter table public.property_sequences
+      add constraint property_sequences_pkey primary key (id);
+  end if;
+end;
+$migrate_legacy_property_sequences$;
+
+alter table public.property_sequences
+  alter column id set not null,
+  alter column prefix set not null,
+  alter column last_number set default 0,
+  alter column last_number set not null;
+
 do $$
 begin
   perform set_config('request.jwt.claim.role', 'service_role', true);

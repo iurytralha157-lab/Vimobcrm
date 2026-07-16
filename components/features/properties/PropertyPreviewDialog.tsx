@@ -10,6 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Property, useProperty, useUpdateProperty } from '@/hooks/use-properties';
+import { usePropertyCondominiums } from '@/hooks/use-property-locations';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
 import { getPropertyCaptor, type PropertySiteInfo } from '@/lib/api/property-support';
@@ -72,6 +73,11 @@ function metadataString(value: unknown) {
   return typeof value === 'string' ? value : '';
 }
 
+function metadataLocationValue(value: unknown) {
+  if (typeof value === 'string') return value.trim();
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : '';
+}
+
 export function PropertyPreviewDialog({
   property: propertyFromList,
   open,
@@ -97,6 +103,7 @@ export function PropertyPreviewDialog({
 
   // Use full property if available, otherwise fallback to list property
   const property = fullProperty || propertyFromList;
+  const { data: condominiums = [] } = usePropertyCondominiums(property?.neighborhood_id || undefined);
   const propertyId = property?.id ?? null;
   const currentImageIndex = imageSelection.propertyId === propertyId ? imageSelection.index : 0;
   const cadastroUserId = property?.cadastrado_por && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(property.cadastrado_por)
@@ -177,8 +184,21 @@ export function PropertyPreviewDialog({
   const propertyMetadata = getPropertyMetadata(property);
   const financingDetails = metadataString(propertyMetadata.financing_details);
   const exchangeDetails = metadataString(propertyMetadata.exchange_details);
-  const quadra = metadataString(propertyMetadata.quadra);
-  const lote = metadataString(propertyMetadata.lote);
+  const quadra = metadataLocationValue(propertyMetadata.quadra);
+  const lote = metadataLocationValue(propertyMetadata.lote);
+  const selectedCondominium = property?.condominium_id
+    ? condominiums.find(condominium => condominium.id === property.condominium_id)
+    : null;
+  const streetAddress = [property?.endereco, property?.numero].filter(Boolean).join(', ');
+  const cityAddress = [property?.cidade, property?.uf].filter(Boolean).join(' - ');
+  const addressContext = [property?.complemento, property?.bairro, cityAddress].filter(Boolean);
+  const addressDetails = [
+    selectedCondominium?.name ? `Condomínio: ${selectedCondominium.name}` : null,
+    property?.cep ? `CEP: ${property.cep}` : null,
+    quadra ? `Quadra: ${quadra}` : null,
+    lote ? `Lote: ${lote}` : null,
+  ].filter((detail): detail is string => Boolean(detail));
+  const hasFullAddress = Boolean(streetAddress || addressContext.length > 0 || addressDetails.length > 0);
   const ownerPhone = property?.owner_cellphone || property?.owner_phone_commercial || property?.owner_phone_residential || null;
   const captorName = captorUser?.name || (cadastroUserId ? null : property?.cadastrado_por) || null;
   const captorContact = captorUser?.whatsapp || captorUser?.email || null;
@@ -401,10 +421,10 @@ export function PropertyPreviewDialog({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <Badge variant="outline" className="font-mono text-xs">
+            <Badge className="rounded-[6px] border-0 bg-primary px-2.5 py-1 font-mono text-xs font-semibold text-primary-foreground hover:bg-primary">
               {property.code}
             </Badge>
-            <Badge variant={property.tipo_de_negocio === 'Venda' ? 'default' : 'secondary'}>
+            <Badge className="rounded-[6px] border-0 bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground hover:bg-primary">
               {property.tipo_de_negocio}
             </Badge>
             {property.destaque && (
@@ -440,15 +460,21 @@ export function PropertyPreviewDialog({
         </div>
       </div>
 
-      {(property.endereco || property.bairro || property.cidade || quadra || lote) && (
-        <div className="flex items-start gap-2 text-muted-foreground">
-          <MapPin className="h-4 w-4 mt-0.5 shrink-0" />
-          <span className="text-sm">
-            {[property.endereco, property.numero, property.bairro, quadra ? `Quadra ${quadra}` : null, lote ? `Lote ${lote}` : null, property.cidade, property.uf]
-              .filter(Boolean)
-              .join(', ')}
-            {property.cep && <span className="text-xs ml-1">- CEP: {property.cep}</span>}
-          </span>
+      {hasFullAddress && (
+        <div data-tour="property-internal-full-address" className="flex items-start gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2.5">
+          <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          <div className="min-w-0 space-y-1">
+            <p className="text-xs font-medium text-muted-foreground">Localização completa</p>
+            {streetAddress && <p className="text-sm font-medium text-foreground">{streetAddress}</p>}
+            {addressContext.length > 0 && (
+              <p className="text-sm text-muted-foreground">{addressContext.join(' • ')}</p>
+            )}
+            {addressDetails.length > 0 && (
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                {addressDetails.map(detail => <span key={detail}>{detail}</span>)}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -631,7 +657,7 @@ export function PropertyPreviewDialog({
 
               {/* Main Badge */}
               {currentImageIndex === 0 && property.imagem_principal && (
-                <Badge className="absolute top-2 left-2 bg-primary text-primary-foreground text-xs">
+                <Badge className="absolute left-2 top-2 rounded-[6px] border-0 bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground hover:bg-primary">
                   <Star className="h-3 w-3 mr-1 fill-current" />
                   Principal
                 </Badge>

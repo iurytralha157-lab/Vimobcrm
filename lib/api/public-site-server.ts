@@ -112,13 +112,9 @@ export interface PublicProperty {
   area_total: number | null;
   area_construida: number | null;
   andar?: number | null;
-  endereco: string | null;
-  public_address_visibility?: string | null;
   bairro: string | null;
   cidade: string | null;
   estado: string | null;
-  condominio_nome?: string | null;
-  cep: string | null;
   imagem_principal: string | null;
   fotos: string[] | null;
   image_urls?: string[] | null;

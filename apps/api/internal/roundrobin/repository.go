@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -1537,20 +1538,14 @@ func jsonb(value any) string {
 }
 
 func canManageRoundRobinScope(tenantContext tenant.Context) bool {
-	return canManageRoundRobins(tenantContext) || tenantContext.IsTeamLeader
+	return canManageRoundRobins(tenantContext)
 }
 
 func canManageRoundRobins(tenantContext tenant.Context) bool {
 	if tenantContext.IsSuperAdmin || tenantContext.HasRole("owner", "admin") {
 		return true
 	}
-	if tenantContext.IsTeamLeader {
-		return false
-	}
-
-	return tenantContext.HasRole("manager") ||
-		tenantContext.HasPermission("lead_manage") ||
-		tenantContext.HasPermission("lead_assign")
+	return tenantContext.HasPermission(permissions.DistributionManage)
 }
 
 func ensureRoundRobinInputInScope(tenantContext tenant.Context, pipelineID *string, members []memberInput, membersSet bool, requirePipeline bool) error {

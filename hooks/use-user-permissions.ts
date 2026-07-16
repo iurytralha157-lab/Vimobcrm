@@ -1,6 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
-import { meAPI } from '@/lib/api/me';
 import {
   getTenantPermissions,
   isTenantContextForOrganization,
@@ -18,34 +16,15 @@ interface UserPermissions {
  * Admins and super admins always have all permissions.
  */
 export function useUserPermissions(): UserPermissions {
-  const { profile, organization, tenantContext, isSuperAdmin } = useAuth();
+  const { profile, organization, tenantContext, isSuperAdmin, loading } = useAuth();
   const organizationId = organization?.id || profile?.organization_id;
   const hasCurrentTenantContext = isTenantContextForOrganization(organizationId, tenantContext);
-  const initialPermissions = hasCurrentTenantContext && tenantContext
+  const permissions = hasCurrentTenantContext && tenantContext
     ? getTenantPermissions(tenantContext)
-    : undefined;
-
-  const { data: permissions = [], isLoading: permissionsLoading } = useQuery({
-    queryKey: ['user-permissions', profile?.id, organizationId],
-    queryFn: async () => {
-      if (!profile?.id) return [];
-
-      try {
-        const response = await meAPI.getMe(organizationId);
-        const context = response.context;
-        if (context.isSuperAdmin || context.memberRole === 'owner' || context.memberRole === 'admin') {
-          return ['*'];
-        }
-        return context.permissions?.filter(Boolean) || [];
-      } catch {
-        return [];
-      }
-    },
-    enabled: !!profile?.id,
-    initialData: initialPermissions,
-    staleTime: 1000 * 60 * 5, // 5 minutes
-  });
-  const isLoading = permissionsLoading && !hasCurrentTenantContext;
+    : isSuperAdmin
+      ? ['*']
+      : [];
+  const isLoading = loading || !profile?.id || (!isSuperAdmin && !hasCurrentTenantContext);
 
   const hasPermission = (key: string): boolean => {
     // Super admin always has permission

@@ -135,7 +135,7 @@ func (repo Repository) loadRetryMediaMessage(ctx context.Context, tenantContext 
 		where wm.organization_id = $1::uuid
 		  and wc.organization_id = $1::uuid
 		  and wc.deleted_at is null
-		  and `+conversationVisibilitySQL()+`
+		  and `+conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		  and `+conversationMessageLeadMatchSQL()+`
 		  and wm.id = $5::uuid
 		limit 1

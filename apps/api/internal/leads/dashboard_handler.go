@@ -4,13 +4,13 @@ import (
 	"net/http"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 func (handler Handler) ShowDashboardStats(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+	tenantContext, ok := dashboardTenantContext(w, r)
+	if !ok {
 		return
 	}
 
@@ -30,9 +30,8 @@ func (handler Handler) ShowDashboardStats(w http.ResponseWriter, r *http.Request
 }
 
 func (handler Handler) ShowDashboardFunnel(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+	tenantContext, ok := dashboardTenantContext(w, r)
+	if !ok {
 		return
 	}
 
@@ -52,9 +51,8 @@ func (handler Handler) ShowDashboardFunnel(w http.ResponseWriter, r *http.Reques
 }
 
 func (handler Handler) ShowDashboardSources(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+	tenantContext, ok := dashboardTenantContext(w, r)
+	if !ok {
 		return
 	}
 
@@ -74,9 +72,8 @@ func (handler Handler) ShowDashboardSources(w http.ResponseWriter, r *http.Reque
 }
 
 func (handler Handler) ShowDashboardTopBrokers(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+	tenantContext, ok := dashboardTenantContext(w, r)
+	if !ok {
 		return
 	}
 
@@ -96,9 +93,8 @@ func (handler Handler) ShowDashboardTopBrokers(w http.ResponseWriter, r *http.Re
 }
 
 func (handler Handler) ListDashboardUpcomingTasks(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+	tenantContext, ok := dashboardTenantContext(w, r)
+	if !ok {
 		return
 	}
 
@@ -118,9 +114,8 @@ func (handler Handler) ListDashboardUpcomingTasks(w http.ResponseWriter, r *http
 }
 
 func (handler Handler) ShowDashboardDealsEvolution(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+	tenantContext, ok := dashboardTenantContext(w, r)
+	if !ok {
 		return
 	}
 
@@ -140,9 +135,8 @@ func (handler Handler) ShowDashboardDealsEvolution(w http.ResponseWriter, r *htt
 }
 
 func (handler Handler) ShowDashboardExtraCounts(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+	tenantContext, ok := dashboardTenantContext(w, r)
+	if !ok {
 		return
 	}
 
@@ -162,9 +156,8 @@ func (handler Handler) ShowDashboardExtraCounts(w http.ResponseWriter, r *http.R
 }
 
 func (handler Handler) ListDashboardRecentActivities(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+	tenantContext, ok := dashboardTenantContext(w, r)
+	if !ok {
 		return
 	}
 
@@ -184,9 +177,8 @@ func (handler Handler) ListDashboardRecentActivities(w http.ResponseWriter, r *h
 }
 
 func (handler Handler) ListDashboardTeamLeadIDs(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+	tenantContext, ok := dashboardTenantContext(w, r)
+	if !ok {
 		return
 	}
 
@@ -203,4 +195,17 @@ func (handler Handler) ListDashboardTeamLeadIDs(w http.ResponseWriter, r *http.R
 	}
 
 	httpserver.WriteJSON(w, http.StatusOK, DashboardTeamLeadIDsResponse{LeadIDs: leadIDs})
+}
+
+func dashboardTenantContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return tenant.Context{}, false
+	}
+	if !tenantContext.HasPermission(permissions.DashboardView) {
+		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to view the dashboard.")
+		return tenant.Context{}, false
+	}
+	return tenantContext, true
 }

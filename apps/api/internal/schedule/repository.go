@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -49,15 +50,27 @@ func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder
 }
 
 func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, filter ListFilter) ([]Event, error) {
-	canManage := canManageSchedule(tenantContext)
+	if !canViewSchedule(tenantContext) {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
+	canViewAll := canViewAllScheduleEvents(tenantContext)
 	args := []any{
 		tenantContext.OrganizationID,
 		tenantContext.UserID,
-		canManage,
+		canViewAll,
+		canViewAllLeads(tenantContext),
+		tenantContext.UserID,
+		tenantContext.HasPermission(permissions.LeadViewTeam),
 	}
 	where := []string{
 		"se.organization_id = $1::uuid",
 		scheduleEventScopeSQL("$2", "$3"),
+		`($3::boolean or se.lead_id is null or ` + leadScheduleVisibilitySQL(
+			"$4",
+			"$5",
+			"$6",
+			tenantContext.HasPermission(permissions.LeadViewOwn),
+		) + `)`,
 	}
 
 	addFilter := func(clause string, value any) {
@@ -84,19 +97,6 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	}
 	if filter.LeadID != "" {
 		addFilter("se.lead_id = $%d::uuid", filter.LeadID)
-		args = append(args,
-			canViewAllLeads(tenantContext),
-			tenantContext.UserID,
-			tenantContext.HasPermission("lead_view_team"),
-		)
-		canViewAllIndex := len(args) - 2
-		userIDIndex := len(args) - 1
-		canViewTeamIndex := len(args)
-		where = append(where, leadScheduleVisibilitySQL(
-			fmt.Sprintf("$%d", canViewAllIndex),
-			fmt.Sprintf("$%d", userIDIndex),
-			fmt.Sprintf("$%d", canViewTeamIndex),
-		))
 	}
 	if filter.StartTime != nil {
 		addFilter("se.end_time >= $%d::timestamptz", *filter.StartTime)
@@ -167,6 +167,9 @@ func (repo Repository) Capabilities(ctx context.Context, tenantContext tenant.Co
 }
 
 func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context, input createInput) (Event, error) {
+	if !canManageSchedule(tenantContext) {
+		return Event{}, tenant.ErrOrganizationAccessDenied
+	}
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return Event{}, err
@@ -590,7 +593,7 @@ func (repo Repository) AddComment(ctx context.Context, tenantContext tenant.Cont
 	if err != nil {
 		return Comment{}, err
 	}
-	if ok, err := repo.canViewEvent(ctx, tx, tenantContext, current); err != nil {
+	if ok, err := repo.canEditEvent(ctx, tx, tenantContext, current); err != nil {
 		return Comment{}, err
 	} else if !ok {
 		return Comment{}, tenant.ErrOrganizationAccessDenied
@@ -896,6 +899,9 @@ func (repo Repository) validateLead(ctx context.Context, querier queryRower, ten
 	if leadID == nil {
 		return nil
 	}
+	if !tenantContext.HasPermission(permissions.LeadOperate) {
+		return tenant.ErrOrganizationAccessDenied
+	}
 
 	var exists bool
 	err := querier.QueryRow(ctx, `
@@ -904,7 +910,7 @@ func (repo Repository) validateLead(ctx context.Context, querier queryRower, ten
 			from public.leads l
 			where l.organization_id = $1::uuid
 			  and l.id = $2::uuid
-			  and `+leadVisibilitySQL("$3", "$4", "$5")+`
+			  and `+leadVisibilitySQL("$3", "$4", "$5", tenantContext.HasPermission(permissions.LeadViewOwn))+`
 		)
 	`, tenantContext.OrganizationID, *leadID, canViewAllLeads(tenantContext), tenantContext.UserID, tenantContext.HasPermission("lead_view_team")).Scan(&exists)
 	if err != nil {
@@ -1043,22 +1049,36 @@ func (repo Repository) ensureCanViewEvent(ctx context.Context, tenantContext ten
 }
 
 func (repo Repository) canViewEvent(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, snapshot eventSnapshot) (bool, error) {
-	if canManageSchedule(tenantContext) {
+	if !canViewSchedule(tenantContext) {
+		return false, nil
+	}
+	if canViewAllScheduleEvents(tenantContext) {
 		return true, nil
+	}
+	canViewLead, err := repo.canAccessEventLead(ctx, tx, tenantContext, snapshot.LeadID)
+	if err != nil || !canViewLead {
+		return canViewLead, err
 	}
 	if snapshot.Visibility == "private" {
 		return repo.isEventParticipant(ctx, tx, tenantContext.OrganizationID, snapshot.ID, tenantContext.UserID, snapshot.UserID)
 	}
 
-	return repo.isEventInScheduleScope(ctx, tx, tenantContext.OrganizationID, snapshot.ID, tenantContext.UserID)
+	return repo.isEventInScheduleScope(ctx, tx, tenantContext, snapshot.ID)
 }
 
 func (repo Repository) canEditEvent(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, snapshot eventSnapshot) (bool, error) {
-	if canManageSchedule(tenantContext) {
+	if !canManageSchedule(tenantContext) {
+		return false, nil
+	}
+	if canViewAllScheduleEvents(tenantContext) {
 		return true, nil
 	}
+	canViewLead, err := repo.canAccessEventLead(ctx, tx, tenantContext, snapshot.LeadID)
+	if err != nil || !canViewLead {
+		return canViewLead, err
+	}
 	if snapshot.Visibility != "private" {
-		if inScope, err := repo.isEventInScheduleScope(ctx, tx, tenantContext.OrganizationID, snapshot.ID, tenantContext.UserID); err != nil || inScope {
+		if inScope, err := repo.isEventInScheduleScope(ctx, tx, tenantContext, snapshot.ID); err != nil || inScope {
 			return inScope, err
 		}
 	}
@@ -1066,7 +1086,25 @@ func (repo Repository) canEditEvent(ctx context.Context, tx pgx.Tx, tenantContex
 	return repo.isEventParticipant(ctx, tx, tenantContext.OrganizationID, snapshot.ID, tenantContext.UserID, snapshot.UserID)
 }
 
-func (repo Repository) isEventInScheduleScope(ctx context.Context, tx pgx.Tx, organizationID string, eventID string, userID string) (bool, error) {
+func (repo Repository) canAccessEventLead(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, leadID string) (bool, error) {
+	if strings.TrimSpace(leadID) == "" {
+		return true, nil
+	}
+
+	var exists bool
+	err := tx.QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.leads l
+			where l.organization_id = $1::uuid
+			  and l.id = $2::uuid
+			  and `+leadVisibilitySQL("$3", "$4", "$5", tenantContext.HasPermission(permissions.LeadViewOwn))+`
+		)
+	`, tenantContext.OrganizationID, leadID, canViewAllLeads(tenantContext), tenantContext.UserID, tenantContext.HasPermission(permissions.LeadViewTeam)).Scan(&exists)
+	return exists, err
+}
+
+func (repo Repository) isEventInScheduleScope(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, eventID string) (bool, error) {
 	var exists bool
 	err := tx.QueryRow(ctx, `
 		select exists (
@@ -1075,8 +1113,14 @@ func (repo Repository) isEventInScheduleScope(ctx context.Context, tx pgx.Tx, or
 			where se.organization_id = $1::uuid
 			  and se.id = $2::uuid
 			  and `+scheduleEventScopeSQL("$3", "false")+`
+			  and (se.lead_id is null or `+leadScheduleVisibilitySQL(
+		"$4",
+		"$5",
+		"$6",
+		tenantContext.HasPermission(permissions.LeadViewOwn),
+	)+`)
 		)
-	`, organizationID, eventID, userID).Scan(&exists)
+	`, tenantContext.OrganizationID, eventID, tenantContext.UserID, canViewAllLeads(tenantContext), tenantContext.UserID, tenantContext.HasPermission(permissions.LeadViewTeam)).Scan(&exists)
 	return exists, err
 }
 
@@ -1423,24 +1467,43 @@ func scheduleEventScopeSQL(userIDPlaceholder string, canManagePlaceholder string
 	)`
 }
 
-func leadScheduleVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, canViewTeamPlaceholder string) string {
+func leadScheduleVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, canViewTeamPlaceholder string, canViewOwn bool) string {
 	return `exists (
 		select 1
 		from public.leads l
 		where l.organization_id = se.organization_id
 		  and l.id = se.lead_id
-		  and ` + leadVisibilitySQL(canViewAllPlaceholder, userIDPlaceholder, canViewTeamPlaceholder) + `
+		  and ` + leadVisibilitySQL(canViewAllPlaceholder, userIDPlaceholder, canViewTeamPlaceholder, canViewOwn) + `
 	)`
 }
 
-func leadVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, canViewTeamPlaceholder string) string {
+func leadVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, canViewTeamPlaceholder string, canViewOwn bool) string {
+	canViewOwnSQL := "false"
+	if canViewOwn {
+		canViewOwnSQL = "true"
+	}
 	return `(
 		` + canViewAllPlaceholder + `::boolean
-		or l.assigned_user_id = ` + userIDPlaceholder + `::uuid
+		or (` + canViewOwnSQL + ` and l.assigned_user_id = ` + userIDPlaceholder + `::uuid)
 		or (
 			` + canViewTeamPlaceholder + `::boolean
-			and l.assigned_user_id is not null
-			and exists (
+			and (
+				(
+					nullif(to_jsonb(l)->>'team_id', '') is not null
+					and exists (
+						select 1
+						from public.team_members leader
+						where leader.organization_id = l.organization_id
+						  and leader.user_id = ` + userIDPlaceholder + `::uuid
+						  and coalesce(leader.is_active, true) = true
+						  and coalesce(leader.is_leader, false) = true
+						  and leader.team_id::text = nullif(to_jsonb(l)->>'team_id', '')
+					)
+				)
+				or (
+					nullif(to_jsonb(l)->>'team_id', '') is null
+					and l.assigned_user_id is not null
+					and exists (
 				select 1
 				from public.team_members leader
 				join public.team_members member
@@ -1452,6 +1515,8 @@ func leadVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, c
 				  and coalesce(leader.is_active, true) = true
 				  and coalesce(leader.is_leader, false) = true
 				  and member.user_id = l.assigned_user_id
+			)
+				)
 			)
 		)
 	)`
@@ -1587,14 +1652,24 @@ func recurrenceMax(frequency string) int {
 
 func canManageSchedule(tenantContext tenant.Context) bool {
 	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin", "manager") ||
-		tenantContext.HasPermission("schedule_manage")
+		tenantContext.HasRole("owner", "admin") ||
+		tenantContext.HasPermission(permissions.ScheduleManage)
+}
+
+func canViewSchedule(tenantContext tenant.Context) bool {
+	return tenantContext.IsSuperAdmin ||
+		tenantContext.HasRole("owner", "admin") ||
+		tenantContext.HasPermission(permissions.ScheduleView)
+}
+
+func canViewAllScheduleEvents(tenantContext tenant.Context) bool {
+	return tenantContext.IsSuperAdmin || tenantContext.HasRole("owner", "admin")
 }
 
 func canViewAllLeads(tenantContext tenant.Context) bool {
 	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin", "manager") ||
-		tenantContext.HasPermission("lead_view_all")
+		tenantContext.HasRole("owner", "admin") ||
+		tenantContext.HasPermission(permissions.LeadViewAll)
 }
 
 func nullable(value *string) any {

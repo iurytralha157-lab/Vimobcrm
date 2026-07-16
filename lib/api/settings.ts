@@ -9,6 +9,7 @@ import {
   apiRecordListEnvelopeSchema,
   apiSetupGuideProgressResponseSchema,
   apiSubscriptionOverviewResponseSchema,
+  apiUserPermissionProfileResponseSchema,
   apiUnknownEnvelopeSchema,
   assignUserRoleInputSchema,
   changePasswordInputSchema,
@@ -19,12 +20,14 @@ import {
   permissionKeySchema,
   pushTokenInputSchema,
   replaceRolePermissionsInputSchema,
+  replaceUserPermissionsInputSchema,
   selectSubscriptionPlanInputSchema,
   settingsRoleInputSchema,
   setupGuideProgressInputSchema,
   subscriptionBillingInputSchema,
   updateOrganizationInputSchema,
   updateProfileInputSchema,
+  uuidSchema,
   validateDomainResponse,
 } from '@/lib/validation';
 import { vimobAPIRequest, vimobPublicAPIRequest } from './vimob-client';
@@ -57,6 +60,23 @@ export type OrganizationModule = {
 export type SetupGuideProgress = {
   completed_steps: Record<string, boolean>;
   skipped: boolean;
+};
+
+export type UserPermissionItem = {
+  key: string;
+  label: string;
+  description: string;
+  domain: string;
+  allowed: boolean;
+  defaultAllowed: boolean;
+  override: boolean | null;
+};
+
+export type UserPermissionProfile = {
+  userId: string;
+  profile: string;
+  locked: boolean;
+  permissions: UserPermissionItem[];
 };
 
 export type CreateApiKeyResult = {
@@ -392,6 +412,35 @@ export const settingsAPI = {
   async listPermissions<T = SettingsJSON>() {
     const response = await vimobAPIRequest<Envelope<T[]>>('/v1/settings/permissions');
     validateDomainResponse(apiRecordListEnvelopeSchema, response, 'settings.permissions.list');
+    return response.data;
+  },
+
+  async getUserPermissions(userId: string, organizationId?: string | null) {
+    const id = parseDomainInput(uuidSchema, userId, 'settings.user-permissions.user-id');
+    const response = await vimobAPIRequest<Envelope<UserPermissionProfile>>(`/v1/settings/users/${id}/permissions`, {
+      organizationId,
+    });
+    validateDomainResponse(apiUserPermissionProfileResponseSchema, response, 'settings.user-permissions.get');
+    return response.data;
+  },
+
+  async replaceUserPermissions(userId: string, permissions: Record<string, boolean>, organizationId?: string | null) {
+    const body = parseDomainInput(replaceUserPermissionsInputSchema, { permissions }, 'settings.user-permissions.replace');
+    const response = await vimobAPIRequest<Envelope<UserPermissionProfile>>(`/v1/settings/users/${userId}/permissions`, {
+      method: 'PUT',
+      organizationId,
+      body,
+    });
+    validateDomainResponse(apiUserPermissionProfileResponseSchema, response, 'settings.user-permissions.replace');
+    return response.data;
+  },
+
+  async resetUserPermissions(userId: string, organizationId?: string | null) {
+    const response = await vimobAPIRequest<Envelope<UserPermissionProfile>>(`/v1/settings/users/${userId}/permissions`, {
+      method: 'DELETE',
+      organizationId,
+    });
+    validateDomainResponse(apiUserPermissionProfileResponseSchema, response, 'settings.user-permissions.reset');
     return response.data;
   },
 

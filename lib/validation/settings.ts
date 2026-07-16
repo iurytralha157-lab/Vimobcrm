@@ -69,6 +69,9 @@ export const selectSubscriptionPlanInputSchema = z.object({ plan_id: uuidSchema 
 export const replaceRolePermissionsInputSchema = z.object({
   permissions: z.array(z.string().trim().min(1).max(180)).max(500),
 }).strict()
+export const replaceUserPermissionsInputSchema = z.object({
+  permissions: z.record(z.boolean()),
+}).strict()
 export const assignUserRoleInputSchema = z.object({
   userId: uuidSchema,
   roleId: uuidSchema.nullable(),
@@ -118,6 +121,22 @@ export const apiSubscriptionOverviewSchema = z.object({
   availablePlans: z.array(z.record(z.unknown())),
   history: z.array(z.record(z.unknown())),
 }).passthrough()
+export const apiUserPermissionItemSchema = z.object({
+  key: permissionKeySchema,
+  label: z.string(),
+  description: z.string(),
+  domain: z.string(),
+  allowed: z.boolean(),
+  defaultAllowed: z.boolean(),
+  override: z.boolean().nullable(),
+}).strict()
+export const apiUserPermissionProfileSchema = z.object({
+  userId: uuidSchema,
+  profile: z.string(),
+  locked: z.boolean(),
+  permissions: z.array(apiUserPermissionItemSchema),
+}).strict()
+export const apiUserPermissionProfileResponseSchema = apiEnvelopeSchema(apiUserPermissionProfileSchema)
 
 export const apiAssetUploadResponseSchema = apiEnvelopeSchema(apiAssetUploadSchema)
 export const apiOrganizationApiKeyListResponseSchema = apiEnvelopeSchema(z.array(apiOrganizationApiKeySchema))

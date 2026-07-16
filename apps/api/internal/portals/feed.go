@@ -129,7 +129,7 @@ func buildVRSyncFeed(integration publicIntegration, items []feedListing) ([]byte
 func mapToVRSyncListing(integration publicIntegration, item feedListing) (vrSyncListing, bool) {
 	property := item.Property
 	title := trimMax(firstPropertyText(property, "title"), 100)
-	description := firstPropertyText(property, "descricao_site", "descricao", "status_descritivo")
+	description := firstPropertyText(property, "descricao_site", "status_descritivo")
 	if description == "" {
 		description = title
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -1211,10 +1212,7 @@ func canManageTeams(tenantContext tenant.Context) bool {
 		return false
 	}
 
-	return tenantContext.HasRole("manager") ||
-		tenantContext.HasPermission("settings_manage") ||
-		tenantContext.HasPermission("settings_teams") ||
-		tenantContext.HasPermission("teams_manage")
+	return tenantContext.HasPermission(permissions.TeamManage)
 }
 
 func textOrNil(value *string) any {

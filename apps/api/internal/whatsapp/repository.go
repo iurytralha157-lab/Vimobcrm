@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -165,7 +166,7 @@ func (repo Repository) ListConversations(ctx context.Context, tenantContext tena
 	where := []string{
 		"wc.organization_id = $1::uuid",
 		"wc.deleted_at is null",
-		conversationVisibilitySQL(),
+		conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext)),
 	}
 
 	addFilter := func(clause string, value any) {
@@ -287,7 +288,7 @@ func (repo Repository) GetConversation(ctx context.Context, tenantContext tenant
 		left join public.stages stage on stage.id = l.stage_id
 		where wc.organization_id = $1::uuid
 		  and wc.deleted_at is null
-		  and `+conversationVisibilitySQL()+`
+		  and `+conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		  and wc.id = $5::uuid
 		limit 1
 	`, args...))
@@ -486,7 +487,7 @@ func (repo Repository) LinkConversationToLead(ctx context.Context, tenantContext
 			(
 			  wc.lead_id is not null
 			  and l.id is not null
-			  and `+leadVisibilitySQL()+`
+			  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 			)
 			or (
 			  wc.lead_id is null
@@ -645,7 +646,7 @@ func (repo Repository) ensureCanViewConversation(ctx context.Context, tenantCont
 			left join public.leads l on l.id = wc.lead_id
 			where wc.organization_id = $1::uuid
 			  and wc.deleted_at is null
-			  and `+conversationVisibilitySQL()+`
+		  and `+conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 			  and wc.id = $5::uuid
 		)
 	`, args...).Scan(&ok)
@@ -687,7 +688,7 @@ func (repo Repository) ensureCanLinkConversation(ctx context.Context, tenantCont
 				(
 					l.id is not null
 					and l.organization_id = wc.organization_id
-					and `+leadVisibilitySQL()+`
+					and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 				)
 				or (
 					wc.lead_id is null
@@ -747,7 +748,7 @@ func (repo Repository) ensureCanViewLead(ctx context.Context, tenantContext tena
 			from public.leads l
 			where l.organization_id = $1::uuid
 			  and l.id = $5::uuid
-			  and `+leadVisibilitySQL()+`
+			  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		)
 	`, args...).Scan(&allowed)
 	if err != nil {
@@ -1191,7 +1192,7 @@ func baseConversationArgs(tenantContext tenant.Context) []any {
 	}
 }
 
-func conversationVisibilitySQL() string {
+func conversationVisibilitySQL(canViewOwn bool) string {
 	return `(
 		ws.id is not null
 		and ws.organization_id = wc.organization_id
@@ -1203,7 +1204,7 @@ func conversationVisibilitySQL() string {
 				wc.lead_id is not null
 				and l.id is not null
 				and l.organization_id = wc.organization_id
-				and ` + leadVisibilitySQL() + `
+				and ` + leadVisibilitySQL(canViewOwn) + `
 			)
 			or (
 				wc.lead_id is null
@@ -1217,11 +1218,11 @@ func conversationVisibilitySQL() string {
 // session can no longer send, but it must not make already authorized lead
 // messages disappear. The target lead is joined as `l` by the two history
 // queries; tenant/user visibility remains identical to current lead access.
-func leadHistoryVisibilitySQL() string {
+func leadHistoryVisibilitySQL(canViewOwn bool) string {
 	return `(
 		l.id is not null
 		and l.organization_id = wc.organization_id
-		and ` + leadVisibilitySQL() + `
+		and ` + leadVisibilitySQL(canViewOwn) + `
 	)`
 }
 
@@ -1237,25 +1238,45 @@ func leadHistoryMessageLeadMatchSQL() string {
 	return "(wm.lead_id = $5::uuid or (wm.lead_id is null and wc.lead_id = $5::uuid))"
 }
 
-func leadVisibilitySQL() string {
+func leadVisibilitySQL(canViewOwn bool) string {
+	canViewOwnSQL := "false"
+	if canViewOwn {
+		canViewOwnSQL = "true"
+	}
 	return `(
 		$3::boolean
-		or l.assigned_user_id = $2::uuid
+		or (` + canViewOwnSQL + ` and l.assigned_user_id = $2::uuid)
 		or (
 			$4::boolean
-			and l.assigned_user_id is not null
-			and exists (
-				select 1
-				from public.team_members leader
-				join public.team_members member
-				  on member.organization_id = leader.organization_id
-				 and member.team_id = leader.team_id
-				 and coalesce(member.is_active, true) = true
-				where leader.organization_id = l.organization_id
-				  and leader.user_id = $2::uuid
-				  and coalesce(leader.is_active, true) = true
-				  and coalesce(leader.is_leader, false) = true
-				  and member.user_id = l.assigned_user_id
+			and (
+				(
+					nullif(to_jsonb(l)->>'team_id', '') is not null
+					and exists (
+						select 1 from public.team_members leader
+						where leader.organization_id = l.organization_id
+						  and leader.user_id = $2::uuid
+						  and leader.team_id::text = to_jsonb(l)->>'team_id'
+						  and coalesce(leader.is_active, true) = true
+						  and coalesce(leader.is_leader, false) = true
+					)
+				)
+				or (
+					nullif(to_jsonb(l)->>'team_id', '') is null
+					and l.assigned_user_id is not null
+					and exists (
+						select 1
+						from public.team_members leader
+						join public.team_members member
+						  on member.organization_id = leader.organization_id
+						 and member.team_id = leader.team_id
+						 and coalesce(member.is_active, true) = true
+						where leader.organization_id = l.organization_id
+						  and leader.user_id = $2::uuid
+						  and coalesce(leader.is_active, true) = true
+						  and coalesce(leader.is_leader, false) = true
+						  and member.user_id = l.assigned_user_id
+					)
+				)
 			)
 		)
 	)`
@@ -1263,15 +1284,18 @@ func leadVisibilitySQL() string {
 
 func canViewAllWhatsAppLeads(tenantContext tenant.Context) bool {
 	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin", "manager") ||
+		tenantContext.HasRole("owner", "admin") ||
 		tenantContext.HasPermission("lead_view_all")
+}
+
+func canViewOwnWhatsAppLeads(tenantContext tenant.Context) bool {
+	return tenantContext.HasPermission(permissions.LeadViewOwn)
 }
 
 func canManageWhatsApp(tenantContext tenant.Context) bool {
 	return tenantContext.IsSuperAdmin ||
 		tenantContext.HasRole("owner", "admin") ||
-		tenantContext.HasPermission("whatsapp_manage") ||
-		tenantContext.HasPermission("settings_manage")
+		tenantContext.HasPermission(permissions.WhatsAppManage)
 }
 
 func canCreateOwnWhatsAppSession(tenantContext tenant.Context) bool {

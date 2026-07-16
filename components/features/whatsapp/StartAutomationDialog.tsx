@@ -52,7 +52,7 @@ export function StartAutomationDialog({
   conversationId,
   contactName,
 }: StartAutomationDialogProps) {
-  const { data: canStartAutomations = false, isLoading: permissionLoading } = useHasPermission("automations_edit");
+  const { data: canStartAutomations = false, isLoading: permissionLoading } = useHasPermission("automations_manage");
   const { data: automations, isLoading, error, refetch } = useAutomations(open && canStartAutomations);
   const { profile } = useAuth();
   const queryClient = useQueryClient();

@@ -50,6 +50,8 @@ import {
   Trophy,
   XCircle,
   Loader2,
+  RefreshCw,
+  AlertTriangle,
 } from "lucide-react";
 import { CreateLeadDialog } from "@/components/features/leads/CreateLeadDialog";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -58,7 +60,7 @@ import { ContactCard } from "@/components/features/contacts/ContactCard";
 import { useStages } from "@/hooks/use-stages";
 import { useOrganizationUsers } from "@/hooks/use-users";
 import { useTags } from "@/hooks/use-tags";
-import { format, formatDistanceToNow } from "date-fns";
+import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { ImportContactsDialog } from "@/components/features/contacts/ImportContactsDialog";
@@ -72,9 +74,20 @@ import { SharedFilters } from "@/components/shared/SharedFilters";
 import { useSharedFilters } from "@/hooks/use-shared-filters";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
+import { useFilterOptionsPipelineId } from "@/hooks/use-filter-options-pipeline-id";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+function getInitials(name: string) {
+  return name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
 }
 
 function SortIcon({
@@ -114,6 +127,68 @@ function LeadCountBadge({
   );
 }
 
+function ContactsErrorState({
+  message,
+  onRetry,
+  isRetrying,
+}: {
+  message: string;
+  onRetry: () => void;
+  isRetrying: boolean;
+}) {
+  return (
+    <div className="flex min-h-[260px] flex-col items-center justify-center gap-3 px-6 py-10 text-center">
+      <div className="flex h-10 w-10 items-center justify-center rounded-[8px] bg-destructive/10 text-destructive">
+        <AlertTriangle className="h-5 w-5" />
+      </div>
+      <div className="space-y-1">
+        <h3 className="text-sm font-semibold text-[var(--app-text-primary)]">Não foi possível carregar os contatos</h3>
+        <p className="max-w-[420px] text-xs text-muted-foreground">{message}</p>
+      </div>
+      <Button variant="outline" size="sm" onClick={onRetry} disabled={isRetrying} className="h-8 gap-2">
+        <RefreshCw className={cn("h-3.5 w-3.5", isRetrying && "animate-spin")} />
+        Tentar novamente
+      </Button>
+    </div>
+  );
+}
+
+function AssigneeAvatarCell({
+  name,
+  avatarUrl,
+}: {
+  name: string | null;
+  avatarUrl: string | null;
+}) {
+  const label = name || "Sem responsável";
+
+  return (
+    <TooltipProvider delayDuration={120}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="flex w-12 justify-center">
+            {name ? (
+              <Avatar className="h-7 w-7">
+                <AvatarImage src={avatarUrl || undefined} alt={name} />
+                <AvatarFallback className="bg-[var(--app-surface-soft)] text-[10px] text-[var(--app-text-tertiary)]">
+                  {getInitials(name)}
+                </AvatarFallback>
+              </Avatar>
+            ) : (
+              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--app-surface-soft)] text-[10px] text-muted-foreground">
+                --
+              </div>
+            )}
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-xs">
+          {label}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 export default function Contacts() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -121,8 +196,15 @@ export default function Contacts() {
   const { hasPermission } = useUserPermissions();
   const organizationId = organization?.id ?? profile?.organization_id ?? null;
   const canDeleteLeads = isSuperAdmin || hasPermission("lead_delete");
+  const canCreateLeads = isSuperAdmin || hasPermission("lead_create");
+  const canImportLeads = isSuperAdmin || hasPermission("lead_import");
+  const canExportLeads = isSuperAdmin || hasPermission("lead_export");
   const isMobile = useIsMobile();
   const { toast } = useToast();
+  const [shouldLoadFilterOptions, setShouldLoadFilterOptions] = useState(false);
+  const [selectedPipeline, setSelectedPipeline] = useState<string>("all");
+  const [selectedStage, setSelectedStage] = useState<string>("all");
+  const filterOptionsPipelineId = useFilterOptionsPipelineId(selectedPipeline !== "all" ? selectedPipeline : null);
 
   const {
     filters: sharedFilters,
@@ -158,10 +240,10 @@ export default function Contacts() {
     isLoadingCampaigns,
     isLoadingAdSets,
     isLoadingAds,
-  } = useSharedFilters();
-
-  const [selectedPipeline, setSelectedPipeline] = useState<string>("all");
-  const [selectedStage, setSelectedStage] = useState<string>("all");
+  } = useSharedFilters({
+    loadDynamicOptions: shouldLoadFilterOptions,
+    pipelineId: selectedPipeline !== "all" ? selectedPipeline : filterOptionsPipelineId,
+  });
 
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
@@ -178,7 +260,7 @@ export default function Contacts() {
   const openLeadDetails = (contactId: string) => setSelectedContactId(contactId);
 
   useEffect(() => {
-    if (searchParams.get("new") !== "lead") return;
+    if (searchParams.get("new") !== "lead" || !canCreateLeads) return;
 
     const cleanParams = new URLSearchParams(searchParams.toString());
     cleanParams.delete("new");
@@ -194,7 +276,7 @@ export default function Contacts() {
     return () => {
       isActive = false;
     };
-  }, [searchParams, router]);
+  }, [canCreateLeads, searchParams, router]);
 
   useEffect(() => {
     const handleKeyDown = (e: globalThis.KeyboardEvent) => {
@@ -253,7 +335,15 @@ export default function Contacts() {
     limit: pageSize,
   };
 
-  const { data: contacts = [], isLoading } = useContactsList(filters);
+  const {
+    data: contacts = [],
+    isLoading,
+    isFetching: isFetchingContacts,
+    isError: contactsError,
+    error: contactsQueryError,
+    isPlaceholderData: contactsPlaceholderData,
+    refetch: refetchContacts,
+  } = useContactsList(filters);
   const { data: stages = [] } = useStages(selectedPipeline !== "all" ? selectedPipeline : undefined);
   const { data: users = [] } = useOrganizationUsers();
   const { data: tags = [] } = useTags();
@@ -264,6 +354,42 @@ export default function Contacts() {
   const totalCount = contacts[0]?.total_count || 0;
   const totalPages = Math.ceil(totalCount / pageSize);
   const isOpeningLeadDetails = Boolean(selectedContactId && !selectedLead && isFetchingSelectedLead);
+  const isInitialContactsLoading = isLoading && contacts.length === 0;
+  const isContactsTransitioning = isInitialContactsLoading || contactsPlaceholderData;
+  const isContactsRetrying = contactsError && !isContactsTransitioning && !isFetchingContacts;
+  const showContactsErrorState = contactsError && contacts.length === 0 && !isContactsTransitioning;
+  const contactsErrorMessage = getErrorMessage(contactsQueryError, "Tente novamente em instantes.");
+
+  useEffect(() => {
+    let isActive = true;
+    queueMicrotask(() => {
+      if (isActive) setPageInputValue(String(page));
+    });
+    return () => {
+      isActive = false;
+    };
+  }, [page]);
+
+  useEffect(() => {
+    if (contactsPlaceholderData || isFetchingContacts || totalPages === 0 || page <= totalPages) return;
+    let isActive = true;
+    queueMicrotask(() => {
+      if (isActive) setPage(totalPages);
+    });
+    return () => {
+      isActive = false;
+    };
+  }, [contactsPlaceholderData, isFetchingContacts, page, totalPages]);
+
+  useEffect(() => {
+    if (!contactsError) return;
+
+    const retryTimer = window.setTimeout(() => {
+      void refetchContacts();
+    }, 2500);
+
+    return () => window.clearTimeout(retryTimer);
+  }, [contactsError, refetchContacts]);
 
   const sourceLabels: Record<string, string> = {
     manual: "Manual",
@@ -294,6 +420,7 @@ export default function Contacts() {
   };
 
   const handleExport = async () => {
+    if (!canExportLeads) return;
     setIsExporting(true);
 
     try {
@@ -395,25 +522,10 @@ export default function Contacts() {
   };
 
   const hasActiveFilters =
-    Boolean(search) ||
+    hasSharedActiveFilters ||
     selectedPipeline !== "all" ||
     selectedStage !== "all" ||
-    Boolean(selectedAssignee && selectedAssignee !== "all") ||
-    Boolean(selectedTag && selectedTag !== "all") ||
-    Boolean(selectedSource && selectedSource !== "all") ||
-    Boolean(selectedDealStatus && selectedDealStatus !== "all") ||
-    lostLeadsView ||
-    datePreset !== "last30days" ||
-    Boolean(customDateRange);
-
-  const getInitials = (name: string) => {
-    return name
-      .split(" ")
-      .map((n) => n[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
-  };
+    lostLeadsView;
 
   const handleSort = (column: ContactListFilters["sortBy"]) => {
     if (sortBy === column) {
@@ -447,30 +559,33 @@ export default function Contacts() {
               <div data-tour="contacts-filters" className="min-w-0 flex-1">
                 <SharedFilters
                   datePreset={datePreset}
-                  onDatePresetChange={setDatePreset}
+                  onDatePresetChange={handleFilterChange(setDatePreset)}
                   customDateRange={customDateRange}
-                  onCustomDateRangeChange={setCustomDateRange}
+                  onCustomDateRangeChange={handleFilterChange(setCustomDateRange)}
                   teamId={sharedFilters.teamId}
-                  onTeamChange={setTeamId}
+                  onTeamChange={handleFilterChange(setTeamId)}
                   userId={selectedAssignee}
-                  onUserChange={setSelectedAssignee}
+                  onUserChange={handleFilterChange(setSelectedAssignee)}
                   source={selectedSource}
-                  onSourceChange={setSelectedSource}
+                  onSourceChange={handleFilterChange(setSelectedSource)}
                   campaignId={sharedFilters.campaignId}
-                  onCampaignChange={setCampaignId}
+                  onCampaignChange={handleFilterChange(setCampaignId)}
                   adSetId={sharedFilters.adSetId}
-                  onAdSetChange={setAdSetId}
+                  onAdSetChange={handleFilterChange(setAdSetId)}
                   adId={sharedFilters.adId}
-                  onAdChange={setAdId}
+                  onAdChange={handleFilterChange(setAdId)}
                   tagId={selectedTag}
-                  onTagChange={setSelectedTag}
+                  onTagChange={handleFilterChange(setSelectedTag)}
                   dealStatus={effectiveDealStatus}
                   onDealStatusChange={(value) => {
                     setLostLeadsView(false);
-                    setSelectedDealStatus(value);
+                    handleFilterChange(setSelectedDealStatus)(value);
                   }}
                   searchQuery={search}
-                  onSearchChange={setSearch}
+                  onSearchChange={(value) => {
+                    setSearch(value);
+                    setPage(1);
+                  }}
                   onClear={handleClearFilters}
                   hasActiveFilters={hasSharedActiveFilters || selectedPipeline !== "all" || selectedStage !== "all" || lostLeadsView}
                   dynamicSources={dynamicSources}
@@ -483,11 +598,15 @@ export default function Contacts() {
                   isLoadingAdSets={isLoadingAdSets}
                   isLoadingAds={isLoadingAds}
                   datePosition="end"
+                  loadDynamicOptions={shouldLoadFilterOptions}
+                  onFiltersOpenChange={(open) => {
+                    if (open) setShouldLoadFilterOptions(true);
+                  }}
                   tourPrefix="contacts"
                 />
               </div>
 
-              <Button
+              {canCreateLeads && <Button
                 data-tour="contacts-new"
                 size="sm"
                 onClick={() => setIsCreateDialogOpen(true)}
@@ -496,53 +615,42 @@ export default function Contacts() {
               >
                 <Plus className="h-4 w-4" />
                 <span>Novo</span>
-              </Button>
+              </Button>}
             </div>
 
-            <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
-              <Button
-                data-tour="contacts-lost"
-                variant={lostLeadsView ? "destructive" : "outline"}
-                size="sm"
-                className={cn(
-                  "h-9 min-w-0 justify-center gap-1.5 border-0 bg-[var(--app-surface-soft)] px-2 text-xs font-medium shadow-none hover:bg-[var(--app-surface-hover)]",
-                  lostLeadsView && "bg-destructive text-destructive-foreground hover:bg-destructive/90",
-                )}
-                onClick={handleToggleLostLeadsView}
-                title={lostLeadsView ? "Voltar para todos os leads" : "Leads perdidos"}
-              >
-                <XCircle className="h-4 w-4 shrink-0" />
-                <span className="truncate">Perdidos</span>
-              </Button>
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+              <LeadCountBadge
+                isLoading={isLoading || contactsPlaceholderData}
+                totalCount={totalCount}
+                className="justify-center px-2 text-xs"
+              />
 
-              <LeadCountBadge isLoading={isLoading} totalCount={totalCount} className="justify-center px-2 text-xs" />
-
-              <DropdownMenu>
+              {(canImportLeads || canExportLeads) && <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button data-tour="contacts-import" variant="outline" size="icon" className="h-9 w-9 shrink-0 border-0 bg-[var(--app-surface-soft)] shadow-none hover:bg-[var(--app-surface-hover)]">
                     <Upload className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent data-tour="contacts-import-menu" align="end" className="w-48">
-                  <DropdownMenuItem data-tour="contacts-import-action" onClick={() => setImportDialogOpen(true)} className="py-2.5">
+                  {canImportLeads && <DropdownMenuItem data-tour="contacts-import-action" onClick={() => setImportDialogOpen(true)} className="py-2.5">
                     <Upload className="h-4 w-4 mr-2 text-primary" />
                     Importar CSV/Excel
-                  </DropdownMenuItem>
-                  <DropdownMenuItem data-tour="contacts-export-action" onClick={handleExport} disabled={isExporting || totalCount === 0} className="py-2.5">
+                  </DropdownMenuItem>}
+                  {canExportLeads && <DropdownMenuItem data-tour="contacts-export-action" onClick={handleExport} disabled={isExporting || totalCount === 0} className="py-2.5">
                     <Download className="h-4 w-4 mr-2 text-primary" />
                     {isExporting ? "Exportando..." : "Exportar"}
-                  </DropdownMenuItem>
+                  </DropdownMenuItem>}
                 </DropdownMenuContent>
-              </DropdownMenu>
+              </DropdownMenu>}
             </div>
           </div>
         ) : (
           <div className="app-toolbar overflow-hidden px-3 py-1.5">
             <div className="flex items-center justify-between gap-3 w-full">
               <div className="flex items-center gap-2">
-                <LeadCountBadge isLoading={isLoading} totalCount={totalCount} />
+                <LeadCountBadge isLoading={isLoading || contactsPlaceholderData} totalCount={totalCount} />
 
-                <DropdownMenu>
+                {(canImportLeads || canExportLeads) && <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button data-tour="contacts-import" variant="outline" size="sm" className="h-9 gap-2 border-0 bg-[var(--app-surface-soft)] font-medium shadow-none hover:bg-[var(--app-surface-hover)]">
                       <Upload className="h-4 w-4" />
@@ -551,11 +659,11 @@ export default function Contacts() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent data-tour="contacts-import-menu" align="end" className="w-48">
-                    <DropdownMenuItem data-tour="contacts-import-action" onClick={() => setImportDialogOpen(true)} className="py-2.5">
+                    {canImportLeads && <DropdownMenuItem data-tour="contacts-import-action" onClick={() => setImportDialogOpen(true)} className="py-2.5">
                       <Upload className="h-4 w-4 mr-2 text-primary" />
                       Importar CSV/Excel
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
+                    </DropdownMenuItem>}
+                    {canExportLeads && <DropdownMenuItem
                       data-tour="contacts-export-action"
                       onClick={handleExport}
                       disabled={isExporting || totalCount === 0}
@@ -563,20 +671,10 @@ export default function Contacts() {
                     >
                       <Download className="h-4 w-4 mr-2 text-primary" />
                       {isExporting ? "Exportando..." : "Exportar"}
-                    </DropdownMenuItem>
+                    </DropdownMenuItem>}
                   </DropdownMenuContent>
-                </DropdownMenu>
+                </DropdownMenu>}
 
-                <Button
-                  data-tour="contacts-lost"
-                  variant={lostLeadsView ? "destructive" : "outline"}
-                  size="sm"
-                  onClick={handleToggleLostLeadsView}
-                  className="h-9 gap-2 border-0 bg-[var(--app-surface-soft)] font-medium shadow-none hover:bg-[var(--app-surface-hover)]"
-                >
-                  <XCircle className="h-4 w-4" />
-                  <span>Leads perdidos</span>
-                </Button>
               </div>
 
               <div className="contacts-toolbar-actions flex min-w-0 items-center justify-end gap-2">
@@ -622,11 +720,15 @@ export default function Contacts() {
                     isLoadingAdSets={isLoadingAdSets}
                     isLoadingAds={isLoadingAds}
                     datePosition="end"
+                    loadDynamicOptions={shouldLoadFilterOptions}
+                    onFiltersOpenChange={(open) => {
+                      if (open) setShouldLoadFilterOptions(true);
+                    }}
                     tourPrefix="contacts"
                   />
                 </div>
 
-                <Button
+                {canCreateLeads && <Button
                   data-tour="contacts-new"
                   size="sm"
                   onClick={() => setIsCreateDialogOpen(true)}
@@ -634,7 +736,7 @@ export default function Contacts() {
                 >
                   <Plus className="h-4 w-4" />
                   <span>Novo Lead</span>
-                </Button>
+                </Button>}
               </div>
             </div>
           </div>
@@ -661,10 +763,32 @@ export default function Contacts() {
           </div>
         )}
 
-        <Card data-tour="contacts-list" className="app-card contacts-table-card overflow-hidden">
+        <Card data-tour="contacts-list" className="app-card contacts-table-card relative overflow-hidden">
+          {isContactsTransitioning && (
+            <div className="absolute inset-0 z-30 flex items-center justify-center bg-[var(--app-bg)]/70 backdrop-blur-[2px]">
+              <div className="flex items-center gap-2 rounded-[8px] bg-[var(--app-surface-solid)] px-4 py-3 text-xs font-extralight tracking-wide text-[var(--app-text-primary)] shadow-[0_18px_40px_rgb(0_0_0_/_0.18)]">
+                <Loader2 className="h-4 w-4 animate-spin text-[#FF4529]" />
+                <span>Carregando contatos...</span>
+              </div>
+            </div>
+          )}
+
+          {isContactsRetrying && contacts.length > 0 && (
+            <div className="absolute right-3 top-3 z-30 flex items-center gap-2 rounded-[8px] bg-amber-500/12 px-3 py-2 text-[11px] font-extralight tracking-wide text-amber-700 ring-1 ring-amber-500/25 dark:text-amber-200">
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              <span>API demorou. Tentando carregar contatos novamente...</span>
+            </div>
+          )}
+
           {isMobile ? (
             <div>
-              {isLoading ? (
+              {showContactsErrorState ? (
+                <ContactsErrorState
+                  message={contactsErrorMessage}
+                  onRetry={() => void refetchContacts()}
+                  isRetrying={isFetchingContacts}
+                />
+              ) : isLoading ? (
                 <div className="divide-y divide-white/[0.045]">
                   {Array.from({ length: 5 }).map((_, i) => (
                     <div key={i} className="p-4 space-y-3 animate-pulse">
@@ -685,8 +809,8 @@ export default function Contacts() {
               ) : contacts.length === 0 ? (
                 <EmptyState
                   hasActiveFilters={!!hasActiveFilters}
-                  onImport={() => setImportDialogOpen(true)}
-                  onCreate={() => setIsCreateDialogOpen(true)}
+                  onImport={canImportLeads ? () => setImportDialogOpen(true) : undefined}
+                  onCreate={canCreateLeads ? () => setIsCreateDialogOpen(true) : undefined}
                   onClearFilters={handleClearFilters}
                 />
               ) : (
@@ -705,15 +829,21 @@ export default function Contacts() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              {isLoading ? (
+              {showContactsErrorState ? (
+                <ContactsErrorState
+                  message={contactsErrorMessage}
+                  onRetry={() => void refetchContacts()}
+                  isRetrying={isFetchingContacts}
+                />
+              ) : isLoading ? (
                 <Table className="app-data-table">
                   <TableSkeleton />
                 </Table>
               ) : contacts.length === 0 ? (
                 <EmptyState
                   hasActiveFilters={!!hasActiveFilters}
-                  onImport={() => setImportDialogOpen(true)}
-                  onCreate={() => setIsCreateDialogOpen(true)}
+                  onImport={canImportLeads ? () => setImportDialogOpen(true) : undefined}
+                  onCreate={canCreateLeads ? () => setIsCreateDialogOpen(true) : undefined}
                   onClearFilters={handleClearFilters}
                 />
               ) : (
@@ -737,7 +867,7 @@ export default function Contacts() {
                       <TableHead>Contato</TableHead>
                       <TableHead>{lostLeadsView ? "Motivo da perda" : "Status"}</TableHead>
                       <TableHead>Pipeline / Estágio</TableHead>
-                      <TableHead>Responsável</TableHead>
+                      <TableHead className="w-14 text-center">Resp.</TableHead>
                       <TableHead className="hidden 2xl:table-cell">Tags</TableHead>
                       <TableHead className="cursor-pointer hover:bg-[var(--app-surface-hover)]" onClick={() => handleSort("created_at")}>
                         <div className="flex items-center">
@@ -863,22 +993,8 @@ export default function Contacts() {
                             </div>
                           </TableCell>
 
-                          <TableCell onClick={() => openLeadDetails(contact.id)}>
-                            {contact.assignee_name ? (
-                              <div className="flex min-w-0 items-center gap-2">
-                                <Avatar className="h-6 w-6">
-                                  <AvatarImage src={contact.assignee_avatar || undefined} />
-                                  <AvatarFallback className="bg-[var(--app-surface-soft)] text-[10px] text-[var(--app-text-tertiary)]">
-                                    {getInitials(contact.assignee_name)}
-                                  </AvatarFallback>
-                                </Avatar>
-                                <span className="max-w-[120px] truncate text-sm" title={contact.assignee_name}>
-                                  {contact.assignee_name}
-                                </span>
-                              </div>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">Sem responsável</span>
-                            )}
+                          <TableCell className="w-14" onClick={() => openLeadDetails(contact.id)}>
+                            <AssigneeAvatarCell name={contact.assignee_name} avatarUrl={contact.assignee_avatar} />
                           </TableCell>
 
                           <TableCell className="hidden 2xl:table-cell" onClick={() => openLeadDetails(contact.id)}>
@@ -906,12 +1022,9 @@ export default function Contacts() {
                           </TableCell>
 
                           <TableCell onClick={() => openLeadDetails(contact.id)}>
-                            <div className="text-sm">
-                              <p>{format(new Date(contact.created_at), "dd/MM/yyyy", { locale: ptBR })}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {formatDistanceToNow(new Date(contact.created_at), { addSuffix: true, locale: ptBR })}
-                              </p>
-                            </div>
+                            <p className="whitespace-nowrap text-sm text-[var(--app-text-primary)]">
+                              {format(new Date(contact.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+                            </p>
                           </TableCell>
 
                           <TableCell onClick={(e) => e.stopPropagation()}>
@@ -1092,7 +1205,7 @@ export default function Contacts() {
           />
         )}
 
-        <CreateLeadDialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen} />
+        {canCreateLeads && <CreateLeadDialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen} />}
 
         <AlertDialog open={canDeleteLeads && !!deleteContactId} onOpenChange={(open) => !open && setDeleteContactId(null)}>
           <AlertDialogContent>
@@ -1137,7 +1250,7 @@ export default function Contacts() {
           </AlertDialogContent>
         </AlertDialog>
 
-        <ImportContactsDialog open={importDialogOpen} onOpenChange={setImportDialogOpen} />
+        {canImportLeads && <ImportContactsDialog open={importDialogOpen} onOpenChange={setImportDialogOpen} />}
       </div>
     </AppLayout>
   );

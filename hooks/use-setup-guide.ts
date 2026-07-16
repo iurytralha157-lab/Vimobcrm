@@ -98,10 +98,10 @@ export function useSetupGuide() {
     activeMemberRole === 'admin' ||
     activeMemberRole === 'owner';
   const isTeamLeader = accessScope.isTeamLeader;
-  const canAccessManagement = isAdmin || isTeamLeader;
-  const canManageTeam = isAdmin || hasPermission('settings_users') || hasPermission('settings_teams');
-  const canManagePipelines = isAdmin || hasPermission('settings_pipelines');
-  const canExportLeads = isAdmin || hasPermission('lead_export') || hasPermission('lead_view_all');
+  const canAccessManagement = isAdmin || isTeamLeader || ['team_manage', 'distribution_manage', 'pipeline_manage', 'tag_manage'].some(hasPermission);
+  const canManageTeam = isAdmin || isTeamLeader || hasPermission('team_manage');
+  const canManagePipelines = isAdmin || hasPermission('pipeline_manage');
+  const canExportLeads = isAdmin || hasPermission('lead_export');
   const canUseAutomations = hasModule('automations') && hasPermission('automations_view');
   const canAccessFinancial =
     isAdmin &&

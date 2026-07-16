@@ -23,7 +23,6 @@ export type NavigationAccess = {
 const TEAM_LEADER_MANAGEMENT_PATHS = new Set([
   '/crm/management',
   '/crm/management?tab=teams',
-  '/crm/management?tab=distribution',
 ])
 
 function canAccessItem(item: NavigationAccessItem, access: NavigationAccess) {

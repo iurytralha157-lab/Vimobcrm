@@ -10,7 +10,29 @@ var (
 	ErrAuthNotConfigured    = errors.New("settings auth admin is not configured")
 	ErrAuthOperation        = errors.New("settings auth admin operation failed")
 	ErrEmailOperation       = errors.New("settings email notification failed")
+	ErrPermissionStorage    = errors.New("user permission storage is not available")
 )
+
+type UserPermissionItem struct {
+	Key            string `json:"key"`
+	Label          string `json:"label"`
+	Description    string `json:"description"`
+	Domain         string `json:"domain"`
+	Allowed        bool   `json:"allowed"`
+	DefaultAllowed bool   `json:"defaultAllowed"`
+	Override       *bool  `json:"override"`
+}
+
+type UserPermissionProfile struct {
+	UserID      string               `json:"userId"`
+	Profile     string               `json:"profile"`
+	Locked      bool                 `json:"locked"`
+	Permissions []UserPermissionItem `json:"permissions"`
+}
+
+type ReplaceUserPermissionsRequest struct {
+	Permissions map[string]bool `json:"permissions"`
+}
 
 type Envelope[T any] struct {
 	Data T `json:"data"`

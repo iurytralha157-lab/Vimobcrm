@@ -9,12 +9,14 @@ import { Toaster } from 'sonner'
 import { LanguageProvider } from '@/contexts/LanguageContext'
 import { SidebarProvider } from '@/contexts/SidebarContext'
 import { UserThemeSync } from './user-theme-sync'
+import { BackendRealtimeBus } from '@/contexts/BackendRealtimeBus'
 
 export function RootProvider({ children }: { children: ReactNode }) {
   return (
     <ThemeProviderWrapper>
       <AuthProviderWrapper>
         <QueryProvider>
+          <BackendRealtimeBus />
           <TelemetryProvider />
           <UserThemeSync />
           <LanguageProvider>

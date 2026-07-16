@@ -64,24 +64,23 @@ const CATEGORY_CONFIG: Record<string, { label: string; icon: React.ElementType; 
 // Agrupamento semântico de permissões por área funcional
 const PERMISSION_GROUPS: Record<string, { label: string; keys: string[] }> = {
   // Dentro de "modules"
-  dashboard: { label: 'Dashboard', keys: ['dashboard_view'] },
-  pipeline: { label: 'Pipeline', keys: ['pipeline_view', 'pipeline_edit'] },
-  conversations: { label: 'Conversas', keys: ['conversations_view', 'conversations_edit'] },
-  financial: { label: 'Financeiro', keys: ['financial_view', 'financial_edit'] },
-  properties: { label: 'Imóveis', keys: ['properties_view', 'properties_edit'] },
-  agenda: { label: 'Agenda', keys: ['agenda_view', 'agenda_edit'] },
-  automations: { label: 'Automações', keys: ['automations_view', 'automations_edit'] },
-  reports: { label: 'Relatórios', keys: ['reports_view'] },
+  dashboard: { label: 'Dashboard', keys: ['dashboard_view', 'dashboard_site_view', 'dashboard_campaigns_view'] },
+  conversations: { label: 'Conversas', keys: ['whatsapp_view', 'whatsapp_operate', 'whatsapp_manage'] },
+  financial: { label: 'Financeiro', keys: ['financial_view', 'financial_manage'] },
+  properties: { label: 'Imóveis', keys: ['property_view', 'property_manage'] },
+  agenda: { label: 'Agenda', keys: ['schedule_view', 'schedule_manage'] },
+  automations: { label: 'Automações', keys: ['automations_view', 'automations_manage'] },
   // Dentro de "leads"
   lead_visibility: { label: 'Visibilidade de Leads', keys: ['lead_view_all', 'lead_view_own', 'lead_view_team'] },
-  lead_actions: { label: 'Ações em Leads', keys: ['lead_edit', 'lead_delete', 'lead_assign', 'lead_transfer', 'pipeline_lock'] },
+  lead_actions: { label: 'Ações em Leads', keys: ['lead_operate', 'lead_create', 'lead_delete', 'lead_import', 'lead_export'] },
   // Dentro de "data"
   customers: { label: 'Clientes', keys: ['customers_view_all', 'customers_view_own', 'customers_edit'] },
   data_export: { label: 'Exportação', keys: ['data_export'] },
   // Dentro de "settings"
-  org_settings: { label: 'Configurações', keys: ['settings_view', 'settings_edit'] },
-  team_management: { label: 'Gestão de Equipes', keys: ['team_view', 'team_edit'] },
-  user_management: { label: 'Gestão de Usuários', keys: ['user_invite', 'user_edit'] },
+  org_settings: { label: 'Configurações', keys: ['settings_organization', 'settings_integrations', 'settings_ai', 'settings_site', 'settings_billing'] },
+  team_management: { label: 'Gestão de Equipes', keys: ['team_view', 'team_manage', 'distribution_manage'] },
+  crm_management: { label: 'Configuração do CRM', keys: ['pipeline_manage', 'tag_manage'] },
+  user_management: { label: 'Gestão de Usuários', keys: ['users_manage', 'permissions_manage'] },
 };
 
 const COLOR_OPTIONS = [

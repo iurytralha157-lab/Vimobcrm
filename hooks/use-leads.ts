@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import type { Tables, TablesUpdate } from '@/integrations/supabase/types';
 import { enforceClientActionRateLimit, getClientRateLimitMessage } from '@/lib/client-action-rate-limit';
 import { VimobAPIError } from '@/lib/api/vimob-client';
+import { invalidateLeadHistorySoon } from '@/hooks/use-optimistic-lead-history';
 type LeadTag = Pick<Tables<'tags'>, 'id' | 'name' | 'color'>;
 type CreateLeadInput = {
   name: string;
@@ -34,6 +35,7 @@ type CreateLeadInput = {
   deal_status?: string;
   lost_reason?: string;
   is_own_resource?: boolean;
+  import_mode?: boolean;
 };
 type CreateLeadResult = Lead & { reentry?: boolean; assignedUserName?: string };
 
@@ -145,7 +147,7 @@ export function useCreateLead() {
       queryClient.invalidateQueries({ queryKey: ['activities'] });
       if (data?.id) {
         queryClient.invalidateQueries({ queryKey: ['lead', data.id] });
-        queryClient.invalidateQueries({ queryKey: ['lead-history-v2', data.id] });
+        invalidateLeadHistorySoon(queryClient, data.id);
       }
       queryClient.invalidateQueries({ queryKey: ['whatsapp-conversations'] });
       if (data?.reentry) {
@@ -216,7 +218,7 @@ export function useUpdateLead() {
         );
 
         queryClient.invalidateQueries({ queryKey: ['lead', organizationId, data.id] });
-        queryClient.invalidateQueries({ queryKey: ['lead-history-v2', data.id] });
+        invalidateLeadHistorySoon(queryClient, data.id);
       }
 
       queryClient.invalidateQueries({ queryKey: ['leads'] });
@@ -297,7 +299,7 @@ export function useAddLeadTag() {
       queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
       queryClient.invalidateQueries({ queryKey: ['activities'] });
       queryClient.invalidateQueries({ queryKey: ['conversation-lead-detail'] });
-      queryClient.invalidateQueries({ queryKey: ['lead-history-v2', variables.leadId] });
+      invalidateLeadHistorySoon(queryClient, variables.leadId);
       toast.success('Tag adicionada!');
     },
     onError: (error: unknown) => {
@@ -342,7 +344,7 @@ export function useRemoveLeadTag() {
       queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
       queryClient.invalidateQueries({ queryKey: ['activities'] });
       queryClient.invalidateQueries({ queryKey: ['conversation-lead-detail'] });
-      queryClient.invalidateQueries({ queryKey: ['lead-history-v2', variables.leadId] });
+      invalidateLeadHistorySoon(queryClient, variables.leadId);
       toast.success('Tag removida!');
     },
     onError: (error) => {

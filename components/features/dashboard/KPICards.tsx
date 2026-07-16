@@ -163,8 +163,7 @@ function KPICardItem({
               <div className="flex flex-col gap-1">
                 <div>
                   <p className={cn(
-                    "truncate pr-9 text-muted-foreground font-medium uppercase tracking-wider sm:pr-11",
-                    isHighlighted ? "text-[10px] sm:text-sm" : "text-[9px] sm:text-xs"
+                    "truncate pr-9 text-[12px] font-light leading-tight text-muted-foreground sm:pr-11"
                   )}>
                     {title}
                   </p>
@@ -183,7 +182,7 @@ function KPICardItem({
 
                 <div className="flex flex-col">
                   <p className={cn(
-                    "font-bold leading-tight break-words",
+                    "font-medium leading-tight break-words text-[#232323]",
                     isHighlighted ? "text-xl sm:text-3xl" : "text-lg sm:text-2xl"
                   )}>
                     {formatValue(value, format)}
@@ -197,7 +196,7 @@ function KPICardItem({
                         <TrendingDown className="h-3 w-3 text-destructive" />
                       )}
                       <span className={cn(
-                        "text-[10px] sm:text-xs font-semibold",
+                        "text-[10px] font-light",
                         isPositive ? "text-emerald-500" : "text-destructive"
                       )}>
                         {trend > 0 ? '+' : ''}{trend}%
@@ -205,7 +204,7 @@ function KPICardItem({
                     </div>
                   )}
                   {rate !== undefined && (
-                    <div className={cn('mt-1 max-w-full whitespace-nowrap text-[9px] sm:text-xs font-semibold leading-tight', rateColorClass)}>
+                    <div className={cn('mt-1 max-w-full whitespace-nowrap text-[10px] font-light leading-tight', rateColorClass)}>
                       {formatValue(rate, 'percent')}{rateLabel ? ` ${rateLabel}` : ''}
                     </div>
                   )}
@@ -214,8 +213,8 @@ function KPICardItem({
             </CardContent>
           </Card>
         </TooltipTrigger>
-        <TooltipContent>
-          <p className="text-xs">{tooltip}</p>
+        <TooltipContent className="text-[#272727]">
+          <p className="text-[11px] font-light leading-snug">{tooltip}</p>
         </TooltipContent>
       </Tooltip>
       </TooltipProvider>

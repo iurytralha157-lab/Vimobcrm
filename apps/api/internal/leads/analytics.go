@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -150,7 +151,7 @@ func (repo Repository) ListLeadTimeline(ctx context.Context, tenantContext tenan
 		join public.leads l on l.id = e.lead_id
 		left join public.users u on u.id = coalesce(e.actor_user_id, e.user_id)
 		where l.organization_id = $1::uuid
-		  and `+leadVisibilitySQL("$2", "$3", "$4")+`
+		  and `+leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn))+`
 		  and e.lead_id = $5::uuid
 	`, tenantContext.OrganizationID, canViewAllLeads(tenantContext), tenantContext.UserID, tenantContext.HasPermission("lead_view_team"), leadID)
 }
@@ -166,7 +167,7 @@ func (repo Repository) ListLeadJourney(ctx context.Context, tenantContext tenant
 			select l.visitor_session_id
 			from public.leads l
 			where l.organization_id = $1::uuid
-			  and `+leadVisibilitySQL("$2", "$3", "$4")+`
+			  and `+leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn))+`
 			  and l.id = $5::uuid
 			limit 1
 		)
@@ -469,18 +470,70 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 	}
 
 	users, err := queueHistoryJSONArray(batch, `
+		with user_ids as (
+			select e.user_id as id
+			from public.lead_timeline_events e
+			where e.organization_id = $1::uuid
+			  and e.lead_id = $2::uuid
+			  and e.user_id is not null
+			union
+			select e.actor_user_id as id
+			from public.lead_timeline_events e
+			where e.organization_id = $1::uuid
+			  and e.lead_id = $2::uuid
+			  and e.actor_user_id is not null
+			union
+			select a.user_id as id
+			from public.activities a
+			where a.organization_id = $1::uuid
+			  and a.lead_id = $2::uuid
+			  and a.user_id is not null
+			union
+			select rrl.assigned_user_id as id
+			from public.round_robin_logs rrl
+			where rrl.organization_id = $1::uuid
+			  and rrl.lead_id = $2::uuid
+			  and rrl.assigned_user_id is not null
+			union
+			select al.old_user_id as id
+			from public.assignments_log al
+			where al.organization_id = $1::uuid
+			  and al.lead_id = $2::uuid
+			  and al.old_user_id is not null
+			union
+			select al.new_user_id as id
+			from public.assignments_log al
+			where al.organization_id = $1::uuid
+			  and al.lead_id = $2::uuid
+			  and al.new_user_id is not null
+			union
+			select al.created_by as id
+			from public.assignments_log al
+			where al.organization_id = $1::uuid
+			  and al.lead_id = $2::uuid
+			  and al.created_by is not null
+			union
+			select audit.user_id as id
+			from public.audit_logs audit
+			where audit.organization_id = $1::uuid
+			  and audit.entity_type = 'lead'
+			  and audit.entity_id::text = $2
+			  and audit.user_id is not null
+			union
+			select l.assigned_user_id as id
+			from public.leads l
+			where l.organization_id = $1::uuid
+			  and l.id = $2::uuid
+			  and l.assigned_user_id is not null
+		)
 		select coalesce(jsonb_agg(jsonb_build_object(
 			'id', u.id::text,
 			'name', coalesce(nullif(u.name, ''), u.email, 'Usuario'),
 			'avatar_url', u.avatar_url
 		) order by u.name asc), '[]'::jsonb)
 		from public.users u
-		join public.organization_members om
-		  on om.user_id = u.id
-		 and om.organization_id = $1::uuid
-		where coalesce(u.is_active, false) = true
-		  and coalesce(om.is_active, false) = true
-	`, tenantContext.OrganizationID)
+		join user_ids on user_ids.id = u.id
+	`, tenantContext.OrganizationID, leadID)
 	if err != nil {
 		return nil, err
 	}
@@ -717,7 +770,7 @@ func buildFirstResponseWhere(tenantContext tenant.Context, filter FirstResponseF
 	}
 	where := []string{
 		"l.organization_id = $1::uuid",
-		leadVisibilitySQL("$2", "$3", "$4"),
+		leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn)),
 		"l.first_response_seconds is not null",
 	}
 

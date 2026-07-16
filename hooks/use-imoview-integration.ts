@@ -28,14 +28,14 @@ const getErrorMessage = (error: unknown) => {
   return String(error);
 };
 
-export function useImoviewIntegration() {
+export function useImoviewIntegration(options: { enabled?: boolean } = {}) {
   const { profile } = useAuth();
   const orgId = profile?.organization_id;
 
   return useQuery({
     queryKey: ['imoview-integration', orgId],
     queryFn: () => integrationsAPI.getImoview(orgId) as Promise<ImoviewIntegration | null>,
-    enabled: !!orgId,
+    enabled: options.enabled !== false && !!orgId,
   });
 }
 

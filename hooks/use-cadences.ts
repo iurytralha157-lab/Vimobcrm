@@ -33,6 +33,9 @@ export function useCadenceTemplates() {
   return useQuery({
     queryKey: ['cadence-templates'],
     queryFn: () => cadencesAPI.listTemplates(),
+    staleTime: 10 * 60_000,
+    gcTime: 60 * 60_000,
+    refetchOnWindowFocus: false,
   });
 }
 

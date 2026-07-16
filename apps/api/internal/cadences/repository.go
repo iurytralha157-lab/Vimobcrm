@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -371,11 +372,8 @@ func taskMetadata(input taskInput) map[string]any {
 }
 
 func canEditCadences(tenantContext tenant.Context) bool {
-	return tenantContext.HasPermission("settings_manage") ||
-		tenantContext.HasPermission("settings_pipelines") ||
-		tenantContext.HasPermission("cadences_manage") ||
-		tenantContext.HasPermission("automations_edit") ||
-		tenantContext.HasPermission("lead_manage")
+	return tenantContext.HasPermission(permissions.PipelineManage) ||
+		tenantContext.HasPermission(permissions.AutomationsManage)
 }
 
 func normalizeUUID(value string) (string, bool) {

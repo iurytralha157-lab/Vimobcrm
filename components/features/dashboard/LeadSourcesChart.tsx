@@ -82,21 +82,21 @@ function LeadSourcesTooltip({ active, payload }: LeadSourcesTooltipProps) {
   const leadLabel = value === 1 ? 'lead' : 'leads';
 
   return (
-    <div className="min-w-[150px] rounded-xl border-0 bg-[var(--app-surface-solid)] px-3 py-2.5 text-[var(--app-text-primary)] shadow-[0_8px_20px_rgba(0,0,0,0.22)] animate-in fade-in zoom-in-95 duration-150">
+    <div className="min-w-[150px] rounded-xl border-0 bg-[var(--app-surface-solid)] px-3 py-2.5 text-[#232323] shadow-[0_8px_20px_rgba(0,0,0,0.18)] animate-in fade-in zoom-in-95 duration-150">
       <div className="mb-1 flex items-center gap-2">
         <span
           className="h-2.5 w-2.5 rounded-full ring-2 ring-[var(--app-surface-solid)]"
           style={{ backgroundColor: source?.color || entry.color || entry.fill }}
         />
-        <span className="truncate text-xs font-semibold text-foreground">
+        <span className="truncate text-[11px] font-light text-[#272727]">
           {source?.name || entry.name}
         </span>
       </div>
       <div className="flex items-end justify-between gap-4">
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-[11px] font-light text-[#272727]/70">
           {value} {leadLabel}
         </span>
-        <span className="rounded-full bg-white/[0.055] px-2 py-0.5 text-[11px] font-bold tabular-nums text-foreground">
+        <span className="rounded-full bg-[#232323]/5 px-2 py-0.5 text-[11px] font-medium tabular-nums text-[#232323]">
           {percentage}%
         </span>
       </div>
@@ -109,7 +109,7 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
     return (
       <Card className="app-card overflow-hidden h-full flex flex-col">
         <CardHeader className="pb-1 pt-4 px-4">
-          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground">
+          <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[#272727]">
             <PieChartIcon className="h-4 w-4 text-primary" />
             Origem dos leads
           </CardTitle>
@@ -152,7 +152,7 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
     return (
       <Card className="app-card overflow-hidden h-full flex flex-col">
         <CardHeader className="pb-1 pt-4 px-4">
-          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground">
+          <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[#272727]">
             <PieChartIcon className="h-4 w-4 text-primary" />
             Origem dos leads
           </CardTitle>
@@ -173,7 +173,7 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
     <Card className="app-card overflow-hidden h-full flex flex-col">
       <CardHeader className="pb-0 pt-4 px-4">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground">
+          <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[#272727]">
             <PieChartIcon className="h-3.5 w-3.5 text-primary" />
             Origem dos leads
           </CardTitle>
@@ -241,20 +241,20 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
 
             {/* Central text for Donut - Improved Hierarchy */}
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none z-0">
-              <span className="text-[10px] sm:text-[11px] uppercase font-bold text-muted-foreground/70 tracking-[0.2em] mb-0.5">
-                Leads
-              </span>
               <div className="relative flex max-w-[52%] items-center justify-center">
                 <span
                   className={cn(
-                    "max-w-full truncate font-black leading-none text-foreground tabular-nums drop-shadow-sm",
+                    "max-w-full truncate font-medium leading-none text-[#232323] tabular-nums drop-shadow-sm",
                     totalValueClassName,
                   )}
                 >
                   {total}
                 </span>
-                <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-8 h-1 bg-primary/20 rounded-full blur-[2px]" />
+                <div className="absolute -bottom-1 left-1/2 h-1 w-8 -translate-x-1/2 rounded-full bg-[#232323]/10 blur-[2px]" />
               </div>
+              <span className="mt-1 text-[10px] font-light uppercase tracking-[0.2em] text-[#232323] sm:text-[11px]">
+                Leads
+              </span>
             </div>
           </div>
         </div>

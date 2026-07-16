@@ -219,7 +219,7 @@ export function FloatingChat() {
   const isMobile = useIsMobile();
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
   const { profile, organization } = useAuth();
-  const { data: canStartAutomations = false } = useHasPermission("automations_edit");
+  const { data: canStartAutomations = false } = useHasPermission("automations_manage");
   const [searchTerm, setSearchTerm] = useState("");
   const [messageText, setMessageText] = useState("");
   const [hideGroups, setHideGroups] = useState(() => {

@@ -17,6 +17,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/authorization"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -775,7 +777,17 @@ func (repo Repository) listContactsFull(ctx context.Context, tenantContext tenan
 			l.meta_ad_id,
 			l.meta_click_id,
 			coalesce(lm.campaign_id, l.meta_campaign_id),
-			coalesce(lm.campaign_name, l.utm_campaign),
+			coalesce(
+				nullif(lm.campaign_name, ''),
+				nullif(l.utm_campaign, ''),
+				nullif(lm.raw_payload->>'campaign_name', ''),
+				nullif(lm.raw_payload->>'campaignName', ''),
+				nullif(lm.raw_payload#>>'{campaign,name}', ''),
+				nullif(lm.payload->>'campaign_name', ''),
+				nullif(lm.payload->>'campaignName', ''),
+				nullif(lm.payload#>>'{campaign,name}', ''),
+				nullif(mci.campaign_name, '')
+			),
 			coalesce(lm.adset_id, l.meta_adset_id),
 			lm.adset_name,
 			coalesce(lm.ad_id, l.meta_ad_id),
@@ -805,6 +817,12 @@ func (repo Repository) listContactsFull(ctx context.Context, tenantContext tenan
 			order by lm.updated_at desc nulls last, lm.created_at desc nulls last
 			limit 1
 		) lm on true
+		left join lateral (
+			select max(nullif(mi.campaign_name, '')) as campaign_name
+			from public.meta_campaign_insights mi
+			where mi.organization_id = l.organization_id
+			  and mi.campaign_id = coalesce(nullif(lm.campaign_id, ''), nullif(l.meta_campaign_id, ''))
+		) mci on true
 		left join lateral (
 			select json_agg(json_build_object('id', t.id::text, 'name', t.name, 'color', t.color) order by t.name) as tags
 			from public.lead_tags lt
@@ -1029,7 +1047,7 @@ func (repo Repository) ListTags(ctx context.Context, tenantContext tenant.Contex
 }
 
 func (repo Repository) CreateTag(ctx context.Context, tenantContext tenant.Context, input tagMutationInput) (Tag, error) {
-	if !canManageLeads(tenantContext) {
+	if !tenantContext.HasPermission(permissions.TagManage) {
 		return Tag{}, tenant.ErrOrganizationAccessDenied
 	}
 	return scanTag(repo.db.Pool().QueryRow(ctx, `
@@ -1040,7 +1058,7 @@ func (repo Repository) CreateTag(ctx context.Context, tenantContext tenant.Conte
 }
 
 func (repo Repository) UpdateTag(ctx context.Context, tenantContext tenant.Context, tagID string, input tagMutationInput) (Tag, error) {
-	if !canManageLeads(tenantContext) {
+	if !tenantContext.HasPermission(permissions.TagManage) {
 		return Tag{}, tenant.ErrOrganizationAccessDenied
 	}
 	tagID, ok := normalizeUUID(tagID)
@@ -1057,7 +1075,7 @@ func (repo Repository) UpdateTag(ctx context.Context, tenantContext tenant.Conte
 }
 
 func (repo Repository) DeleteTag(ctx context.Context, tenantContext tenant.Context, tagID string) error {
-	if !canManageLeads(tenantContext) {
+	if !tenantContext.HasPermission(permissions.TagManage) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 	tagID, ok := normalizeUUID(tagID)
@@ -1097,7 +1115,7 @@ func (repo Repository) ListActivities(ctx context.Context, tenantContext tenant.
 	where := []string{
 		"a.organization_id = $1::uuid",
 		"l.organization_id = $1::uuid",
-		leadVisibilitySQL("$2", "$3", "$4"),
+		leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn)),
 	}
 
 	if leadID != "" {
@@ -1201,7 +1219,7 @@ func (repo Repository) GetLeadMeta(ctx context.Context, tenantContext tenant.Con
 		join public.leads l on l.id = lm.lead_id
 		where l.organization_id = $1::uuid
 		  and lm.organization_id = $1::uuid
-		  and `+leadVisibilitySQL("$2", "$3", "$4")+`
+		  and `+leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn))+`
 		  and lm.lead_id = $5::uuid
 		order by lm.created_at desc
 		limit 1
@@ -1230,7 +1248,7 @@ func (repo Repository) ListLeadAttachments(ctx context.Context, tenantContext te
 	where := []string{
 		"l.organization_id = $1::uuid",
 		"la.lead_id = $5::uuid",
-		leadVisibilitySQL("$2", "$3", "$4"),
+		leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn)),
 	}
 	if columns.OrganizationID {
 		where = append(where, "la.organization_id = $1::uuid")
@@ -1791,7 +1809,7 @@ func (repo Repository) getNotificationRecipient(ctx context.Context, organizatio
 		  u.id::text,
 		  u.name,
 		  u.email,
-		  coalesce(nullif(u.whatsapp, ''), nullif(u.phone, ''))
+		  nullif(u.whatsapp, '')
 		from public.users u
 		join public.organization_members om
 		  on om.user_id = u.id
@@ -2468,9 +2486,8 @@ func requestWantsChannel(channels []string, channel string) bool {
 func canDispatchNotifications(tenantContext tenant.Context) bool {
 	return tenantContext.IsSuperAdmin ||
 		canManageLeads(tenantContext) ||
-		tenantContext.HasPermission("settings_manage") ||
-		tenantContext.HasPermission("whatsapp_manage") ||
-		tenantContext.HasPermission("users_manage")
+		tenantContext.HasPermission(permissions.WhatsAppManage) ||
+		tenantContext.HasPermission(permissions.UsersManage)
 }
 
 func firstNotificationText(values ...string) string {
@@ -2570,7 +2587,7 @@ func buildContactWhere(tenantContext tenant.Context, filter ContactListFilter) (
 	}
 	where := []string{
 		"l.organization_id = $1::uuid",
-		leadVisibilitySQL("$2", "$3", "$4"),
+		leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn)),
 	}
 
 	add := func(clause string, value any) {
@@ -2588,11 +2605,19 @@ func buildContactWhere(tenantContext tenant.Context, filter ContactListFilter) (
 		if !ok {
 			return nil, nil, fmt.Errorf("%w: teamId is invalid", ErrInvalidInput)
 		}
-		add(`exists (
-			select 1 from public.team_members tm
-			where tm.team_id = $%d::uuid
-			  and tm.user_id = l.assigned_user_id
-		)`, teamID)
+		args = append(args, teamID)
+		index := len(args)
+		where = append(where, fmt.Sprintf(`(
+			nullif(to_jsonb(l)->>'team_id', '') = $%d::text
+			or (
+				nullif(to_jsonb(l)->>'team_id', '') is null
+				and exists (
+					select 1 from public.team_members tm
+					where tm.team_id = $%d::uuid
+					  and tm.user_id = l.assigned_user_id
+				)
+			)
+		)`, index, index))
 	}
 	if strings.TrimSpace(filter.PipelineID) != "" {
 		pipelineID, ok := normalizeUUID(filter.PipelineID)
@@ -2642,22 +2667,12 @@ func buildContactWhere(tenantContext tenant.Context, filter ContactListFilter) (
 			add("l.created_at <= $%d::timestamptz", filter.CreatedTo)
 		}
 	}
-	addMeta := func(columnID string, columnName string, value string) {
-		if value == "" {
-			return
-		}
-		args = append(args, value)
-		index := len(args)
-		where = append(where, fmt.Sprintf(`exists (
-			select 1 from public.lead_meta lm
-			where lm.organization_id = l.organization_id
-			  and lm.lead_id = l.id
-			  and (lm.%s = $%d or lm.%s = $%d)
-		)`, columnID, index, columnName, index))
+	addMeta := func(leadColumns []string, columnID string, columnName string, value string) {
+		addLeadMetaFilterCondition(&args, &where, "l", "lm", leadColumns, columnID, columnName, value)
 	}
-	addMeta("campaign_id", "campaign_name", filter.CampaignID)
-	addMeta("adset_id", "adset_name", filter.AdSetID)
-	addMeta("ad_id", "ad_name", filter.AdID)
+	addMeta([]string{"meta_campaign_id", "utm_campaign"}, "campaign_id", "campaign_name", filter.CampaignID)
+	addMeta([]string{"meta_adset_id"}, "adset_id", "adset_name", filter.AdSetID)
+	addMeta([]string{"meta_ad_id"}, "ad_id", "ad_name", filter.AdID)
 
 	return where, args, nil
 }
@@ -3295,7 +3310,7 @@ func (repo Repository) ensureLeadVisible(ctx context.Context, tenantContext tena
 		select l.id::text
 		from public.leads l
 		where l.organization_id = $1::uuid
-		  and `+leadVisibilitySQL("$2", "$3", "$4")+`
+		  and `+leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn))+`
 		  and l.id = $5::uuid
 		limit 1
 	`, tenantContext.OrganizationID, canViewAllLeads(tenantContext), tenantContext.UserID, tenantContext.HasPermission("lead_view_team"), leadID).Scan(&id)
@@ -3306,20 +3321,25 @@ func (repo Repository) ensureLeadVisible(ctx context.Context, tenantContext tena
 }
 
 func (repo Repository) ensureLeadEditable(ctx context.Context, tenantContext tenant.Context, leadID string) error {
-	var assignedUserID pgtype.Text
+	var assignedUserID, teamID pgtype.Text
 	err := repo.db.Pool().QueryRow(ctx, `
-		select assigned_user_id::text
-		from public.leads
+		select
+			assigned_user_id::text,
+			nullif(to_jsonb(l)->>'team_id', '')
+		from public.leads l
 		where organization_id = $1::uuid and id = $2::uuid
 		limit 1
-	`, tenantContext.OrganizationID, leadID).Scan(&assignedUserID)
+	`, tenantContext.OrganizationID, leadID).Scan(&assignedUserID, &teamID)
 	if err == pgx.ErrNoRows {
 		return ErrLeadNotFound
 	}
 	if err != nil {
 		return err
 	}
-	if !canMoveLead(tenantContext, textValue(assignedUserID)) {
+	if !authorization.CanOperateLead(tenantContext, authorization.LeadResource{
+		AssignedUserID: textValue(assignedUserID),
+		TeamID:         textValue(teamID),
+	}) {
 		return tenant.ErrOrganizationAccessDenied
 	}
 	return nil

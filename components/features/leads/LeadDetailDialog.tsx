@@ -86,9 +86,10 @@ import { useUpdateLeadCommission } from '@/hooks/use-update-commission';
 import { useDealStatusChange } from '@/hooks/use-deal-status-change';
 import { useCreateCall } from '@/hooks/use-telephony';
 import { useRecordFirstResponseOnAction } from '@/hooks/use-first-response';
-import { useUserAccessScope } from '@/hooks/use-user-access-scope';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useTeams } from '@/hooks/use-teams';
 import type { UnifiedHistoryEvent } from '@/hooks/use-lead-history';
+import { appendOptimisticHistoryEvent } from '@/hooks/use-optimistic-lead-history';
 import { leadsAPI } from '@/lib/api/leads';
 import { teamsAPI } from '@/lib/api/teams';
 const sourceLabels: Record<string, string> = {
@@ -202,6 +203,29 @@ type SelectableLeadProperty = {
   preco?: number | null;
   commission_percentage?: number | null;
 };
+
+function getLeadPropertyFallback(lead: LeadDetailLead | null): SelectableLeadProperty | null {
+  const property = lead?.interest_property || lead?.property || null;
+  const propertyId = lead?.interest_property_id || lead?.property_id || property?.id || null;
+
+  if (!propertyId) return null;
+
+  return {
+    id: propertyId,
+    title: property?.title || null,
+    code: property?.code || null,
+    preco: typeof property?.preco === 'number' ? property.preco : null,
+    commission_percentage: typeof lead?.commission_percentage === 'number' ? lead.commission_percentage : null,
+  };
+}
+
+function mergePropertyFallback(
+  properties: SelectableLeadProperty[],
+  fallback: SelectableLeadProperty | null,
+) {
+  if (!fallback || properties.some((property) => property.id === fallback.id)) return properties;
+  return [fallback, ...properties];
+}
 
 type PipelineCacheStage = LeadDetailStage & {
   leads?: LeadDetailLead[];
@@ -589,7 +613,7 @@ function CompactScheduleEventsList({
 }: {
   events: ScheduleEvent[];
   locale: Locale;
-  onEditEvent: (event: ScheduleEvent) => void;
+  onEditEvent?: (event: ScheduleEvent) => void;
 }) {
   const [currentTime] = useState(() => Date.now());
   const sortedEvents = [...events].sort((left, right) => {
@@ -624,9 +648,10 @@ function CompactScheduleEventsList({
           <button
             key={event.id}
             type="button"
-            onClick={() => onEditEvent(event)}
+            disabled={!onEditEvent}
+            onClick={() => onEditEvent?.(event)}
             className={cn(
-              'flex w-full items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-1.5 text-left transition-colors hover:bg-primary/10',
+              'flex w-full items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-1.5 text-left transition-colors hover:bg-primary/10 disabled:cursor-default disabled:hover:bg-[var(--app-surface-solid)]',
               isCompleted && 'opacity-65',
             )}
           >
@@ -722,6 +747,7 @@ export function LeadDetailDialog({
   const [historyEventDialogOpen, setHistoryEventDialogOpen] = useState(false);
   const [selectedAttachment, setSelectedAttachment] = useState<LeadAttachment | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [shouldLoadLeadProperties, setShouldLoadLeadProperties] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [reopenStatusConfirmation, setReopenStatusConfirmation] = useState<{
     leadId: string;
@@ -738,7 +764,7 @@ export function LeadDetailDialog({
   const [feedback, setFeedback] = useState('');
 
   const handleSaveFeedback = async () => {
-    if (!feedback.trim()) return;
+    if (!canOperateLead || !feedback.trim()) return;
     const savedFeedback = feedback.trim();
     try {
       await updateLead.mutateAsync({
@@ -870,13 +896,27 @@ export function LeadDetailDialog({
   const {
     data: cadenceTemplates = []
   } = useCadenceTemplates();
+  const { profile, organization } = useAuth();
+  const { hasPermission } = useUserPermissions();
+  const canOperateLead = hasPermission('lead_operate');
+  const canViewProperties = hasPermission('property_view') || hasPermission('property_manage');
+  const canViewLeadSchedule = hasPermission('schedule_view');
+  const canManageLeadSchedule = canOperateLead && hasPermission('schedule_manage');
   const {
-    data: properties = []
-  } = useProperties();
+    data: loadedProperties = [],
+    isLoading: propertiesLoading,
+    isFetching: propertiesFetching,
+  } = useProperties(undefined, {}, { enabled: canViewProperties && shouldLoadLeadProperties });
+  const propertyOptions = mergePropertyFallback(loadedProperties, getLeadPropertyFallback(localLead));
+  const propertyPickerLoading = shouldLoadLeadProperties && (propertiesLoading || (propertiesFetching && loadedProperties.length === 0));
+  const handlePropertyPickerOpenChange = (open: boolean) => {
+    if (open) setShouldLoadLeadProperties(true);
+  };
   const {
     data: scheduleEvents = []
   } = useScheduleEvents({
-    leadId: leadId || undefined
+    leadId: leadId || undefined,
+    enabled: canViewLeadSchedule,
   });
   const {
     data: leadMeta,
@@ -889,8 +929,6 @@ export function LeadDetailDialog({
   const updateCommission = useUpdateLeadCommission();
   const dealStatusChange = useDealStatusChange();
   const { recordFirstResponse } = useRecordFirstResponseOnAction();
-  const { profile, organization, tenantContext } = useAuth();
-  const accessScope = useUserAccessScope();
   const { data: teams = [] } = useTeams({ includeInactive: true });
   const createCallMutation = useCreateCall();
   const createActivityMutation = useCreateActivity();
@@ -909,7 +947,7 @@ export function LeadDetailDialog({
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !lead.id) return;
+    if (!canOperateLead || !file || !lead.id) return;
 
     setIsUploading(true);
     try {
@@ -926,6 +964,7 @@ export function LeadDetailDialog({
   };
 
   const handleSelectInterestProperty = async (property: SelectableLeadProperty) => {
+    if (!canOperateLead) return;
     const nextPropertyPrice = typeof property.preco === 'number' ? property.preco : null;
     const nextPropertyCommission =
       typeof property.commission_percentage === 'number' ? property.commission_percentage : null;
@@ -956,6 +995,38 @@ export function LeadDetailDialog({
     setLocalLead((current) => current ? { ...current, ...nextLeadPatch } : current);
     updatePipelineLeadCache(lead.id, nextLeadPatch);
 
+    const historyQueryKey = ['lead-history-v2', lead.id] as const;
+    const previousHistory = queryClient.getQueryData<UnifiedHistoryEvent[]>(historyQueryKey);
+    const timestamp = new Date().toISOString();
+    const propertyContent = [propertyCode, propertyTitle].filter(Boolean).join(' - ') || 'Imovel selecionado';
+    queryClient.setQueryData<UnifiedHistoryEvent[]>(historyQueryKey, (current) =>
+      appendOptimisticHistoryEvent(current, {
+        id: `optimistic-property-${lead.id}-${property.id}-${timestamp}`,
+        type: 'property_selected',
+        label: propertyCode || propertyTitle
+          ? `Imovel selecionado: ${propertyCode || propertyTitle}`
+          : 'Imovel selecionado',
+        content: propertyContent,
+        timestamp,
+        actor: profile?.id
+          ? {
+              id: profile.id,
+              name: profile.name || profile.email || 'Usuario',
+              avatar_url: profile.avatar_url || null,
+            }
+          : null,
+        source: 'activity',
+        metadata: {
+          property_id: property.id,
+          property_title: propertyTitle,
+          property_code: propertyCode,
+          property_price: nextPropertyPrice,
+          commission_percentage: nextPropertyCommission,
+          origin: 'lead_update',
+        },
+      }),
+    );
+
     const updateData: Partial<Lead> & { id: string } = {
       id: lead.id,
       property_id: property.id,
@@ -974,13 +1045,14 @@ export function LeadDetailDialog({
     } catch (error) {
       setLocalLead(lead);
       updatePipelineLeadCache(lead.id, lead);
+      queryClient.setQueryData(historyQueryKey, previousHistory);
       throw error;
     }
   };
 
   // Quick action handlers for phone/email with outcome dialog
   const handleQuickPhone = () => {
-    if (!lead.phone) return;
+    if (!canOperateLead || !lead.phone) return;
 
     // 1. Log initiation immediately in history
     createActivityMutation.mutate({
@@ -996,12 +1068,13 @@ export function LeadDetailDialog({
   };
 
   const handleQuickWhatsApp = () => {
+    if (!canOperateLead) return;
     setActiveTab(isMobile ? 'history' : 'activities');
     setComposerRequest((current) => ({ id: (current?.id || 0) + 1 }));
   };
 
   const handleQuickEmail = () => {
-    if (!lead.email) return;
+    if (!canOperateLead || !lead.email) return;
     const gmailUrl = `https://mail.google.com/mail/view=cm&fs=1&tf=1&to=${encodeURIComponent(lead.email)}`;
     window.open(gmailUrl, '_blank');
     setQuickActionOutcomeType('email');
@@ -1009,6 +1082,7 @@ export function LeadDetailDialog({
   };
 
   const handleQuickActionOutcomeConfirm = async (outcome: TaskOutcome, notes: string) => {
+    if (!canOperateLead) return;
     // 1. Log in the 'activities' table for visual history
     await createActivityMutation.mutateAsync({
       lead_id: lead.id,
@@ -1040,6 +1114,7 @@ export function LeadDetailDialog({
     setQuickActionOutcomeOpen(false);
   };
   const handleEditScheduleEvent = (event: ScheduleEvent) => {
+    if (!canManageLeadSchedule) return;
     setEditingScheduleEvent(event);
     setScheduleFormOpen(true);
   };
@@ -1058,21 +1133,8 @@ export function LeadDetailDialog({
   const leadTags = Array.isArray(localLead.tags) ? localLead.tags.filter(hasTagId) : [];
   const safeAllTags = Array.isArray(allTags) ? allTags.filter(Boolean) : [];
   const safeAllUsers = Array.isArray(allUsers) ? allUsers.filter(Boolean) : [];
-  const currentUserId = profile?.id || tenantContext?.userId || '';
-  const currentAssigneeId = localLead.assigned_user_id || localLead.assignee?.id || '';
-  const canTransferOwnLead =
-    !!currentUserId &&
-    !!currentAssigneeId &&
-    currentAssigneeId === currentUserId;
-  const canTransferTeamLead = (
-    accessScope.isTeamLeader &&
-    (
-      (!!localLead.pipeline_id && accessScope.ledPipelineIds.includes(localLead.pipeline_id)) ||
-      (!!currentAssigneeId && accessScope.ledUserIds.includes(currentAssigneeId))
-    )
-  );
-  const canTransferLead = accessScope.canTransferAnyLead || canTransferOwnLead || canTransferTeamLead;
-  const canUnassignLead = accessScope.canTransferAnyLead || canTransferTeamLead;
+  const canTransferLead = canOperateLead;
+  const canUnassignLead = canOperateLead;
   const assignableUsers = canTransferLead ? safeAllUsers : [];
   const safeLeadTasks = Array.isArray(leadTasks) ? leadTasks.filter(Boolean) : [];
   const safeCadenceTemplates = Array.isArray(cadenceTemplates) ? cadenceTemplates.filter(Boolean) : [];
@@ -1210,6 +1272,7 @@ export function LeadDetailDialog({
   };
 
   const handleAddTag = async (tagId: string) => {
+    if (!canOperateLead) return;
     const tagToAdd = safeAllTags.find(t => t.id === tagId);
     if (!tagToAdd || !localLead) return;
 
@@ -1241,7 +1304,7 @@ export function LeadDetailDialog({
   };
 
   const handleRemoveTag = async (tagId: string) => {
-    if (!localLead) return;
+    if (!canOperateLead || !localLead) return;
 
     const nextTags = leadTags.filter((tag) => tag.id !== tagId);
     const previousLead: LeadDetailLead = { ...localLead, tags: localLead.tags ? [...localLead.tags] : [] };
@@ -1391,6 +1454,7 @@ export function LeadDetailDialog({
     }
   };
   const handleToggleCadenceTask = async (task: CadenceTaskTemplate, outcome = 'done', outcomeNotes = '') => {
+    if (!canOperateLead) return;
     await completeCadenceTask.mutateAsync({
       leadId: lead.id,
       templateTaskId: task.id,
@@ -1421,6 +1485,7 @@ export function LeadDetailDialog({
 
   // Handle outcome dialog confirmation
   const handleOutcomeConfirm = async (outcome: TaskOutcome, notes: string) => {
+    if (!canOperateLead) return;
     if (!taskForOutcome) return;
     await handleToggleCadenceTask(taskForOutcome, outcome, notes);
     setOutcomeDialogOpen(false);
@@ -1436,6 +1501,7 @@ export function LeadDetailDialog({
   };
 
   const handleCadenceTaskClick = (task: CadenceTaskTemplate) => {
+    if (!canOperateLead) return;
     const taskType = getCadenceTaskType(task.type);
     const existingTask = leadTasksMap.get(`${task.title}-${task.day_offset}-${task.type}`);
     const isDone = existingTask?.is_done;
@@ -1468,6 +1534,7 @@ export function LeadDetailDialog({
     }
   };
   const handleRoteiroAction = (action: 'complete' | 'message') => {
+    if (!canOperateLead) return;
     if (!selectedTask) return;
     if (action === 'message' && selectedTask.recommended_message) {
       const message = selectedTask.recommended_message.replace(/{nome}/gi, lead.name || '').replace(/{empresa}/gi, lead.empresa || '').replace(/{email}/gi, lead.email || '');
@@ -1514,6 +1581,7 @@ export function LeadDetailDialog({
     });
   };
   const handleSaveContact = async () => {
+    if (!canOperateLead) return;
     try {
       const newValorInteresse = editForm.valor_interesse ? parseFloat(editForm.valor_interesse) : null;
       const newCommissionPercentage = editForm.commission_percentage ? parseFloat(editForm.commission_percentage) : null;
@@ -1569,7 +1637,7 @@ export function LeadDetailDialog({
     }
   };
   const handleMoveToStage = async (stageId: string) => {
-    if (stageId === localLead.stage_id) return;
+    if (!canOperateLead || stageId === localLead.stage_id) return;
 
     setStagePopoverOpen(false);
     const previousLead = { ...localLead };
@@ -1619,6 +1687,7 @@ export function LeadDetailDialog({
     newStatus: string,
     options?: { skipReopenConfirmation?: boolean; previousStatusOverride?: string },
   ) => {
+    if (!canOperateLead) return;
     const previousStatus = options?.previousStatusOverride || localLead?.deal_status || 'open';
     if (newStatus === previousStatus) return;
 
@@ -1810,7 +1879,7 @@ export function LeadDetailDialog({
                   >
                     <div className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: tagColor }} />
                     {tag.name || 'Tag'}
-                    <button onClick={() => handleRemoveTag(tag.id)} className="ml-0.5 rounded-[3px] p-0.5 hover:bg-black/10">
+                    <button disabled={!canOperateLead} onClick={() => handleRemoveTag(tag.id)} className="ml-0.5 rounded-[3px] p-0.5 hover:bg-black/10 disabled:hidden">
                       <X className="h-2 w-2" />
                     </button>
                   </Badge>
@@ -1821,9 +1890,9 @@ export function LeadDetailDialog({
                   +{leadTags.length - 3}
                 </Badge>
               )}
-              <Popover open={tagPopoverOpen} onOpenChange={setTagPopoverOpen}>
+              <Popover open={tagPopoverOpen} onOpenChange={(open) => canOperateLead && setTagPopoverOpen(open)}>
                 <PopoverTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-5 w-5 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-0">
+                  <Button disabled={!canOperateLead} variant="ghost" size="sm" className="h-5 w-5 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-0 disabled:hidden">
                     <Plus className="h-3 w-3" />
                   </Button>
                 </PopoverTrigger>
@@ -1842,17 +1911,17 @@ export function LeadDetailDialog({
         {/* Row 2 - Ações rápidas */}
         <div className="flex items-center gap-2 mb-3">
           {lead.phone && (
-            <Button variant="outline" size="sm" onClick={handleQuickPhone} className="h-9 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+            <Button disabled={!canOperateLead} variant="outline" size="sm" onClick={handleQuickPhone} className="h-9 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
               <Phone className="h-4 w-4 mr-1.5" />
               Ligar
             </Button>
           )}
-          <Button size="sm" onClick={handleQuickWhatsApp} className="h-9 flex-1 rounded-[6px]">
+          <Button disabled={!canOperateLead} size="sm" onClick={handleQuickWhatsApp} className="h-9 flex-1 rounded-[6px]">
             <MessageCircle className="h-4 w-4 mr-1.5" />
             Chat
           </Button>
           {lead.email && (
-            <Button variant="outline" size="sm" onClick={handleQuickEmail} className="h-9 w-9 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-0">
+            <Button disabled={!canOperateLead} variant="outline" size="sm" onClick={handleQuickEmail} className="h-9 w-9 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-0">
               <Mail className="h-4 w-4" />
             </Button>
           )}
@@ -1867,10 +1936,10 @@ export function LeadDetailDialog({
             </Badge>
           )}
           {/* Stage pill */}
-          <Popover open={stagePopoverOpen} onOpenChange={setStagePopoverOpen}>
+          <Popover open={stagePopoverOpen} onOpenChange={(open) => canOperateLead && setStagePopoverOpen(open)}>
 
             <PopoverTrigger asChild>
-              <button className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden rounded-[6px] bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
+              <button disabled={!canOperateLead} className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden rounded-[6px] bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary disabled:cursor-default disabled:opacity-70">
                 <div className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse shrink-0" />
                 <span className="truncate">{currentStage?.name || 'Sem estágio'}</span>
                 <ChevronDown className="h-3 w-3 shrink-0 ml-auto" />
@@ -1882,7 +1951,7 @@ export function LeadDetailDialog({
                   const isActive = stage.id === localLead.stage_id;
                   const isPast = idx < currentStageIndex;
                   return (
-                    <button key={stage.id} onClick={() => handleMoveToStage(stage.id)} className={cn("flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-left transition-all", isActive ? "bg-primary text-primary-foreground" : isPast ? "bg-primary/10 text-primary hover:bg-primary/20" : "hover:bg-accent")}>
+                    <button key={stage.id} disabled={!canOperateLead} onClick={() => handleMoveToStage(stage.id)} className={cn("flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-left transition-all disabled:cursor-default", isActive ? "bg-primary text-primary-foreground" : isPast ? "bg-primary/10 text-primary hover:bg-primary/20" : "hover:bg-accent")}>
                       {isPast && <Check className="h-4 w-4 shrink-0" />}
                       {isActive && <div className="h-2 w-2 rounded-full bg-primary-foreground animate-pulse" />}
                       {!isPast && !isActive && <div className="h-2 w-2 rounded-full bg-muted" />}
@@ -1895,7 +1964,7 @@ export function LeadDetailDialog({
           </Popover>
 
           {/* Deal Status pill */}
-          <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange}>
+          <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange} disabled={!canOperateLead}>
               <SelectTrigger
                 className={cn(
                   "h-auto w-auto shrink-0 gap-1.5 rounded-[6px] px-3 py-1.5 text-xs font-medium",
@@ -1933,12 +2002,14 @@ export function LeadDetailDialog({
             value={lostReasonLocal}
             onChange={(e) => setLostReasonLocal(e.target.value)}
             onBlur={async (e) => {
+              if (!canOperateLead) return;
               if (e.target.value !== (lead.lost_reason || '')) {
                 await updateLead.mutateAsync({ id: lead.id, lost_reason: e.target.value });
                 refetchStages();
               }
             }}
             placeholder="Motivo da perda..."
+            disabled={!canOperateLead}
             className="mt-2 rounded-xl text-sm border-red-200 dark:border-red-800"
           />
         )}
@@ -2036,12 +2107,13 @@ export function LeadDetailDialog({
                   className="min-h-[120px] rounded-xl resize-none text-sm"
                   value={feedback}
                   onChange={(e) => setFeedback(e.target.value)}
+                  disabled={!canOperateLead}
                 />
                 <div className="flex justify-end">
                   <Button
                     className="lead-detail-primary-action rounded-[6px] px-3"
                     size="sm"
-                    disabled={!feedback.trim() || updateLead.isPending}
+                    disabled={!canOperateLead || !feedback.trim() || updateLead.isPending}
                     onClick={handleSaveFeedback}
                   >
                     Registrar feedback
@@ -2056,7 +2128,7 @@ export function LeadDetailDialog({
           {/* Schedule Tab */}
           {activeTab === 'schedule' && <div className="space-y-4">
               <div className="flex justify-end">
-                <Button variant="default" onClick={() => {
+                <Button variant="default" disabled={!canManageLeadSchedule} onClick={() => {
                   setEditingScheduleEvent(null);
                   setScheduleDefaultType('call');
                   setScheduleFormOpen(true);
@@ -2068,7 +2140,7 @@ export function LeadDetailDialog({
 
               <EventsList
                 events={scheduleEvents}
-                onEditEvent={handleEditScheduleEvent}
+                onEditEvent={canManageLeadSchedule ? handleEditScheduleEvent : undefined}
                 onAddEvent={() => {
                   setEditingScheduleEvent(null);
                   setScheduleDefaultType('call');
@@ -2088,7 +2160,7 @@ export function LeadDetailDialog({
                     </div>
                     <h3 className="font-medium text-sm">Dados do contato</h3>
                   </div>
-                {!isEditingContact && <Button variant="ghost" size="sm" onClick={() => {
+                {!isEditingContact && canOperateLead && <Button variant="ghost" size="sm" onClick={() => {
                     setActiveTab('contact');
                     setIsEditingContact(true);
                   }} className="lead-detail-subtle-action h-8 rounded-[6px] px-3">
@@ -2487,6 +2559,7 @@ export function LeadDetailDialog({
                   <Select
                     value={localLead.deal_status || 'open'}
                     onValueChange={handleDealStatusChange}
+                    disabled={!canOperateLead}
                   >
                     <SelectTrigger className={cn('rounded-xl', getDealStatusTriggerClass(localLead.deal_status))}>
                       <SelectValue placeholder="Selecionar status" />
@@ -2541,9 +2614,12 @@ export function LeadDetailDialog({
                 <div>
                   <Label className="text-xs text-muted-foreground mb-2 block">Imóvel de interesse</Label>
                   <PropertyPickerDialog
-                    properties={properties}
+                    properties={propertyOptions}
                     selectedPropertyId={localLead.interest_property_id || editForm.property_id || null}
                     onSelect={(property) => void handleSelectInterestProperty(property)}
+                    disabled={!canOperateLead || !canViewProperties}
+                    isLoading={propertyPickerLoading}
+                    onOpenChange={handlePropertyPickerOpenChange}
                   />
                 </div>
 
@@ -2675,6 +2751,7 @@ export function LeadDetailDialog({
                   <button
                     key={stage.id}
                     type="button"
+                    disabled={!canOperateLead}
                     aria-label={`Mover para ${stage.name}`}
                     data-lead-stage-step
                     onClick={() => handleMoveToStage(stage.id)}
@@ -2721,7 +2798,7 @@ export function LeadDetailDialog({
                       style={{ backgroundColor: tagColor, color: '#fff' }}
                     >
                       <span className="max-w-[82px] truncate">{tag.name || 'Tag'}</span>
-                      <button type="button" className="rounded-[3px] p-0.5 hover:bg-black/10" onClick={() => handleRemoveTag(tag.id)}>
+                      <button disabled={!canOperateLead} type="button" className="rounded-[3px] p-0.5 hover:bg-black/10 disabled:hidden" onClick={() => handleRemoveTag(tag.id)}>
                         <X className="h-2.5 w-2.5" />
                       </button>
                     </Badge>
@@ -2732,9 +2809,9 @@ export function LeadDetailDialog({
                     +{leadTags.length - 4}
                   </Badge>
                 )}
-                <Popover open={tagPopoverOpen} onOpenChange={setTagPopoverOpen}>
+                <Popover open={tagPopoverOpen} onOpenChange={(open) => canOperateLead && setTagPopoverOpen(open)}>
                   <PopoverTrigger asChild>
-                    <Button variant="ghost" size="sm" className="h-5 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-1.5 text-[10px]">
+                    <Button disabled={!canOperateLead} variant="ghost" size="sm" className="h-5 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-1.5 text-[10px] disabled:hidden">
                       <Plus className="mr-1 h-3 w-3" />
                       Tag
                     </Button>
@@ -2797,7 +2874,7 @@ export function LeadDetailDialog({
               </PopoverContent>
             </Popover>
 
-            <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange}>
+            <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange} disabled={!canOperateLead}>
               <SelectTrigger className={cn('h-8 w-[92px] gap-1 rounded-[6px] px-2 text-xs font-medium', getDealStatusTriggerClass(localLead.deal_status))}>
                 <SelectValue>{dealStatusLabel}</SelectValue>
               </SelectTrigger>
@@ -2811,16 +2888,16 @@ export function LeadDetailDialog({
 
           <div className="mt-2 grid grid-cols-3 gap-2">
             {lead.phone && (
-              <Button variant="outline" size="sm" onClick={handleQuickPhone} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+              <Button disabled={!canOperateLead} variant="outline" size="sm" onClick={handleQuickPhone} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
                 <Phone className="h-3.5 w-3.5" />
               </Button>
             )}
-            <Button size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
+            <Button disabled={!canOperateLead} size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
               <MessageCircle className="mr-1 h-3.5 w-3.5" />
               Chat
             </Button>
             {lead.email && (
-              <Button variant="outline" size="sm" onClick={handleQuickEmail} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+              <Button disabled={!canOperateLead} variant="outline" size="sm" onClick={handleQuickEmail} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
                 <Mail className="h-3.5 w-3.5" />
               </Button>
             )}
@@ -2859,10 +2936,10 @@ export function LeadDetailDialog({
                 <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-xs font-semibold">Dados do contato</h3>
-                    <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" onClick={() => setIsEditingContact((value) => !value)}>
+                    {canOperateLead && <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" onClick={() => setIsEditingContact((value) => !value)}>
                       <FileEdit className="h-3 w-3" />
                       {isEditingContact ? 'Fechar' : 'Editar'}
-                    </Button>
+                    </Button>}
                   </div>
 
                   <div className="space-y-2">
@@ -2891,15 +2968,18 @@ export function LeadDetailDialog({
                 </section>
 
                 <PropertyPickerDialog
-                  properties={properties}
+                  properties={propertyOptions}
                   selectedPropertyId={localLead.interest_property_id || editForm.property_id || null}
                   onSelect={(property) => void handleSelectInterestProperty(property)}
+                  disabled={!canOperateLead || !canViewProperties}
+                  isLoading={propertyPickerLoading}
+                  onOpenChange={handlePropertyPickerOpenChange}
                 />
 
                 <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-xs font-semibold">Documentação</h3>
-                    {(accessScope.isAdmin || profile?.id === lead.assigned_user_id) && (
+                    {canOperateLead && (
                       <>
                         <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" disabled={isUploading} onClick={() => fileInputRef.current?.click()}>
                           {isUploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
@@ -2942,6 +3022,7 @@ export function LeadDetailDialog({
                     </div>
                     <Button
                       size="sm"
+                      disabled={!canManageLeadSchedule}
                       className="lead-detail-primary-action lead-agenda-action h-8 shrink-0 rounded-[6px] px-2.5"
                       onClick={() => {
                         setEditingScheduleEvent(null);
@@ -2956,7 +3037,7 @@ export function LeadDetailDialog({
                   <CompactScheduleEventsList
                     events={scheduleEvents}
                     locale={dateLocale}
-                    onEditEvent={handleEditScheduleEvent}
+                    onEditEvent={canManageLeadSchedule ? handleEditScheduleEvent : undefined}
                   />
                 </section>
 
@@ -3018,10 +3099,11 @@ export function LeadDetailDialog({
                     placeholder="Registre o feedback sobre atendimento, perfil ou próximos passos..."
                     value={feedback}
                     onChange={(event) => setFeedback(event.target.value)}
+                    disabled={!canOperateLead}
                     className="min-h-[92px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"
                   />
                   <div className="mt-2 flex justify-end">
-                    <Button className="lead-detail-primary-action h-8 rounded-[6px] px-3" disabled={!feedback.trim() || updateLead.isPending} onClick={handleSaveFeedback}>
+                    <Button className="lead-detail-primary-action h-8 rounded-[6px] px-3" disabled={!canOperateLead || !feedback.trim() || updateLead.isPending} onClick={handleSaveFeedback}>
                       Registrar feedback
                     </Button>
                   </div>
@@ -3090,6 +3172,7 @@ export function LeadDetailDialog({
                       <TooltipTrigger asChild>
                         <button
                           type="button"
+                          disabled={!canOperateLead}
                           aria-label={`Mover para ${stage.name}`}
                           data-lead-stage-step
                           onClick={() => handleMoveToStage(stage.id)}
@@ -3143,15 +3226,15 @@ export function LeadDetailDialog({
                             style={{ backgroundColor: tagColor, color: '#fff' }}
                           >
                             {tag.name || 'Tag'}
-                            <button type="button" className="rounded-[3px] p-0.5 hover:bg-black/10" onClick={() => handleRemoveTag(tag.id)}>
+                            <button disabled={!canOperateLead} type="button" className="rounded-[3px] p-0.5 hover:bg-black/10 disabled:hidden" onClick={() => handleRemoveTag(tag.id)}>
                               <X className="h-2.5 w-2.5" />
                             </button>
                           </Badge>
                         );
                       })}
-                      <Popover open={tagPopoverOpen} onOpenChange={setTagPopoverOpen}>
+                      <Popover open={tagPopoverOpen} onOpenChange={(open) => canOperateLead && setTagPopoverOpen(open)}>
                         <PopoverTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-6 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-2 text-[10px]">
+                          <Button disabled={!canOperateLead} variant="ghost" size="sm" className="h-6 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-2 text-[10px] disabled:hidden">
                             <Plus className="mr-1 h-3 w-3" />
                             Tag
                           </Button>
@@ -3215,7 +3298,7 @@ export function LeadDetailDialog({
                   </Popover>
 
                   <div onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
-                    <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange}>
+                    <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange} disabled={!canOperateLead}>
                       <SelectTrigger
                         className={cn(
                           'h-8 w-[92px] gap-1 rounded-[6px] px-2 text-xs font-medium',
@@ -3235,16 +3318,16 @@ export function LeadDetailDialog({
 
                 <div className="grid grid-cols-3 gap-2">
                   {lead.phone && (
-                    <Button variant="outline" size="sm" onClick={handleQuickPhone} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+                    <Button disabled={!canOperateLead} variant="outline" size="sm" onClick={handleQuickPhone} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
                       <Phone className="h-3.5 w-3.5" />
                     </Button>
                   )}
-                  <Button size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
+                  <Button disabled={!canOperateLead} size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
                     <MessageCircle className="mr-1 h-3.5 w-3.5" />
                     Chat
                   </Button>
                   {lead.email && (
-                    <Button variant="outline" size="sm" onClick={handleQuickEmail} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+                    <Button disabled={!canOperateLead} variant="outline" size="sm" onClick={handleQuickEmail} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
                       <Mail className="h-3.5 w-3.5" />
                     </Button>
                   )}
@@ -3253,10 +3336,10 @@ export function LeadDetailDialog({
                 <div data-tour="lead-detail-contact" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-xs font-semibold">Dados do contato</h3>
-                    <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" onClick={() => setIsEditingContact((value) => !value)}>
+                    {canOperateLead && <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" onClick={() => setIsEditingContact((value) => !value)}>
                       <FileEdit className="h-3 w-3" />
                       {isEditingContact ? 'Fechar' : 'Editar'}
-                    </Button>
+                    </Button>}
                   </div>
 
                   <div className="space-y-2">
@@ -3283,15 +3366,18 @@ export function LeadDetailDialog({
                 </div>
 
                 <PropertyPickerDialog
-                  properties={properties}
+                  properties={propertyOptions}
                   selectedPropertyId={localLead.interest_property_id || editForm.property_id || null}
                   onSelect={(property) => void handleSelectInterestProperty(property)}
+                  disabled={!canOperateLead || !canViewProperties}
+                  isLoading={propertyPickerLoading}
+                  onOpenChange={handlePropertyPickerOpenChange}
                 />
 
                 <div data-tour="lead-detail-documents" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-xs font-semibold">Documentacao</h3>
-                    {(accessScope.isAdmin || profile?.id === lead.assigned_user_id) && (
+                    {canOperateLead && (
                       <>
                         <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" disabled={isUploading} onClick={() => fileInputRef.current?.click()}>
                           {isUploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
@@ -3335,6 +3421,7 @@ export function LeadDetailDialog({
                     </div>
                     <Button
                       size="sm"
+                      disabled={!canManageLeadSchedule}
                       className="lead-detail-primary-action lead-agenda-action h-8 shrink-0 rounded-[6px] px-2.5"
                       onClick={() => {
                         setEditingScheduleEvent(null);
@@ -3349,7 +3436,7 @@ export function LeadDetailDialog({
                   <CompactScheduleEventsList
                     events={scheduleEvents}
                     locale={dateLocale}
-                    onEditEvent={handleEditScheduleEvent}
+                    onEditEvent={canManageLeadSchedule ? handleEditScheduleEvent : undefined}
                   />
                 </section>
 
@@ -3411,12 +3498,13 @@ export function LeadDetailDialog({
                     placeholder="Registre o feedback sobre atendimento, perfil ou próximos passos..."
                     value={feedback}
                     onChange={(event) => setFeedback(event.target.value)}
+                    disabled={!canOperateLead}
                     className="min-h-[74px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"
                   />
                   <div className="mt-2 flex justify-end">
                     <Button
                       className="lead-detail-primary-action h-8 rounded-[6px] px-3"
-                      disabled={!feedback.trim() || updateLead.isPending}
+                      disabled={!canOperateLead || !feedback.trim() || updateLead.isPending}
                       onClick={handleSaveFeedback}
                     >
                       Registrar feedback
@@ -3464,6 +3552,7 @@ export function LeadDetailDialog({
             <Select
               value={localLead.deal_status || 'open'}
               onValueChange={handleDealStatusChange}
+              disabled={!canOperateLead}
             >
               <SelectTrigger
                 className={cn(
@@ -3508,15 +3597,15 @@ export function LeadDetailDialog({
                   style={{ backgroundColor: tagColor, color: '#FFFFFF', borderColor: tagColor }}
                 >
                   {tag.name || 'Tag'}
-                  <button onClick={() => handleRemoveTag(tag.id)} className="ml-0.5 rounded-[3px] p-0.5 transition-colors hover:bg-black/10">
+                  <button disabled={!canOperateLead} onClick={() => handleRemoveTag(tag.id)} className="ml-0.5 rounded-[3px] p-0.5 transition-colors hover:bg-black/10 disabled:hidden">
                     <X className="h-3 w-3" />
                   </button>
                 </Badge>
               );
             })}
-            <Popover open={tagPopoverOpen} onOpenChange={setTagPopoverOpen}>
+            <Popover open={tagPopoverOpen} onOpenChange={(open) => canOperateLead && setTagPopoverOpen(open)}>
               <PopoverTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-7 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 text-xs text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary">
+                <Button disabled={!canOperateLead} variant="ghost" size="sm" className="h-7 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 text-xs text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary disabled:hidden">
                   <Plus className="h-3 w-3 mr-1" />
                   Tag
                 </Button>
@@ -3658,15 +3747,15 @@ export function LeadDetailDialog({
             {/* Quick Actions - Premium pills */}
             <div className="flex items-center gap-2 shrink-0">
               {lead.phone &&
-                  <Button variant="outline" size="sm" onClick={handleQuickPhone} className="h-9 w-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-0 transition-colors hover:bg-primary/10 hover:text-primary">
+                  <Button disabled={!canOperateLead} variant="outline" size="sm" onClick={handleQuickPhone} className="h-9 w-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-0 transition-colors hover:bg-primary/10 hover:text-primary">
                     <Phone className="h-4 w-4" />
                   </Button>
               }
-              <Button size="sm" onClick={handleQuickWhatsApp} className="h-9 rounded-[6px] bg-primary px-4 text-white transition-opacity hover:bg-primary hover:opacity-90">
+              <Button disabled={!canOperateLead} size="sm" onClick={handleQuickWhatsApp} className="h-9 rounded-[6px] bg-primary px-4 text-white transition-opacity hover:bg-primary hover:opacity-90">
                 <MessageCircle className="h-4 w-4 mr-1.5" />
                 Chat
               </Button>
-              {lead.email && <Button variant="outline" size="sm" onClick={handleQuickEmail} className="h-9 w-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-0 transition-colors hover:bg-primary/10 hover:text-primary">
+              {lead.email && <Button disabled={!canOperateLead} variant="outline" size="sm" onClick={handleQuickEmail} className="h-9 w-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-0 transition-colors hover:bg-primary/10 hover:text-primary">
                   <Mail className="h-4 w-4" />
                 </Button>}
             </div>
@@ -3686,6 +3775,7 @@ export function LeadDetailDialog({
                     <Tooltip key={stage.id}>
                       <TooltipTrigger asChild>
                         <button
+                          disabled={!canOperateLead}
                           onClick={() => handleMoveToStage(stage.id)}
                           aria-label={`Mover para ${stage.name}`}
                           data-lead-stage-step
@@ -3813,11 +3903,12 @@ export function LeadDetailDialog({
                     className="min-h-[150px] rounded-xl resize-none focus-visible:ring-primary/20"
                     value={feedback}
                     onChange={(e) => setFeedback(e.target.value)}
+                    disabled={!canOperateLead}
                   />
                   <div className="flex justify-end">
                     <Button
                       className="lead-detail-primary-action rounded-[6px] px-3"
-                      disabled={!feedback.trim() || updateLead.isPending}
+                      disabled={!canOperateLead || !feedback.trim() || updateLead.isPending}
                       onClick={handleSaveFeedback}
                     >
                       Registrar feedback
@@ -3833,7 +3924,7 @@ export function LeadDetailDialog({
           <TabsContent value="schedule" className="p-6 mt-0">
             <div className="space-y-4">
               <div className="flex justify-end">
-                <Button variant="default" onClick={() => {
+                <Button variant="default" disabled={!canManageLeadSchedule} onClick={() => {
                   setEditingScheduleEvent(null);
                   setScheduleDefaultType('call');
                   setScheduleFormOpen(true);
@@ -3845,7 +3936,7 @@ export function LeadDetailDialog({
 
               <EventsList
                 events={scheduleEvents}
-                onEditEvent={handleEditScheduleEvent}
+                onEditEvent={canManageLeadSchedule ? handleEditScheduleEvent : undefined}
                 onAddEvent={() => {
                   setEditingScheduleEvent(null);
                   setScheduleDefaultType('call');
@@ -3867,13 +3958,7 @@ export function LeadDetailDialog({
                       </div>
                       <h3 className="font-medium text-sm">Dados do contato</h3>
                     </div>
-                      {!isEditingContact ? <Button variant="ghost" size="sm" onClick={() => {
-                        setActiveTab('contact');
-                        setIsEditingContact(true);
-                      }} className="lead-detail-subtle-action h-8 rounded-[6px] px-3">
-                        <FileEdit className="h-3.5 w-3.5" />
-                        Editar
-                      </Button> : <div className="flex gap-2">
+                      {isEditingContact ? <div className="flex gap-2">
                         <Button variant="ghost" size="sm" onClick={() => {
                           resetContactEditForm();
                           setIsEditingContact(false);
@@ -3884,7 +3969,13 @@ export function LeadDetailDialog({
                           <Save className="h-3.5 w-3.5 mr-1" />
                           Salvar
                         </Button>
-                      </div>}
+                      </div> : canOperateLead ? <Button variant="ghost" size="sm" onClick={() => {
+                        setActiveTab('contact');
+                        setIsEditingContact(true);
+                      }} className="lead-detail-subtle-action h-8 rounded-[6px] px-3">
+                        <FileEdit className="h-3.5 w-3.5" />
+                        Editar
+                      </Button> : null}
                   </div>
 
                   <div className="rounded-xl bg-white/[0.035] border border-white/[0.055] p-4 space-y-4">
@@ -4091,7 +4182,7 @@ export function LeadDetailDialog({
                           </div>
                           <h3 className="font-medium text-sm">Documentação</h3>
                         </div>
-                        {(accessScope.isAdmin || profile?.id === lead.assigned_user_id) && (
+                        {canOperateLead && (
                           <>
                             <Button
                               variant="outline"
@@ -4211,6 +4302,7 @@ export function LeadDetailDialog({
                   <Select
                     value={localLead.deal_status || 'open'}
                     onValueChange={handleDealStatusChange}
+                    disabled={!canOperateLead}
                   >
                     <SelectTrigger className={cn('rounded-xl', getDealStatusTriggerClass(localLead.deal_status))}>
                       <SelectValue placeholder="Selecionar status" />
@@ -4265,9 +4357,12 @@ export function LeadDetailDialog({
                 <div>
                   <Label className="text-xs text-muted-foreground mb-2 block">Imóvel de interesse</Label>
                   <PropertyPickerDialog
-                    properties={properties}
+                    properties={propertyOptions}
                     selectedPropertyId={localLead.interest_property_id || editForm.property_id || null}
                     onSelect={(property) => void handleSelectInterestProperty(property)}
+                    disabled={!canOperateLead || !canViewProperties}
+                    isLoading={propertyPickerLoading}
+                    onOpenChange={handlePropertyPickerOpenChange}
                   />
                 </div>
 

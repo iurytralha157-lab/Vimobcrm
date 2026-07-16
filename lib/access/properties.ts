@@ -7,8 +7,7 @@ type PropertyAccessInput = {
   ownerIds?: Array<string | null | undefined>
 }
 
-const PROPERTY_MANAGER_ROLES = new Set(['owner', 'admin', 'manager', 'super_admin'])
-const PROPERTY_DELETE_ROLES = new Set(['owner', 'admin', 'super_admin'])
+const PROPERTY_MANAGER_ROLES = new Set(['owner', 'admin', 'super_admin'])
 
 function normalizeRole(value?: string | null) {
   const role = (value || '').trim().toLowerCase()
@@ -50,24 +49,17 @@ export function canManageProperties(input: PropertyAccessInput) {
 }
 
 export function canDeleteProperties(input: PropertyAccessInput) {
-  if (input.isSuperAdmin) return true
-  if (!isOrganizationMember(input)) return false
-
-  const memberRole = normalizeRole(input.memberRole)
-  return PROPERTY_DELETE_ROLES.has(memberRole) || hasPermission(input.permissions, 'property_delete')
+  return canManageProperties(input)
 }
 
 export function canUpdatePropertyAvailability(input: PropertyAccessInput) {
-  return isOrganizationMember(input)
+  return canManageProperties(input)
 }
 
 export function canAssignProperties(input: PropertyAccessInput) {
-  return canManageProperties(input) || hasPermission(input.permissions, 'property_assign')
+  return canManageProperties(input)
 }
 
 export function canEditPropertyDetails(input: PropertyAccessInput) {
-  if (canManageProperties(input)) return true
-  if (!isOrganizationMember(input)) return false
-
-  return Boolean(input.ownerIds?.some((ownerId) => ownerId && ownerId === input.userId))
+  return canManageProperties(input)
 }

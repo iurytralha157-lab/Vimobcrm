@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -809,7 +810,7 @@ func firstNonNilString(values ...*string) *string {
 }
 
 func canManageUsers(tenantContext tenant.Context) bool {
-	return tenantContext.HasPermission("users_manage") || tenantContext.HasPermission("settings_manage")
+	return tenantContext.HasPermission(permissions.UsersManage)
 }
 
 func normalizeUserIDs(values []string) []string {

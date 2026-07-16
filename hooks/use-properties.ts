@@ -94,7 +94,11 @@ const getErrorMessage = (error: unknown) => {
   return String(error)
 }
 
-export function useProperties(search?: string, filters: Pick<PropertyFilters, 'scope'> = {}) {
+export function useProperties(
+  search?: string,
+  filters: Pick<PropertyFilters, 'scope'> = {},
+  options: { enabled?: boolean } = {},
+) {
   const { user } = useAuth()
   const organizationId = useOrganizationId()
   const normalizedSearch = sanitizeSearchTerm(search)
@@ -114,7 +118,11 @@ export function useProperties(search?: string, filters: Pick<PropertyFilters, 's
       if (error) throw error
       return data as Property[]
     },
-    enabled: !!user?.id && !!organizationId,
+    enabled: !!user?.id && !!organizationId && options.enabled !== false,
+    placeholderData: keepPreviousData,
+    staleTime: 1000 * 60 * 10,
+    gcTime: 1000 * 60 * 60,
+    refetchOnWindowFocus: false,
   })
 }
 

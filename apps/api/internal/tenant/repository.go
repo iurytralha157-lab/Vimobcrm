@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
@@ -116,7 +117,7 @@ func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrga
 	}
 
 	resolved.UserRole = profile.Role
-	resolved.Permissions, err = repo.getPermissions(ctx, userID, organizationID)
+	roleGrants, err := repo.getPermissions(ctx, userID, organizationID)
 	if err != nil {
 		return Context{}, fmt.Errorf("%w: %v", ErrTenantResolutionUnhealthy, err)
 	}
@@ -128,6 +129,11 @@ func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrga
 	if err != nil {
 		return Context{}, err
 	}
+	overrides, err := repo.getPermissionOverrides(ctx, userID, organizationID)
+	if err != nil {
+		return Context{}, fmt.Errorf("%w: %v", ErrTenantResolutionUnhealthy, err)
+	}
+	resolved.Permissions = permissions.Resolve(resolved.MemberRole, resolved.IsTeamLeader, roleGrants, overrides)
 
 	if requestedOrganizationID != "" {
 		repo.storeCachedContext(cacheKey, resolved)
@@ -430,6 +436,33 @@ func (repo Repository) getPermissions(ctx context.Context, userID string, organi
 	return strings.Split(csv, ","), nil
 }
 
+func (repo Repository) getPermissionOverrides(ctx context.Context, userID string, organizationID string) (map[string]bool, error) {
+	rows, err := repo.db.Pool().Query(ctx, `
+		select permission_key, allowed
+		from public.user_permission_overrides
+		where organization_id = $1::uuid
+		  and user_id = $2::uuid
+	`, organizationID, userID)
+	if isUndefinedSchemaError(err) {
+		return map[string]bool{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	overrides := map[string]bool{}
+	for rows.Next() {
+		var key string
+		var allowed bool
+		if err := rows.Scan(&key, &allowed); err != nil {
+			return nil, err
+		}
+		overrides[permissions.CanonicalKey(key)] = allowed
+	}
+	return overrides, rows.Err()
+}
+
 func (repo Repository) applyTeamLeadershipScope(ctx context.Context, tenantContext Context) (Context, error) {
 	tenantContext.IsTeamLeader = false
 	tenantContext.LedTeamIDs = nil
@@ -510,9 +543,6 @@ func (repo Repository) applyTeamLeadershipScope(ctx context.Context, tenantConte
 	tenantContext.LedTeamIDs = teamIDs
 	tenantContext.LedUserIDs = userIDs
 	tenantContext.LedPipelineIDs = pipelineIDs
-	if tenantContext.IsTeamLeader && !stringSliceContains(tenantContext.Permissions, "lead_view_team") {
-		tenantContext.Permissions = append(append([]string(nil), tenantContext.Permissions...), "lead_view_team")
-	}
 
 	return tenantContext, nil
 }

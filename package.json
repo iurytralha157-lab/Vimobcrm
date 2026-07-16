@@ -7,12 +7,15 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
     "api:dev": "go run ./apps/api/cmd/api",
     "api:fmt": "gofmt -w apps/api packages/auth packages/db",
     "api:test": "go test ./apps/api/... ./packages/auth/... ./packages/db/...",
     "whatsapp:realtime:test": "node scripts/tests/whatsapp-realtime-smoke.mjs",
     "load:api": "node scripts/load/api-read-smoke.mjs",
-    "validation:test": "tsc -p tsconfig.validation-tests.json && node --test .validation-tests/lib/validation/leads.test.js .validation-tests/lib/validation/pipelines.test.js .validation-tests/lib/validation/users.test.js .validation-tests/lib/validation/whatsapp.test.js .validation-tests/lib/validation/domains.test.js .validation-tests/lib/validation/attention.test.js .validation-tests/lib/access/management.test.js .validation-tests/lib/access/navigation.test.js .validation-tests/lib/access/tenant-navigation.test.js .validation-tests/lib/whatsapp-query-cache.test.js"
+    "validation:test": "tsc -p tsconfig.validation-tests.json && node --test .validation-tests/lib/validation/leads.test.js .validation-tests/lib/validation/pipelines.test.js .validation-tests/lib/validation/users.test.js .validation-tests/lib/validation/whatsapp.test.js .validation-tests/lib/validation/domains.test.js .validation-tests/lib/validation/attention.test.js .validation-tests/lib/access/api-boundary.test.js .validation-tests/lib/access/management.test.js .validation-tests/lib/access/properties.test.js .validation-tests/lib/access/navigation.test.js .validation-tests/lib/access/tenant-navigation.test.js .validation-tests/lib/access/tenant-query-cache.test.js .validation-tests/lib/whatsapp-query-cache.test.js"
   },
   "dependencies": {
     "@capacitor/core": "^8.4.0",
@@ -83,12 +86,15 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
+    "pg": "^8.22.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   },

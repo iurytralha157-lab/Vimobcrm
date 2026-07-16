@@ -64,9 +64,10 @@ export function CreateLeadDialog({
   const fieldIdPrefix = useId();
   const { hasPermission } = useUserPermissions();
   const { data: allUsers = [] } = useOrganizationUsers();
-  const users = hasPermission('lead_view_all') ? allUsers : allUsers.filter(u => u.id === profile?.id);
+  const users = hasPermission('lead_operate') ? allUsers : allUsers.filter(u => u.id === profile?.id);
+  const canViewProperties = hasPermission('property_view') || hasPermission('property_manage');
   const { data: pipelines = [] } = usePipelines();
-  const { data: properties = [] } = useProperties();
+  const { data: properties = [] } = useProperties(undefined, {}, { enabled: canViewProperties });
   const createLead = useCreateLead();
 
   // Form state
@@ -781,6 +782,7 @@ export function CreateLeadDialog({
                             status: p.status,
                           }))}
                           selectedPropertyId={formData.property_id || null}
+                          disabled={!canViewProperties}
                           onSelect={(p) => {
                             updateField('property_id', p.id);
                             if (p.preco && !formData.valor_interesse) {

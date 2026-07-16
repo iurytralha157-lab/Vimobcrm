@@ -117,6 +117,7 @@ type LeadAPIOptions = {
 type LeadCreateInput = Partial<LeadInsert> & {
   tag_ids?: string[]
   conversation_id?: string
+  import_mode?: boolean
 }
 
 type LeadMoveStageInput = {
@@ -193,6 +194,7 @@ export const leadsAPI = {
       uf: data.uf,
       rendaFamiliar: data.renda_familiar,
       faixaValorImovel: data.faixa_valor_imovel,
+      importMode: data.import_mode,
     }, 'leads.create')
     const response = await vimobAPIRequest<APILeadResponse>('/v1/leads', {
       method: 'POST',

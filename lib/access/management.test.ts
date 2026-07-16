@@ -32,22 +32,22 @@ test('admin acessa todas as abas de gestao', () => {
   assert.deepEqual(allowedTabs, ['teams', 'distribution', 'pipelines', 'tags'])
 })
 
-test('lider acessa somente equipes e distribuicao', () => {
+test('lider acessa somente equipes por padrao', () => {
   const allowedTabs = getAllowedManagementTabs({
     isAdmin: false,
     isTeamLeader: true,
     hasPermission: permissions(),
   })
 
-  assert.deepEqual(allowedTabs, ['teams', 'distribution'])
+  assert.deepEqual(allowedTabs, ['teams'])
   assert.equal(getSafeManagementTab('pipelines', allowedTabs), 'teams')
 })
 
-test('permissao de pipelines libera pipelines e tags', () => {
+test('permissoes administrativas liberam somente suas abas', () => {
   const allowedTabs = getAllowedManagementTabs({
     isAdmin: false,
     isTeamLeader: false,
-    hasPermission: permissions('settings_pipelines'),
+    hasPermission: permissions('pipeline_manage', 'tag_manage'),
   })
 
   assert.deepEqual(allowedTabs, ['pipelines', 'tags'])

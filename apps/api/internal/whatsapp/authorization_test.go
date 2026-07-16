@@ -42,7 +42,7 @@ func TestConversationAuthorizationScopeArguments(t *testing.T) {
 }
 
 func TestConversationVisibilityAllowsLeadAccessOrOwnedUnlinkedConversation(t *testing.T) {
-	query := conversationVisibilitySQL()
+	query := conversationVisibilitySQL(true)
 	required := []string{
 		"ws.organization_id = wc.organization_id",
 		"wc.lead_id is not null",
@@ -62,7 +62,7 @@ func TestConversationVisibilityAllowsLeadAccessOrOwnedUnlinkedConversation(t *te
 }
 
 func TestLeadHistoryVisibilityKeepsDeletedSessionEvidence(t *testing.T) {
-	query := leadHistoryVisibilitySQL()
+	query := leadHistoryVisibilitySQL(true)
 	for _, fragment := range []string{
 		"l.id is not null",
 		"l.organization_id = wc.organization_id",
@@ -98,6 +98,13 @@ func TestProviderActionRequiresWhatsAppManager(t *testing.T) {
 	}, ProviderActionRequest{Action: "send.text"})
 	if !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
 		t.Fatalf("RunProviderAction() error = %v, want organization access denied", err)
+	}
+}
+
+func TestLeadVisibilityCanDisableOwnLeadBranch(t *testing.T) {
+	query := leadVisibilitySQL(false)
+	if !strings.Contains(query, "(false and l.assigned_user_id = $2::uuid)") {
+		t.Fatal("own-lead branch must be disabled when lead_view_own is denied")
 	}
 }
 
@@ -160,7 +167,7 @@ func TestGenericProviderActionCannotBypassLeadBoundAPIs(t *testing.T) {
 }
 
 func TestReactionTargetAuthorizationIsConversationAndLeadBound(t *testing.T) {
-	query := reactionTargetAuthorizationSQL()
+	query := reactionTargetAuthorizationSQL(true)
 	required := []string{
 		"wm.organization_id = $1::uuid",
 		"wc.id = $5::uuid",

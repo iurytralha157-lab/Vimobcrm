@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { Building2, Search, SlidersHorizontal, ChevronRight, ExternalLink, Clock, CheckCircle, KeyRound, type LucideIcon } from 'lucide-react';
+import { Building2, Search, SlidersHorizontal, ChevronRight, ExternalLink, Clock, CheckCircle, KeyRound, Loader2, type LucideIcon } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useQuery } from '@tanstack/react-query';
 import { getPropertySiteInfo } from '@/lib/api/property-support';
@@ -31,6 +31,9 @@ interface PropertyPickerDialogProps {
   selectedPropertyId?: string | null;
   onSelect: (property: Property) => void;
   trigger?: React.ReactNode;
+  disabled?: boolean;
+  isLoading?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 type PropertyStatusBadge = {
@@ -90,7 +93,15 @@ function getSelectionBlockedMessage(status?: string | null) {
   }
 }
 
-export function PropertyPickerDialog({ properties, selectedPropertyId, onSelect, trigger }: PropertyPickerDialogProps) {
+export function PropertyPickerDialog({
+  properties,
+  selectedPropertyId,
+  onSelect,
+  trigger,
+  disabled = false,
+  isLoading = false,
+  onOpenChange,
+}: PropertyPickerDialogProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [showFilters, setShowFilters] = useState(false);
@@ -127,11 +138,18 @@ export function PropertyPickerDialog({ properties, selectedPropertyId, onSelect,
   });
 
   const handleOpen = () => {
+    if (disabled) return;
     setSearch('');
     setFilterType('');
     setFilterPurpose('');
     setFilterLocation('');
     setOpen(true);
+    onOpenChange?.(true);
+  };
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    onOpenChange?.(nextOpen);
   };
 
   const getDisplayLabel = () => {
@@ -145,12 +163,13 @@ export function PropertyPickerDialog({ properties, selectedPropertyId, onSelect,
   return (
     <>
       {trigger ? (
-        <div onClick={handleOpen}>{trigger}</div>
+        <div onClick={handleOpen} aria-disabled={disabled}>{trigger}</div>
       ) : (
         <Button
           variant="ghost"
           className="h-10 w-full justify-between rounded-[8px] border-0 bg-[var(--app-surface-soft)] px-3 text-xs text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
           onClick={handleOpen}
+          disabled={disabled}
         >
           <div className="flex items-center gap-2 min-w-0">
             <Building2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
@@ -160,7 +179,7 @@ export function PropertyPickerDialog({ properties, selectedPropertyId, onSelect,
         </Button>
       )}
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="w-[95%] max-w-4xl max-h-[90vh] flex flex-col p-0 overflow-hidden">
           <div className="flex items-center gap-3 p-4 pr-12 pb-3 border-b">
             <DialogTitle className="text-sm font-semibold whitespace-nowrap">Selecionar Imóvel</DialogTitle>
@@ -225,8 +244,12 @@ export function PropertyPickerDialog({ properties, selectedPropertyId, onSelect,
           <div className="flex-1 overflow-y-auto px-4 pb-4 pt-2">
             {filteredProperties.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                <Building2 className="h-8 w-8 mb-2 opacity-40" />
-                <p className="text-xs">Nenhum imóvel encontrado</p>
+                {isLoading ? (
+                  <Loader2 className="mb-2 h-8 w-8 animate-spin opacity-60" />
+                ) : (
+                  <Building2 className="h-8 w-8 mb-2 opacity-40" />
+                )}
+                <p className="text-xs">{isLoading ? 'Carregando imoveis...' : 'Nenhum imóvel encontrado'}</p>
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-2">

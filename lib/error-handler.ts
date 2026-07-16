@@ -11,11 +11,20 @@ const getErrorMessage = (error: unknown) => {
   return '';
 };
 
+const getErrorCode = (error: unknown) => {
+  if (error && typeof error === 'object' && 'code' in error) {
+    const code = (error as { code?: unknown }).code;
+    return typeof code === 'string' ? code : '';
+  }
+  return '';
+};
+
 export function getFriendlyErrorMessage(error: unknown): string {
   if (!error) return 'Ocorreu um erro inesperado. Tente novamente.';
 
   const message = getErrorMessage(error);
   const lowerMessage = message.toLowerCase();
+  const code = getErrorCode(error);
 
   // User creation / Auth errors
   if (lowerMessage.includes('user already exists') || lowerMessage.includes('already registered')) {
@@ -56,8 +65,17 @@ export function getFriendlyErrorMessage(error: unknown): string {
   }
 
   // Permission errors
-  if (lowerMessage.includes('insufficient_privilege') || lowerMessage.includes('permission denied')) {
+  if (
+    code === 'permission_denied' ||
+    lowerMessage.includes('insufficient_privilege') ||
+    lowerMessage.includes('permission denied') ||
+    lowerMessage.includes('you do not have permission')
+  ) {
     return 'Você não tem permissão para realizar esta ação (RLS Policy).';
+  }
+
+  if (code === 'invalid_schedule_reference' || lowerMessage.includes('schedule references do not belong')) {
+    return 'Lead, imóvel ou responsável fora do seu escopo. Selecione uma opção permitida e tente novamente.';
   }
 
   // Specific check for SMTP/Email sending errors

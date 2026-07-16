@@ -25,6 +25,7 @@ func TestCanUpdateAssignedLeadStatusAllowsOwnLeadStatusPatch(t *testing.T) {
 		UserID:         userID,
 		OrganizationID: "30000000-0000-0000-0000-000000000001",
 		MemberRole:     "user",
+		Permissions:    []string{"lead_view_own", "lead_operate"},
 	}
 
 	if !canUpdateAssignedLeadStatus(tenantContext, current, input) {
@@ -47,6 +48,7 @@ func TestCanUpdateAssignedLeadStatusAllowsLostReasonOnOwnLostLead(t *testing.T) 
 		UserID:         userID,
 		OrganizationID: "30000000-0000-0000-0000-000000000001",
 		MemberRole:     "user",
+		Permissions:    []string{"lead_view_own", "lead_operate"},
 	}
 
 	if !canUpdateAssignedLeadStatus(tenantContext, current, input) {
@@ -115,7 +117,7 @@ func TestCanUpdateAssignedLeadStatusAllowsTeamLeaderForLedUser(t *testing.T) {
 		UserID:         leaderID,
 		OrganizationID: "30000000-0000-0000-0000-000000000001",
 		MemberRole:     "user",
-		Permissions:    []string{"lead_view_team"},
+		Permissions:    []string{"lead_view_team", "lead_operate"},
 		IsTeamLeader:   true,
 		LedUserIDs:     []string{assignedUserID},
 	}
@@ -168,6 +170,7 @@ func TestCanUpdateAssignedLeadOperationalPatchAllowsFeedbackOnOwnLead(t *testing
 		UserID:         userID,
 		OrganizationID: "30000000-0000-0000-0000-000000000001",
 		MemberRole:     "user",
+		Permissions:    []string{"lead_view_own", "lead_operate"},
 	}
 
 	if !canUpdateAssignedLeadOperationalPatch(tenantContext, current, input) {
@@ -197,6 +200,7 @@ func TestCanUpdateAssignedLeadOperationalPatchAllowsPropertyInterestOnOwnLead(t 
 		UserID:         userID,
 		OrganizationID: "30000000-0000-0000-0000-000000000001",
 		MemberRole:     "user",
+		Permissions:    []string{"lead_view_own", "lead_operate"},
 	}
 
 	if !canUpdateAssignedLeadOperationalPatch(tenantContext, current, input) {
@@ -221,6 +225,7 @@ func TestCanUpdateAssignedLeadOperationalPatchRejectsPropertyInterestWithDataEdi
 		UserID:         userID,
 		OrganizationID: "30000000-0000-0000-0000-000000000001",
 		MemberRole:     "user",
+		Permissions:    []string{"lead_view_own", "lead_operate"},
 	}
 
 	if canUpdateAssignedLeadOperationalPatch(tenantContext, current, input) {
@@ -311,6 +316,7 @@ func TestCanTransferLeadAllowsAssignedUser(t *testing.T) {
 		UserID:         userID,
 		OrganizationID: "30000000-0000-0000-0000-000000000001",
 		MemberRole:     "user",
+		Permissions:    []string{"lead_view_own", "lead_operate"},
 	}
 
 	if !canTransferLead(tenantContext, userID) {

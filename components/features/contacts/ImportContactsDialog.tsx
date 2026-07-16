@@ -390,6 +390,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
           tag_ids: tagIds,
           deal_status: dealStatus,
           lost_reason: lostReason,
+          import_mode: true,
         });
         success++;
       } catch (error) {

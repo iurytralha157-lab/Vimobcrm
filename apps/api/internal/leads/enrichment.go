@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -88,7 +89,7 @@ func (repo Repository) listVisibleLeadEnrichmentSeeds(ctx context.Context, tenan
 			l.interest_property_id::text
 		from public.leads l
 		where l.organization_id = $1::uuid
-		  and `+leadVisibilitySQL("$2", "$3", "$4")+`
+		  and `+leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn))+`
 		  and l.id in (`+uuidPlaceholders(5, leadIDs)+`)
 	`, args...)
 	if err != nil {

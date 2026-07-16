@@ -372,7 +372,9 @@ function getBrowserLocalAPIBaseURL(configuredBaseURL: string) {
   }
 
   const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:'
-  return `${protocol}//${browserHostname}:8081`
+  const configuredURL = new URL(configuredBaseURL)
+  const port = configuredURL.port ? `:${configuredURL.port}` : ''
+  return `${protocol}//${browserHostname}${port}`
 }
 
 function isLocalDevelopmentAPI(baseURL: string) {

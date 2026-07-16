@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -995,10 +996,7 @@ func intValue(value *int, fallback int) int {
 
 func canManageStageConfig(tenantContext tenant.Context) bool {
 	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin", "manager") ||
-		tenantContext.HasPermission("settings_manage") ||
-		tenantContext.HasPermission("settings_pipelines") ||
-		tenantContext.HasPermission("pipeline_edit") ||
-		tenantContext.HasPermission("automations_edit") ||
-		tenantContext.HasPermission("lead_manage")
+		tenantContext.HasRole("owner", "admin") ||
+		tenantContext.HasPermission(permissions.PipelineManage) ||
+		tenantContext.HasPermission(permissions.AutomationsManage)
 }

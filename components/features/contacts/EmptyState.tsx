@@ -3,8 +3,8 @@ import { Users, Upload, Plus } from 'lucide-react';
 
 interface EmptyStateProps {
   hasActiveFilters: boolean;
-  onImport: () => void;
-  onCreate: () => void;
+  onImport?: () => void;
+  onCreate?: () => void;
   onClearFilters: () => void;
 }
 
@@ -24,7 +24,9 @@ export function EmptyState({
         <p className="text-muted-foreground text-sm max-w-sm mt-1">
           {hasActiveFilters
             ? 'Tente ajustar os filtros para encontrar mais resultados.'
-            : 'Comece importando uma planilha ou criando seu primeiro contato.'}
+            : onImport || onCreate
+              ? 'Comece adicionando seu primeiro contato.'
+              : 'Nenhum contato estÃ¡ disponÃ­vel no seu escopo.'}
         </p>
       </div>
       <div className="mt-2 flex flex-wrap justify-center gap-3">
@@ -34,14 +36,18 @@ export function EmptyState({
           </Button>
         ) : (
           <>
+            {onImport && (
             <Button variant="outline" className="border-white/[0.055] bg-white/[0.035] hover:bg-white/[0.055]" onClick={onImport}>
               <Upload className="h-4 w-4 mr-2" />
               Importar Contatos
             </Button>
+            )}
+            {onCreate && (
             <Button onClick={onCreate}>
               <Plus className="h-4 w-4 mr-2" />
               Criar Contato
             </Button>
+            )}
           </>
         )}
       </div>

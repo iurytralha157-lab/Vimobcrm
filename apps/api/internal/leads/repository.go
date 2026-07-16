@@ -12,6 +12,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/authorization"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -34,10 +36,6 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
-type queryRower interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}
-
 type destination struct {
 	PipelineID *string
 	StageID    *string
@@ -58,6 +56,7 @@ type roundRobinSelection struct {
 
 type existingLeadMatch struct {
 	ID               string
+	TeamID           string
 	Phone            string
 	AssignedUserID   string
 	AssignedUserName string
@@ -65,6 +64,7 @@ type existingLeadMatch struct {
 
 type leadSnapshot struct {
 	ID                 string
+	TeamID             string
 	Name               string
 	Phone              string
 	AssignedUserID     string
@@ -101,7 +101,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 
 	where := []string{
 		"l.organization_id = $1::uuid",
-		leadVisibilitySQL("$2", "$3", "$4"),
+		leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn)),
 	}
 
 	addFilter := func(clause string, value any) {
@@ -192,7 +192,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, le
 		left join public.stages s on s.id = l.stage_id
 		left join public.users u on u.id = l.assigned_user_id
 		where l.organization_id = $1::uuid
-		  and ` + leadVisibilitySQL("$2", "$3", "$4") + `
+		  and ` + leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn)) + `
 		  and l.id = $5::uuid
 		limit 1`
 
@@ -216,7 +216,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, le
 }
 
 func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context, input createInput) (CreateResult, error) {
-	if !canCreateLeads(tenantContext) {
+	if !canCreateLeadInput(tenantContext, input) {
 		return CreateResult{}, tenant.ErrOrganizationAccessDenied
 	}
 	if !canAssignLeads(tenantContext) {
@@ -280,20 +280,12 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return Lead{}, err
 	}
 
-	canEdit, err := repo.canEditLead(ctx, tx, tenantContext, current.AssignedUserID)
+	canEdit, err := repo.canEditLead(ctx, tx, tenantContext, current.AssignedUserID, current.TeamID)
 	if err != nil {
 		return Lead{}, err
 	}
 
 	canOperationalPatch := canUpdateAssignedLeadOperationalPatch(tenantContext, current, input)
-	if !canEdit && !canOperationalPatch && (isLeadPropertyInterestPatch(input) || isLeadStatusPatch(current, input)) {
-		canViewLead, err := canViewExistingLeadWithQuerier(ctx, tx, tenantContext, current.AssignedUserID)
-		if err != nil {
-			return Lead{}, err
-		}
-		canOperationalPatch = canUpdateVisibleLeadPropertyInterest(canViewLead, input) ||
-			canUpdateVisibleLeadStatus(canViewLead, current, input)
-	}
 	if !canEdit && !canOperationalPatch {
 		return Lead{}, tenant.ErrOrganizationAccessDenied
 	}
@@ -516,7 +508,7 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 		return moveStageResult{}, err
 	}
 
-	if !canMoveLead(tenantContext, current.AssignedUserID) {
+	if !canOperateLeadSnapshot(tenantContext, current) {
 		return moveStageResult{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -651,7 +643,7 @@ func (repo Repository) Assign(ctx context.Context, tenantContext tenant.Context,
 		return Lead{}, err
 	}
 
-	if !canTransferLead(tenantContext, current.AssignedUserID) {
+	if !canOperateLeadSnapshot(tenantContext, current) {
 		return Lead{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -694,7 +686,7 @@ func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext
 		return RoundRobinResult{}, err
 	}
 
-	if !canAssignLeads(tenantContext) {
+	if !canOperateLeadSnapshot(tenantContext, current) {
 		return RoundRobinResult{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -773,10 +765,6 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 	if !ok {
 		return ErrLeadNotFound
 	}
-	if !canDeleteLeads(tenantContext) {
-		return tenant.ErrOrganizationAccessDenied
-	}
-
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return err
@@ -786,6 +774,9 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 	current, err := repo.getLeadSnapshotForUpdate(ctx, tx, tenantContext.OrganizationID, leadID)
 	if err != nil {
 		return err
+	}
+	if !authorization.CanDeleteLead(tenantContext, authorization.LeadResource{AssignedUserID: current.AssignedUserID, TeamID: current.TeamID}) {
+		return tenant.ErrOrganizationAccessDenied
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -864,7 +855,7 @@ func (repo Repository) AddTag(ctx context.Context, tenantContext tenant.Context,
 		return err
 	}
 
-	canEdit, err := repo.canEditLead(ctx, tx, tenantContext, current.AssignedUserID)
+	canEdit, err := repo.canEditLead(ctx, tx, tenantContext, current.AssignedUserID, current.TeamID)
 	if err != nil {
 		return err
 	}
@@ -935,7 +926,7 @@ func (repo Repository) RemoveTag(ctx context.Context, tenantContext tenant.Conte
 		return err
 	}
 
-	canEdit, err := repo.canEditLead(ctx, tx, tenantContext, current.AssignedUserID)
+	canEdit, err := repo.canEditLead(ctx, tx, tenantContext, current.AssignedUserID, current.TeamID)
 	if err != nil {
 		return err
 	}
@@ -1154,10 +1145,10 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 }
 
 func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant.Context, input createInput, resolvedDestination destination, existingLead existingLeadMatch) (CreateResult, error) {
-	canViewExisting, err := repo.canViewExistingLead(ctx, tenantContext, existingLead.AssignedUserID)
-	if err != nil {
-		return CreateResult{}, err
-	}
+	canViewExisting := authorization.CanViewLead(tenantContext, authorization.LeadResource{
+		AssignedUserID: existingLead.AssignedUserID,
+		TeamID:         existingLead.TeamID,
+	})
 	if !canViewExisting {
 		return CreateResult{}, ErrLeadAlreadyExists
 	}
@@ -1757,11 +1748,12 @@ func (repo Repository) validateProperty(ctx context.Context, tx pgx.Tx, organiza
 
 func (repo Repository) getLeadSnapshotForUpdate(ctx context.Context, tx pgx.Tx, organizationID string, leadID string) (leadSnapshot, error) {
 	var snapshot leadSnapshot
-	var phone, assignedUserID, pipelineID, stageID, stageName, lostReason, interestValue, propertyID, interestPropertyID, propertyCode pgtype.Text
+	var teamID, phone, assignedUserID, pipelineID, stageID, stageName, lostReason, interestValue, propertyID, interestPropertyID, propertyCode pgtype.Text
 
 	err := tx.QueryRow(ctx, `
 		select
 			l.id::text,
+			nullif(to_jsonb(l)->>'team_id', ''),
 			l.name,
 			l.phone,
 			l.assigned_user_id::text,
@@ -1782,7 +1774,7 @@ func (repo Repository) getLeadSnapshotForUpdate(ctx context.Context, tx pgx.Tx, 
 		  and l.id = $2::uuid
 		limit 1
 		for update of l
-	`, organizationID, leadID).Scan(&snapshot.ID, &snapshot.Name, &phone, &assignedUserID, &pipelineID, &stageID, &stageName, &snapshot.DealStatus, &lostReason, &interestValue, &propertyID, &interestPropertyID, &propertyCode)
+	`, organizationID, leadID).Scan(&snapshot.ID, &teamID, &snapshot.Name, &phone, &assignedUserID, &pipelineID, &stageID, &stageName, &snapshot.DealStatus, &lostReason, &interestValue, &propertyID, &interestPropertyID, &propertyCode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return leadSnapshot{}, ErrLeadNotFound
 	}
@@ -1790,6 +1782,7 @@ func (repo Repository) getLeadSnapshotForUpdate(ctx context.Context, tx pgx.Tx, 
 		return leadSnapshot{}, err
 	}
 
+	snapshot.TeamID = textValue(teamID)
 	snapshot.Phone = textValue(phone)
 	snapshot.AssignedUserID = textValue(assignedUserID)
 	snapshot.PipelineID = textValue(pipelineID)
@@ -1822,44 +1815,10 @@ func (repo Repository) getLeadForMutation(ctx context.Context, tx pgx.Tx, organi
 	return lead, err
 }
 
-func (repo Repository) canEditLead(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, assignedUserID string) (bool, error) {
-	if canEditAllLeads(tenantContext) {
-		return true, nil
-	}
-
-	if !tenantContext.HasPermission("lead_edit") {
-		return false, nil
-	}
-
-	if assignedUserID != "" && assignedUserID == tenantContext.UserID {
-		return true, nil
-	}
-
-	if assignedUserID == "" || !tenantContext.HasPermission("lead_view_team") {
-		return false, nil
-	}
-
-	var canEditTeamLead bool
-	err := tx.QueryRow(ctx, `
-		select exists (
-			select 1
-			from public.team_members leader
-			join public.team_members member
-			  on member.organization_id = leader.organization_id
-			 and member.team_id = leader.team_id
-			 and member.is_active = true
-			where leader.organization_id = $1::uuid
-			  and leader.user_id = $2::uuid
-			  and leader.is_active = true
-			  and leader.is_leader = true
-			  and member.user_id = $3::uuid
-		)
-	`, tenantContext.OrganizationID, tenantContext.UserID, assignedUserID).Scan(&canEditTeamLead)
-	if err != nil {
-		return false, err
-	}
-
-	return canEditTeamLead, nil
+func (repo Repository) canEditLead(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, assignedUserID string, teamID string) (bool, error) {
+	_ = ctx
+	_ = tx
+	return authorization.CanOperateLead(tenantContext, authorization.LeadResource{AssignedUserID: assignedUserID, TeamID: teamID}), nil
 }
 
 func (repo Repository) applyDestinationAssignments(ctx context.Context, organizationID string, current leadSnapshot, input updateInput, addUUIDAssignment func(string, patchString), addRawAssignment func(string)) error {
@@ -1934,10 +1893,11 @@ func (repo Repository) findExistingLeadByPhone(ctx context.Context, organization
 	}
 
 	var match existingLeadMatch
-	var phoneValue, assignedUserID, assignedUserName pgtype.Text
+	var teamID, phoneValue, assignedUserID, assignedUserName pgtype.Text
 	err := repo.db.Pool().QueryRow(ctx, `
 		select
 			l.id::text,
+			nullif(to_jsonb(l)->>'team_id', ''),
 			l.phone,
 			l.assigned_user_id::text,
 			u.name
@@ -1948,7 +1908,7 @@ func (repo Repository) findExistingLeadByPhone(ctx context.Context, organization
 		  and normalize_phone(l.phone) = normalize_phone($2)
 		order by l.created_at asc
 		limit 1
-	`, organizationID, *phone).Scan(&match.ID, &phoneValue, &assignedUserID, &assignedUserName)
+	`, organizationID, *phone).Scan(&match.ID, &teamID, &phoneValue, &assignedUserID, &assignedUserName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -1956,55 +1916,12 @@ func (repo Repository) findExistingLeadByPhone(ctx context.Context, organization
 		return nil, err
 	}
 
+	match.TeamID = textValue(teamID)
 	match.Phone = textValue(phoneValue)
 	match.AssignedUserID = textValue(assignedUserID)
 	match.AssignedUserName = textValue(assignedUserName)
 
 	return &match, nil
-}
-
-func (repo Repository) canViewExistingLead(ctx context.Context, tenantContext tenant.Context, assignedUserID string) (bool, error) {
-	return canViewExistingLeadWithQuerier(ctx, repo.db.Pool(), tenantContext, assignedUserID)
-}
-
-func canViewExistingLeadWithQuerier(ctx context.Context, querier queryRower, tenantContext tenant.Context, assignedUserID string) (bool, error) {
-	if canViewAllLeads(tenantContext) {
-		return true, nil
-	}
-
-	if assignedUserID == "" || tenantContext.UserID == "" || tenantContext.OrganizationID == "" {
-		return false, nil
-	}
-
-	if assignedUserID == tenantContext.UserID {
-		return true, nil
-	}
-
-	if !tenantContext.HasPermission("lead_view_team") {
-		return false, nil
-	}
-
-	var canView bool
-	err := querier.QueryRow(ctx, `
-		select exists (
-			select 1
-			from public.team_members leader
-			join public.team_members member
-			  on member.organization_id = leader.organization_id
-			 and member.team_id = leader.team_id
-			 and member.is_active = true
-			where leader.organization_id = $1::uuid
-			  and leader.user_id = $2::uuid
-			  and leader.is_active = true
-			  and leader.is_leader = true
-			  and member.user_id = $3::uuid
-		)
-	`, tenantContext.OrganizationID, tenantContext.UserID, assignedUserID).Scan(&canView)
-	if err != nil {
-		return false, err
-	}
-
-	return canView, nil
 }
 
 func (repo Repository) insertLeadTags(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, tagIDs []string) error {
@@ -2087,6 +2004,7 @@ func (repo Repository) insertDealStatusActivities(ctx context.Context, tx pgx.Tx
 
 	metadata := map[string]any{
 		"new_status":      newStatus,
+		"from_status":     current.DealStatus,
 		"to_status":       newStatus,
 		"previous_status": current.DealStatus,
 		"valor_interesse": nullableString(interestValue),
@@ -2808,25 +2726,45 @@ func leadSelectFields() string {
 		u.avatar_url`
 }
 
-func leadVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, canViewTeamPlaceholder string) string {
+func leadVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, canViewTeamPlaceholder string, canViewOwn bool) string {
+	canViewOwnSQL := "false"
+	if canViewOwn {
+		canViewOwnSQL = "true"
+	}
 	return `(
 		` + canViewAllPlaceholder + `::boolean
-		or l.assigned_user_id = ` + userIDPlaceholder + `::uuid
+		or (` + canViewOwnSQL + ` and l.assigned_user_id = ` + userIDPlaceholder + `::uuid)
 		or (
 			` + canViewTeamPlaceholder + `::boolean
-			and l.assigned_user_id is not null
-			and exists (
-				select 1
-				from public.team_members leader
-				join public.team_members member
-				  on member.organization_id = leader.organization_id
-				 and member.team_id = leader.team_id
-				 and member.is_active = true
-				where leader.organization_id = l.organization_id
-				  and leader.user_id = ` + userIDPlaceholder + `::uuid
-				  and leader.is_active = true
-				  and leader.is_leader = true
-				  and member.user_id = l.assigned_user_id
+			and (
+				(
+					nullif(to_jsonb(l)->>'team_id', '') is not null
+					and exists (
+						select 1 from public.team_members leader
+						where leader.organization_id = l.organization_id
+						  and leader.user_id = ` + userIDPlaceholder + `::uuid
+						  and leader.team_id::text = to_jsonb(l)->>'team_id'
+						  and leader.is_active = true
+						  and leader.is_leader = true
+					)
+				)
+				or (
+					nullif(to_jsonb(l)->>'team_id', '') is null
+					and l.assigned_user_id is not null
+					and exists (
+						select 1
+						from public.team_members leader
+						join public.team_members member
+						  on member.organization_id = leader.organization_id
+						 and member.team_id = leader.team_id
+						 and member.is_active = true
+						where leader.organization_id = l.organization_id
+						  and leader.user_id = ` + userIDPlaceholder + `::uuid
+						  and leader.is_active = true
+						  and leader.is_leader = true
+						  and member.user_id = l.assigned_user_id
+					)
+				)
 			)
 		)
 	)`
@@ -3118,41 +3056,46 @@ func normalizePhone(value string) string {
 
 func canViewAllLeads(tenantContext tenant.Context) bool {
 	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin", "manager") ||
-		tenantContext.HasPermission("lead_view_all")
+		tenantContext.HasRole("owner", "admin") ||
+		tenantContext.HasPermission(permissions.LeadViewAll)
 }
 
 func canManageLeads(tenantContext tenant.Context) bool {
-	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin", "manager") ||
-		tenantContext.HasPermission("lead_manage")
+	return canViewAllLeads(tenantContext) && tenantContext.HasPermission(permissions.LeadOperate)
 }
 
 func canCreateLeads(tenantContext tenant.Context) bool {
-	if canManageLeads(tenantContext) || tenantContext.HasPermission("lead_create") {
-		return true
+	return authorization.CanCreateLead(tenantContext)
+}
+
+func canCreateLeadInput(tenantContext tenant.Context, input createInput) bool {
+	if input.ImportMode {
+		return tenantContext.IsOrganizationMember() && tenantContext.HasPermission(permissions.LeadImport)
 	}
-	return tenantContext.IsOrganizationMember()
+	return canCreateLeads(tenantContext)
 }
 
 func canEditAllLeads(tenantContext tenant.Context) bool {
-	return canManageLeads(tenantContext) ||
-		tenantContext.HasPermission("lead_edit_all")
+	return canManageLeads(tenantContext)
 }
 
 func canAssignLeads(tenantContext tenant.Context) bool {
-	return canManageLeads(tenantContext) ||
-		tenantContext.HasPermission("lead_assign") ||
-		tenantContext.HasPermission("lead_transfer")
+	return tenantContext.HasPermission(permissions.LeadOperate)
 }
 
 func canMoveLead(tenantContext tenant.Context, assignedUserID string) bool {
-	return canManageLeads(tenantContext) ||
-		(assignedUserID != "" && assignedUserID == tenantContext.UserID)
+	return authorization.CanOperateLead(tenantContext, authorization.LeadResource{AssignedUserID: assignedUserID})
+}
+
+func canOperateLeadSnapshot(tenantContext tenant.Context, current leadSnapshot) bool {
+	return authorization.CanOperateLead(tenantContext, authorization.LeadResource{
+		AssignedUserID: current.AssignedUserID,
+		TeamID:         current.TeamID,
+	})
 }
 
 func canUpdateAssignedLeadOperationalPatch(tenantContext tenant.Context, current leadSnapshot, input updateInput) bool {
-	if canMoveLead(tenantContext, current.AssignedUserID) {
+	if canOperateLeadSnapshot(tenantContext, current) {
 		return isLeadStatusPatch(current, input) || isLeadFeedbackPatch(input) || isLeadPropertyInterestPatch(input)
 	}
 
@@ -3177,9 +3120,7 @@ func canUpdateAssignedLeadStatus(tenantContext tenant.Context, current leadSnaps
 }
 
 func canUpdateLedLeadStatus(tenantContext tenant.Context, current leadSnapshot, input updateInput) bool {
-	return tenantContext.IsTeamLeader &&
-		tenantContext.HasPermission("lead_view_team") &&
-		tenantContext.LeadsUser(current.AssignedUserID) &&
+	return canOperateLeadSnapshot(tenantContext, current) &&
 		isLeadStatusPatch(current, input) &&
 		!input.PropertyID.Set &&
 		!input.InterestPropertyID.Set &&
@@ -3325,12 +3266,9 @@ func isLeadPropertyInterestPatch(input updateInput) bool {
 }
 
 func canTransferLead(tenantContext tenant.Context, assignedUserID string) bool {
-	return canAssignLeads(tenantContext) ||
-		(assignedUserID != "" && assignedUserID == tenantContext.UserID)
+	return authorization.CanOperateLead(tenantContext, authorization.LeadResource{AssignedUserID: assignedUserID})
 }
 
 func canDeleteLeads(tenantContext tenant.Context) bool {
-	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin") ||
-		tenantContext.HasPermission("lead_delete")
+	return tenantContext.HasPermission(permissions.LeadDelete)
 }

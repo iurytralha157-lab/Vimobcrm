@@ -32,6 +32,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { usePasswordChangeStatus } from "@/hooks/use-password-change-status";
 import { usePasswordStrength, type PasswordStrength } from "@/hooks/use-password-strength";
+import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { settingsAPI } from "@/lib/api/settings";
 import { canManageOrganization } from "@/lib/access/organization";
 import { toast } from "sonner";
@@ -103,6 +104,7 @@ export function AccountTab() {
   const { profile, organization, refreshProfile, isSuperAdmin, userOrganizations } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const { setTheme } = useTheme();
+  const { hasPermission } = useUserPermissions();
 
   // Profile states
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -125,10 +127,9 @@ export function AccountTab() {
   const [editingOrg, setEditingOrg] = useState(false);
   const activeOrganizationId = organization?.id || profile?.organization_id;
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
-  const isAdmin = canManageOrganization({
-    isSuperAdmin,
-    memberRole: activeMemberRole,
-  });
+  const isAdmin =
+    canManageOrganization({ isSuperAdmin, memberRole: activeMemberRole }) ||
+    hasPermission('settings_organization');
 
   const [profileForm, setProfileForm] = useState<ProfileFormData>({
     name: "",

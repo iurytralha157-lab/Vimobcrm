@@ -20,10 +20,15 @@
     "lib/validation/*.test.ts",
     "lib/access/management.ts",
     "lib/access/management.test.ts",
+    "lib/access/api-boundary.test.ts",
+    "lib/access/properties.ts",
+    "lib/access/properties.test.ts",
     "lib/access/navigation.ts",
     "lib/access/navigation.test.ts",
     "lib/access/tenant-navigation.ts",
     "lib/access/tenant-navigation.test.ts",
+    "lib/access/tenant-query-cache.ts",
+    "lib/access/tenant-query-cache.test.ts",
     "lib/whatsapp-query-cache.ts",
     "lib/whatsapp-query-cache.test.ts"
   ]
