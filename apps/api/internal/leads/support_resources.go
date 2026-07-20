@@ -2993,7 +2993,7 @@ func scanContact(row scanner) (Contact, error) {
 	contact.WonAt = timePtr(wonAt)
 	contact.LostAt = timePtr(lostAt)
 	contact.CreatedBy = textPtr(createdBy)
-	contact.MetadataJSON = textPtr(metadataJSON)
+	contact.MetadataJSON = sanitizedLeadMetadataJSON(metadataJSON)
 	contact.MetaLeadID = textPtr(metaLeadID)
 	contact.MetaFormID = textPtr(metaFormID)
 	contact.MetaCampaignID = textPtr(metaCampaignID)
@@ -3024,6 +3024,42 @@ func scanContact(row scanner) (Contact, error) {
 		_ = json.Unmarshal([]byte(tagsJSON), &contact.Tags)
 	}
 	return contact, nil
+}
+
+func sanitizedLeadMetadataJSON(raw pgtype.Text) *string {
+	if !raw.Valid || strings.TrimSpace(raw.String) == "" {
+		return nil
+	}
+
+	metadata := map[string]any{}
+	if err := json.Unmarshal([]byte(raw.String), &metadata); err != nil {
+		empty := "{}"
+		return &empty
+	}
+
+	sanitize := func(values map[string]any) {
+		if value, exists := values["cpf"]; exists {
+			values["hasCPF"] = strings.TrimSpace(fmt.Sprint(value)) != ""
+			delete(values, "cpf")
+		}
+		if value, exists := values["rg"]; exists {
+			values["hasRG"] = strings.TrimSpace(fmt.Sprint(value)) != ""
+			delete(values, "rg")
+		}
+	}
+
+	sanitize(metadata)
+	if profile, ok := metadata["profile"].(map[string]any); ok {
+		sanitize(profile)
+	}
+
+	payload, err := json.Marshal(metadata)
+	if err != nil {
+		empty := "{}"
+		return &empty
+	}
+	value := string(payload)
+	return &value
 }
 
 func int32Ptr(value pgtype.Int4) *int32 {

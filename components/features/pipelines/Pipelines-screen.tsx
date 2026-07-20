@@ -1663,9 +1663,14 @@ export default function Pipelines() {
               lead={selectedLead}
               stages={stages}
               onClose={() => setSelectedLead(null)}
-              onEdit={() => {
-                setEditingLead(selectedLead);
-                setSelectedLead(null);
+              onEdit={(leadToEdit) => {
+                setEditingLead({
+                  ...selectedLead,
+                  ...leadToEdit,
+                  assignee: selectedLead.assignee,
+                  stage: selectedLead.stage,
+                  tags: selectedLead.tags,
+                });
               }}
               allTags={allTags}
               allUsers={users}
@@ -1702,7 +1707,16 @@ export default function Pipelines() {
               if (!nextOpen) setEditingLead(null);
             }}
             lead={editingLead}
-            onSaved={() => refetch()}
+            onSaved={(updatedLead) => {
+              setSelectedLead((current) => current?.id === updatedLead.id ? {
+                ...current,
+                ...updatedLead,
+                tags: current.tags,
+                assignee: current.assignee,
+                stage: current.stage,
+              } : current);
+              void refetch();
+            }}
           />
         )}
 

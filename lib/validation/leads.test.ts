@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   apiLeadListResponseSchema,
+  apiLeadSensitiveProfileResponseSchema,
   leadCreateInputSchema,
   leadMoveStageInputSchema,
   leadUpdateInputSchema,
@@ -134,4 +135,13 @@ test('valida o contrato da lista de leads', () => {
 
   assert.equal(result.success, true)
   assert.equal(apiLeadListResponseSchema.safeParse({ data: [], total: -1, limit: 50, offset: 0 }).success, false)
+})
+
+test('valida o contrato protegido de CPF e RG', () => {
+  assert.equal(apiLeadSensitiveProfileResponseSchema.safeParse({
+    data: { cpf: '12345678901', rg: '123456789' },
+  }).success, true)
+  assert.equal(apiLeadSensitiveProfileResponseSchema.safeParse({
+    data: { cpf: '12345678901', unexpected: 'leak' },
+  }).success, false)
 })

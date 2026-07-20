@@ -3,7 +3,6 @@ import { maskCNPJ, maskCPF, maskPhone, maskRG } from '@/lib/masks';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { leadAttachmentsAPI } from '@/lib/api/lead-attachments';
-import { leadsAPI } from '@/lib/api/leads';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -21,7 +20,7 @@ import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useOrganizationUsers } from '@/hooks/use-users';
 import { usePipelines, useStages } from '@/hooks/use-stages';
 import { useProperties } from '@/hooks/use-properties';
-import { useCreateLead, useLead, useUpdateLead, type Lead } from '@/hooks/use-leads';
+import { useCreateLead, useLead, useLeadSensitiveProfile, useUpdateLead, type Lead } from '@/hooks/use-leads';
 import { useTeams } from '@/hooks/use-teams';
 
 type EditableLead = Omit<Partial<Lead>, 'tags' | 'stage' | 'assignee'> & {
@@ -114,8 +113,13 @@ export function CreateLeadDialog({
   const createLead = useCreateLead();
   const updateLead = useUpdateLead();
   const isEditMode = Boolean(leadSummary?.id);
-  const organizationId = organization?.id || profile?.organization_id || undefined;
   const { data: persistedLead, isLoading: isLoadingPersistedLead } = useLead(isEditMode ? leadSummary?.id || null : null);
+  const {
+    data: sensitiveProfile,
+    isLoading: isLoadingSensitiveProfile,
+    isError: sensitiveProfileError,
+  } = useLeadSensitiveProfile(isEditMode ? leadSummary?.id || null : null, { enabled: open && isEditMode });
+  const isLoadingEditLead = isEditMode && (isLoadingPersistedLead || isLoadingSensitiveProfile);
   const editableLead = useMemo<EditableLead | null>(() => {
     if (!isEditMode || !leadSummary) return null;
     if (!persistedLead) return leadSummary;
@@ -155,8 +159,8 @@ export function CreateLeadDialog({
     person_type: (metadataText(profileMetadata, 'personType') === 'company' ? 'company' : 'individual') as 'individual' | 'company',
     gender: (['male', 'female', 'other'].includes(metadataText(profileMetadata, 'gender')) ? metadataText(profileMetadata, 'gender') : '') as '' | 'male' | 'female' | 'other',
     social_name: metadataText(profileMetadata, 'socialName'),
-    cpf: maskCPF(metadataText(profileMetadata, 'cpf')),
-    rg: maskRG(metadataText(profileMetadata, 'rg')),
+    cpf: maskCPF(sensitiveProfile?.cpf || metadataText(profileMetadata, 'cpf')),
+    rg: maskRG(sensitiveProfile?.rg || metadataText(profileMetadata, 'rg')),
     birth_date: metadataText(profileMetadata, 'birthDate'),
     cnpj: maskCNPJ(metadataText(profileMetadata, 'cnpj')),
     corporate_name: metadataText(profileMetadata, 'corporateName'),
@@ -191,9 +195,10 @@ export function CreateLeadDialog({
     tag_ids: (editableLead?.tags || []).flatMap((tag) => tag.id ? [tag.id] : []),
     conversation_id: '',
   });
-  }, [editableLead, profile?.id, defaultPipelineId, defaultStageId]);
+  }, [editableLead, profile?.id, defaultPipelineId, defaultStageId, sensitiveProfile?.cpf, sensitiveProfile?.rg]);
 
   const [formData, setFormData] = useState(getEmptyFormData);
+  const finalTab = isEditMode ? 'interest' : 'management';
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const selectedTeam = teams.find((team) => team.id === formData.team_id);
@@ -290,7 +295,7 @@ export function CreateLeadDialog({
       dialogPositionRef.current = { x: 0, y: 0 };
 
       if (isEditMode) {
-        if (isLoadingPersistedLead || !editableLead) return;
+        if (isLoadingEditLead || !editableLead) return;
         setPendingAttachments([]);
         setFormData(getEmptyFormData());
         setActiveTab('basic');
@@ -335,7 +340,7 @@ export function CreateLeadDialog({
         stage_id: defaultStageId || '',
       });
     }
-  }, [open, pipelines, defaultStageId, defaultPipelineId, draftKey, getEmptyFormData, isFormEmpty, contactPhone, contactName, conversationId, isEditMode, isLoadingPersistedLead, editableLead]);
+  }, [open, pipelines, defaultStageId, defaultPipelineId, draftKey, getEmptyFormData, isFormEmpty, contactPhone, contactName, conversationId, isEditMode, isLoadingEditLead, editableLead]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const discardDraft = useCallback(() => {
@@ -469,14 +474,18 @@ export function CreateLeadDialog({
       return;
     }
 
-    if (activeTab === 'interest') {
+    if (activeTab === 'interest' && !isEditMode) {
       setActiveTab('management');
       return;
     }
 
     if (!validateBasicStep()) return;
     if (!validateProfileStep()) return;
-    if (!validateManagementStep()) return;
+    if (!isEditMode && !validateManagementStep()) return;
+    if (isEditMode && sensitiveProfileError) {
+      toast.error('Não foi possível carregar CPF e RG com segurança. Reabra o formulário e tente novamente.');
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -495,7 +504,6 @@ export function CreateLeadDialog({
         tradeName: formData.trade_name || undefined,
         stateRegistration: formData.state_registration || undefined,
       };
-      const originalTagIds = (editableLead?.tags || []).flatMap((tag) => tag.id ? [tag.id] : []);
 
       const savedLead = isEditMode && editableLead
         ? await updateLead.mutateAsync({
@@ -505,10 +513,6 @@ export function CreateLeadDialog({
           email: formData.email || null,
           feedback: initialFeedback === currentFeedback ? undefined : initialFeedback || null,
           source: formData.source || 'manual',
-          pipeline_id: formData.pipeline_id || null,
-          stage_id: formData.stage_id || null,
-          assigned_user_id: formData.assigned_user_id || null,
-          team_id: formData.team_id || null,
           cargo: formData.cargo || null,
           empresa: formData.empresa || null,
           profissao: formData.profissao || null,
@@ -518,8 +522,6 @@ export function CreateLeadDialog({
           property_id: primaryPropertyId,
           interest_property_id: primaryPropertyId,
           interest_property_ids: formData.interest_property_ids,
-          deal_status: formData.deal_status || 'open',
-          lost_reason: formData.deal_status === 'lost' ? formData.lost_reason || null : null,
           profile: profileInput,
         })
         : await createLead.mutateAsync({
@@ -548,22 +550,6 @@ export function CreateLeadDialog({
           is_own_resource: false,
           profile: profileInput,
         });
-
-      if (isEditMode && organizationId) {
-        const selectedTagIds = new Set(formData.tag_ids);
-        const originalTags = new Set(originalTagIds);
-        const tagsToAdd = formData.tag_ids.filter((tagId) => !originalTags.has(tagId));
-        const tagsToRemove = originalTagIds.filter((tagId) => !selectedTagIds.has(tagId));
-
-        try {
-          await Promise.all([
-            ...tagsToAdd.map((tagId) => leadsAPI.addLeadTag(savedLead.id, tagId, organizationId)),
-            ...tagsToRemove.map((tagId) => leadsAPI.removeLeadTag(savedLead.id, tagId, organizationId)),
-          ]);
-        } catch {
-          toast.warning('Os dados foram salvos, mas algumas tags não puderam ser atualizadas.');
-        }
-      }
 
       let failedAttachments = 0;
       for (const file of pendingAttachments) {
@@ -778,7 +764,7 @@ export function CreateLeadDialog({
   };
 
   const handleFormKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
-    if (e.key !== 'Enter' || e.defaultPrevented || activeTab === 'management') return;
+    if (e.key !== 'Enter' || e.defaultPrevented || activeTab === finalTab) return;
 
     const target = e.target as HTMLElement;
     if (
@@ -801,7 +787,7 @@ export function CreateLeadDialog({
       return;
     }
 
-    if (activeTab === 'interest') {
+    if (activeTab === 'interest' && !isEditMode) {
       setActiveTab('management');
     }
   };
@@ -832,7 +818,7 @@ export function CreateLeadDialog({
           </SheetTitle>
         </SheetHeader>
 
-        {isEditMode && isLoadingPersistedLead && (
+        {isEditMode && isLoadingEditLead && (
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-[var(--app-surface)]/95">
             <div className="flex items-center gap-2 text-sm text-[var(--app-text-secondary)]">
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -863,11 +849,11 @@ export function CreateLeadDialog({
           <div className="flex-1 min-h-0 overflow-y-auto">
             <div className="px-6 pb-4 pt-3">
               <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                <TabsList data-tour="lead-form-tabs" className="mb-5 grid h-10 w-full grid-cols-4 rounded-xl bg-[var(--app-surface-soft)] p-1">
+                <TabsList data-tour="lead-form-tabs" className={cn('mb-5 grid h-10 w-full rounded-xl bg-[var(--app-surface-soft)] p-1', isEditMode ? 'grid-cols-3' : 'grid-cols-4')}>
                   <TabsTrigger data-tour="lead-form-tab-basic" value="basic" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Contato</TabsTrigger>
                   <TabsTrigger data-tour="lead-form-tab-profile" value="profile" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Pessoa</TabsTrigger>
                   <TabsTrigger data-tour="lead-form-tab-interest" value="interest" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Interesse</TabsTrigger>
-                  <TabsTrigger data-tour="lead-form-tab-management" value="management" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Gestão</TabsTrigger>
+                  {!isEditMode && <TabsTrigger data-tour="lead-form-tab-management" value="management" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Gestão</TabsTrigger>}
                 </TabsList>
 
                 {/* Basic Info Tab */}
@@ -956,6 +942,7 @@ export function CreateLeadDialog({
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="__none__">Não informado</SelectItem>
+                            <SelectItem value="manual">Manual</SelectItem>
                             <SelectItem value="site">Site</SelectItem>
                             <SelectItem value="indicacao">Indicação</SelectItem>
                             <SelectItem value="portais">Portais</SelectItem>
@@ -963,6 +950,12 @@ export function CreateLeadDialog({
                             <SelectItem value="facebook">Facebook</SelectItem>
                             <SelectItem value="instagram">Instagram</SelectItem>
                             <SelectItem value="google">Google</SelectItem>
+                            <SelectItem value="google_ads">Google Ads</SelectItem>
+                            <SelectItem value="meta">Meta Ads</SelectItem>
+                            <SelectItem value="meta_ads">Meta Ads</SelectItem>
+                            <SelectItem value="import">Importação</SelectItem>
+                            <SelectItem value="webhook">Webhook</SelectItem>
+                            <SelectItem value="outros">Outros</SelectItem>
                             <SelectItem value="outro">Outro</SelectItem>
                           </SelectContent>
                         </Select>
@@ -1140,7 +1133,7 @@ export function CreateLeadDialog({
                     {!canViewProperties && <p className="text-xs text-[var(--app-text-tertiary)]">Seu perfil não possui acesso aos imóveis.</p>}
                   </div>
 
-                  <div className="space-y-3 border-t border-[var(--app-border)] pt-4">
+                  {!isEditMode && <div className="space-y-3 border-t border-[var(--app-border)] pt-4">
                     <div>
                       <Label className="flex items-center gap-2"><Paperclip className="h-3.5 w-3.5" />Documentos</Label>
                       <p className="mt-1 text-xs text-[var(--app-text-tertiary)]">Até 10 arquivos de 25 MB. O envio acontece depois que o lead é criado.</p>
@@ -1171,11 +1164,11 @@ export function CreateLeadDialog({
                         </button>
                       </div>
                     ))}
-                  </div>
+                  </div>}
                 </TabsContent>
 
                 {/* Management Tab */}
-                <TabsContent data-tour="lead-form-management" value="management" className="space-y-4 mt-0">
+                {!isEditMode && <TabsContent data-tour="lead-form-management" value="management" className="space-y-4 mt-0">
                   <div className="grid gap-4 sm:grid-cols-2">
                     {canSelectTeam && (
                       <div className="space-y-2">
@@ -1335,7 +1328,7 @@ export function CreateLeadDialog({
                       placeholder="Adicionar tags..."
                     />
                   </div>
-                </TabsContent>
+                </TabsContent>}
               </Tabs>
             </div>
           </div>
@@ -1344,7 +1337,7 @@ export function CreateLeadDialog({
             <Button type="button" className="h-10 w-[40%] border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]" onClick={() => handleOpenChange(false)}>
               Cancelar
             </Button>
-            {activeTab !== 'management' ? (
+            {activeTab !== finalTab ? (
               <Button
                 key="btn-avancar"
                 type="button"
@@ -1358,7 +1351,7 @@ export function CreateLeadDialog({
                     if (!validateProfileStep()) return;
                     setActiveTab('interest');
                   }
-                  else if (activeTab === 'interest') setActiveTab('management');
+                  else if (activeTab === 'interest' && !isEditMode) setActiveTab('management');
                 }}
               >
                 Avançar
@@ -1369,7 +1362,7 @@ export function CreateLeadDialog({
                 key="btn-submit"
                 type="submit"
                 className="h-10 w-[60%] bg-primary text-white hover:bg-primary/90"
-                disabled={isSubmitting || isLoadingPersistedLead || !hasRequiredLeadIdentity || !hasRequiredManagement}
+                disabled={isSubmitting || isLoadingEditLead || sensitiveProfileError || !hasRequiredLeadIdentity || (!isEditMode && !hasRequiredManagement)}
               >
                 {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 {isSubmitting

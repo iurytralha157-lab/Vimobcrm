@@ -35,7 +35,7 @@ import {
   Briefcase, MapPin, DollarSign, Clock, ChevronRight, Calendar, Target,
   Lightbulb, FileEdit, Zap, Bot, Check, Activity, ListTodo, Contact,
   Handshake, History, ChevronDown, Trophy, XCircle, CircleDot, UserCheck,
-  RotateCcw, FileText, Download, Paperclip, BarChart3, Info, Eye, ExternalLink
+  RotateCcw, FileText, Download, Paperclip, BarChart3, Info, Eye, EyeOff, ExternalLink
 } from 'lucide-react';
 import {
   Command,
@@ -54,7 +54,7 @@ import { useLeadTasks, useCompleteCadenceTask } from '@/hooks/use-lead-tasks';
 import { useCadenceTemplates } from '@/hooks/use-cadences';
 import type { CadenceTaskTemplate } from '@/hooks/use-cadences';
 import { useCreateActivity } from '@/hooks/use-activities';
-import { useUpdateLead, useAddLeadTag, useRemoveLeadTag } from '@/hooks/use-leads';
+import { useLead, useUpdateLead, useAddLeadTag, useLeadSensitiveProfile, useRemoveLeadTag } from '@/hooks/use-leads';
 import type { Lead } from '@/hooks/use-leads';
 import type { Tag } from '@/hooks/use-tags';
 import type { User as AppUser } from '@/hooks/use-users';
@@ -94,6 +94,7 @@ import type { UnifiedHistoryEvent } from '@/hooks/use-lead-history';
 import { appendOptimisticHistoryEvent } from '@/hooks/use-optimistic-lead-history';
 import { leadsAPI } from '@/lib/api/leads';
 import { teamsAPI } from '@/lib/api/teams';
+import { maskCPF, maskRG } from '@/lib/masks';
 const sourceLabels: Record<string, string> = {
   meta: 'Meta Ads',
   meta_ads: 'Meta Ads',
@@ -178,7 +179,7 @@ type LeadDetailAssignee = {
   avatar_url?: string | null;
 };
 
-type LeadDetailLead = Omit<PipelineLead, 'stage' | 'assignee' | 'tags'> & Omit<Partial<Lead>, 'stage' | 'assignee' | 'tags'> & {
+export type LeadDetailLead = Omit<PipelineLead, 'stage' | 'assignee' | 'tags'> & Omit<Partial<Lead>, 'stage' | 'assignee' | 'tags'> & {
   whatsapp_picture?: string | null;
   whatsapp_avatar_url?: string | null;
   contact_picture?: string | null;
@@ -259,7 +260,7 @@ interface LeadDetailDialogProps {
   lead: LeadDetailLead | null;
   stages: LeadDetailStage[];
   onClose: () => void;
-  onEdit?: () => void;
+  onEdit?: (lead: LeadDetailLead) => void;
   allTags: Tag[];
   allUsers: AppUser[];
   refetchStages: () => void;
@@ -526,6 +527,141 @@ function CampaignTrackingHover({ leadMeta }: { leadMeta: CampaignTrackingDetails
   );
 }
 
+function LeadProfileHover({
+  lead,
+  canRevealSensitive,
+}: {
+  lead: LeadDetailLead;
+  canRevealSensitive: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [revealSensitive, setRevealSensitive] = useState(false);
+  const queryClient = useQueryClient();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id || undefined;
+  const sensitiveProfile = useLeadSensitiveProfile(lead.id, {
+    enabled: canRevealSensitive && revealSensitive,
+  });
+  const metadata = trackingRecord(lead.metadata) || {};
+  const nestedProfile = trackingRecord(metadata.profile);
+  const profileData = nestedProfile && Object.keys(nestedProfile).length > 0 ? nestedProfile : metadata;
+  const text = (key: string) => metaText(profileData[key]);
+  const personType = text('personType');
+  const gender = text('gender');
+  const hasCPF = metadata.hasCPF === true || profileData.hasCPF === true;
+  const hasRG = metadata.hasRG === true || profileData.hasRG === true;
+  const birthDate = text('birthDate');
+  const birthDateLabel = birthDate
+    ? format(new Date(`${birthDate}T00:00:00`), 'dd/MM/yyyy', { locale: ptBR })
+    : null;
+  const interestValue = typeof lead.valor_interesse === 'number'
+    ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(lead.valor_interesse)
+    : null;
+  const interestProperty = lead.interest_property || lead.property;
+  const propertyLabel = [interestProperty?.code, interestProperty?.title].filter(Boolean).join(' - ') || null;
+  const rows = [
+    ['Nome', lead.name],
+    ['Nome social', text('socialName')],
+    ['Telefone', formatPhoneForDisplay(lead.phone || '')],
+    ['E-mail', lead.email],
+    ['Tipo', personType === 'company' ? 'Pessoa jurídica' : personType === 'individual' ? 'Pessoa física' : null],
+    ['Gênero', gender === 'male' ? 'Masculino' : gender === 'female' ? 'Feminino' : gender === 'other' ? 'Outro' : null],
+    ['Nascimento', birthDateLabel],
+    ['Profissão', lead.profissao],
+    ['Cargo', lead.cargo],
+    ['Empresa', lead.empresa],
+    ['Renda', lead.renda_familiar],
+    ['Razão social', text('corporateName')],
+    ['Nome fantasia', text('tradeName')],
+    ['CNPJ', text('cnpj')],
+    ['Inscrição estadual', text('stateRegistration')],
+    ['Valor de interesse', interestValue],
+    ['Imóvel de interesse', propertyLabel],
+  ].filter((row): row is [string, string] => Boolean(row[1]));
+
+  const clearSensitiveData = () => {
+    setRevealSensitive(false);
+    if (organizationId) {
+      queryClient.removeQueries({
+        queryKey: ['lead-sensitive-profile', organizationId, lead.id],
+        exact: true,
+      });
+    }
+  };
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (!nextOpen) clearSensitiveData();
+  };
+
+  const sensitiveValue = (kind: 'cpf' | 'rg') => {
+    if (!revealSensitive) return '••••••••••••';
+    if (sensitiveProfile.isLoading || sensitiveProfile.isFetching) return 'Carregando...';
+    const value = sensitiveProfile.data?.[kind];
+    if (!value) return 'Não informado';
+    return kind === 'cpf' ? maskCPF(value) : maskRG(value);
+  };
+
+  return (
+    <HoverCard open={open} onOpenChange={handleOpenChange} openDelay={100} closeDelay={420}>
+      <HoverCardTrigger asChild>
+        <button
+          type="button"
+          className="group inline-flex min-w-0 max-w-full items-center justify-end gap-1 text-right font-medium text-[var(--app-text-primary)] outline-none transition-colors hover:text-primary focus-visible:text-primary"
+        >
+          <span className="truncate underline decoration-dotted decoration-[var(--app-text-tertiary)] underline-offset-4 group-hover:decoration-primary">
+            {lead.name || 'Lead'}
+          </span>
+          <Info className="h-3 w-3 shrink-0 text-[var(--app-text-tertiary)] group-hover:text-primary" />
+        </button>
+      </HoverCardTrigger>
+      <HoverCardContent
+        side="right"
+        align="start"
+        sideOffset={4}
+        className="vimob-popover-content z-[110] w-[min(420px,calc(100vw-2rem))] rounded-[8px] border-0 p-0 text-left text-[var(--app-text-primary)] shadow-[0_22px_70px_rgba(0,0,0,0.28)]"
+      >
+        <div className="border-b border-[var(--app-border)] px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-primary">Ficha do lead</p>
+        </div>
+        <div className="max-h-[430px] space-y-3 overflow-y-auto p-3">
+          <div className="space-y-1.5">
+            {rows.map(([label, value]) => (
+              <div key={label} className="grid grid-cols-[118px_minmax(0,1fr)] gap-2 text-[11px] leading-snug">
+                <span className="text-[var(--app-text-tertiary)]">{label}</span>
+                <span className="break-words font-medium text-[var(--app-text-primary)]">{value}</span>
+              </div>
+            ))}
+          </div>
+
+          {(hasCPF || hasRG) && (
+            <div className="space-y-1.5 border-t border-[var(--app-border)] pt-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--app-text-tertiary)]">Documentos protegidos</p>
+                {canRevealSensitive && (
+                  <button
+                    type="button"
+                    onClick={() => revealSensitive ? clearSensitiveData() : setRevealSensitive(true)}
+                    className="inline-flex items-center gap-1 rounded-[5px] bg-[var(--app-surface-soft)] px-2 py-1 text-[10px] font-medium text-primary"
+                  >
+                    {revealSensitive ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                    {revealSensitive ? 'Ocultar' : 'Revelar'}
+                  </button>
+                )}
+              </div>
+              {hasCPF && <InfoLine label="CPF" value={sensitiveValue('cpf')} />}
+              {hasRG && <InfoLine label="RG" value={sensitiveValue('rg')} />}
+              {sensitiveProfile.isError && (
+                <p className="text-[10px] text-destructive">Não foi possível liberar os documentos.</p>
+              )}
+            </div>
+          )}
+        </div>
+      </HoverCardContent>
+    </HoverCard>
+  );
+}
+
 function getDealStatusTriggerClass(status?: string | null) {
   if (status === 'won') {
     return '!border-0 !bg-emerald-600 !text-white !shadow-none !ring-0 !ring-offset-0 transition-colors hover:!bg-emerald-700 data-[state=open]:!bg-emerald-700 focus:!ring-0 focus-visible:!ring-1 focus-visible:!ring-emerald-500/40 focus-visible:!ring-offset-0';
@@ -627,11 +763,7 @@ function CompactScheduleEventsList({
   });
 
   if (sortedEvents.length === 0) {
-    return (
-      <p className="mt-3 rounded-[6px] bg-[var(--app-surface-solid)] px-3 py-2 text-xs text-[var(--app-text-tertiary)]">
-        Nenhum compromisso agendado
-      </p>
-    );
+    return null;
   }
 
   return (
@@ -763,6 +895,7 @@ export function LeadDetailDialog({
   const queryClient = useQueryClient();
 
   const leadId = leadProp?.id ?? null;
+  const fullLeadQuery = useLead(leadId);
   const [lostReasonLocal, setLostReasonLocal] = useState(lead?.lost_reason || '');
   const [lostReasonDialogOpen, setLostReasonDialogOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -826,15 +959,34 @@ export function LeadDetailDialog({
   useEffect(() => {
     if (!leadProp || isUpdatingAssignee) return;
 
+    const fullLead = fullLeadQuery.data as LeadDetailLead | null | undefined;
+    const hydratedLead: LeadDetailLead = fullLead
+      ? {
+          ...leadProp,
+          ...fullLead,
+          assignee: fullLead.assignee ?? (
+            fullLead.assigned_user_id === leadProp.assigned_user_id
+              ? leadProp.assignee
+              : undefined
+          ),
+          interest_property: leadProp.interest_property ?? fullLead.interest_property,
+          property: leadProp.property ?? fullLead.property,
+          stage: leadProp.stage ?? fullLead.stage,
+          tags: leadProp.tags ?? fullLead.tags,
+          tasks_count: leadProp.tasks_count ?? fullLead.tasks_count,
+          whatsapp_avatar_url: leadProp.whatsapp_avatar_url ?? fullLead.whatsapp_avatar_url,
+        }
+      : leadProp;
+
     let isActive = true;
     queueMicrotask(() => {
-      if (isActive) setLocalLead(leadProp);
+      if (isActive) setLocalLead(hydratedLead);
     });
 
     return () => {
       isActive = false;
     };
-  }, [leadProp, isUpdatingAssignee]);
+  }, [leadProp, fullLeadQuery.data, isUpdatingAssignee]);
 
   useEffect(() => {
     if (!leadProp) return;
@@ -906,7 +1058,7 @@ export function LeadDetailDialog({
   const handleOpenLeadEdit = () => {
     if (!canOperateLead) return;
     setIsEditingContact(false);
-    onEdit?.();
+    onEdit?.(localLead || lead);
   };
   const canViewProperties = hasPermission('property_view') || hasPermission('property_manage');
   const canViewLeadSchedule = hasPermission('schedule_view');
@@ -1357,6 +1509,7 @@ export function LeadDetailDialog({
   };
 
   const handleAssignUser = async (userId: string | null) => {
+    if (isUpdatingAssignee) return;
     if (!canTransferLead) {
       toast.error('Você não tem permissão para trocar o responsável deste lead');
       return;
@@ -1372,92 +1525,98 @@ export function LeadDetailDialog({
 
     if (!localLead) return;
 
-    // UI Otimista
-    const previousLead: LeadDetailLead = { ...localLead };
-    const selectedUser = userId ? assignableUsers.find(u => u.id === userId) : null;
-
-    const updatedLead: LeadDetailLead = {
-      ...localLead,
-      assigned_user_id: userId,
-      assignee: selectedUser ? {
-        id: selectedUser.id,
-        name: selectedUser.name,
-        email: selectedUser.email,
-        avatar_url: selectedUser.avatar_url
-      } : undefined
-    };
-
-    setLocalLead(updatedLead);
-    const pipelineSnapshots = updatePipelineAssigneeCache(updatedLead);
-    setIsUpdatingAssignee(true);
-    setAssigneePopoverOpen(false);
-
-    if (!userId) {
-      try {
-        const { error } = await leadsAPI.assignLead(lead.id, null, lead.organization_id || profile?.organization_id || organization?.id);
-        if (error) throw error;
-        refreshPipelineInBackground();
-      } catch {
-        setLocalLead(previousLead);
-        restorePipelineCache(pipelineSnapshots);
-      } finally {
-        setIsUpdatingAssignee(false);
-      }
+    if ((localLead.assigned_user_id || null) === userId) {
+      setAssigneePopoverOpen(false);
       return;
     }
 
+    const previousLead: LeadDetailLead = { ...localLead };
+    const selectedUser = userId ? assignableUsers.find(u => u.id === userId) : null;
+    setIsUpdatingAssignee(true);
+    setAssigneePopoverOpen(false);
+
+    let pipelineSnapshots: Array<[QueryKey, unknown]> = [];
+
     try {
-      // Check user availability before assigning
-      const currentDay = new Date().getDay();
-      const currentTime = format(new Date(), 'HH:mm:ss');
+      if (userId) {
+        const currentDay = new Date().getDay();
+        const currentTime = format(new Date(), 'HH:mm:ss');
+        const teamMember = teams
+          .flatMap((team) => team.members || [])
+          .find((member) => member.user_id === userId);
 
-      const teamMember = teams
-        .flatMap((team) => team.members || [])
-        .find((member) => member.user_id === userId);
-
-      if (teamMember) {
-        const availabilityList = await loadAssigneeAvailability();
-        const availability = availabilityList.find((item) =>
-          item.team_member_id === teamMember.id && item.day_of_week === currentDay && item.is_active
-        );
-
-        if (availability) {
-          const isOutsideSchedule = !availability.is_all_day &&
-            (currentTime < (availability.start_time || '00:00:00') ||
-             currentTime > (availability.end_time || '23:59:59'));
-
-          if (isOutsideSchedule) {
-            const startTime = availability.start_time || '00:00:00';
-            const endTime = availability.end_time || '23:59:59';
-            const confirmAssign = window.confirm(
-              `Atenção: Este usuário está fora do seu horário de escala (${startTime.slice(0, 5)} - ${endTime.slice(0, 5)}). Deseja atribuir mesmo assim`
-            );
-            if (!confirmAssign) {
-              setLocalLead(previousLead);
-              restorePipelineCache(pipelineSnapshots);
-              setIsUpdatingAssignee(false);
-              return;
-            }
-          }
-        } else {
-          const confirmAssign = window.confirm(
-            'Atenção: Este usuário não tem escala ativa para hoje. Deseja atribuir mesmo assim'
+        if (teamMember) {
+          const availabilityList = await loadAssigneeAvailability();
+          const availability = availabilityList.find((item) =>
+            item.team_member_id === teamMember.id && item.day_of_week === currentDay && item.is_active
           );
-          if (!confirmAssign) {
-            setLocalLead(previousLead);
-            restorePipelineCache(pipelineSnapshots);
-            setIsUpdatingAssignee(false);
-            return;
+
+          if (availability) {
+            const isOutsideSchedule = !availability.is_all_day &&
+              (currentTime < (availability.start_time || '00:00:00') ||
+               currentTime > (availability.end_time || '23:59:59'));
+
+            if (isOutsideSchedule) {
+              const startTime = availability.start_time || '00:00:00';
+              const endTime = availability.end_time || '23:59:59';
+              const confirmAssign = window.confirm(
+                `Atenção: Este usuário está fora do seu horário de escala (${startTime.slice(0, 5)} - ${endTime.slice(0, 5)}). Deseja atribuir mesmo assim?`
+              );
+              if (!confirmAssign) return;
+            }
+          } else {
+            const confirmAssign = window.confirm(
+              'Atenção: Este usuário não tem escala ativa para hoje. Deseja atribuir mesmo assim?'
+            );
+            if (!confirmAssign) return;
           }
         }
       }
 
-      const { error } = await leadsAPI.assignLead(lead.id, userId, lead.organization_id || profile?.organization_id || organization?.id);
+      const optimisticLead: LeadDetailLead = {
+        ...localLead,
+        assigned_user_id: userId,
+        assignee: selectedUser ? {
+          id: selectedUser.id,
+          name: selectedUser.name,
+          email: selectedUser.email,
+          avatar_url: selectedUser.avatar_url
+        } : undefined
+      };
+
+      setLocalLead(optimisticLead);
+      pipelineSnapshots = updatePipelineAssigneeCache(optimisticLead);
+
+      const organizationId = lead.organization_id || profile?.organization_id || organization?.id;
+      const { data, error } = await leadsAPI.assignLead(lead.id, userId, organizationId);
       if (error) throw error;
+
+      const serverLead = data as LeadDetailLead;
+      const persistedLead: LeadDetailLead = {
+        ...optimisticLead,
+        ...serverLead,
+        assignee: serverLead.assignee ?? (
+          serverLead.assigned_user_id === optimisticLead.assigned_user_id
+            ? optimisticLead.assignee
+            : undefined
+        ),
+      };
+
+      setLocalLead(persistedLead);
+      if (organizationId) {
+        queryClient.setQueryData(['lead', organizationId, lead.id], persistedLead);
+      }
+      updatePipelineLeadCache(lead.id, persistedLead);
+      void queryClient.invalidateQueries({ queryKey: ['lead-history-v2', lead.id] });
       refreshPipelineInBackground();
-    } catch {
+
+      toast.success(userId
+        ? `Lead transferido para ${selectedUser?.name || selectedUser?.email || 'o novo responsável'}`
+        : 'Responsável removido do lead');
+    } catch (error: unknown) {
       setLocalLead(previousLead);
       restorePipelineCache(pipelineSnapshots);
+      toast.error(`Não foi possível transferir o lead: ${getErrorMessage(error)}`);
     } finally {
       setIsUpdatingAssignee(false);
     }
@@ -1818,10 +1977,10 @@ export function LeadDetailDialog({
     }
   };
 
-  const leadSource = lead.source ?? 'outros';
+  const leadSource = localLead?.source ?? lead.source ?? 'outros';
   const SourceIcon = sourceIcons[leadSource] || Target;
-  const leadName = lead.name || 'Lead';
-  const campaignTrackingDetails = buildCampaignTrackingDetails(leadMeta ?? null, lead);
+  const leadName = localLead?.name || lead.name || 'Lead';
+  const campaignTrackingDetails = buildCampaignTrackingDetails(leadMeta ?? null, localLead || lead);
   // State for roteiro dialog is now at top of component
 
   // Tabs configuration
@@ -2720,17 +2879,13 @@ export function LeadDetailDialog({
     const dealStatusLabel = localLead.deal_status === 'won' ? 'Ganho' : localLead.deal_status === 'lost' ? 'Perdido' : 'Aberto';
     const mobileActiveTab = ['summary', 'actions', 'history'].includes(activeTab) ? activeTab : 'summary';
     const contactRows: Array<{ label: string; value: ReactNode }> = [
-      { label: 'Nome', value: lead.name },
-      { label: 'Telefone', value: formatPhoneForDisplay(lead.phone || '') },
-      { label: 'E-mail', value: lead.email },
-      { label: 'Cargo', value: lead.cargo },
-      { label: 'Empresa', value: lead.empresa },
+      { label: 'Nome', value: <LeadProfileHover lead={localLead} canRevealSensitive={canOperateLead} /> },
+      { label: 'Telefone', value: formatPhoneForDisplay(localLead.phone || '') },
       { label: 'Origem', value: sourceLabels[leadSource] || leadSource },
       {
         label: 'Campanha',
         value: campaignTrackingDetails ? <CampaignTrackingHover leadMeta={campaignTrackingDetails} /> : null
       },
-      { label: 'Criado em', value: lead.created_at ? format(new Date(lead.created_at), 'dd/MM/yy HH:mm', { locale: dateLocale }) : null },
     ]
       .filter((row) => Boolean(row.value));
 
@@ -3146,17 +3301,13 @@ export function LeadDetailDialog({
     const leadAvatarUrl = lead.whatsapp_picture || lead.whatsapp_avatar_url || lead.contact_picture || null;
     const dealStatusLabel = localLead.deal_status === 'won' ? 'Ganho' : localLead.deal_status === 'lost' ? 'Perdido' : 'Aberto';
     const contactRows: Array<{ label: string; value: ReactNode; icon?: ReactNode }> = [
-      { label: 'Nome', value: lead.name },
-      { label: 'Telefone', value: formatPhoneForDisplay(lead.phone || '') },
-      { label: 'E-mail', value: lead.email },
-      { label: 'Cargo', value: lead.cargo },
-      { label: 'Empresa', value: lead.empresa },
+      { label: 'Nome', value: <LeadProfileHover lead={localLead} canRevealSensitive={canOperateLead} /> },
+      { label: 'Telefone', value: formatPhoneForDisplay(localLead.phone || '') },
       { label: 'Origem', value: sourceLabels[leadSource] || leadSource },
       {
         label: 'Campanha',
         value: campaignTrackingDetails ? <CampaignTrackingHover leadMeta={campaignTrackingDetails} /> : null
       },
-      { label: 'Criado em', value: lead.created_at ? format(new Date(lead.created_at), 'dd/MM/yy HH:mm', { locale: dateLocale }) : null },
     ]
       .filter((row) => Boolean(row.value));
 

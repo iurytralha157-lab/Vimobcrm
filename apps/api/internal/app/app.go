@@ -603,6 +603,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("GET /v1/leads/{id}/journey", withOrganization(http.HandlerFunc(leadsHandler.ListLeadJourney)))
 	mux.Handle("GET /v1/leads/{id}/history-raw", withOrganization(http.HandlerFunc(leadsHandler.ShowLeadHistoryRaw)))
 	mux.Handle("GET /v1/leads/{id}/conversation-detail", withOrganization(http.HandlerFunc(leadsHandler.ShowConversationDetail)))
+	mux.Handle("GET /v1/leads/{id}/sensitive-profile", withPermission(permissions.LeadOperate, http.HandlerFunc(leadsHandler.ShowSensitiveProfile)))
 	mux.Handle("GET /v1/leads/{id}", withOrganization(http.HandlerFunc(leadsHandler.Show)))
 	mux.Handle("PATCH /v1/leads/{id}", withPermission(permissions.LeadOperate, http.HandlerFunc(leadsHandler.Update)))
 	mux.Handle("DELETE /v1/leads/{id}", withPermission(permissions.LeadDelete, http.HandlerFunc(leadsHandler.Delete)))

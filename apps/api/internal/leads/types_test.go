@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -172,6 +173,75 @@ func TestUpdateRequestValidate(t *testing.T) {
 	profile, ok := input.Metadata["profile"].(LeadMetadata)
 	if !ok || profile["personType"] != "company" || profile["cnpj"] != "12345678000190" {
 		t.Fatalf("Validate() profile metadata = %#v", input.Metadata)
+	}
+}
+
+func TestLeadProfileSensitiveFieldsAreNotExposed(t *testing.T) {
+	fields := LeadMetadata{}
+	mergeLeadProfileMetadata(fields, []byte(`{
+		"profile": {
+			"personType": "individual",
+			"gender": "female",
+			"cpf": "12345678901",
+			"rg": "123456789"
+		}
+	}`))
+
+	if _, exists := fields["cpf"]; exists {
+		t.Fatal("CPF must not be exposed in the regular lead payload")
+	}
+	if _, exists := fields["rg"]; exists {
+		t.Fatal("RG must not be exposed in the regular lead payload")
+	}
+	if fields["hasCPF"] != true || fields["hasRG"] != true {
+		t.Fatalf("sensitive field flags = %#v", fields)
+	}
+	if fields["personType"] != "individual" || fields["gender"] != "female" {
+		t.Fatalf("non-sensitive profile fields = %#v", fields)
+	}
+}
+
+func TestSensitiveProfileAuditIsRedacted(t *testing.T) {
+	current := map[string]any{
+		"metadata": map[string]any{
+			"profile": map[string]any{
+				"cpf":        "12345678901",
+				"rg":         "123456789",
+				"personType": "individual",
+			},
+		},
+	}
+	requested := map[string]any{
+		"cpf":         "98765432100",
+		"rg":          nil,
+		"person_type": "individual",
+	}
+
+	oldData, newData := changedLeadAuditData(current, requested)
+	if oldData["cpf"] != "Protegido" || newData["cpf"] != "Protegido" {
+		t.Fatalf("CPF audit values must be redacted: old=%#v new=%#v", oldData, newData)
+	}
+	if oldData["rg"] != "Protegido" || newData["rg"] != nil {
+		t.Fatalf("RG audit values must be redacted: old=%#v new=%#v", oldData, newData)
+	}
+	if _, exists := newData["person_type"]; exists {
+		t.Fatalf("unchanged profile value should not be audited: %#v", newData)
+	}
+}
+
+func TestContactMetadataSanitizesSensitiveProfile(t *testing.T) {
+	sanitized := sanitizedLeadMetadataJSON(pgtype.Text{
+		String: `{"profile":{"cpf":"12345678901","rg":"123456789","socialName":"Cliente QA"}}`,
+		Valid:  true,
+	})
+	if sanitized == nil {
+		t.Fatal("sanitized metadata is nil")
+	}
+	if strings.Contains(*sanitized, "12345678901") || strings.Contains(*sanitized, "123456789") {
+		t.Fatalf("sensitive values leaked in contact metadata: %s", *sanitized)
+	}
+	if !strings.Contains(*sanitized, `"hasCPF":true`) || !strings.Contains(*sanitized, `"hasRG":true`) {
+		t.Fatalf("sensitive field flags missing in contact metadata: %s", *sanitized)
 	}
 }
 

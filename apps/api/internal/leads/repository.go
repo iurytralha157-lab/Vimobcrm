@@ -222,6 +222,43 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, le
 	return lead, nil
 }
 
+func (repo Repository) GetSensitiveProfile(ctx context.Context, tenantContext tenant.Context, leadID string) (SensitiveLeadProfile, error) {
+	leadID, ok := normalizeUUID(leadID)
+	if !ok {
+		return SensitiveLeadProfile{}, ErrLeadNotFound
+	}
+
+	lead, err := repo.Get(ctx, tenantContext, leadID)
+	if err != nil {
+		return SensitiveLeadProfile{}, err
+	}
+	if !authorization.CanOperateLead(tenantContext, authorization.LeadResource{
+		AssignedUserID: lead.AssignedUserID,
+		TeamID:         lead.TeamID,
+	}) {
+		return SensitiveLeadProfile{}, tenant.ErrOrganizationAccessDenied
+	}
+
+	var cpf, rg pgtype.Text
+	err = repo.db.Pool().QueryRow(ctx, `
+		select
+			nullif(metadata #>> '{profile,cpf}', ''),
+			nullif(metadata #>> '{profile,rg}', '')
+		from public.leads
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		limit 1
+	`, tenantContext.OrganizationID, leadID).Scan(&cpf, &rg)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SensitiveLeadProfile{}, ErrLeadNotFound
+	}
+	if err != nil {
+		return SensitiveLeadProfile{}, err
+	}
+
+	return SensitiveLeadProfile{CPF: textValue(cpf), RG: textValue(rg)}, nil
+}
+
 func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context, input createInput) (CreateResult, error) {
 	if !canCreateLeadInput(tenantContext, input) {
 		return CreateResult{}, tenant.ErrOrganizationAccessDenied
@@ -1943,14 +1980,58 @@ func changedLeadAuditData(current map[string]any, requested map[string]any) (map
 	oldData := make(map[string]any)
 	newData := make(map[string]any)
 	for key, newValue := range requested {
-		oldValue := current[key]
+		oldValue := currentLeadAuditValue(current, key)
 		if leadAuditValuesEqual(key, oldValue, newValue) {
+			continue
+		}
+		if key == "cpf" || key == "rg" {
+			oldData[key] = protectedAuditValue(oldValue)
+			newData[key] = protectedAuditValue(newValue)
 			continue
 		}
 		oldData[key] = oldValue
 		newData[key] = newValue
 	}
 	return oldData, newData
+}
+
+func currentLeadAuditValue(current map[string]any, key string) any {
+	profileKey := ""
+	switch key {
+	case "person_type":
+		profileKey = "personType"
+	case "social_name":
+		profileKey = "socialName"
+	case "birth_date":
+		profileKey = "birthDate"
+	case "corporate_name":
+		profileKey = "corporateName"
+	case "trade_name":
+		profileKey = "tradeName"
+	case "state_registration":
+		profileKey = "stateRegistration"
+	case "gender", "cpf", "rg", "cnpj":
+		profileKey = key
+	}
+	if profileKey == "" {
+		return current[key]
+	}
+	metadata, ok := current["metadata"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	profile, ok := metadata["profile"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	return profile[profileKey]
+}
+
+func protectedAuditValue(value any) any {
+	if strings.TrimSpace(fmt.Sprint(value)) == "" || value == nil {
+		return nil
+	}
+	return "Protegido"
 }
 
 func leadAuditValuesEqual(key string, left any, right any) bool {
@@ -3106,6 +3187,14 @@ func mergeLeadProfileMetadata(fields LeadMetadata, rawMetadata []byte) {
 	}
 	if profile, ok := metadata["profile"].(map[string]any); ok {
 		for key, value := range profile {
+			if key == "cpf" || key == "rg" {
+				flagKey := "hasCPF"
+				if key == "rg" {
+					flagKey = "hasRG"
+				}
+				fields[flagKey] = strings.TrimSpace(fmt.Sprint(value)) != ""
+				continue
+			}
 			fields[key] = value
 		}
 	}

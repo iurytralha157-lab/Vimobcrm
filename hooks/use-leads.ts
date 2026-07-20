@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { leadsAPI, type LeadUpdateInput } from '@/lib/api/leads';
+import { leadsAPI, type LeadSensitiveProfile, type LeadUpdateInput } from '@/lib/api/leads';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import type { Tables } from '@/integrations/supabase/types';
@@ -132,6 +132,22 @@ export function useLead(id: string | null) {
     },
     enabled: !!id && !!organizationId,
   });
+}
+
+export function useLeadSensitiveProfile(id: string | null, options: { enabled?: boolean } = {}) {
+	const { profile, organization } = useAuth();
+	const organizationId = organization?.id || profile?.organization_id || undefined;
+
+	return useQuery<LeadSensitiveProfile>({
+		queryKey: ['lead-sensitive-profile', organizationId, id],
+		queryFn: async () => {
+			if (!id || !organizationId) return {};
+			return leadsAPI.getSensitiveProfile(id, organizationId);
+		},
+		enabled: Boolean(id && organizationId && options.enabled !== false),
+		staleTime: 0,
+		gcTime: 0,
+	});
 }
 
 export function useCreateLead() {

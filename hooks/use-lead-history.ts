@@ -644,6 +644,15 @@ function sourceLabel(source?: string | null): string | null {
     site: 'Site',
     wordpress: 'WordPress',
     manual: 'Manual',
+    indicacao: 'Indicação',
+    portais: 'Portais',
+    facebook: 'Facebook',
+    instagram: 'Instagram',
+    google: 'Google',
+    google_ads: 'Google Ads',
+    import: 'Importação',
+    outros: 'Outros',
+    outro: 'Outro',
   };
   return labels[source] || source;
 }
@@ -935,24 +944,24 @@ function buildContent(type: string, metadata: HistoryMetadata): string | undefin
 
 const AUDIT_FIELD_LABELS: Record<string, string> = {
   name: 'Nome',
-  email: 'Email',
+  email: 'E-mail',
   phone: 'Telefone',
   source: 'Origem',
   message: 'Mensagem',
   property_code: 'Código do imóvel',
-  property_id: 'Imovel',
-  interest_property_id: 'Imovel de interesse',
+  property_id: 'Imóvel',
+  interest_property_id: 'Imóvel de interesse',
   pipeline_id: 'Pipeline',
   stage_id: 'Etapa',
-  assigned_user_id: 'Responsavel',
+  assigned_user_id: 'Responsável',
   valor_interesse: 'Valor de interesse',
-  commission_percentage: 'Comissao',
+  commission_percentage: 'Comissão',
   deal_status: 'Status',
   lost_reason: 'Motivo de perda',
   feedback: 'Feedback',
   cargo: 'Cargo',
   empresa: 'Empresa',
-  profissao: 'Profissao',
+  profissao: 'Profissão',
   endereco: 'Endereço',
   numero: 'Número',
   complemento: 'Complemento',
@@ -966,9 +975,20 @@ const AUDIT_FIELD_LABELS: Record<string, string> = {
   trabalha: 'Trabalha',
   procura_financiamento: 'Procura financiamento',
   is_own_resource: 'Recurso proprio',
+  person_type: 'Tipo de pessoa',
+  gender: 'Gênero',
+  social_name: 'Nome social',
+  birth_date: 'Data de nascimento',
+  cpf: 'CPF',
+  rg: 'RG',
+  cnpj: 'CNPJ',
+  corporate_name: 'Razão social',
+  trade_name: 'Nome fantasia',
+  state_registration: 'Inscrição estadual',
 };
 
 const AUDIT_IGNORED_FIELDS = new Set(['origin']);
+const AUDIT_FEMININE_FIELDS = new Set(['birth_date', 'source', 'empresa', 'profissao', 'renda_familiar', 'commission_percentage']);
 
 function auditChangedKeys(audit: AuditLogRow) {
   const newData = asMetadata(audit.new_data);
@@ -1033,9 +1053,26 @@ function auditEventType(action: string, keys: string[]) {
   return 'lead_updated';
 }
 
-function auditDisplayValue(value: unknown) {
+function auditDisplayValue(value: unknown, key?: string) {
   if (value === null || value === undefined || value === '') return '';
-  if (typeof value === 'boolean') return value ? 'Sim' : 'NÃ£o';
+  if (key === 'source') return sourceLabel(String(value));
+  if (key === 'valor_interesse') {
+    const amount = Number(value);
+    if (Number.isFinite(amount)) {
+      return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(amount);
+    }
+  }
+  if (key === 'birth_date' && /^\d{4}-\d{2}-\d{2}$/.test(String(value))) {
+    const [year, month, day] = String(value).split('-');
+    return `${day}/${month}/${year}`;
+  }
+  if (key === 'person_type') {
+    return value === 'company' ? 'Pessoa jurídica' : value === 'individual' ? 'Pessoa física' : String(value);
+  }
+  if (key === 'gender') {
+    return value === 'male' ? 'Masculino' : value === 'female' ? 'Feminino' : value === 'other' ? 'Outro' : String(value);
+  }
+  if (typeof value === 'boolean') return value ? 'Sim' : 'Não';
   return String(value);
 }
 
@@ -1044,11 +1081,16 @@ function auditContent(action: string, keys: string[], oldData: HistoryMetadata, 
   if (keys.length === 0) return undefined;
   return keys.map((key) => {
     const label = auditFieldLabel(key);
-    const oldValue = auditDisplayValue(oldData[key]);
-    const newValue = auditDisplayValue(newData[key]);
-    if (!oldValue && newValue) return `${label} adicionado: ${newValue}`;
-    if (oldValue && !newValue) return `${label} removido (era: ${oldValue})`;
-    return `${label}: ${oldValue} â†’ ${newValue}`;
+    const oldValue = auditDisplayValue(oldData[key], key);
+    const newValue = auditDisplayValue(newData[key], key);
+    if (key === 'cpf' || key === 'rg') {
+      if (!oldValue && newValue) return `${label} adicionado`;
+      if (oldValue && !newValue) return `${label} removido`;
+      return `${label} atualizado`;
+    }
+    if (!oldValue && newValue) return `${label} ${AUDIT_FEMININE_FIELDS.has(key) ? 'adicionada' : 'adicionado'}: ${newValue}`;
+    if (oldValue && !newValue) return `${label} ${AUDIT_FEMININE_FIELDS.has(key) ? 'removida' : 'removido'} (era: ${oldValue})`;
+    return `${label}: ${oldValue} → ${newValue}`;
   }).join('\n');
 }
 

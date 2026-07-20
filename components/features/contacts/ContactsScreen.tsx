@@ -1223,10 +1223,15 @@ export default function Contacts() {
             lead={selectedLead}
             stages={stages}
             onClose={() => setSelectedContactId(null)}
-            onEdit={() => {
+            onEdit={(leadToEdit) => {
               const contactTags = contacts.find((contact) => contact.id === selectedLead.id)?.tags;
-              setEditingLead({ ...selectedLead, tags: contactTags || selectedLead.tags });
-              setSelectedContactId(null);
+              setEditingLead({
+                ...selectedLead,
+                ...leadToEdit,
+                assignee: selectedLead.assignee,
+                stage: selectedLead.stage,
+                tags: contactTags || selectedLead.tags,
+              });
             }}
             allTags={tags}
             allUsers={users}
@@ -1243,7 +1248,7 @@ export default function Contacts() {
               if (!nextOpen) setEditingLead(null);
             }}
             lead={editingLead}
-            onSaved={() => refetchContacts()}
+            onSaved={() => void refetchContacts()}
           />
         )}
 

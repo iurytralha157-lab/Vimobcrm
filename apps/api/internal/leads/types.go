@@ -70,6 +70,11 @@ type Lead struct {
 
 type LeadMetadata map[string]any
 
+type SensitiveLeadProfile struct {
+	CPF string `json:"cpf,omitempty"`
+	RG  string `json:"rg,omitempty"`
+}
+
 type Stage struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
@@ -868,10 +873,41 @@ func (input updateInput) auditData() map[string]any {
 	addBool("procura_financiamento", input.ProcuraFinanciamento)
 	addBool("is_own_resource", input.IsOwnResource)
 	if input.MetadataSet {
-		out["metadata"] = input.Metadata
+		if profile, ok := input.Metadata["profile"].(LeadMetadata); ok {
+			for _, key := range []string{
+				"personType", "gender", "socialName", "birthDate", "cpf", "rg", "cnpj",
+				"corporateName", "tradeName", "stateRegistration",
+			} {
+				value, exists := profile[key]
+				if !exists {
+					out[leadProfileAuditKey(key)] = nil
+					continue
+				}
+				out[leadProfileAuditKey(key)] = value
+			}
+		}
 	}
 
 	return out
+}
+
+func leadProfileAuditKey(key string) string {
+	switch key {
+	case "personType":
+		return "person_type"
+	case "socialName":
+		return "social_name"
+	case "birthDate":
+		return "birth_date"
+	case "corporateName":
+		return "corporate_name"
+	case "tradeName":
+		return "trade_name"
+	case "stateRegistration":
+		return "state_registration"
+	default:
+		return key
+	}
 }
 
 func validateLeadProfile(request *LeadProfileRequest, interestPropertyIDs []string) (LeadMetadata, error) {

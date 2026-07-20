@@ -154,7 +154,27 @@ const leadAdditionalFieldsSchema = z.object({
   uf: z.string().optional(),
   rendaFamiliar: z.string().optional(),
   faixaValorImovel: z.string().optional(),
+	personType: z.enum(['individual', 'company']).optional(),
+	gender: z.enum(['male', 'female', 'other']).optional(),
+	socialName: z.string().optional(),
+	birthDate: z.string().optional(),
+	hasCPF: z.boolean().optional(),
+	hasRG: z.boolean().optional(),
+	cnpj: z.string().optional(),
+	corporateName: z.string().optional(),
+	tradeName: z.string().optional(),
+	stateRegistration: z.string().optional(),
+	interestPropertyIds: z.array(uuidSchema).optional(),
 }).passthrough()
+
+export const leadSensitiveProfileSchema = z.object({
+	cpf: z.string().max(18).optional(),
+	rg: z.string().max(30).optional(),
+}).strict()
+
+export const apiLeadSensitiveProfileResponseSchema = z.object({
+	data: leadSensitiveProfileSchema,
+}).strict()
 
 export const apiLeadSchema = z.object({
   id: uuidSchema,

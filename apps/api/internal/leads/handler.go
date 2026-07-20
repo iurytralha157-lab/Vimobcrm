@@ -66,6 +66,24 @@ func (handler Handler) Show(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (handler Handler) ShowSensitiveProfile(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+
+	profile, err := handler.repo.GetSensitiveProfile(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, map[string]SensitiveLeadProfile{
+		"data": profile,
+	})
+}
+
 func (handler Handler) ShowConversationDetail(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := tenant.FromContext(r.Context())
 	if !ok || tenantContext.OrganizationID == "" {

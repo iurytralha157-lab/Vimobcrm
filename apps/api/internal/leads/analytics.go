@@ -447,8 +447,8 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 				'action', al.action,
 				'entity_type', al.entity_type,
 				'entity_id', al.entity_id::text,
-				'old_data', coalesce(al.old_data, '{}'::jsonb),
-				'new_data', coalesce(al.new_data, '{}'::jsonb),
+				'old_data', (coalesce(al.old_data, '{}'::jsonb) #- '{metadata,profile,cpf}') #- '{metadata,profile,rg}',
+				'new_data', (coalesce(al.new_data, '{}'::jsonb) #- '{metadata,profile,cpf}') #- '{metadata,profile,rg}',
 				'created_at', al.created_at,
 				'actor',
 					case when u.id is null then null else jsonb_build_object(

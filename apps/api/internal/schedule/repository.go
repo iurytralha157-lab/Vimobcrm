@@ -66,12 +66,14 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	where := []string{
 		"se.organization_id = $1::uuid",
 		scheduleEventScopeSQL("$2", "$3"),
-		`($3::boolean or se.lead_id is null or ` + leadScheduleVisibilitySQL(
+		scheduleEventLeadVisibilitySQL(
+			"$3",
+			"$2",
 			"$4",
 			"$5",
 			"$6",
 			tenantContext.HasPermission(permissions.LeadViewOwn),
-		) + `)`,
+		),
 	}
 
 	addFilter := func(clause string, value any) {
@@ -1059,12 +1061,19 @@ func (repo Repository) canViewEvent(ctx context.Context, tx pgx.Tx, tenantContex
 	if canViewAllScheduleEvents(tenantContext) {
 		return true, nil
 	}
+	participant, err := repo.isEventParticipant(ctx, tx, tenantContext.OrganizationID, snapshot.ID, tenantContext.UserID, snapshot.UserID)
+	if err != nil {
+		return false, err
+	}
+	if participant {
+		return true, nil
+	}
 	canViewLead, err := repo.canAccessEventLead(ctx, tx, tenantContext, snapshot.LeadID)
 	if err != nil || !canViewLead {
 		return canViewLead, err
 	}
 	if snapshot.Visibility == "private" {
-		return repo.isEventParticipant(ctx, tx, tenantContext.OrganizationID, snapshot.ID, tenantContext.UserID, snapshot.UserID)
+		return false, nil
 	}
 
 	return repo.isEventInScheduleScope(ctx, tx, tenantContext, snapshot.ID)
@@ -1077,17 +1086,21 @@ func (repo Repository) canEditEvent(ctx context.Context, tx pgx.Tx, tenantContex
 	if canViewAllScheduleEvents(tenantContext) {
 		return true, nil
 	}
+	participant, err := repo.isEventParticipant(ctx, tx, tenantContext.OrganizationID, snapshot.ID, tenantContext.UserID, snapshot.UserID)
+	if err != nil {
+		return false, err
+	}
+	if participant {
+		return true, nil
+	}
+	if snapshot.Visibility == "private" {
+		return false, nil
+	}
 	canViewLead, err := repo.canAccessEventLead(ctx, tx, tenantContext, snapshot.LeadID)
 	if err != nil || !canViewLead {
 		return canViewLead, err
 	}
-	if snapshot.Visibility != "private" {
-		if inScope, err := repo.isEventInScheduleScope(ctx, tx, tenantContext, snapshot.ID); err != nil || inScope {
-			return inScope, err
-		}
-	}
-
-	return repo.isEventParticipant(ctx, tx, tenantContext.OrganizationID, snapshot.ID, tenantContext.UserID, snapshot.UserID)
+	return repo.isEventInScheduleScope(ctx, tx, tenantContext, snapshot.ID)
 }
 
 func (repo Repository) canAccessEventLead(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, leadID string) (bool, error) {
@@ -1117,12 +1130,14 @@ func (repo Repository) isEventInScheduleScope(ctx context.Context, tx pgx.Tx, te
 			where se.organization_id = $1::uuid
 			  and se.id = $2::uuid
 			  and `+scheduleEventScopeSQL("$3", "false")+`
-			  and (se.lead_id is null or `+leadScheduleVisibilitySQL(
+			  and `+scheduleEventLeadVisibilitySQL(
+		"false",
+		"$3",
 		"$4",
 		"$5",
 		"$6",
 		tenantContext.HasPermission(permissions.LeadViewOwn),
-	)+`)
+	)+`
 		)
 	`, tenantContext.OrganizationID, eventID, tenantContext.UserID, canViewAllLeads(tenantContext), tenantContext.UserID, tenantContext.HasPermission(permissions.LeadViewTeam)).Scan(&exists)
 	return exists, err
@@ -1480,6 +1495,27 @@ func leadScheduleVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder s
 		where l.organization_id = se.organization_id
 		  and l.id = se.lead_id
 		  and ` + leadVisibilitySQL(canViewAllPlaceholder, userIDPlaceholder, canViewTeamPlaceholder, canViewOwn) + `
+	)`
+}
+
+func scheduleEventLeadVisibilitySQL(canViewAllSchedulePlaceholder string, participantUserIDPlaceholder string, canViewAllLeadsPlaceholder string, leadUserIDPlaceholder string, canViewTeamPlaceholder string, canViewOwn bool) string {
+	return `(
+		` + canViewAllSchedulePlaceholder + `::boolean
+		or se.lead_id is null
+		or se.user_id = ` + participantUserIDPlaceholder + `::uuid
+		or exists (
+			select 1
+			from public.schedule_event_assignees participant
+			where participant.organization_id = se.organization_id
+			  and participant.event_id = se.id
+			  and participant.user_id = ` + participantUserIDPlaceholder + `::uuid
+		)
+		or ` + leadScheduleVisibilitySQL(
+		canViewAllLeadsPlaceholder,
+		leadUserIDPlaceholder,
+		canViewTeamPlaceholder,
+		canViewOwn,
+	) + `
 	)`
 }
 

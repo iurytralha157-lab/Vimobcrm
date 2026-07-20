@@ -47,6 +47,19 @@ func TestScheduleLeadVisibilityRespectsOwnPermissionAndExplicitTeam(t *testing.T
 	}
 }
 
+func TestScheduleParticipantKeepsEventAccessAfterLeadTransfer(t *testing.T) {
+	query := scheduleEventLeadVisibilitySQL("false", "$2", "$3", "$4", "$5", false)
+	if !strings.Contains(query, "se.user_id = $2::uuid") {
+		t.Fatal("event owner should keep access independently from the linked lead")
+	}
+	if !strings.Contains(query, "participant.user_id = $2::uuid") {
+		t.Fatal("explicit event assignee should keep access independently from the linked lead")
+	}
+	if !strings.Contains(query, "l.assigned_user_id = $4::uuid") {
+		t.Fatal("non-participants should still depend on lead visibility")
+	}
+}
+
 func TestSchedulePropertyVisibilityRequiresPropertyPermission(t *testing.T) {
 	standard := tenant.Context{UserID: "user-1", Permissions: []string{permissions.ScheduleView, permissions.ScheduleManage}}
 	if canViewProperties(standard) {

@@ -3,6 +3,7 @@ import {
   apiLeadListResponseSchema,
   apiLeadResponseSchema,
   apiLeadRoundRobinResponseSchema,
+	apiLeadSensitiveProfileResponseSchema,
   leadAssignInputSchema,
   leadCreateInputSchema,
   leadListQuerySchema,
@@ -30,6 +31,10 @@ export type LeadUpdateInput = TablesUpdate<'leads'> & {
     tradeName?: string
     stateRegistration?: string
   }
+}
+export type LeadSensitiveProfile = {
+	cpf?: string
+	rg?: string
 }
 type LeadRow = Tables<'leads'>
 
@@ -93,8 +98,8 @@ type APILead = {
     gender?: 'male' | 'female' | 'other'
     socialName?: string
     birthDate?: string
-    cpf?: string
-    rg?: string
+	hasCPF?: boolean
+	hasRG?: boolean
     cnpj?: string
     corporateName?: string
     tradeName?: string
@@ -206,6 +211,14 @@ export const leadsAPI = {
       error: null,
     }
   },
+
+	async getSensitiveProfile(leadId: string, organizationId: string) {
+		const response = await vimobAPIRequest<{ data: LeadSensitiveProfile }>(`/v1/leads/${leadId}/sensitive-profile`, {
+			organizationId,
+		})
+		validateDomainResponse(apiLeadSensitiveProfileResponseSchema, response, 'leads.sensitive-profile')
+		return response.data
+	},
 
   async createLead(organizationId: string, data: LeadCreateInput) {
     const body = parseDomainInput(leadCreateInputSchema, {
