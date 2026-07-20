@@ -88,6 +88,8 @@ export const leadUpdateInputSchema = z.object({
   pipelineId: optionalUUID,
   stageId: optionalUUID,
   assignedUserId: optionalUUID,
+  teamId: optionalUUID,
+  interestPropertyIds: z.array(uuidSchema).max(20).optional(),
   interestValue: decimalStringSchema.nullish(),
   commissionPercentage: decimalStringSchema.nullish(),
   dealStatus: leadDealStatusSchema.nullable().optional(),
@@ -109,6 +111,7 @@ export const leadUpdateInputSchema = z.object({
   trabalha: z.boolean().nullish(),
   procuraFinanciamento: z.boolean().nullish(),
   isOwnResource: z.boolean().nullish(),
+  profile: leadProfileSchema.optional(),
 }).strict().refine(
   (input) => Object.values(input).some((value) => value !== undefined),
   'Informe ao menos uma alteracao',

@@ -199,39 +199,49 @@ type patchBool struct {
 	Value *bool
 }
 
+type patchStringSlice struct {
+	Set   bool
+	Value []string
+}
+
 type UpdateRequest struct {
-	Name                 patchString `json:"name,omitempty"`
-	Email                patchString `json:"email,omitempty"`
-	Phone                patchString `json:"phone,omitempty"`
-	Source               patchString `json:"source,omitempty"`
-	Message              patchString `json:"message,omitempty"`
-	PropertyCode         patchString `json:"propertyCode,omitempty"`
-	PropertyID           patchString `json:"propertyId,omitempty"`
-	InterestPropertyID   patchString `json:"interestPropertyId,omitempty"`
-	PipelineID           patchString `json:"pipelineId,omitempty"`
-	StageID              patchString `json:"stageId,omitempty"`
-	AssignedUserID       patchString `json:"assignedUserId,omitempty"`
-	InterestValue        patchString `json:"interestValue,omitempty"`
-	CommissionPercentage patchString `json:"commissionPercentage,omitempty"`
-	DealStatus           patchString `json:"dealStatus,omitempty"`
-	LostReason           patchString `json:"lostReason,omitempty"`
-	Feedback             patchString `json:"feedback,omitempty"`
-	Cargo                patchString `json:"cargo,omitempty"`
-	Empresa              patchString `json:"empresa,omitempty"`
-	Profissao            patchString `json:"profissao,omitempty"`
-	Endereco             patchString `json:"endereco,omitempty"`
-	Numero               patchString `json:"numero,omitempty"`
-	Complemento          patchString `json:"complemento,omitempty"`
-	Bairro               patchString `json:"bairro,omitempty"`
-	CEP                  patchString `json:"cep,omitempty"`
-	Cidade               patchString `json:"cidade,omitempty"`
-	UF                   patchString `json:"uf,omitempty"`
-	RendaFamiliar        patchString `json:"rendaFamiliar,omitempty"`
-	FaixaValorImovel     patchString `json:"faixaValorImovel,omitempty"`
-	FinalidadeCompra     patchString `json:"finalidadeCompra,omitempty"`
-	Trabalha             patchBool   `json:"trabalha,omitempty"`
-	ProcuraFinanciamento patchBool   `json:"procuraFinanciamento,omitempty"`
-	IsOwnResource        patchBool   `json:"isOwnResource,omitempty"`
+	Name                 patchString         `json:"name,omitempty"`
+	Email                patchString         `json:"email,omitempty"`
+	Phone                patchString         `json:"phone,omitempty"`
+	Source               patchString         `json:"source,omitempty"`
+	Message              patchString         `json:"message,omitempty"`
+	PropertyCode         patchString         `json:"propertyCode,omitempty"`
+	PropertyID           patchString         `json:"propertyId,omitempty"`
+	InterestPropertyID   patchString         `json:"interestPropertyId,omitempty"`
+	PipelineID           patchString         `json:"pipelineId,omitempty"`
+	StageID              patchString         `json:"stageId,omitempty"`
+	AssignedUserID       patchString         `json:"assignedUserId,omitempty"`
+	TeamID               patchString         `json:"teamId,omitempty"`
+	InterestPropertyIDs  patchStringSlice    `json:"interestPropertyIds,omitempty"`
+	InterestValue        patchString         `json:"interestValue,omitempty"`
+	CommissionPercentage patchString         `json:"commissionPercentage,omitempty"`
+	DealStatus           patchString         `json:"dealStatus,omitempty"`
+	LostReason           patchString         `json:"lostReason,omitempty"`
+	Feedback             patchString         `json:"feedback,omitempty"`
+	Cargo                patchString         `json:"cargo,omitempty"`
+	Empresa              patchString         `json:"empresa,omitempty"`
+	Profissao            patchString         `json:"profissao,omitempty"`
+	Endereco             patchString         `json:"endereco,omitempty"`
+	Numero               patchString         `json:"numero,omitempty"`
+	Complemento          patchString         `json:"complemento,omitempty"`
+	Bairro               patchString         `json:"bairro,omitempty"`
+	CEP                  patchString         `json:"cep,omitempty"`
+	Cidade               patchString         `json:"cidade,omitempty"`
+	UF                   patchString         `json:"uf,omitempty"`
+	RendaFamiliar        patchString         `json:"rendaFamiliar,omitempty"`
+	FaixaValorImovel     patchString         `json:"faixaValorImovel,omitempty"`
+	FinalidadeCompra     patchString         `json:"finalidadeCompra,omitempty"`
+	Trabalha             patchBool           `json:"trabalha,omitempty"`
+	ProcuraFinanciamento patchBool           `json:"procuraFinanciamento,omitempty"`
+	IsOwnResource        patchBool           `json:"isOwnResource,omitempty"`
+	Profile              *LeadProfileRequest `json:"profile,omitempty"`
+	Metadata             LeadMetadata        `json:"-"`
+	MetadataSet          bool                `json:"-"`
 }
 
 type updateInput UpdateRequest
@@ -322,6 +332,20 @@ func (field *patchBool) UnmarshalJSON(data []byte) error {
 	}
 
 	field.Value = &value
+	return nil
+}
+
+func (field *patchStringSlice) UnmarshalJSON(data []byte) error {
+	field.Set = true
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		field.Value = []string{}
+		return nil
+	}
+
+	if err := json.Unmarshal(data, &field.Value); err != nil {
+		return fmt.Errorf("%w: expected string array or null", ErrInvalidInput)
+	}
+
 	return nil
 }
 
@@ -587,6 +611,8 @@ func (request UpdateRequest) Validate() (updateInput, error) {
 		PipelineID:           request.PipelineID,
 		StageID:              request.StageID,
 		AssignedUserID:       request.AssignedUserID,
+		TeamID:               request.TeamID,
+		InterestPropertyIDs:  request.InterestPropertyIDs,
 		InterestValue:        validatePatchString(request.InterestValue, 40),
 		CommissionPercentage: validatePatchString(request.CommissionPercentage, 20),
 		DealStatus:           validatePatchString(request.DealStatus, 20),
@@ -608,10 +634,7 @@ func (request UpdateRequest) Validate() (updateInput, error) {
 		Trabalha:             request.Trabalha,
 		ProcuraFinanciamento: request.ProcuraFinanciamento,
 		IsOwnResource:        request.IsOwnResource,
-	}
-
-	if !input.hasChanges() {
-		return updateInput{}, ErrNoLeadChanges
+		Profile:              request.Profile,
 	}
 
 	if input.Name.Set {
@@ -644,10 +667,47 @@ func (request UpdateRequest) Validate() (updateInput, error) {
 		{name: "pipelineId", field: &input.PipelineID},
 		{name: "stageId", field: &input.StageID},
 		{name: "assignedUserId", field: &input.AssignedUserID},
+		{name: "teamId", field: &input.TeamID},
 	} {
 		if err := validatePatchUUID(item.name, item.field); err != nil {
 			return updateInput{}, err
 		}
+	}
+
+	if input.InterestPropertyIDs.Set {
+		if len(input.InterestPropertyIDs.Value) > 20 {
+			return updateInput{}, fmt.Errorf("%w: interestPropertyIds can contain at most 20 items", ErrInvalidInput)
+		}
+		seenPropertyIDs := map[string]struct{}{}
+		propertyIDs := make([]string, 0, len(input.InterestPropertyIDs.Value))
+		for _, propertyID := range input.InterestPropertyIDs.Value {
+			value, ok := normalizeUUID(propertyID)
+			if !ok {
+				return updateInput{}, fmt.Errorf("%w: interestPropertyIds contains an invalid uuid", ErrInvalidInput)
+			}
+			if _, exists := seenPropertyIDs[value]; exists {
+				continue
+			}
+			seenPropertyIDs[value] = struct{}{}
+			propertyIDs = append(propertyIDs, value)
+		}
+		input.InterestPropertyIDs.Value = propertyIDs
+	}
+
+	if input.Profile != nil || input.InterestPropertyIDs.Set {
+		metadata := LeadMetadata{}
+		if input.InterestPropertyIDs.Set {
+			metadata["interestPropertyIds"] = input.InterestPropertyIDs.Value
+		}
+		if input.Profile != nil {
+			profileMetadata, err := validateLeadProfile(input.Profile, nil)
+			if err != nil {
+				return updateInput{}, err
+			}
+			metadata["profile"] = profileMetadata["profile"]
+		}
+		input.Metadata = metadata
+		input.MetadataSet = true
 	}
 
 	for _, item := range []struct {
@@ -662,6 +722,10 @@ func (request UpdateRequest) Validate() (updateInput, error) {
 				return updateInput{}, fmt.Errorf("%w: %s is invalid", ErrInvalidInput, item.name)
 			}
 		}
+	}
+
+	if !input.hasChanges() {
+		return updateInput{}, ErrNoLeadChanges
 	}
 
 	return input, nil
@@ -694,6 +758,7 @@ func (input updateInput) hasChanges() bool {
 		input.PipelineID,
 		input.StageID,
 		input.AssignedUserID,
+		input.TeamID,
 		input.InterestValue,
 		input.CommissionPercentage,
 		input.DealStatus,
@@ -718,7 +783,7 @@ func (input updateInput) hasChanges() bool {
 		}
 	}
 
-	return input.Trabalha.Set || input.ProcuraFinanciamento.Set || input.IsOwnResource.Set
+	return input.Trabalha.Set || input.ProcuraFinanciamento.Set || input.IsOwnResource.Set || input.MetadataSet
 }
 
 func validatePatchString(field patchString, maxLength int) patchString {
@@ -780,6 +845,7 @@ func (input updateInput) auditData() map[string]any {
 	addString("pipeline_id", input.PipelineID)
 	addString("stage_id", input.StageID)
 	addString("assigned_user_id", input.AssignedUserID)
+	addString("team_id", input.TeamID)
 	addString("valor_interesse", input.InterestValue)
 	addString("commission_percentage", input.CommissionPercentage)
 	addString("deal_status", input.DealStatus)
@@ -801,6 +867,9 @@ func (input updateInput) auditData() map[string]any {
 	addBool("trabalha", input.Trabalha)
 	addBool("procura_financiamento", input.ProcuraFinanciamento)
 	addBool("is_own_resource", input.IsOwnResource)
+	if input.MetadataSet {
+		out["metadata"] = input.Metadata
+	}
 
 	return out
 }

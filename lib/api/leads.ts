@@ -15,7 +15,22 @@ import {
 import { vimobAPIRequest } from './vimob-client'
 
 type LeadInsert = TablesInsert<'leads'>
-type LeadUpdate = TablesUpdate<'leads'>
+export type LeadUpdateInput = TablesUpdate<'leads'> & {
+  team_id?: string | null
+  interest_property_ids?: string[]
+  profile?: {
+    personType?: 'individual' | 'company'
+    gender?: 'male' | 'female' | 'other'
+    socialName?: string
+    birthDate?: string
+    cpf?: string
+    rg?: string
+    cnpj?: string
+    corporateName?: string
+    tradeName?: string
+    stateRegistration?: string
+  }
+}
 type LeadRow = Tables<'leads'>
 
 type APILead = {
@@ -242,7 +257,7 @@ export const leadsAPI = {
     }
   },
 
-  async updateLead(leadId: string, data: LeadUpdate, organizationId?: string) {
+  async updateLead(leadId: string, data: LeadUpdateInput, organizationId?: string) {
     const body = parseDomainInput(leadUpdateInputSchema, toAPILeadUpdateBody(data), 'leads.update')
     const response = await vimobAPIRequest<APILeadResponse>(`/v1/leads/${leadId}`, {
       method: 'PATCH',
@@ -419,7 +434,7 @@ function nullableDecimal(value: number | null | undefined) {
   return String(value)
 }
 
-function toAPILeadUpdateBody(data: LeadUpdate) {
+function toAPILeadUpdateBody(data: LeadUpdateInput) {
   return {
     name: data.name,
     email: data.email,
@@ -432,6 +447,8 @@ function toAPILeadUpdateBody(data: LeadUpdate) {
     pipelineId: data.pipeline_id,
     stageId: data.stage_id,
     assignedUserId: data.assigned_user_id,
+    teamId: data.team_id,
+    interestPropertyIds: data.interest_property_ids,
     interestValue: nullableDecimal(data.valor_interesse),
     commissionPercentage: nullableDecimal(data.commission_percentage),
     dealStatus: data.deal_status,
@@ -453,6 +470,7 @@ function toAPILeadUpdateBody(data: LeadUpdate) {
     trabalha: data.trabalha,
     procuraFinanciamento: data.procura_financiamento,
     isOwnResource: data.is_own_resource,
+    profile: data.profile,
   }
 }
 

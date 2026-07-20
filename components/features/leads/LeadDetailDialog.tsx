@@ -259,6 +259,7 @@ interface LeadDetailDialogProps {
   lead: LeadDetailLead | null;
   stages: LeadDetailStage[];
   onClose: () => void;
+  onEdit?: () => void;
   allTags: Tag[];
   allUsers: AppUser[];
   refetchStages: () => void;
@@ -717,6 +718,7 @@ export function LeadDetailDialog({
   lead: leadProp,
   stages,
   onClose,
+  onEdit,
   allTags,
   allUsers,
   refetchStages
@@ -901,6 +903,11 @@ export function LeadDetailDialog({
   const { profile, organization } = useAuth();
   const { hasPermission } = useUserPermissions();
   const canOperateLead = hasPermission('lead_operate');
+  const handleOpenLeadEdit = () => {
+    if (!canOperateLead) return;
+    setIsEditingContact(false);
+    onEdit?.();
+  };
   const canViewProperties = hasPermission('property_view') || hasPermission('property_manage');
   const canViewLeadSchedule = hasPermission('schedule_view');
   const canManageLeadSchedule = canOperateLead && hasPermission('schedule_manage');
@@ -2162,10 +2169,7 @@ export function LeadDetailDialog({
                     </div>
                     <h3 className="font-medium text-sm">Dados do contato</h3>
                   </div>
-                {!isEditingContact && canOperateLead && <Button variant="ghost" size="sm" onClick={() => {
-                    setActiveTab('contact');
-                    setIsEditingContact(true);
-                  }} className="lead-detail-subtle-action h-8 rounded-[6px] px-3">
+                {canOperateLead && <Button variant="ghost" size="sm" onClick={handleOpenLeadEdit} className="lead-detail-subtle-action h-8 rounded-[6px] px-3">
                     <FileEdit className="h-3.5 w-3.5" />
                     Editar
                   </Button>}
@@ -2944,9 +2948,9 @@ export function LeadDetailDialog({
                 <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-xs font-semibold">Dados do contato</h3>
-                    {canOperateLead && <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" onClick={() => setIsEditingContact((value) => !value)}>
+                    {canOperateLead && <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" onClick={handleOpenLeadEdit}>
                       <FileEdit className="h-3 w-3" />
-                      {isEditingContact ? 'Fechar' : 'Editar'}
+                      Editar
                     </Button>}
                   </div>
 
@@ -3344,9 +3348,9 @@ export function LeadDetailDialog({
                 <div data-tour="lead-detail-contact" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-xs font-semibold">Dados do contato</h3>
-                    {canOperateLead && <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" onClick={() => setIsEditingContact((value) => !value)}>
+                    {canOperateLead && <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" onClick={handleOpenLeadEdit}>
                       <FileEdit className="h-3 w-3" />
-                      {isEditingContact ? 'Fechar' : 'Editar'}
+                      Editar
                     </Button>}
                   </div>
 
@@ -3967,21 +3971,7 @@ export function LeadDetailDialog({
                       </div>
                       <h3 className="font-medium text-sm">Dados do contato</h3>
                     </div>
-                      {isEditingContact ? <div className="flex gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => {
-                          resetContactEditForm();
-                          setIsEditingContact(false);
-                        }} className="h-8 px-3 rounded-full">
-                          Cancelar
-                        </Button>
-                        <Button size="sm" onClick={handleSaveContact} className="h-8 px-3 rounded-full">
-                          <Save className="h-3.5 w-3.5 mr-1" />
-                          Salvar
-                        </Button>
-                      </div> : canOperateLead ? <Button variant="ghost" size="sm" onClick={() => {
-                        setActiveTab('contact');
-                        setIsEditingContact(true);
-                      }} className="lead-detail-subtle-action h-8 rounded-[6px] px-3">
+                      {canOperateLead ? <Button variant="ghost" size="sm" onClick={handleOpenLeadEdit} className="lead-detail-subtle-action h-8 rounded-[6px] px-3">
                         <FileEdit className="h-3.5 w-3.5" />
                         Editar
                       </Button> : null}

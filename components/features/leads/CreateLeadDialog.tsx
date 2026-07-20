@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback, useId, useRef } from 'react';
+import { useState, useEffect, useCallback, useId, useMemo, useRef } from 'react';
 import { maskCNPJ, maskCPF, maskPhone, maskRG } from '@/lib/masks';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { leadAttachmentsAPI } from '@/lib/api/lead-attachments';
+import { leadsAPI } from '@/lib/api/leads';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -20,8 +21,13 @@ import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useOrganizationUsers } from '@/hooks/use-users';
 import { usePipelines, useStages } from '@/hooks/use-stages';
 import { useProperties } from '@/hooks/use-properties';
-import { useCreateLead } from '@/hooks/use-leads';
+import { useCreateLead, useLead, useUpdateLead, type Lead } from '@/hooks/use-leads';
 import { useTeams } from '@/hooks/use-teams';
+
+type EditableLead = Omit<Partial<Lead>, 'tags' | 'stage' | 'assignee'> & {
+  id: string;
+  tags?: Array<{ id?: string; name?: string | null; color?: string | null }>;
+};
 
 interface CreateLeadDialogProps {
   open: boolean;
@@ -31,10 +37,12 @@ interface CreateLeadDialogProps {
   contactPhone?: string | null;
   contactName?: string | null;
   conversationId?: string | null;
+  lead?: EditableLead | null;
+  onSaved?: (lead: Lead) => void;
 }
 
 type LeadFormErrors = Partial<Record<
-  'name' | 'contact' | 'phone' | 'email' | 'cpf' | 'cnpj' | 'birth_date' | 'assigned_user_id' | 'team_id' | 'pipeline_id' | 'stage_id',
+  'name' | 'contact' | 'phone' | 'email' | 'cpf' | 'cnpj' | 'birth_date' | 'assigned_user_id' | 'team_id' | 'pipeline_id' | 'stage_id' | 'lost_reason',
   string
 >>;
 
@@ -54,6 +62,17 @@ function formatCurrencyInput(value: string | number) {
 function parseCurrencyInput(value: string) {
   const digits = value.replace(/\D/g, '');
   return digits ? Number(digits) / 100 : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function metadataText(metadata: Record<string, unknown>, key: string) {
+  const value = metadata[key];
+  return typeof value === 'string' ? value : '';
 }
 
 function omitBasicErrors(errors: LeadFormErrors) {
@@ -78,7 +97,9 @@ export function CreateLeadDialog({
   defaultPipelineId,
   contactPhone,
   contactName,
-  conversationId
+  conversationId,
+  lead: leadSummary,
+  onSaved,
 }: CreateLeadDialogProps) {
   const { profile, organization } = useAuth();
   const fieldIdPrefix = useId();
@@ -91,31 +112,56 @@ export function CreateLeadDialog({
   const { data: pipelines = [] } = usePipelines();
   const { data: properties = [] } = useProperties(undefined, {}, { enabled: canViewProperties && open });
   const createLead = useCreateLead();
+  const updateLead = useUpdateLead();
+  const isEditMode = Boolean(leadSummary?.id);
+  const organizationId = organization?.id || profile?.organization_id || undefined;
+  const { data: persistedLead, isLoading: isLoadingPersistedLead } = useLead(isEditMode ? leadSummary?.id || null : null);
+  const editableLead = useMemo<EditableLead | null>(() => {
+    if (!isEditMode || !leadSummary) return null;
+    if (!persistedLead) return leadSummary;
+    return {
+      ...leadSummary,
+      ...persistedLead,
+      tags: leadSummary.tags?.length ? leadSummary.tags : persistedLead.tags,
+    };
+  }, [isEditMode, leadSummary, persistedLead]);
 
   // Form state
   const [activeTab, setActiveTab] = useState('basic');
   const [draftRestored, setDraftRestored] = useState(false);
 
-  const draftKey = organization?.id ? `lead-draft-${organization.id}` : null;
+  const draftKey = !isEditMode && organization?.id ? `lead-draft-${organization.id}` : null;
 
-  const getEmptyFormData = useCallback(() => ({
-    name: '',
-    phone: '',
+  const getEmptyFormData = useCallback(() => {
+    const metadata = asRecord(editableLead?.metadata);
+    const nestedProfile = asRecord(metadata.profile);
+    const profileMetadata = Object.keys(nestedProfile).length > 0 ? nestedProfile : metadata;
+    const primaryPropertyId = editableLead?.interest_property_id || editableLead?.property_id || '';
+    const metadataPropertyIds = Array.isArray(metadata.interestPropertyIds)
+      ? metadata.interestPropertyIds.filter((value): value is string => typeof value === 'string')
+      : [];
+    const interestPropertyIds = metadataPropertyIds.length > 0
+      ? metadataPropertyIds
+      : primaryPropertyId ? [primaryPropertyId] : [];
+
+    return ({
+    name: editableLead?.name || '',
+    phone: editableLead?.phone || '',
     phone2: '',
-    email: '',
-    message: '',
-    feedback: '',
-    source: '',
-    person_type: 'individual' as 'individual' | 'company',
-    gender: '' as '' | 'male' | 'female' | 'other',
-    social_name: '',
-    cpf: '',
-    rg: '',
-    birth_date: '',
-    cnpj: '',
-    corporate_name: '',
-    trade_name: '',
-    state_registration: '',
+    email: editableLead?.email || '',
+    message: editableLead?.message || '',
+    feedback: editableLead?.feedback || '',
+    source: editableLead?.source || '',
+    person_type: (metadataText(profileMetadata, 'personType') === 'company' ? 'company' : 'individual') as 'individual' | 'company',
+    gender: (['male', 'female', 'other'].includes(metadataText(profileMetadata, 'gender')) ? metadataText(profileMetadata, 'gender') : '') as '' | 'male' | 'female' | 'other',
+    social_name: metadataText(profileMetadata, 'socialName'),
+    cpf: maskCPF(metadataText(profileMetadata, 'cpf')),
+    rg: maskRG(metadataText(profileMetadata, 'rg')),
+    birth_date: metadataText(profileMetadata, 'birthDate'),
+    cnpj: maskCNPJ(metadataText(profileMetadata, 'cnpj')),
+    corporate_name: metadataText(profileMetadata, 'corporateName'),
+    trade_name: metadataText(profileMetadata, 'tradeName'),
+    state_registration: metadataText(profileMetadata, 'stateRegistration'),
     is_portability: false,
     mother_name: '',
     uf: '',
@@ -127,23 +173,25 @@ export function CreateLeadDialog({
     plan_id: '',
     due_day: '',
     payment_method: '',
-    cargo: '',
-    empresa: '',
-    profissao: '',
-    renda_familiar: '',
-    faixa_valor_imovel: '',
-    valor_interesse: '',
-    assigned_user_id: profile?.id || '',
-    team_id: '',
-    pipeline_id: defaultPipelineId || '',
-    stage_id: defaultStageId || '',
-    property_id: '',
-    interest_property_ids: [] as string[],
-    deal_status: 'open',
-    is_own_resource: false,
-    tag_ids: [] as string[],
+    cargo: editableLead?.cargo || '',
+    empresa: editableLead?.empresa || '',
+    profissao: editableLead?.profissao || '',
+    renda_familiar: editableLead?.renda_familiar || '',
+    faixa_valor_imovel: editableLead?.faixa_valor_imovel || '',
+    valor_interesse: editableLead?.valor_interesse == null ? '' : formatCurrencyInput(editableLead.valor_interesse),
+    assigned_user_id: editableLead?.assigned_user_id || profile?.id || '',
+    team_id: editableLead?.team_id || '',
+    pipeline_id: editableLead?.pipeline_id || defaultPipelineId || '',
+    stage_id: editableLead?.stage_id || defaultStageId || '',
+    property_id: primaryPropertyId,
+    interest_property_ids: interestPropertyIds,
+    deal_status: editableLead?.deal_status || 'open',
+    lost_reason: editableLead?.lost_reason || '',
+    is_own_resource: editableLead?.is_own_resource || false,
+    tag_ids: (editableLead?.tags || []).flatMap((tag) => tag.id ? [tag.id] : []),
     conversation_id: '',
-  }), [profile?.id, defaultPipelineId, defaultStageId]);
+  });
+  }, [editableLead, profile?.id, defaultPipelineId, defaultStageId]);
 
   const [formData, setFormData] = useState(getEmptyFormData);
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
@@ -203,6 +251,7 @@ export function CreateLeadDialog({
       && !data.renda_familiar
       && !data.faixa_valor_imovel
       && !data.valor_interesse
+      && !data.lost_reason
       && !data.property_id
       && data.interest_property_ids.length === 0
       && data.tag_ids.length === 0
@@ -239,6 +288,14 @@ export function CreateLeadDialog({
       setErrors({});
       setDialogPosition({ x: 0, y: 0 });
       dialogPositionRef.current = { x: 0, y: 0 };
+
+      if (isEditMode) {
+        if (isLoadingPersistedLead || !editableLead) return;
+        setPendingAttachments([]);
+        setFormData(getEmptyFormData());
+        setActiveTab('basic');
+        return;
+      }
 
       if (contactPhone || contactName || conversationId) {
         const defaultPipeline = pipelines.find(p => p.is_default) || pipelines[0];
@@ -278,7 +335,7 @@ export function CreateLeadDialog({
         stage_id: defaultStageId || '',
       });
     }
-  }, [open, pipelines, defaultStageId, defaultPipelineId, draftKey, getEmptyFormData, isFormEmpty, contactPhone, contactName, conversationId]);
+  }, [open, pipelines, defaultStageId, defaultPipelineId, draftKey, getEmptyFormData, isFormEmpty, contactPhone, contactName, conversationId, isEditMode, isLoadingPersistedLead, editableLead]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const discardDraft = useCallback(() => {
@@ -423,56 +480,102 @@ export function CreateLeadDialog({
 
     setIsSubmitting(true);
     try {
-      const initialFeedback = formData.feedback.trim() || formData.message.trim();
-      const createdLead = await createLead.mutateAsync({
-        name: formData.name,
-        phone: formData.phone || undefined,
-        email: formData.email || undefined,
-        message: initialFeedback || undefined,
-        feedback: initialFeedback || undefined,
-        pipeline_id: formData.pipeline_id || undefined,
-        stage_id: formData.stage_id || undefined,
-        assigned_user_id: formData.assigned_user_id || undefined,
-        team_id: formData.team_id || undefined,
-        tag_ids: formData.tag_ids.length > 0 ? formData.tag_ids : undefined,
-        source: formData.source || 'manual',
-        conversation_id: formData.conversation_id || undefined,
-        // Profile fields
-        cargo: formData.cargo || undefined,
-        empresa: formData.empresa || undefined,
-        profissao: formData.profissao || undefined,
-        renda_familiar: formData.renda_familiar || undefined,
-        faixa_valor_imovel: formData.faixa_valor_imovel || undefined,
-        valor_interesse: parseCurrencyInput(formData.valor_interesse),
-        property_id: formData.property_id || undefined,
-        interest_property_ids: formData.interest_property_ids.length > 0 ? formData.interest_property_ids : undefined,
-        deal_status: formData.deal_status || 'open',
-        is_own_resource: false,
-        profile: {
-          personType: formData.person_type,
-          gender: formData.gender || undefined,
-          socialName: formData.social_name || undefined,
-          birthDate: formData.birth_date || undefined,
-          cpf: formData.cpf || undefined,
-          rg: formData.rg || undefined,
-          cnpj: formData.cnpj || undefined,
-          corporateName: formData.corporate_name || undefined,
-          tradeName: formData.trade_name || undefined,
-          stateRegistration: formData.state_registration || undefined,
-        },
-      });
+      const initialFeedback = formData.feedback.trim() || (!isEditMode ? formData.message.trim() : '');
+      const currentFeedback = editableLead?.feedback?.trim() || '';
+      const primaryPropertyId = formData.interest_property_ids[0] || formData.property_id || null;
+      const profileInput = {
+        personType: formData.person_type,
+        gender: formData.gender || undefined,
+        socialName: formData.social_name || undefined,
+        birthDate: formData.birth_date || undefined,
+        cpf: formData.cpf || undefined,
+        rg: formData.rg || undefined,
+        cnpj: formData.cnpj || undefined,
+        corporateName: formData.corporate_name || undefined,
+        tradeName: formData.trade_name || undefined,
+        stateRegistration: formData.state_registration || undefined,
+      };
+      const originalTagIds = (editableLead?.tags || []).flatMap((tag) => tag.id ? [tag.id] : []);
+
+      const savedLead = isEditMode && editableLead
+        ? await updateLead.mutateAsync({
+          id: editableLead.id,
+          name: formData.name,
+          phone: formData.phone || null,
+          email: formData.email || null,
+          feedback: initialFeedback === currentFeedback ? undefined : initialFeedback || null,
+          source: formData.source || 'manual',
+          pipeline_id: formData.pipeline_id || null,
+          stage_id: formData.stage_id || null,
+          assigned_user_id: formData.assigned_user_id || null,
+          team_id: formData.team_id || null,
+          cargo: formData.cargo || null,
+          empresa: formData.empresa || null,
+          profissao: formData.profissao || null,
+          renda_familiar: formData.renda_familiar || null,
+          faixa_valor_imovel: formData.faixa_valor_imovel || null,
+          valor_interesse: parseCurrencyInput(formData.valor_interesse) ?? null,
+          property_id: primaryPropertyId,
+          interest_property_id: primaryPropertyId,
+          interest_property_ids: formData.interest_property_ids,
+          deal_status: formData.deal_status || 'open',
+          lost_reason: formData.deal_status === 'lost' ? formData.lost_reason || null : null,
+          profile: profileInput,
+        })
+        : await createLead.mutateAsync({
+          name: formData.name,
+          phone: formData.phone || undefined,
+          email: formData.email || undefined,
+          message: initialFeedback || undefined,
+          feedback: initialFeedback || undefined,
+          pipeline_id: formData.pipeline_id || undefined,
+          stage_id: formData.stage_id || undefined,
+          assigned_user_id: formData.assigned_user_id || undefined,
+          team_id: formData.team_id || undefined,
+          tag_ids: formData.tag_ids.length > 0 ? formData.tag_ids : undefined,
+          source: formData.source || 'manual',
+          conversation_id: formData.conversation_id || undefined,
+          cargo: formData.cargo || undefined,
+          empresa: formData.empresa || undefined,
+          profissao: formData.profissao || undefined,
+          renda_familiar: formData.renda_familiar || undefined,
+          faixa_valor_imovel: formData.faixa_valor_imovel || undefined,
+          valor_interesse: parseCurrencyInput(formData.valor_interesse),
+          property_id: primaryPropertyId || undefined,
+          interest_property_ids: formData.interest_property_ids.length > 0 ? formData.interest_property_ids : undefined,
+          deal_status: formData.deal_status || 'open',
+          lost_reason: formData.deal_status === 'lost' ? formData.lost_reason || undefined : undefined,
+          is_own_resource: false,
+          profile: profileInput,
+        });
+
+      if (isEditMode && organizationId) {
+        const selectedTagIds = new Set(formData.tag_ids);
+        const originalTags = new Set(originalTagIds);
+        const tagsToAdd = formData.tag_ids.filter((tagId) => !originalTags.has(tagId));
+        const tagsToRemove = originalTagIds.filter((tagId) => !selectedTagIds.has(tagId));
+
+        try {
+          await Promise.all([
+            ...tagsToAdd.map((tagId) => leadsAPI.addLeadTag(savedLead.id, tagId, organizationId)),
+            ...tagsToRemove.map((tagId) => leadsAPI.removeLeadTag(savedLead.id, tagId, organizationId)),
+          ]);
+        } catch {
+          toast.warning('Os dados foram salvos, mas algumas tags não puderam ser atualizadas.');
+        }
+      }
 
       let failedAttachments = 0;
       for (const file of pendingAttachments) {
         try {
-          await leadAttachmentsAPI.upload(createdLead.id, file);
+          await leadAttachmentsAPI.upload(savedLead.id, file);
         } catch {
           failedAttachments += 1;
         }
       }
 
       if (failedAttachments > 0) {
-        toast.warning(`Lead criado, mas ${failedAttachments} documento(s) não foram enviados.`);
+        toast.warning(`Lead ${isEditMode ? 'atualizado' : 'criado'}, mas ${failedAttachments} documento(s) não foram enviados.`);
       } else if (pendingAttachments.length > 0) {
         toast.success(`${pendingAttachments.length} documento(s) anexado(s).`);
       }
@@ -482,6 +585,8 @@ export function CreateLeadDialog({
       setPendingAttachments([]);
       setDraftRestored(false);
       setErrors({});
+      if (isEditMode) toast.success('Lead atualizado com sucesso!');
+      onSaved?.(savedLead as Lead);
       onOpenChange(false);
     } catch {
       // Error handled by mutation
@@ -520,6 +625,7 @@ export function CreateLeadDialog({
         remove('stage_id');
       }
       if (field === 'stage_id') remove('stage_id');
+      if (field === 'lost_reason' || field === 'deal_status') remove('lost_reason');
 
       return changed ? next : prev;
     });
@@ -530,7 +636,10 @@ export function CreateLeadDialog({
   const hasValidEmail = !formData.email.trim() || EMAIL_REGEX.test(formData.email.trim());
   const hasContactChannel = (!!formData.phone && hasValidPhone) || (!!formData.email.trim() && hasValidEmail);
   const hasRequiredLeadIdentity = !!formData.name.trim() && hasContactChannel;
-  const hasRequiredManagement = !!formData.assigned_user_id && !!formData.pipeline_id && !!formData.stage_id;
+  const hasRequiredManagement = !!formData.assigned_user_id
+    && !!formData.pipeline_id
+    && !!formData.stage_id
+    && (formData.deal_status !== 'lost' || !!formData.lost_reason.trim());
   const selectedInterestProperties = formData.interest_property_ids
     .map((propertyId) => properties.find((property) => property.id === propertyId))
     .filter((property): property is NonNullable<typeof property> => Boolean(property));
@@ -658,6 +767,13 @@ export function CreateLeadDialog({
       return false;
     }
 
+    if (formData.deal_status === 'lost' && !formData.lost_reason.trim()) {
+      setErrors((previous) => ({ ...previous, lost_reason: 'Informe o motivo da perda' }));
+      toast.error('Informe o motivo da perda');
+      setActiveTab('management');
+      return false;
+    }
+
     return true;
   };
 
@@ -712,9 +828,18 @@ export function CreateLeadDialog({
         >
           <SheetTitle className="flex items-center gap-2 pr-9 text-[15px] font-semibold text-[var(--app-text-primary)]">
             <User className="h-4 w-4 text-primary" />
-            <span>Novo Lead</span>
+            <span>{isEditMode ? 'Editar Lead' : 'Novo Lead'}</span>
           </SheetTitle>
         </SheetHeader>
+
+        {isEditMode && isLoadingPersistedLead && (
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-[var(--app-surface)]/95">
+            <div className="flex items-center gap-2 text-sm text-[var(--app-text-secondary)]">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              Carregando dados do lead...
+            </div>
+          </div>
+        )}
 
         {/* Draft restored banner */}
         {draftRestored && (
@@ -1126,6 +1251,22 @@ export function CreateLeadDialog({
                           ))}
                         </SelectContent>
                       </Select>
+                      {formData.deal_status === 'lost' && (
+                        <div className="mt-3 space-y-1.5">
+                          <Label htmlFor={`${fieldIdPrefix}-lost-reason`}>Motivo da perda *</Label>
+                          <Input
+                            id={`${fieldIdPrefix}-lost-reason`}
+                            value={formData.lost_reason}
+                            onChange={(event) => updateField('lost_reason', event.target.value)}
+                            placeholder="Ex.: sem retorno, valor ou desistência"
+                            maxLength={300}
+                            aria-invalid={Boolean(errors.lost_reason)}
+                          />
+                          {errors.lost_reason && (
+                            <p className="text-xs font-medium text-destructive" role="alert">{errors.lost_reason}</p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1228,10 +1369,12 @@ export function CreateLeadDialog({
                 key="btn-submit"
                 type="submit"
                 className="h-10 w-[60%] bg-primary text-white hover:bg-primary/90"
-                disabled={isSubmitting || !hasRequiredLeadIdentity || !hasRequiredManagement}
+                disabled={isSubmitting || isLoadingPersistedLead || !hasRequiredLeadIdentity || !hasRequiredManagement}
               >
                 {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                {isSubmitting ? 'Criando...' : 'Criar Lead'}
+                {isSubmitting
+                  ? isEditMode ? 'Salvando...' : 'Criando...'
+                  : isEditMode ? 'Salvar alterações' : 'Criar Lead'}
               </Button>
             )}
           </div>

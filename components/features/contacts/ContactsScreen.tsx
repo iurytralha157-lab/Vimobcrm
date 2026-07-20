@@ -67,7 +67,7 @@ import { ImportContactsDialog } from "@/components/features/contacts/ImportConta
 import { TableSkeleton } from "@/components/features/contacts/TableSkeleton";
 import { EmptyState } from "@/components/features/contacts/EmptyState";
 import { useContactsList, type Contact, type ContactListFilters } from "@/hooks/use-contacts-list";
-import { useLead, useDeleteLead } from "@/hooks/use-leads";
+import { useLead, useDeleteLead, type Lead } from "@/hooks/use-leads";
 import { ReentryBadge } from "@/components/features/leads/ReentryBadge";
 import { useToast } from "@/hooks/use-toast";
 import { SharedFilters } from "@/components/shared/SharedFilters";
@@ -247,6 +247,7 @@ export default function Contacts() {
 
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
+  const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [deleteContactId, setDeleteContactId] = useState<string | null>(null);
   const [pageInputValue, setPageInputValue] = useState("1");
   const [isExporting, setIsExporting] = useState(false);
@@ -1222,6 +1223,11 @@ export default function Contacts() {
             lead={selectedLead}
             stages={stages}
             onClose={() => setSelectedContactId(null)}
+            onEdit={() => {
+              const contactTags = contacts.find((contact) => contact.id === selectedLead.id)?.tags;
+              setEditingLead({ ...selectedLead, tags: contactTags || selectedLead.tags });
+              setSelectedContactId(null);
+            }}
             allTags={tags}
             allUsers={users}
             refetchStages={() => {}}
@@ -1229,6 +1235,17 @@ export default function Contacts() {
         )}
 
         {canCreateLeads && <CreateLeadDialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen} />}
+
+        {editingLead && (
+          <CreateLeadDialog
+            open={!!editingLead}
+            onOpenChange={(nextOpen) => {
+              if (!nextOpen) setEditingLead(null);
+            }}
+            lead={editingLead}
+            onSaved={() => refetchContacts()}
+          />
+        )}
 
         <AlertDialog open={canDeleteLeads && !!deleteContactId} onOpenChange={(open) => !open && setDeleteContactId(null)}>
           <AlertDialogContent>

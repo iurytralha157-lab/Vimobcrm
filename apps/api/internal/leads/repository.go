@@ -354,6 +354,34 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		}
 	}
 
+	if input.TeamID.Set {
+		if !canAssignLeads(tenantContext) {
+			return Lead{}, tenant.ErrOrganizationAccessDenied
+		}
+		if err := repo.validateLeadTeam(ctx, tenantContext, input.TeamID.Value); err != nil {
+			return Lead{}, err
+		}
+		addUUIDAssignment("team_id", input.TeamID)
+	}
+
+	nextTeamID := current.TeamID
+	if input.TeamID.Set {
+		nextTeamID = ""
+		if input.TeamID.Value != nil {
+			nextTeamID = *input.TeamID.Value
+		}
+	}
+	nextAssignedUserID := current.AssignedUserID
+	if input.AssignedUserID.Set {
+		nextAssignedUserID = ""
+		if input.AssignedUserID.Value != nil {
+			nextAssignedUserID = *input.AssignedUserID.Value
+		}
+	}
+	if err := repo.validateRoundRobinAssigneeTeam(ctx, tx, tenantContext.OrganizationID, nextTeamID, optionalString(nextAssignedUserID, 36)); err != nil {
+		return Lead{}, err
+	}
+
 	if err := repo.applyDestinationAssignments(ctx, tenantContext.OrganizationID, current, input, addUUIDAssignment, addRawAssignment); err != nil {
 		return Lead{}, err
 	}
@@ -369,6 +397,13 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 			return Lead{}, err
 		}
 		addUUIDAssignment("interest_property_id", input.InterestPropertyID)
+	}
+	if input.InterestPropertyIDs.Set {
+		for _, propertyID := range input.InterestPropertyIDs.Value {
+			if err := repo.validateProperty(ctx, tx, tenantContext.OrganizationID, &propertyID); err != nil {
+				return Lead{}, err
+			}
+		}
 	}
 
 	addTextAssignment("name", input.Name)
@@ -397,6 +432,10 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	addBoolAssignment("trabalha", input.Trabalha)
 	addBoolAssignment("procura_financiamento", input.ProcuraFinanciamento)
 	addBoolAssignment("is_own_resource", input.IsOwnResource)
+	if input.MetadataSet {
+		args = append(args, jsonb(input.Metadata))
+		assignments = append(assignments, fmt.Sprintf("metadata = coalesce(metadata, '{}'::jsonb) || $%d::jsonb", len(args)))
+	}
 
 	if input.DealStatus.Set {
 		addTextAssignment("deal_status", input.DealStatus)

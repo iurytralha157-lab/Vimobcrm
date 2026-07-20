@@ -1,8 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { leadsAPI } from '@/lib/api/leads';
+import { leadsAPI, type LeadUpdateInput } from '@/lib/api/leads';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import type { Tables, TablesUpdate } from '@/integrations/supabase/types';
+import type { Tables } from '@/integrations/supabase/types';
 import { enforceClientActionRateLimit, getClientRateLimitMessage } from '@/lib/client-action-rate-limit';
 import { VimobAPIError } from '@/lib/api/vimob-client';
 import { invalidateLeadHistorySoon } from '@/hooks/use-optimistic-lead-history';
@@ -74,10 +74,16 @@ export type Lead = Tables<'leads'> & {
 
 const leadReadRelationKeys = new Set<keyof Lead>(['tags', 'assignee', 'stage']);
 
-function toLeadUpdateInput(updates: Partial<Lead>): TablesUpdate<'leads'> {
+export type UpdateLeadInput = Partial<Lead> & {
+  id: string;
+  interest_property_ids?: string[];
+  profile?: LeadUpdateInput['profile'];
+};
+
+function toLeadUpdateInput(updates: Omit<UpdateLeadInput, 'id'>): LeadUpdateInput {
   return Object.fromEntries(
     Object.entries(updates).filter(([key]) => !leadReadRelationKeys.has(key as keyof Lead))
-  ) as TablesUpdate<'leads'>;
+  ) as LeadUpdateInput;
 }
 
 export function useLeads(filters?: {
@@ -192,7 +198,7 @@ export function useUpdateLead() {
   const organizationId = organization?.id || profile?.organization_id || undefined;
 
   return useMutation({
-    mutationFn: async ({ id, ...updates }: Partial<Lead> & { id: string }) => {
+    mutationFn: async ({ id, ...updates }: UpdateLeadInput) => {
       if (!user?.id) throw new Error('Usuário não autenticado');
       if (!organizationId) throw new Error('Usuário não possui organização');
 

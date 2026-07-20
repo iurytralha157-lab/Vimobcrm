@@ -381,6 +381,7 @@ export default function Pipelines() {
   const newButtonLabel = 'Novo Lead';
 
   const [selectedLead, setSelectedLead] = useState<PipelineLead | null>(null);
+  const [editingLead, setEditingLead] = useState<PipelineLead | null>(null);
   const [lostReasonLead, setLostReasonLead] = useState<PipelineLead | null>(null);
   const dealStatusChange = useDealStatusChange();
   const [newLeadDialogOpen, setNewLeadDialogOpen] = useState(false);
@@ -1662,6 +1663,10 @@ export default function Pipelines() {
               lead={selectedLead}
               stages={stages}
               onClose={() => setSelectedLead(null)}
+              onEdit={() => {
+                setEditingLead(selectedLead);
+                setSelectedLead(null);
+              }}
               allTags={allTags}
               allUsers={users}
               refetchStages={refetch}
@@ -1687,6 +1692,17 @@ export default function Pipelines() {
             onOpenChange={setNewLeadDialogOpen}
             defaultStageId={newLeadStageId}
             defaultPipelineId={selectedPipelineId}
+          />
+        )}
+
+        {editingLead && (
+          <CreateLeadDialog
+            open={!!editingLead}
+            onOpenChange={(nextOpen) => {
+              if (!nextOpen) setEditingLead(null);
+            }}
+            lead={editingLead}
+            onSaved={() => refetch()}
           />
         )}
 

@@ -129,10 +129,17 @@ func TestUpdateRequestValidate(t *testing.T) {
 	payload := []byte(`{
 		"name": "Ana Atualizada",
 		"assignedUserId": null,
+		"teamId": "44444444-4444-4444-8444-444444444444",
 		"stageId": "11111111-1111-1111-1111-111111111111",
+		"interestPropertyIds": ["55555555-5555-4555-8555-555555555555", "55555555-5555-4555-8555-555555555555"],
 		"interestValue": 450000,
 		"dealStatus": "open",
-		"isOwnResource": true
+		"isOwnResource": true,
+		"profile": {
+			"personType": "company",
+			"cnpj": "12.345.678/0001-90",
+			"corporateName": "Vimob Negocios Imobiliarios"
+		}
 	}`)
 
 	if err := json.Unmarshal(payload, &request); err != nil {
@@ -156,6 +163,16 @@ func TestUpdateRequestValidate(t *testing.T) {
 	if input.IsOwnResource.Value == nil || !*input.IsOwnResource.Value {
 		t.Fatalf("Validate() is own resource = %#v", input.IsOwnResource)
 	}
+	if input.TeamID.Value == nil || *input.TeamID.Value != "44444444-4444-4444-8444-444444444444" {
+		t.Fatalf("Validate() team id = %#v", input.TeamID)
+	}
+	if len(input.InterestPropertyIDs.Value) != 1 || !input.MetadataSet {
+		t.Fatalf("Validate() interest properties = %#v", input.InterestPropertyIDs)
+	}
+	profile, ok := input.Metadata["profile"].(LeadMetadata)
+	if !ok || profile["personType"] != "company" || profile["cnpj"] != "12345678000190" {
+		t.Fatalf("Validate() profile metadata = %#v", input.Metadata)
+	}
 }
 
 func TestUpdateRequestRejectsInvalidValues(t *testing.T) {
@@ -164,6 +181,8 @@ func TestUpdateRequestRejectsInvalidValues(t *testing.T) {
 		`{"name":"A"}`,
 		`{"email":"not-email"}`,
 		`{"stageId":"not-a-uuid"}`,
+		`{"teamId":"not-a-uuid"}`,
+		`{"interestPropertyIds":["not-a-uuid"]}`,
 		`{"dealStatus":"archived"}`,
 		`{"interestValue":"abc"}`,
 	}

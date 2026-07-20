@@ -4,6 +4,7 @@ import {
   apiLeadListResponseSchema,
   leadCreateInputSchema,
   leadMoveStageInputSchema,
+  leadUpdateInputSchema,
 } from './leads'
 
 const ID = '11111111-1111-4111-8111-111111111111'
@@ -72,6 +73,24 @@ test('rejeita perfil e lista de imoveis fora do contrato', () => {
     name: 'Empresa Exemplo',
     interestPropertyIds: ['imovel-invalido'],
     profile: { personType: 'company', gender: 'invalid' },
+  }).success, false)
+})
+
+test('aceita perfil, equipe e varios imoveis na edicao', () => {
+  const result = leadUpdateInputSchema.safeParse({
+    teamId: ORG_ID,
+    propertyId: ID,
+    interestPropertyIds: [ID, ORG_ID],
+    profile: {
+      personType: 'company',
+      corporateName: 'Vimob Negocios Imobiliarios',
+      cnpj: '12.345.678/0001-90',
+    },
+  })
+
+  assert.equal(result.success, true)
+  assert.equal(leadUpdateInputSchema.safeParse({
+    interestPropertyIds: ['imovel-invalido'],
   }).success, false)
 })
 
