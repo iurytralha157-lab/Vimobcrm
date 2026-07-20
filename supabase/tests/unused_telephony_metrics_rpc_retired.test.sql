@@ -1,0 +1,27 @@
+begin;
+
+create extension if not exists pgtap with schema extensions;
+select plan(2);
+
+select ok(
+  to_regprocedure(
+    'public.get_telephony_metrics(uuid,timestamptz,timestamptz,uuid)'
+  ) is null,
+  'the unused legacy telephony metrics RPC is retired'
+);
+
+select ok(
+  to_regclass('public.telephony_calls') is null
+  or exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'telephony_calls'
+      and column_name = 'duration_seconds'
+      and data_type = 'integer'
+  ),
+  'the optional telephony table contract is preserved when present'
+);
+
+select * from finish();
+rollback;

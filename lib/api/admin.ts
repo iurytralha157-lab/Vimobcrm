@@ -227,12 +227,6 @@ export const adminAPI = {
     return response;
   },
 
-  async databaseStats<T = AdminJSON>() {
-    const response = await vimobAPIRequest<Envelope<T>>('/v1/admin/database-stats');
-    validateDomainResponse(apiDynamicRecordResponseSchema, response, 'admin.database.stats');
-    return response.data;
-  },
-
   async orphanMemberStats<T = AdminJSON>() {
     const response = await vimobAPIRequest<Envelope<T>>('/v1/admin/orphan-members');
     validateDomainResponse(apiDynamicRecordResponseSchema, response, 'admin.orphans.stats');
@@ -295,6 +289,13 @@ export const adminAPI = {
     return response.data;
   },
 
+  async listOrganizationPayments(organizationId: string) {
+    const validatedId = parseDomainInput(uuidSchema, organizationId, 'admin.payments.list.organization-id');
+    const response = await vimobAPIRequest<Envelope<AdminJSON[]>>(`/v1/admin/organizations/${validatedId}/payments`);
+    validateDomainResponse(apiDynamicRecordListResponseSchema, response, 'admin.payments.list');
+    return response.data;
+  },
+
   async updateOrganizationAccess(input: {
     organizationId: string;
     organizationUpdates: AdminJSON;
@@ -332,6 +333,15 @@ export const adminAPI = {
     });
     validateDomainResponse(okResponseSchema, response, 'admin.users.delete');
     return response;
+  },
+
+  async resetUserPassword(userId: string) {
+    const validatedUserId = parseDomainInput(uuidSchema, userId, 'admin.users.reset-password.id');
+    const response = await vimobAPIRequest<Envelope<AdminJSON>>(`/v1/admin/users/${validatedUserId}/reset-password`, {
+      method: 'POST',
+    });
+    validateDomainResponse(apiDynamicRecordResponseSchema, response, 'admin.users.reset-password');
+    return response.data;
   },
 
   async dashboardOverview(period: number) {

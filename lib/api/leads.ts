@@ -36,6 +36,7 @@ type APILead = {
   pipelineId?: string
   stageId?: string
   assignedUserId?: string
+  teamId?: string
   interestValue?: string
   commissionPercentage?: string
   feedback?: string
@@ -73,6 +74,17 @@ type APILead = {
     uf?: string
     rendaFamiliar?: string
     faixaValorImovel?: string
+    personType?: 'individual' | 'company'
+    gender?: 'male' | 'female' | 'other'
+    socialName?: string
+    birthDate?: string
+    cpf?: string
+    rg?: string
+    cnpj?: string
+    corporateName?: string
+    tradeName?: string
+    stateRegistration?: string
+    interestPropertyIds?: string[]
   }
 }
 
@@ -118,6 +130,21 @@ type LeadCreateInput = Partial<LeadInsert> & {
   tag_ids?: string[]
   conversation_id?: string
   import_mode?: boolean
+  team_id?: string
+  feedback?: string
+  interest_property_ids?: string[]
+  profile?: {
+    personType?: 'individual' | 'company'
+    gender?: 'male' | 'female' | 'other'
+    socialName?: string
+    birthDate?: string
+    cpf?: string
+    rg?: string
+    cnpj?: string
+    corporateName?: string
+    tradeName?: string
+    stateRegistration?: string
+  }
 }
 
 type LeadMoveStageInput = {
@@ -172,11 +199,14 @@ export const leadsAPI = {
       phone: data.phone,
       source: data.source,
       message: data.message,
+      feedback: data.feedback,
       propertyCode: data.property_code,
       propertyId: data.property_id,
+      interestPropertyIds: data.interest_property_ids,
       pipelineId: data.pipeline_id,
       stageId: data.stage_id,
       assignedUserId: data.assigned_user_id,
+      teamId: data.team_id,
       interestValue: data.valor_interesse == null ? undefined : String(data.valor_interesse),
       dealStatus: data.deal_status,
       lostReason: data.lost_reason,
@@ -194,6 +224,7 @@ export const leadsAPI = {
       uf: data.uf,
       rendaFamiliar: data.renda_familiar,
       faixaValorImovel: data.faixa_valor_imovel,
+      profile: data.profile,
       importMode: data.import_mode,
     }, 'leads.create')
     const response = await vimobAPIRequest<APILeadResponse>('/v1/leads', {
@@ -433,6 +464,8 @@ export function toLegacyLead(lead: APILead): LeadRow & {
   return {
     assigned_at: null,
     assigned_user_id: lead.assignedUserId || null,
+    attention_eligible: false,
+    attention_enrolled_at: null,
     bairro: lead.additionalFields?.bairro || null,
     cargo: lead.additionalFields?.cargo || null,
     cep: lead.additionalFields?.cep || null,
@@ -440,6 +473,7 @@ export function toLegacyLead(lead: APILead): LeadRow & {
     commission_percentage: lead.commissionPercentage ? Number(lead.commissionPercentage) : null,
     complemento: null,
     created_at: lead.createdAt,
+    created_by: null,
     deal_status: lead.dealStatus,
     email: lead.email || null,
     empresa: lead.additionalFields?.empresa || null,
@@ -461,7 +495,9 @@ export function toLegacyLead(lead: APILead): LeadRow & {
     interest_plan_id: null,
     interest_property_id: lead.interestPropertyId || null,
     is_own_resource: lead.isOwnResource ?? null,
+    last_contact_at: null,
     last_entry_at: null,
+    last_redistributed_at: null,
     lost_at: null,
     lost_reason: lead.lostReason || null,
     message: lead.message || null,
@@ -471,24 +507,38 @@ export function toLegacyLead(lead: APILead): LeadRow & {
     meta_click_id: null,
     meta_form_id: null,
     meta_lead_id: null,
+    metadata: lead.additionalFields || null,
     name: lead.name,
+    next_follow_up_at: null,
     numero: lead.additionalFields?.numero || null,
     organization_id: lead.organizationId,
+    owner_last_activity_at: null,
+    owner_last_activity_user_id: null,
     phone: lead.phone || null,
     pipeline_id: lead.pipelineId || null,
+    priority: null,
     procura_financiamento: lead.procuraFinanciamento ?? null,
     profissao: lead.additionalFields?.profissao || null,
     property_code: lead.propertyCode || null,
     property_id: lead.propertyId || null,
     redistribution_count: 0,
+    redistribution_warning_sent_at: null,
     reentry_count: lead.reentryCount,
     renda_familiar: lead.additionalFields?.rendaFamiliar || null,
+    sla_last_checked_at: null,
+    sla_notified_overdue_at: null,
+    sla_notified_warning_at: null,
+    sla_seconds_elapsed: null,
+    sla_status: null,
     source: lead.source,
+    source_detail: null,
     source_session_id: null,
     source_webhook_id: null,
     board_order_at: lead.boardOrderAt || null,
     stage_entered_at: lead.stageEnteredAt || null,
     stage_id: lead.stageId || null,
+    status: null,
+    team_id: lead.teamId || null,
     trabalha: lead.trabalha ?? null,
     uf: lead.additionalFields?.uf || null,
     updated_at: lead.updatedAt,

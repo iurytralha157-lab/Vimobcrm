@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { APP_NAVIGATION_ITEMS } from '../../config/navigation'
 
 import {
   filterNavigationItems,
+  getNavigationLocationKey,
+  isNavigationPathActive,
+  resolveMobileFabAction,
+  selectMobileNavigationItems,
   type NavigationAccess,
   type NavigationAccessItem,
 } from './navigation'
@@ -62,6 +67,64 @@ test('mantem modulos e itens administrativos sob suas regras atuais', () => {
   assert.deepEqual(result.map((item) => item.path), ['/properties', '/financeiro'])
 })
 
+test('menu de imoveis respeita as mesmas permissoes das paginas', () => {
+  const properties = APP_NAVIGATION_ITEMS.filter((item) => item.path === '/properties')
+
+  assert.deepEqual(filterNavigationItems(properties, baseAccess), [])
+
+  const viewer = filterNavigationItems(properties, {
+    ...baseAccess,
+    hasPermission: (permission) => permission === 'property_view',
+  })
+  assert.deepEqual(viewer[0]?.children?.map((item) => item.path), ['/properties'])
+
+  const manager = filterNavigationItems(properties, {
+    ...baseAccess,
+    hasPermission: (permission) => permission === 'property_manage',
+  })
+  assert.deepEqual(manager[0]?.children?.map((item) => item.path), [
+    '/properties',
+    '/properties/condominiums',
+    '/properties/locations',
+    '/properties/owners',
+  ])
+})
+
+test('catalogo principal repete as permissoes declaradas nas rotas', () => {
+  const restrictedPaths = [
+    '/crm/pipelines',
+    '/crm/conversas',
+    '/crm/contacts',
+    '/agenda',
+    '/automations',
+    '/financeiro',
+    '/gamificacao',
+  ]
+  const withoutPermissions = filterNavigationItems(APP_NAVIGATION_ITEMS, {
+    ...baseAccess,
+    canAccessFinancialModule: true,
+  })
+  assert.equal(withoutPermissions.some((item) => restrictedPaths.includes(item.path)), false)
+
+  const granted = new Set([
+    'lead_view_own',
+    'whatsapp_view',
+    'schedule_view',
+    'automations_manage',
+    'financial_manage',
+    'gamification_view',
+  ])
+  const withPermissions = filterNavigationItems(APP_NAVIGATION_ITEMS, {
+    ...baseAccess,
+    canAccessFinancialModule: true,
+    hasPermission: (permission) => granted.has(permission),
+  })
+  assert.deepEqual(
+    withPermissions.filter((item) => restrictedPaths.includes(item.path)).map((item) => item.path),
+    restrictedPaths,
+  )
+})
+
 test('permissoes individuais liberam configuracoes sem depender do cargo', () => {
   const items: NavigationAccessItem[] = [
     { path: '/settings?tab=subscription', permission: 'settings_billing' },
@@ -80,4 +143,113 @@ test('permissoes individuais liberam configuracoes sem depender do cargo', () =>
     '/settings/site',
     '/settings?tab=integrations',
   ])
+})
+
+test('navegacao mobile usa somente itens ja autorizados', () => {
+  const result = selectMobileNavigationItems([
+    { path: '/crm/pipelines' },
+    { path: '/crm/contacts' },
+    { path: '/crm/conversas' },
+  ])
+
+  assert.deepEqual(result.primary.map((item) => item.path), ['/crm/pipelines', '/crm/contacts'])
+  assert.equal(result.secondary?.path, '/crm/conversas')
+  assert.equal(result.primary.some((item) => item.path === '/dashboard'), false)
+})
+
+test('navegacao mobile prioriza dashboard quando autorizado', () => {
+  const result = selectMobileNavigationItems([
+    { path: '/crm/contacts' },
+    { path: '/dashboard' },
+    { path: '/crm/pipelines' },
+  ])
+
+  assert.deepEqual(result.primary.map((item) => item.path), ['/dashboard', '/crm/pipelines'])
+})
+
+test('navegacao mobile usa rota filha quando o pai nao e acessivel diretamente', () => {
+  const result = selectMobileNavigationItems([
+    {
+      path: '/dashboard',
+      children: [
+        { path: '/dashboard/site' },
+        { path: '/dashboard/campaigns' },
+      ],
+    },
+    { path: '/crm/pipelines' },
+  ])
+
+  assert.deepEqual(result.primary.map((item) => item.path), ['/dashboard/site', '/crm/pipelines'])
+})
+
+test('acao central mobile existe apenas quando a pagina e a permissao combinam', () => {
+  const permissions = new Set<string>()
+  const resolve = (pathname: string, tab?: string | null) => resolveMobileFabAction({
+    pathname,
+    tab,
+    isBillingBlocked: false,
+    hasPermission: (permission) => permissions.has(permission),
+  })
+
+  assert.equal(resolve('/crm/pipelines'), null)
+  permissions.add('lead_create')
+  assert.equal(resolve('/crm/pipelines'), 'lead')
+  assert.equal(resolve('/settings', 'account'), null)
+
+  permissions.add('property_manage')
+  assert.equal(resolve('/properties'), 'property')
+  assert.equal(resolve('/properties/new'), null)
+
+  permissions.add('team_manage')
+  assert.equal(resolve('/crm/management'), 'team')
+  assert.equal(resolve('/crm/management', 'tags'), null)
+
+  assert.equal(resolveMobileFabAction({
+    pathname: '/crm/pipelines',
+    isBillingBlocked: true,
+    hasPermission: () => true,
+  }), null)
+})
+
+test('rota ativa reconhece caminhos filhos e abas padrao', () => {
+  assert.equal(isNavigationPathActive('/properties', '/properties/owners', '', { parent: true }), true)
+  assert.equal(isNavigationPathActive('/settings?tab=account', '/settings', ''), true)
+  assert.equal(isNavigationPathActive('/settings?tab=team', '/settings', 'tab=team'), true)
+  assert.equal(isNavigationPathActive('/settings', '/settings', 'tab=team'), false)
+  assert.equal(isNavigationPathActive('/settings?tab=account', '/settings/users/123', ''), false)
+  assert.equal(isNavigationPathActive('/settings?tab=account', '/settings/users/123', 'tab=account'), false)
+  assert.equal(
+    isNavigationPathActive('/gamificacao#history', '/gamificacao', '', { currentHash: '#history' }),
+    true,
+  )
+  assert.equal(
+    isNavigationPathActive('/gamificacao#config', '/gamificacao', '', { currentHash: '#history' }),
+    false,
+  )
+  assert.equal(
+    isNavigationPathActive('/gamificacao', '/gamificacao', '', { currentHash: '#history' }),
+    false,
+  )
+  assert.equal(
+    isNavigationPathActive('/gamificacao', '/gamificacao', '', { parent: true, currentHash: '#history' }),
+    true,
+  )
+})
+
+test('chave de localizacao muda em navegacao por rota e por aba', () => {
+  assert.equal(getNavigationLocationKey('/settings', ''), '/settings')
+  assert.equal(getNavigationLocationKey('/settings', 'tab=team'), '/settings?tab=team')
+  assert.equal(getNavigationLocationKey('/gamificacao', '', '#history'), '/gamificacao#history')
+  assert.notEqual(
+    getNavigationLocationKey('/settings', 'tab=account'),
+    getNavigationLocationKey('/settings', 'tab=team'),
+  )
+})
+
+test('chave de localizacao ignora filtros que nao representam outra pagina', () => {
+  assert.equal(getNavigationLocationKey('/crm/contacts', 'search=maria&page=2'), '/crm/contacts')
+  assert.equal(
+    getNavigationLocationKey('/settings', 'tab=team&search=maria&page=2'),
+    '/settings?tab=team',
+  )
 })

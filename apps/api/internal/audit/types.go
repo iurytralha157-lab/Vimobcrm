@@ -28,6 +28,9 @@ type AuditLog struct {
 	EntityID       string         `json:"entity_id,omitempty"`
 	OldData        map[string]any `json:"old_data,omitempty"`
 	NewData        map[string]any `json:"new_data,omitempty"`
+	Diff           map[string]any `json:"diff,omitempty"`
+	Source         string         `json:"source,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
 	IPAddress      string         `json:"ip_address,omitempty"`
 	UserAgent      string         `json:"user_agent,omitempty"`
 	CreatedAt      time.Time      `json:"created_at"`

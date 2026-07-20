@@ -42,7 +42,7 @@ type APIStage = {
   pipelineId: string
   name: string
   color?: string
-  stageKey?: string
+  stageKey: string
   position: number
   isWon: boolean
   isLost: boolean
@@ -197,8 +197,10 @@ function toLegacyPipeline(pipeline: APIPipeline): PipelineRow {
     name: pipeline.name,
     organization_id: pipeline.organizationId,
     pool_enabled: null,
+    pool_enabled_at: null,
     pool_max_redistributions: null,
     pool_timeout_minutes: null,
+    pool_warning_minutes: null,
     is_active: pipeline.isActive,
     position: pipeline.position,
     updated_at: pipeline.updatedAt,
@@ -218,7 +220,7 @@ function toLegacyStage(stage: APIStage): StageRow {
     pipeline_id: stage.pipelineId,
     position: stage.position,
     sla_hours: stage.slaHours ?? null,
-    stage_key: stage.stageKey || null,
+    stage_key: stage.stageKey,
     updated_at: stage.updatedAt,
   }
 }

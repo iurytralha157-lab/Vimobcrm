@@ -82,6 +82,19 @@ func (handler Handler) RegenerateGrupoOLXFeedToken(w http.ResponseWriter, r *htt
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[map[string]any]{Data: item})
 }
 
+func (handler Handler) RegenerateGrupoOLXWebhookToken(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	item, err := handler.repo.RegenerateWebhookToken(r.Context(), tenantContext)
+	if err != nil {
+		writePortalError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[map[string]any]{Data: item})
+}
+
 func (handler Handler) ListGrupoOLXPublications(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := organizationContext(w, r)
 	if !ok {
@@ -145,7 +158,7 @@ func (handler Handler) GrupoOLXImportReportWebhook(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	item, err := handler.repo.ReceiveGrupoOLXImportReport(r.Context(), token, body)
+	item, err := handler.repo.ReceiveGrupoOLXImportReport(r.Context(), token, r.Header.Get("Authorization"), body)
 	if err != nil {
 		writePortalError(w, r, err)
 		return
@@ -167,6 +180,21 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+		return err
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+		return err
+	}
+	return nil
+}
+
+func ensureJSONEOF(decoder *json.Decoder) error {
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("request body must contain a single JSON value")
+		}
 		return err
 	}
 	return nil

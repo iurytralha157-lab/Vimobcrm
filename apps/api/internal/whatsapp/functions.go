@@ -50,9 +50,8 @@ func (client functionsClient) webhookURL(functionName string) string {
 	return fmt.Sprintf("%s/functions/v1/%s", client.projectURL, url.PathEscape(functionName))
 }
 
-func (client functionsClient) configuredEvolutionWebhookURL(sessionID string, instanceID string, webhookToken string) string {
-	backendRollout := webhookRolloutAllowsSession(client.webhookRolloutSessionIDs, sessionID)
-	baseURL := client.validEvolutionWebhookBaseURL(sessionID)
+func (client functionsClient) configuredEvolutionWebhookURL(sessionID string, instanceID string) string {
+	baseURL := client.validEvolutionWebhookBaseURL()
 	if baseURL == "" {
 		return ""
 	}
@@ -62,30 +61,22 @@ func (client functionsClient) configuredEvolutionWebhookURL(sessionID string, in
 		return ""
 	}
 	query := endpoint.Query()
+	// Webhook URLs are retained by the provider and logged by every proxy in
+	// the request path. Strip every legacy credential name unconditionally;
+	// only non-secret routing identifiers may be present in the callback URL.
+	removeEvolutionWebhookQueryCredentials(query)
 	query.Set("session_id", sessionID)
 	query.Set("instance_id", instanceID)
-	if backendRollout {
-		// The backend authenticates the provider's instanceToken from the JSON
-		// body. Never place a secret in its URL, where proxies, access logs and
-		// browser history can retain it. The legacy Edge receiver still needs
-		// its temporary per-session query token during rollback-safe migration.
-		query.Del("webhook_token")
-	} else {
-		query.Set("webhook_token", webhookToken)
-	}
 	endpoint.RawQuery = query.Encode()
 
 	return endpoint.String()
 }
 
-func (client functionsClient) validEvolutionWebhookBaseURL(sessionID string) string {
-	if webhookRolloutAllowsSession(client.webhookRolloutSessionIDs, sessionID) {
-		if isDeadEvolutionWebhookURL(client.evolutionBackendWebhookURL) {
-			return ""
-		}
-		return client.evolutionBackendWebhookURL
+func (client functionsClient) validEvolutionWebhookBaseURL() string {
+	if isDeadEvolutionWebhookURL(client.evolutionBackendWebhookURL) {
+		return ""
 	}
-	return client.validLegacyEvolutionWebhookBaseURL()
+	return client.evolutionBackendWebhookURL
 }
 
 func (client functionsClient) validLegacyEvolutionWebhookBaseURL() string {

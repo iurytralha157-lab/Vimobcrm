@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -98,7 +99,7 @@ func (repo Repository) InvokeFunctionRequest(ctx context.Context, name string, m
 
 func (repo Repository) GetVista(ctx context.Context, tenantContext tenant.Context) (map[string]any, error) {
 	return repo.getSingleJSON(ctx, `
-		select to_jsonb(v) || jsonb_build_object('api_key', null)
+		select to_jsonb(v) - 'api_key' - 'api_key_secret_ref'
 		from public.vista_integrations v
 		where v.organization_id = $1::uuid
 		limit 1
@@ -106,29 +107,64 @@ func (repo Repository) GetVista(ctx context.Context, tenantContext tenant.Contex
 }
 
 func (repo Repository) SaveVista(ctx context.Context, tenantContext tenant.Context, request VistaIntegrationRequest) (map[string]any, error) {
-	apiURL := strings.TrimSpace(request.APIURL)
+	apiURL, err := normalizeVistaAPIURL(request.APIURL)
 	apiKey := strings.TrimSpace(request.APIKey)
-	if apiURL == "" || apiKey == "" {
+	if err != nil || apiKey == "" {
 		return nil, ErrInvalidInput
 	}
 	return repo.upsertSecretIntegration(ctx, `
 		insert into public.vista_integrations (
 			organization_id,
 			api_url,
-			api_key_secret_ref,
+			api_key,
 			status,
 			created_by,
+			is_active,
 			updated_at
 		)
-		values ($1::uuid, $2, $3, 'connected', $4::uuid, now())
+		values ($1::uuid, $2, $3, 'connected', $4::uuid, true, now())
 		on conflict (organization_id) do update
 		set api_url = excluded.api_url,
 		    api_key_secret_ref = excluded.api_key_secret_ref,
+		    api_key = null,
 		    status = 'connected',
 		    last_error = null,
+		    is_active = true,
 		    updated_at = now()
-		returning to_jsonb(vista_integrations.*) || jsonb_build_object('api_key', null)
-	`, tenantContext.OrganizationID, apiURL, "plain:"+apiKey, tenantContext.UserID)
+		returning to_jsonb(vista_integrations.*) - 'api_key' - 'api_key_secret_ref'
+	`, tenantContext.OrganizationID, apiURL, apiKey, tenantContext.UserID)
+}
+
+func normalizeVistaAPIURL(value string) (string, error) {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return "", ErrInvalidInput
+	}
+	if !strings.HasPrefix(strings.ToLower(raw), "http://") && !strings.HasPrefix(strings.ToLower(raw), "https://") {
+		raw = "https://" + raw
+	}
+	target, err := url.ParseRequestURI(raw)
+	if err != nil || target.Hostname() == "" || target.User != nil {
+		return "", ErrInvalidInput
+	}
+
+	host := strings.ToLower(target.Hostname())
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") {
+		return "", ErrInvalidInput
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()) {
+		return "", ErrInvalidInput
+	}
+	if target.Scheme == "http" && (host == "vistahost.com.br" || strings.HasSuffix(host, ".vistahost.com.br")) {
+		target.Scheme = "https"
+	}
+	if target.Scheme != "https" || target.Port() != "" && target.Port() != "443" {
+		return "", ErrInvalidInput
+	}
+
+	target.RawQuery = ""
+	target.Fragment = ""
+	return strings.TrimRight(target.String(), "/"), nil
 }
 
 func (repo Repository) DeleteVista(ctx context.Context, tenantContext tenant.Context) error {
@@ -137,7 +173,7 @@ func (repo Repository) DeleteVista(ctx context.Context, tenantContext tenant.Con
 
 func (repo Repository) GetImoview(ctx context.Context, tenantContext tenant.Context) (map[string]any, error) {
 	return repo.getSingleJSON(ctx, `
-		select to_jsonb(i) || jsonb_build_object('api_key', null)
+		select to_jsonb(i) - 'api_key' - 'api_key_secret_ref'
 		from public.imoview_integrations i
 		where i.organization_id = $1::uuid
 		limit 1
@@ -152,19 +188,22 @@ func (repo Repository) SaveImoview(ctx context.Context, tenantContext tenant.Con
 	return repo.upsertSecretIntegration(ctx, `
 		insert into public.imoview_integrations (
 			organization_id,
-			api_key_secret_ref,
+			api_key,
 			status,
 			created_by,
+			is_active,
 			updated_at
 		)
-		values ($1::uuid, $2, 'connected', $3::uuid, now())
+		values ($1::uuid, $2, 'connected', $3::uuid, true, now())
 		on conflict (organization_id) do update
 		set api_key_secret_ref = excluded.api_key_secret_ref,
+		    api_key = null,
 		    status = 'connected',
 		    last_error = null,
+		    is_active = true,
 		    updated_at = now()
-		returning to_jsonb(imoview_integrations.*) || jsonb_build_object('api_key', null)
-	`, tenantContext.OrganizationID, "plain:"+apiKey, tenantContext.UserID)
+		returning to_jsonb(imoview_integrations.*) - 'api_key' - 'api_key_secret_ref'
+	`, tenantContext.OrganizationID, apiKey, tenantContext.UserID)
 }
 
 func (repo Repository) DeleteImoview(ctx context.Context, tenantContext tenant.Context) error {

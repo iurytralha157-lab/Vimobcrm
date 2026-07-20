@@ -16,6 +16,9 @@ func TestSchedulePermissionAndScopeAreIndependent(t *testing.T) {
 	if canViewAllScheduleEvents(standard) {
 		t.Fatal("schedule_manage must not grant organization-wide access")
 	}
+	if canAssignAnyScheduleUser(standard) {
+		t.Fatal("schedule_manage must not grant organization-wide assignment")
+	}
 
 	readOnly := tenant.Context{UserID: "user-1", Permissions: []string{permissions.ScheduleView}}
 	if !canViewSchedule(readOnly) || canManageSchedule(readOnly) {
@@ -25,6 +28,9 @@ func TestSchedulePermissionAndScopeAreIndependent(t *testing.T) {
 	admin := tenant.Context{UserID: "admin", MemberRole: "admin"}
 	if !canViewSchedule(admin) || !canManageSchedule(admin) || !canViewAllScheduleEvents(admin) {
 		t.Fatal("admin should have complete schedule access")
+	}
+	if !canAssignAnyScheduleUser(admin) {
+		t.Fatal("admin should assign any active organization user")
 	}
 }
 
@@ -38,5 +44,17 @@ func TestScheduleLeadVisibilityRespectsOwnPermissionAndExplicitTeam(t *testing.T
 	}
 	if !strings.Contains(query, "is null") {
 		t.Fatal("legacy null team_id fallback should remain")
+	}
+}
+
+func TestSchedulePropertyVisibilityRequiresPropertyPermission(t *testing.T) {
+	standard := tenant.Context{UserID: "user-1", Permissions: []string{permissions.ScheduleView, permissions.ScheduleManage}}
+	if canViewProperties(standard) {
+		t.Fatal("schedule permissions must not grant property visibility")
+	}
+
+	viewer := tenant.Context{UserID: "user-1", Permissions: []string{permissions.PropertyView}}
+	if !canViewProperties(viewer) {
+		t.Fatal("property_view should grant catalog visibility under the unified permission catalog")
 	}
 }

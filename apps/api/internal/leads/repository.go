@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -14,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/authorization"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -28,12 +30,16 @@ type Repository struct {
 	evolutionGoAPIURL    string
 	evolutionGoAPIKey    string
 	notificationEmail    notificationEmailClient
-	notificationPush     notificationPushClient
+	notificationPush     *notificationPushClient
 	gamificationRecorder GamificationRecorder
 }
 
 type scanner interface {
 	Scan(dest ...any) error
+}
+
+type leadTeamQueryer interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
 type destination struct {
@@ -77,6 +83,7 @@ type leadSnapshot struct {
 	PropertyID         string
 	InterestPropertyID string
 	PropertyCode       string
+	Data               map[string]any
 }
 
 func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder, storageConfigs ...StorageConfig) Repository {
@@ -129,9 +136,9 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 		addFilter("l.deal_status = $%d", filter.DealStatus)
 	}
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, searchtext.Pattern(filter.Search))
 		index := len(args)
-		where = append(where, fmt.Sprintf("(l.name ilike $%d or l.phone ilike $%d or l.email ilike $%d)", index, index, index))
+		where = append(where, searchtext.AnySQL([]string{"l.name", "l.phone", "l.email"}, fmt.Sprintf("$%d", index)))
 	}
 
 	args = append(args, filter.Limit, filter.Offset)
@@ -234,6 +241,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	}
 
 	if err := repo.validateAssignedUser(ctx, tenantContext.OrganizationID, input.AssignedUserID); err != nil {
+		return CreateResult{}, err
+	}
+	if err := repo.validateLeadTeam(ctx, tenantContext, input.TeamID); err != nil {
 		return CreateResult{}, err
 	}
 
@@ -424,35 +434,37 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Lead{}, ErrLeadNotFound
 		}
+		if isLeadPhoneUniqueViolation(err) {
+			return Lead{}, ErrLeadPhoneConflict
+		}
 		return Lead{}, err
 	}
 
-	_, err = tx.Exec(ctx, `
-		insert into public.audit_logs (
-			organization_id,
-			user_id,
-			action,
-			entity_type,
-			entity_id,
-			old_data,
-			new_data
-		)
-		values (
-			$1::uuid,
-			$2::uuid,
-			'update',
-			'lead',
-			$3::uuid,
-			$4::jsonb,
-			$5::jsonb
-		)
-	`, tenantContext.OrganizationID, tenantContext.UserID, updatedID, jsonb(map[string]any{
-		"name":             current.Name,
-		"stage_id":         nullableString(current.StageID),
-		"assigned_user_id": nullableString(current.AssignedUserID),
-	}), jsonb(input.auditData()))
-	if err != nil {
-		return Lead{}, err
+	oldAuditData, newAuditData := changedLeadAuditData(current.Data, input.auditData())
+	if len(newAuditData) > 0 {
+		_, err = tx.Exec(ctx, `
+			insert into public.audit_logs (
+				organization_id,
+				user_id,
+				action,
+				entity_type,
+				entity_id,
+				old_data,
+				new_data
+			)
+			values (
+				$1::uuid,
+				$2::uuid,
+				'update',
+				'lead',
+				$3::uuid,
+				$4::jsonb,
+				$5::jsonb
+			)
+		`, tenantContext.OrganizationID, tenantContext.UserID, updatedID, jsonb(oldAuditData), jsonb(newAuditData))
+		if err != nil {
+			return Lead{}, err
+		}
 	}
 
 	if err := repo.reserveWonLeadProperty(ctx, tx, tenantContext, current, input); err != nil {
@@ -697,7 +709,7 @@ func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext
 		StageID:    current.StageID,
 	}
 
-	selection, reason, err := repo.selectRoundRobinMember(ctx, tx, tenantContext.OrganizationID, current.PipelineID)
+	selection, reason, err := repo.selectRoundRobinMember(ctx, tx, tenantContext.OrganizationID, current.PipelineID, current.TeamID)
 	if err != nil {
 		return RoundRobinResult{}, err
 	}
@@ -707,6 +719,9 @@ func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext
 	}
 
 	assignedUserID := selection.UserID
+	if err := repo.validateRoundRobinAssigneeTeam(ctx, tx, tenantContext.OrganizationID, current.TeamID, &assignedUserID); err != nil {
+		return RoundRobinResult{}, err
+	}
 	if err := repo.transferLeadAssignee(ctx, tx, tenantContext, current, &assignedUserID, "round_robin"); err != nil {
 		return RoundRobinResult{}, err
 	}
@@ -971,6 +986,12 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 	if err := repo.validateProperty(ctx, tx, tenantContext.OrganizationID, input.PropertyID); err != nil {
 		return CreateResult{}, err
 	}
+	for _, propertyID := range input.InterestPropertyIDs {
+		propertyID := propertyID
+		if err := repo.validateProperty(ctx, tx, tenantContext.OrganizationID, &propertyID); err != nil {
+			return CreateResult{}, err
+		}
+	}
 
 	var leadID string
 	err = tx.QueryRow(ctx, `
@@ -980,6 +1001,7 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 				pipeline_id,
 				stage_id,
 				assigned_user_id,
+				team_id,
 				assigned_at,
 				property_id,
 				interest_property_id,
@@ -1008,28 +1030,30 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 				faixa_valor_imovel,
 				created_by,
 				stage_entered_at,
-				board_order_at
+				board_order_at,
+				feedback,
+				metadata
 			)
 			values (
 				$1::uuid,
 				$2::uuid,
 				$3::uuid,
 				$4::uuid,
+				$5::uuid,
 				case when $4::uuid is null then null else now() end,
-				$5::uuid,
-				$5::uuid,
-				$6,
+				$6::uuid,
+				$6::uuid,
 				$7,
 				$8,
 				$9,
 				$10,
 				$11,
-				$12::numeric,
-				$13,
+				$12,
+				$13::numeric,
 				$14,
-				case when $13 = 'lost' then now() else null end,
-				case when $13 = 'won' then now() else null end,
 				$15,
+				case when $14 = 'lost' then now() else null end,
+				case when $14 = 'won' then now() else null end,
 				$16,
 				$17,
 				$18,
@@ -1041,9 +1065,12 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 				$24,
 				$25,
 				$26,
-				$27::uuid,
+				$27,
+				$28::uuid,
 				case when $3::uuid is null then null else now() end,
-				case when $3::uuid is null then null else now() end
+				case when $3::uuid is null then null else now() end,
+				$29,
+				$30::jsonb
 			)
 			returning id::text, name, phone, source
 		),
@@ -1058,7 +1085,7 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 			)
 			select
 				$1::uuid,
-				$27::uuid,
+				$28::uuid,
 				'create',
 				'lead',
 				inserted.id,
@@ -1075,6 +1102,7 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 		nullable(resolvedDestination.PipelineID),
 		nullable(resolvedDestination.StageID),
 		nullable(input.AssignedUserID),
+		nullable(input.TeamID),
 		nullable(input.PropertyID),
 		input.Name,
 		nullable(input.Email),
@@ -1098,6 +1126,8 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 		nullable(input.RendaFamiliar),
 		nullable(input.FaixaValorImovel),
 		tenantContext.UserID,
+		nullable(input.Feedback),
+		jsonb(input.Metadata),
 	).Scan(&leadID)
 	if err != nil {
 		return CreateResult{}, err
@@ -1118,7 +1148,11 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 		return CreateResult{}, err
 	}
 
-	if err := repo.insertInitialFeedbackActivity(ctx, tx, tenantContext.OrganizationID, leadID, tenantContext.UserID, input.Message, "lead_create"); err != nil {
+	initialFeedback := input.Feedback
+	if initialFeedback == nil {
+		initialFeedback = input.Message
+	}
+	if err := repo.insertInitialFeedbackActivity(ctx, tx, tenantContext.OrganizationID, leadID, tenantContext.UserID, initialFeedback, "lead_create"); err != nil {
 		return CreateResult{}, err
 	}
 
@@ -1449,7 +1483,34 @@ func (repo Repository) validateAssignedUser(ctx context.Context, organizationID 
 	return nil
 }
 
-func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, organizationID string, pipelineID string) (roundRobinSelection, string, error) {
+func (repo Repository) validateLeadTeam(ctx context.Context, tenantContext tenant.Context, teamID *string) error {
+	if teamID == nil {
+		return nil
+	}
+	if !canViewAllLeads(tenantContext) && !tenantContext.LeadsTeam(*teamID) {
+		return tenant.ErrOrganizationAccessDenied
+	}
+
+	var teamExists bool
+	err := repo.db.Pool().QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.teams t
+			where t.organization_id = $1::uuid
+			  and t.id = $2::uuid
+			  and coalesce(t.is_active, true) = true
+		)
+	`, tenantContext.OrganizationID, *teamID).Scan(&teamExists)
+	if err != nil {
+		return err
+	}
+	if !teamExists {
+		return ErrInvalidReference
+	}
+	return nil
+}
+
+func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, organizationID string, pipelineID string, requiredTeamID string) (roundRobinSelection, string, error) {
 	var roundRobinID string
 	err := tx.QueryRow(ctx, `
 		select id::text
@@ -1559,6 +1620,17 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 		    and rrl.assigned_user_id = candidates.user_id
 		) user_logs on true
 		where (
+		    nullif($3, '')::uuid is null
+		    or exists (
+		      select 1
+		      from public.team_members required_member
+		      where required_member.organization_id = candidates.organization_id
+		        and required_member.team_id = nullif($3, '')::uuid
+		        and required_member.user_id = candidates.user_id
+		        and coalesce(required_member.is_active, true) = true
+		    )
+		  )
+		  and (
 		    candidates.team_member_id is null
 		    or not exists (
 		      select 1
@@ -1588,7 +1660,7 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 		  )
 		order by candidates.entry_total asc, candidates.position asc, candidates.created_at asc, coalesce(user_logs.total, 0) asc, candidates.team_member_created_at asc nulls last, candidates.user_id asc
 		limit 1
-	`, organizationID, roundRobinID).Scan(&selection.MemberID, &selection.UserID)
+	`, organizationID, roundRobinID, requiredTeamID).Scan(&selection.MemberID, &selection.UserID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return roundRobinSelection{}, "no_member", nil
 	}
@@ -1663,6 +1735,32 @@ func (repo Repository) transferLeadAssignee(ctx context.Context, tx pgx.Tx, tena
 		return err
 	}
 	return repo.insertTransferNotification(ctx, tx, tenantContext, current, assignedUserID, reason)
+}
+
+func (repo Repository) validateRoundRobinAssigneeTeam(ctx context.Context, queryer leadTeamQueryer, organizationID string, teamID string, assignedUserID *string) error {
+	if strings.TrimSpace(teamID) == "" || assignedUserID == nil {
+		return nil
+	}
+
+	var isActiveMember bool
+	err := queryer.QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.team_members tm
+			where tm.organization_id = $1::uuid
+			  and tm.team_id = $2::uuid
+			  and tm.user_id = $3::uuid
+			  and coalesce(tm.is_active, true) = true
+		)
+	`, organizationID, teamID, *assignedUserID).Scan(&isActiveMember)
+	if err != nil {
+		return err
+	}
+	if !isActiveMember {
+		return ErrInvalidReference
+	}
+
+	return nil
 }
 
 func (repo Repository) insertTransferNotification(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, assignedUserID *string, reason string) error {
@@ -1749,6 +1847,7 @@ func (repo Repository) validateProperty(ctx context.Context, tx pgx.Tx, organiza
 func (repo Repository) getLeadSnapshotForUpdate(ctx context.Context, tx pgx.Tx, organizationID string, leadID string) (leadSnapshot, error) {
 	var snapshot leadSnapshot
 	var teamID, phone, assignedUserID, pipelineID, stageID, stageName, lostReason, interestValue, propertyID, interestPropertyID, propertyCode pgtype.Text
+	var rawData []byte
 
 	err := tx.QueryRow(ctx, `
 		select
@@ -1765,7 +1864,8 @@ func (repo Repository) getLeadSnapshotForUpdate(ctx context.Context, tx pgx.Tx, 
 			l.valor_interesse::text,
 			l.property_id::text,
 			l.interest_property_id::text,
-			l.property_code
+			l.property_code,
+			to_jsonb(l)
 		from public.leads l
 		left join public.stages s
 		  on s.id = l.stage_id
@@ -1774,7 +1874,7 @@ func (repo Repository) getLeadSnapshotForUpdate(ctx context.Context, tx pgx.Tx, 
 		  and l.id = $2::uuid
 		limit 1
 		for update of l
-	`, organizationID, leadID).Scan(&snapshot.ID, &teamID, &snapshot.Name, &phone, &assignedUserID, &pipelineID, &stageID, &stageName, &snapshot.DealStatus, &lostReason, &interestValue, &propertyID, &interestPropertyID, &propertyCode)
+	`, organizationID, leadID).Scan(&snapshot.ID, &teamID, &snapshot.Name, &phone, &assignedUserID, &pipelineID, &stageID, &stageName, &snapshot.DealStatus, &lostReason, &interestValue, &propertyID, &interestPropertyID, &propertyCode, &rawData)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return leadSnapshot{}, ErrLeadNotFound
 	}
@@ -1793,8 +1893,48 @@ func (repo Repository) getLeadSnapshotForUpdate(ctx context.Context, tx pgx.Tx, 
 	snapshot.PropertyID = textValue(propertyID)
 	snapshot.InterestPropertyID = textValue(interestPropertyID)
 	snapshot.PropertyCode = textValue(propertyCode)
+	if err := json.Unmarshal(rawData, &snapshot.Data); err != nil {
+		return leadSnapshot{}, err
+	}
 
 	return snapshot, nil
+}
+
+func changedLeadAuditData(current map[string]any, requested map[string]any) (map[string]any, map[string]any) {
+	oldData := make(map[string]any)
+	newData := make(map[string]any)
+	for key, newValue := range requested {
+		oldValue := current[key]
+		if leadAuditValuesEqual(key, oldValue, newValue) {
+			continue
+		}
+		oldData[key] = oldValue
+		newData[key] = newValue
+	}
+	return oldData, newData
+}
+
+func leadAuditValuesEqual(key string, left any, right any) bool {
+	if key == "trabalha" || key == "procura_financiamento" || key == "is_own_resource" {
+		return leadAuditBoolValue(left) == leadAuditBoolValue(right)
+	}
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	if key == "valor_interesse" || key == "commission_percentage" {
+		leftNumber, leftErr := strconv.ParseFloat(fmt.Sprint(left), 64)
+		rightNumber, rightErr := strconv.ParseFloat(fmt.Sprint(right), 64)
+		return leftErr == nil && rightErr == nil && leftNumber == rightNumber
+	}
+	return fmt.Sprint(left) == fmt.Sprint(right)
+}
+
+func leadAuditBoolValue(value any) bool {
+	if value == nil {
+		return false
+	}
+	parsed, err := strconv.ParseBool(fmt.Sprint(value))
+	return err == nil && parsed
 }
 
 func (repo Repository) getLeadForMutation(ctx context.Context, tx pgx.Tx, organizationID string, leadID string) (Lead, error) {
@@ -2691,6 +2831,7 @@ func leadSelectFields() string {
 		l.pipeline_id::text,
 		l.stage_id::text,
 		l.assigned_user_id::text,
+		l.team_id::text,
 		l.valor_interesse::text,
 		l.commission_percentage::text,
 		l.lost_reason,
@@ -2711,6 +2852,7 @@ func leadSelectFields() string {
 		l.uf,
 		l.renda_familiar,
 		l.faixa_valor_imovel,
+		l.metadata,
 		l.created_at,
 		l.updated_at,
 		l.stage_entered_at,
@@ -2784,11 +2926,12 @@ func scanLead(row scanner) (Lead, error) {
 func scanLeadFields(row scanner, total *int64) (Lead, error) {
 	var lead Lead
 	var email, phone, priority, message, propertyCode, propertyID, interestPropertyID pgtype.Text
-	var pipelineID, stageID, assignedUserID, interestValue, commissionPercentage pgtype.Text
+	var pipelineID, stageID, assignedUserID, teamID, interestValue, commissionPercentage pgtype.Text
 	var lostReason, feedback, finalidadeCompra pgtype.Text
 	var isOwnResource pgtype.Bool
 	var trabalha, procuraFinanciamento pgtype.Bool
 	var cargo, empresa, profissao, endereco, bairro, numero, cep, cidade, uf, rendaFamiliar, faixaValorImovel pgtype.Text
+	var rawMetadata []byte
 	var stageEnteredAt, boardOrderAt, lastContactAt, nextFollowUpAt pgtype.Timestamptz
 	var stageIDValue, stageName, stageColor, stageKey pgtype.Text
 	var assigneeID, assigneeName, assigneeAvatarURL pgtype.Text
@@ -2810,6 +2953,7 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 		&pipelineID,
 		&stageID,
 		&assignedUserID,
+		&teamID,
 		&interestValue,
 		&commissionPercentage,
 		&lostReason,
@@ -2830,6 +2974,7 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 		&uf,
 		&rendaFamiliar,
 		&faixaValorImovel,
+		&rawMetadata,
 		&lead.CreatedAt,
 		&lead.UpdatedAt,
 		&stageEnteredAt,
@@ -2863,6 +3008,7 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 	lead.PipelineID = textValue(pipelineID)
 	lead.StageID = textValue(stageID)
 	lead.AssignedUserID = textValue(assignedUserID)
+	lead.TeamID = textValue(teamID)
 	lead.InterestValue = textValue(interestValue)
 	lead.CommissionPercentage = textValue(commissionPercentage)
 	lead.LostReason = textValue(lostReason)
@@ -2876,6 +3022,7 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 	lead.LastContactAt = timePtr(lastContactAt)
 	lead.NextFollowUpAt = timePtr(nextFollowUpAt)
 	lead.AdditionalFields = additionalFields(cargo, empresa, profissao, endereco, bairro, numero, cep, cidade, uf, rendaFamiliar, faixaValorImovel)
+	mergeLeadProfileMetadata(lead.AdditionalFields, rawMetadata)
 
 	if stageIDValue.Valid {
 		lead.Stage = &Stage{
@@ -2907,11 +3054,25 @@ func additionalFields(values ...pgtype.Text) LeadMetadata {
 		}
 	}
 
-	if len(fields) == 0 {
-		return nil
-	}
-
 	return fields
+}
+
+func mergeLeadProfileMetadata(fields LeadMetadata, rawMetadata []byte) {
+	if fields == nil || len(rawMetadata) == 0 {
+		return
+	}
+	var metadata LeadMetadata
+	if err := json.Unmarshal(rawMetadata, &metadata); err != nil {
+		return
+	}
+	if profile, ok := metadata["profile"].(map[string]any); ok {
+		for key, value := range profile {
+			fields[key] = value
+		}
+	}
+	if propertyIDs, ok := metadata["interestPropertyIds"]; ok {
+		fields["interestPropertyIds"] = propertyIDs
+	}
 }
 
 func textValue(value pgtype.Text) string {

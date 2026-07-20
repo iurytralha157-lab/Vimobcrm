@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -1114,6 +1115,7 @@ func (repo Repository) searchProperties(ctx context.Context, organizationID stri
 		}
 	}
 	searchTerms := propertySearchTerms(message, lead)
+	propertyCodePattern := searchtext.Pattern(propertyCode)
 	rows, err := repo.db.Pool().Query(ctx, `
 		select to_jsonb(row) from (
 			select
@@ -1133,17 +1135,17 @@ func (repo Repository) searchProperties(ctx context.Context, organizationID stri
 			  and coalesce(is_demo, false) = false
 			  and lower(coalesce(status, 'ativo')) in ('ativo', 'active')
 			  and (
-				($2 <> '' and code ilike '%' || $2 || '%')
+				($2 <> '%%' and `+searchtext.SQL("code")+` like $2)
 				or exists (
 					select 1
 					from unnest($3::text[]) term
-					where lower(concat_ws(' ', title, cidade, bairro, tipo_de_imovel, tipo_de_negocio, finalidade)) like '%' || term || '%'
+					where `+searchtext.SQL("concat_ws(' ', title, cidade, bairro, tipo_de_imovel, tipo_de_negocio, finalidade)")+` like '%' || term || '%'
 				)
 			  )
 			order by updated_at desc nulls last, created_at desc
 			limit 5
 		) row
-	`, organizationID, propertyCode, searchTerms)
+	`, organizationID, propertyCodePattern, searchTerms)
 	if err != nil {
 		return nil, err
 	}

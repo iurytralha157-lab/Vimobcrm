@@ -135,7 +135,7 @@ export function AccountTab() {
     name: "",
     whatsapp: "",
     cpf: "",
-    theme_mode: "system",
+    theme_mode: "light",
   });
 
   const [orgForm, setOrgForm] = useState<OrganizationFormData>({

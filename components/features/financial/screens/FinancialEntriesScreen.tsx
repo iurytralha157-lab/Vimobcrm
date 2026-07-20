@@ -41,6 +41,7 @@ import { FinancialDrawer } from '@/components/features/financial/FinancialDrawer
 
 import { useFinancialEntries, useMarkEntryAsPaid, useDeleteFinancialEntry, type FinancialEntry } from '@/hooks/use-financial';
 import { formatCurrency, formatDate, exportToExcel, prepareFinancialEntriesExport } from '@/lib/export-financial';
+import { searchTextIncludes } from '@/lib/search-text';
 import { useIsMobile } from '@/hooks/use-mobile';
 import {
   Plus,
@@ -146,8 +147,8 @@ export default function FinancialEntries() {
   const deleteEntry = useDeleteFinancialEntry();
 
   const filteredEntries = entries?.filter(entry =>
-    entry.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    entry.category?.toLowerCase().includes(searchQuery.toLowerCase())
+    searchTextIncludes(entry.description, searchQuery) ||
+    searchTextIncludes(entry.category, searchQuery)
   ) || [];
 
   const handleExport = () => {

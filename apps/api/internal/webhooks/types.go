@@ -39,6 +39,7 @@ type incomingWebhook struct {
 	OrganizationID   string            `json:"organization_id"`
 	Name             string            `json:"name"`
 	TargetPipelineID *string           `json:"target_pipeline_id"`
+	TargetTeamID     *string           `json:"target_team_id"`
 	TargetStageID    *string           `json:"target_stage_id"`
 	TargetTagIDs     []string          `json:"target_tag_ids"`
 	TargetPropertyID *string           `json:"target_property_id"`

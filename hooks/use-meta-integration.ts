@@ -290,7 +290,7 @@ export function useMetaAdAccounts(userToken?: string, integrationId?: string) {
       );
 
       if (!response.ok) {
-        throw new Error("Failed to fetch ad accounts from Meta");
+        throw new Error("Não foi possível buscar as contas de anúncios da Meta.");
       }
 
       const data = await response.json();

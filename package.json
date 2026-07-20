@@ -15,7 +15,7 @@
     "api:test": "go test ./apps/api/... ./packages/auth/... ./packages/db/...",
     "whatsapp:realtime:test": "node scripts/tests/whatsapp-realtime-smoke.mjs",
     "load:api": "node scripts/load/api-read-smoke.mjs",
-    "validation:test": "tsc -p tsconfig.validation-tests.json && node --test .validation-tests/lib/validation/leads.test.js .validation-tests/lib/validation/pipelines.test.js .validation-tests/lib/validation/users.test.js .validation-tests/lib/validation/whatsapp.test.js .validation-tests/lib/validation/domains.test.js .validation-tests/lib/validation/attention.test.js .validation-tests/lib/access/api-boundary.test.js .validation-tests/lib/access/management.test.js .validation-tests/lib/access/properties.test.js .validation-tests/lib/access/navigation.test.js .validation-tests/lib/access/tenant-navigation.test.js .validation-tests/lib/access/tenant-query-cache.test.js .validation-tests/lib/whatsapp-query-cache.test.js"
+    "validation:test": "tsc -p tsconfig.validation-tests.json && node --test .validation-tests/lib/validation/leads.test.js .validation-tests/lib/validation/pipelines.test.js .validation-tests/lib/validation/users.test.js .validation-tests/lib/validation/whatsapp.test.js .validation-tests/lib/validation/domains.test.js .validation-tests/lib/validation/attention.test.js .validation-tests/lib/access/api-boundary.test.js .validation-tests/lib/access/management.test.js .validation-tests/lib/access/properties.test.js .validation-tests/lib/access/navigation.test.js .validation-tests/lib/access/tenant-navigation.test.js .validation-tests/lib/access/tenant-query-cache.test.js .validation-tests/lib/whatsapp-query-cache.test.js .validation-tests/lib/search-text.test.js"
   },
   "dependencies": {
     "@capacitor/core": "^8.4.0",

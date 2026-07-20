@@ -842,14 +842,14 @@ export function DistributionQueueEditor({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-tour="distribution-queue-editor" className="max-h-[90vh] w-[94vw] max-w-6xl overflow-hidden border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-2xl">
+      <DialogContent data-tour="distribution-queue-editor" className="flex max-h-[90vh] w-[94vw] max-w-6xl flex-col gap-0 overflow-hidden border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-2xl">
         <DialogHeader className="bg-[var(--app-surface-soft)] px-6 py-5">
           <DialogTitle>
             {queue ? 'Editar Fila de Distribuicao' : 'Nova Fila de Distribuicao'}
           </DialogTitle>
         </DialogHeader>
 
-        <div className="max-h-[calc(90vh-150px)] overflow-y-auto px-6 py-5">
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div className="space-y-4">
               <Collapsible data-tour="distribution-queue-basic" open={openSections.includes('basic')} onOpenChange={() => toggleSection('basic')}>

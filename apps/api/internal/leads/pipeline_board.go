@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -671,10 +672,10 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 		add("l.source = $%d", filter.FilterSource)
 	}
 	if hasSearch {
-		value := "%" + strings.TrimSpace(filter.Search) + "%"
+		value := searchtext.Pattern(filter.Search)
 		args = append(args, value)
 		index := len(args)
-		where = append(where, fmt.Sprintf("(l.name ilike $%d or l.phone ilike $%d or l.email ilike $%d)", index, index, index))
+		where = append(where, searchtext.AnySQL([]string{"l.name", "l.phone", "l.email"}, fmt.Sprintf("$%d", index)))
 	}
 	if filter.FilterTag != "" && filter.FilterTag != "all" {
 		tagID, ok := normalizeUUID(filter.FilterTag)

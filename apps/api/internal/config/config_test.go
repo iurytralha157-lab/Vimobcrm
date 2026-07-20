@@ -54,12 +54,53 @@ func TestConfigValidateRequiresBackendURLForWebhookRollout(t *testing.T) {
 	}
 }
 
+func TestConfigValidateRequiresBackendURLWheneverEvolutionGoIsEnabled(t *testing.T) {
+	cfg := validConfigForWebhookRolloutTest()
+	cfg.EvolutionGo.APIURL = "https://evolution.example.com"
+	cfg.EvolutionGo.APIKey = "provider-key"
+	cfg.EvolutionGo.BackendWebhookURL = ""
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "EVOLUTION_GO_BACKEND_WEBHOOK_URL is required") {
+		t.Fatalf("expected backend webhook URL validation error, got %v", err)
+	}
+}
+
 func TestConfigValidateAcceptsCanaryWebhookRolloutSessionID(t *testing.T) {
 	cfg := validConfigForWebhookRolloutTest()
 	cfg.EvolutionGo.WebhookRolloutSessionIDs = []string{"13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"}
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected valid rollout allowlist, got %v", err)
+	}
+}
+
+func TestConfigValidateRejectsWebhookCredentialsInURL(t *testing.T) {
+	for _, field := range []string{"backend", "edge"} {
+		t.Run(field, func(t *testing.T) {
+			cfg := validConfigForWebhookRolloutTest()
+			if field == "backend" {
+				cfg.EvolutionGo.BackendWebhookURL += "?Webhook_Token=secret"
+			} else {
+				cfg.EvolutionGo.WebhookURL = "https://project.supabase.co/functions/v1/evolution-go-webhook?APIKEY=secret"
+			}
+
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), "must not contain credentials in the query string") {
+				t.Fatalf("expected URL credential validation error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestConfigValidateRequiresHTTPSForProductionWebhookURLs(t *testing.T) {
+	cfg := validConfigForWebhookRolloutTest()
+	cfg.Environment = "production"
+	cfg.EvolutionGo.BackendWebhookURL = "http://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go"
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "must use https in production") {
+		t.Fatalf("expected production HTTPS validation error, got %v", err)
 	}
 }
 

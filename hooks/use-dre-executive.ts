@@ -45,7 +45,7 @@ export function useDREExecutive({ startDate, endDate, regime, compareWithPreviou
   return useQuery({
     queryKey: ['dre-executive', organization?.id, startDate.toISOString(), endDate.toISOString(), regime, compareWithPrevious],
     queryFn: async (): Promise<DREData> => {
-      if (!organization?.id) throw new Error('No organization');
+      if (!organization?.id) throw new Error('Organização não encontrada.');
 
       return analyticsAPI.dreExecutive<DREData>({
         startDate: format(startDate, 'yyyy-MM-dd'),

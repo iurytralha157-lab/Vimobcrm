@@ -220,6 +220,7 @@ func (repo Repository) forwardEvolutionWebhook(ctx context.Context, item pending
 		return err
 	}
 	query := endpoint.Query()
+	removeEvolutionWebhookQueryCredentials(query)
 	query.Set("session_id", item.SessionID)
 	if item.InstanceID != "" {
 		query.Set("instance_id", item.InstanceID)

@@ -80,6 +80,7 @@ import {
 } from '@/hooks/gamification';
 import { cn } from '@/lib/utils';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
+import { LOCATION_HASH_CHANGE_EVENT } from '@/hooks/use-location-hash';
 import { VimobAPIError } from '@/lib/api/vimob-client';
 
 const ACTION_LABELS: Record<string, string> = {
@@ -357,6 +358,7 @@ export default function GamificationScreen() {
     setActiveTab(tab);
     const hash = tab === 'arena' ? '' : `#${tab}`;
     window.history.replaceState(null, '', `${window.location.pathname}${hash}`);
+    window.dispatchEvent(new Event(LOCATION_HASH_CHANGE_EVENT));
   };
 
   if (modulesLoading) {

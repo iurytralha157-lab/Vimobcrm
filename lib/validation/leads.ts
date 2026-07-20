@@ -20,17 +20,33 @@ const decimalStringSchema = z.string().trim().max(40).refine(
 
 export const leadDealStatusSchema = z.enum(['open', 'won', 'lost'])
 
+const leadProfileSchema = z.object({
+  personType: z.enum(['individual', 'company']).optional(),
+  gender: z.enum(['male', 'female', 'other']).optional(),
+  socialName: z.string().trim().max(180).optional(),
+  birthDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  cpf: z.string().trim().max(18).optional(),
+  rg: z.string().trim().max(30).optional(),
+  cnpj: z.string().trim().max(20).optional(),
+  corporateName: z.string().trim().max(180).optional(),
+  tradeName: z.string().trim().max(180).optional(),
+  stateRegistration: z.string().trim().max(40).optional(),
+}).strict()
+
 export const leadCreateInputSchema = z.object({
   name: z.string().trim().min(2).max(180),
   email: optionalEmailSchema,
   phone: optionalText(40),
   source: optionalText(80),
   message: optionalText(2_000),
+  feedback: optionalText(2_000),
   propertyCode: optionalText(80),
   propertyId: optionalUUID,
+  interestPropertyIds: z.array(uuidSchema).max(20).optional(),
   pipelineId: optionalUUID,
   stageId: optionalUUID,
   assignedUserId: optionalUUID,
+  teamId: optionalUUID,
   interestValue: decimalStringSchema.nullish(),
   dealStatus: leadDealStatusSchema.nullish(),
   lostReason: optionalText(300),
@@ -48,6 +64,7 @@ export const leadCreateInputSchema = z.object({
   uf: optionalText(2),
   rendaFamiliar: optionalText(80),
   faixaValorImovel: optionalText(80),
+  profile: leadProfileSchema.optional(),
   importMode: z.boolean().optional(),
 }).strict().superRefine((input, ctx) => {
   if (input.dealStatus === 'lost' && !input.lostReason) {
@@ -154,6 +171,7 @@ export const apiLeadSchema = z.object({
   pipelineId: uuidSchema.optional(),
   stageId: uuidSchema.optional(),
   assignedUserId: uuidSchema.optional(),
+  teamId: uuidSchema.optional(),
   interestValue: z.string().optional(),
   commissionPercentage: z.string().optional(),
   feedback: z.string().optional(),

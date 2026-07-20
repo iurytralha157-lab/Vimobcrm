@@ -40,10 +40,13 @@ type EmailConfig struct {
 }
 
 type PushConfig struct {
-	VAPIDPublicKey  string
-	VAPIDPrivateKey string
-	VAPIDSubject    string
-	FCMServerKey    string
+	VAPIDPublicKey        string
+	VAPIDPrivateKey       string
+	VAPIDSubject          string
+	FCMServerKey          string
+	FCMProjectID          string
+	FCMServiceAccountJSON string
+	FCMServiceAccountFile string
 }
 
 type storageClient struct {

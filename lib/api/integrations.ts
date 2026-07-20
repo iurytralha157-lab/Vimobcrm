@@ -136,6 +136,15 @@ export const integrationsAPI = {
     return response.data;
   },
 
+  async regenerateGrupoOLXWebhookToken(organizationId?: string | null) {
+    const response = await vimobAPIRequest<Envelope<IntegrationJSON>>('/v1/integrations/portals/grupo-olx/regenerate-webhook-token', {
+      method: 'POST',
+      organizationId,
+    });
+    validateDomainResponse(apiIntegrationResponseSchema, response, 'integrations.grupo-olx.regenerate-webhook-token');
+    return response.data;
+  },
+
   async listGrupoOLXPublications(organizationId?: string | null) {
     const response = await vimobAPIRequest<Envelope<IntegrationJSON[]>>('/v1/integrations/portals/grupo-olx/publications', {
       organizationId,

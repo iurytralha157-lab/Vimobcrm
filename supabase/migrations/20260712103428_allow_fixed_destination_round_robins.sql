@@ -48,7 +48,7 @@ BEGIN
       WHERE u.id = auth.uid()
         AND u.organization_id = v_org_id
         AND COALESCE(u.is_active, true) = true
-    ) AND NOT public.is_super_admin() THEN
+    ) AND NOT private.is_super_admin() THEN
       RETURN jsonb_build_object('success', false, 'error', 'forbidden');
     END IF;
   END IF;
@@ -232,7 +232,13 @@ BEGIN
     )
   );
 
-  PERFORM public.notify_whatsapp_on_lead(v_org_id, v_next_user_id, v_lead.name, v_lead.source);
+  IF to_regprocedure('public.notify_whatsapp_on_lead(text, uuid, text, uuid)') IS NOT NULL THEN
+    EXECUTE (
+      'select ' || quote_ident('public') || '.' || quote_ident('notify_whatsapp_on_lead') ||
+      '($1::text, $2::uuid, $3::text, $4::uuid)'
+    )
+    USING v_lead.name, v_org_id, v_lead.source, v_next_user_id;
+  END IF;
 
   RETURN jsonb_build_object(
     'success', true,

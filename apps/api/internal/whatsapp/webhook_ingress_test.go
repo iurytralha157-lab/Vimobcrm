@@ -35,8 +35,8 @@ func TestParseEvolutionWebhookEnvelopeUsesScopedSessionAndHeaderToken(t *testing
 	if envelope.InstanceToken != "provider-secret" {
 		t.Fatal("instanceToken was not read from the provider payload")
 	}
-	if len(envelope.LegacyWebhookTokens) != 1 || envelope.LegacyWebhookTokens[0] != "secret-token" {
-		t.Fatal("legacy webhook token was not read from the protected header")
+	if len(envelope.WebhookHeaderTokens) != 1 || envelope.WebhookHeaderTokens[0] != "secret-token" {
+		t.Fatal("webhook token was not read from the protected header")
 	}
 }
 
@@ -54,15 +54,61 @@ func TestEvolutionWebhookRouteAllowsMissingLegacyTokenButRejectsWrongOrConflicti
 	}
 	if err := authorizeEvolutionWebhookRouteSession(session, evolutionWebhookEnvelope{
 		RouteInstanceID:     "instance-1",
-		LegacyWebhookTokens: []string{"wrong-secret"},
+		WebhookHeaderTokens: []string{"wrong-secret"},
 	}); !errors.Is(err, errWebhookUnauthorized) {
 		t.Fatalf("wrong legacy token error = %v, want unauthorized", err)
 	}
 	if err := authorizeEvolutionWebhookRouteSession(session, evolutionWebhookEnvelope{
 		RouteInstanceID:     "instance-1",
-		LegacyWebhookTokens: []string{"legacy-secret", "wrong-secret"},
+		WebhookHeaderTokens: []string{"legacy-secret", "wrong-secret"},
 	}); !errors.Is(err, errWebhookUnauthorized) {
 		t.Fatalf("conflicting legacy tokens error = %v, want unauthorized", err)
+	}
+}
+
+func TestEvolutionWebhookRejectsEveryQueryCredential(t *testing.T) {
+	for _, credential := range []string{"webhook_token", "apikey", "token", "Webhook_Token", "APIKEY", "ToKeN"} {
+		t.Run(credential, func(t *testing.T) {
+			query := url.Values{
+				"session_id":  []string{"45c7cc1f-6dad-4cf4-8df3-561858de4725"},
+				"instance_id": []string{"instance-1"},
+				credential:    []string{"secret-must-not-be-in-a-url"},
+			}
+			_, err := parseEvolutionWebhookEnvelope(query, http.Header{}, []byte(`{"event":"MESSAGE"}`))
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("query credential error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+}
+
+func TestParseEvolutionWebhookEnvelopeRemovesCredentialsBeforePersistence(t *testing.T) {
+	body := []byte(`{"event":"MESSAGE","instanceToken":"provider-secret","data":{"instance_token":"nested-secret","message":{"conversation":"hello"}},"webhook_token":"legacy-secret"}`)
+	envelope, err := parseEvolutionWebhookEnvelope(
+		url.Values{
+			"session_id":  []string{"45c7cc1f-6dad-4cf4-8df3-561858de4725"},
+			"instance_id": []string{"instance-1"},
+		},
+		http.Header{},
+		body,
+	)
+	if err != nil {
+		t.Fatalf("parseEvolutionWebhookEnvelope() returned error: %v", err)
+	}
+	if envelope.InstanceToken != "provider-secret" {
+		t.Fatalf("InstanceToken = %q, want provider-secret for request authentication", envelope.InstanceToken)
+	}
+	if want := evolutionWebhookEventKey(envelope.SessionID, body); envelope.EventKey != want {
+		t.Fatalf("EventKey = %q, want existing raw-payload deduplication key %q", envelope.EventKey, want)
+	}
+	stored := string(envelope.Payload)
+	for _, secret := range []string{"provider-secret", "nested-secret", "legacy-secret", "instanceToken", "instance_token", "webhook_token"} {
+		if strings.Contains(stored, secret) {
+			t.Fatalf("sanitized inbox payload still contains %q: %s", secret, stored)
+		}
+	}
+	if !strings.Contains(stored, `"conversation":"hello"`) {
+		t.Fatalf("sanitized inbox payload lost message content: %s", stored)
 	}
 }
 

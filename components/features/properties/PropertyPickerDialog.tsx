@@ -11,6 +11,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getPropertySiteInfo } from '@/lib/api/property-support';
 import { buildPropertySiteUrl } from '@/lib/property-site-url';
 import { toast } from 'sonner';
+import { normalizeSearchText, searchTextIncludes } from '@/lib/search-text';
 
 interface Property {
   id: string;
@@ -34,6 +35,7 @@ interface PropertyPickerDialogProps {
   disabled?: boolean;
   isLoading?: boolean;
   onOpenChange?: (open: boolean) => void;
+  onSearchChange?: (search: string) => void;
 }
 
 type PropertyStatusBadge = {
@@ -101,6 +103,7 @@ export function PropertyPickerDialog({
   disabled = false,
   isLoading = false,
   onOpenChange,
+  onSearchChange,
 }: PropertyPickerDialogProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -122,11 +125,11 @@ export function PropertyPickerDialog({
   const selectedProperty = (properties || []).find(p => p.id === selectedPropertyId);
 
   const filteredProperties = (properties || []).filter(p => {
-    const s = search.toLowerCase();
+    const s = normalizeSearchText(search);
     if (s && !(
-      (p.code || '').toLowerCase().includes(s) ||
-      (p.title || '').toLowerCase().includes(s) ||
-      (p.bairro || '').toLowerCase().includes(s)
+      searchTextIncludes(p.code, s) ||
+      searchTextIncludes(p.title, s) ||
+      searchTextIncludes(p.bairro, s)
     )) return false;
     if (filterType && p.tipo_de_imovel !== filterType) return false;
     if (filterPurpose && p.tipo_de_negocio !== filterPurpose) return false;
@@ -140,6 +143,7 @@ export function PropertyPickerDialog({
   const handleOpen = () => {
     if (disabled) return;
     setSearch('');
+    onSearchChange?.('');
     setFilterType('');
     setFilterPurpose('');
     setFilterLocation('');
@@ -189,7 +193,10 @@ export function PropertyPickerDialog({
                 placeholder="Buscar por código ou nome..."
                 className="h-8 text-xs pl-8"
                 value={search}
-                onChange={e => setSearch(e.target.value)}
+                onChange={e => {
+                  setSearch(e.target.value);
+                  onSearchChange?.(e.target.value);
+                }}
               />
             </div>
             <Button

@@ -7,6 +7,7 @@ import {
   E2E_OUTSIDE_TEAM_ID,
   E2E_PASSWORD,
   E2E_PIPELINE_ID,
+	E2E_PROPERTY_ID,
   E2E_STAGE_ID,
   E2E_TEAM_ID,
   E2E_USERS,
@@ -24,6 +25,7 @@ const ENABLED_MODULES = [
   'cadences',
   'tags',
   'round_robin',
+  'automations',
   'reports',
   'financial',
 ] as const;
@@ -153,6 +155,33 @@ export async function seedE2EData() {
         stage_key = excluded.stage_key,
         is_active = true
     `, [E2E_STAGE_ID, E2E_ORGANIZATION_ID, E2E_PIPELINE_ID]);
+
+	await db.query(`
+	  insert into public.organization_sites (
+		organization_id, is_active, subdomain, site_title, site_theme
+	  ) values ($1::uuid, true, 'vimob-e2e', 'Site Vimob E2E', 'light')
+	  on conflict (organization_id) do update set
+		is_active = true,
+		subdomain = excluded.subdomain,
+		site_title = excluded.site_title,
+		site_theme = excluded.site_theme
+	`, [E2E_ORGANIZATION_ID]);
+
+	await db.query(`
+	  insert into public.properties (
+		id, organization_id, code, title, finalidade, status, published_on_site,
+		cidade, bairro, preco, created_by
+	  ) values (
+		$1::uuid, $2::uuid, 'E2E-SITE-001', 'Imovel publico E2E', 'venda', 'active', true,
+		'Sao Paulo', 'Centro', 750000, $3::uuid
+	  )
+	  on conflict (id) do update set
+		organization_id = excluded.organization_id,
+		code = excluded.code,
+		title = excluded.title,
+		status = 'active',
+		published_on_site = true
+	`, [E2E_PROPERTY_ID, E2E_ORGANIZATION_ID, userIds.admin]);
 
     const leadFixtures = [
       [E2E_LEADS.leaderOwn, 'Lead do Lider E2E', userIds.leader, E2E_TEAM_ID],

@@ -14,6 +14,16 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -36,14 +46,19 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useProperties, type Property } from "@/hooks/use-properties";
+import { usePipelines, useStages } from "@/hooks/use-stages";
+import { useUsers } from "@/hooks/use-users";
+import { useRoundRobins } from "@/hooks/use-round-robins";
 import {
   getGrupoOLXPublicURLs,
   useActivateGrupoOLXIntegration,
   useGrupoOLXIntegration,
   useGrupoOLXPublications,
   useRegenerateGrupoOLXFeedToken,
+  useRegenerateGrupoOLXWebhookToken,
   useSaveGrupoOLXIntegration,
   useSaveGrupoOLXPublications,
+  type GrupoOLXIntegration,
   type GrupoOLXPublication,
 } from "@/hooks/use-grupo-olx-integration";
 
@@ -53,6 +68,10 @@ type SettingsDraft = {
   contactPhone: string;
   detailBaseURL: string;
   leadWebhookSecret: string;
+  defaultPipelineId: string;
+  defaultStageId: string;
+  defaultAssignedUserId: string;
+  defaultRoundRobinId: string;
 };
 
 type PublicationDraft = {
@@ -67,26 +86,40 @@ const emptySettingsDraft: SettingsDraft = {
   contactPhone: "",
   detailBaseURL: "",
   leadWebhookSecret: "",
+  defaultPipelineId: "",
+  defaultStageId: "",
+  defaultAssignedUserId: "",
+  defaultRoundRobinId: "",
 };
 
 const publicationTypes = [
   { value: "STANDARD", label: "Standard" },
   { value: "PREMIUM", label: "Premium" },
   { value: "SUPER_PREMIUM", label: "Super premium" },
+  { value: "PREMIERE_1", label: "Premiere 1" },
+  { value: "PREMIERE_2", label: "Premiere 2" },
+  { value: "TRIPLE", label: "Triple" },
 ];
+
+const emptyPublications: GrupoOLXPublication[] = [];
+const emptyProperties: Property[] = [];
 
 function getSettingText(settings: Record<string, unknown> | null | undefined, key: string) {
   const value = settings?.[key];
   return typeof value === "string" ? value : "";
 }
 
-function settingsDraftFromIntegration(settings: Record<string, unknown> | null | undefined): SettingsDraft {
+function settingsDraftFromIntegration(integration: GrupoOLXIntegration | null | undefined): SettingsDraft {
   return {
-    contactName: getSettingText(settings, "contact_name"),
-    contactEmail: getSettingText(settings, "contact_email"),
-    contactPhone: getSettingText(settings, "contact_phone"),
-    detailBaseURL: getSettingText(settings, "detail_base_url"),
+    contactName: getSettingText(integration?.settings, "contact_name"),
+    contactEmail: getSettingText(integration?.settings, "contact_email"),
+    contactPhone: getSettingText(integration?.settings, "contact_phone"),
+    detailBaseURL: getSettingText(integration?.settings, "detail_base_url"),
     leadWebhookSecret: "",
+    defaultPipelineId: integration?.default_pipeline_id || "",
+    defaultStageId: integration?.default_stage_id || "",
+    defaultAssignedUserId: integration?.default_assigned_user_id || "",
+    defaultRoundRobinId: integration?.default_round_robin_id || "",
   };
 }
 
@@ -149,13 +182,33 @@ export function GrupoOLXIntegrationSettings() {
   const [settingsDraft, setSettingsDraft] = useState<SettingsDraft>(emptySettingsDraft);
   const [propertySearch, setPropertySearch] = useState("");
   const [publicationDraft, setPublicationDraft] = useState<Record<string, PublicationDraft>>({});
+  const [pendingTokenRegeneration, setPendingTokenRegeneration] = useState<"feed" | "webhook" | null>(null);
+  const shouldSearchProperties = propertySearch.trim().length >= 2;
 
   const { data: integration, isLoading: isLoadingIntegration } = useGrupoOLXIntegration();
-  const { data: publications = [], isLoading: isLoadingPublications } = useGrupoOLXPublications();
-  const { data: properties = [], isLoading: isLoadingProperties } = useProperties(propertySearch);
+  const { data: publicationData, isLoading: isLoadingPublications } = useGrupoOLXPublications();
+  const { data: propertyData, isLoading: isLoadingProperties } = useProperties(
+    propertySearch,
+    {},
+    { enabled: shouldSearchProperties },
+  );
+  const publications = publicationData ?? emptyPublications;
+  const publishedProperties = useMemo(
+    () => publications.flatMap((publication) => {
+      if (!publication.property || typeof publication.property.id !== "string") return [];
+      return [publication.property as unknown as Property];
+    }),
+    [publications],
+  );
+  const properties = shouldSearchProperties ? propertyData ?? emptyProperties : publishedProperties;
+  const { data: pipelines = [] } = usePipelines();
+  const { data: stages = [] } = useStages(settingsDraft.defaultPipelineId || undefined);
+  const { data: users = [] } = useUsers();
+  const { data: roundRobins = [] } = useRoundRobins();
   const saveIntegration = useSaveGrupoOLXIntegration();
   const activateIntegration = useActivateGrupoOLXIntegration();
   const regenerateFeedToken = useRegenerateGrupoOLXFeedToken();
+  const regenerateWebhookToken = useRegenerateGrupoOLXWebhookToken();
   const savePublications = useSaveGrupoOLXPublications();
 
   const urls = useMemo(() => getGrupoOLXPublicURLs(integration), [integration]);
@@ -167,12 +220,18 @@ export function GrupoOLXIntegrationSettings() {
     return map;
   }, [publications]);
   const connected = integration?.status === "connected";
+  const canActivate = Boolean(
+    integration &&
+    integration.lead_webhook_secret_configured &&
+    getSettingText(integration.settings, "contact_name") &&
+    getSettingText(integration.settings, "contact_email"),
+  );
   const activeCount = Object.values(publicationDraft).filter((item) => item.isEnabled).length;
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Sincroniza o formulario quando a integracao carregada muda.
-    setSettingsDraft(settingsDraftFromIntegration(integration?.settings));
-  }, [integration?.settings, integration?.updated_at]);
+    setSettingsDraft(settingsDraftFromIntegration(integration));
+  }, [integration]);
 
   useEffect(() => {
     const nextDraft: Record<string, PublicationDraft> = {};
@@ -187,6 +246,24 @@ export function GrupoOLXIntegrationSettings() {
 
   const updateSettingsDraft = (field: keyof SettingsDraft, value: string) => {
     setSettingsDraft((current) => ({ ...current, [field]: value }));
+  };
+
+  const selectPipeline = (value: string) => {
+    setSettingsDraft((current) => ({
+      ...current,
+      defaultPipelineId: value === "none" ? "" : value,
+      defaultStageId: "",
+    }));
+  };
+
+  const selectDestination = (field: "defaultAssignedUserId" | "defaultRoundRobinId", value: string) => {
+    const normalized = value === "none" ? "" : value;
+    setSettingsDraft((current) => ({
+      ...current,
+      [field]: normalized,
+      ...(field === "defaultAssignedUserId" && normalized ? { defaultRoundRobinId: "" } : {}),
+      ...(field === "defaultRoundRobinId" && normalized ? { defaultAssignedUserId: "" } : {}),
+    }));
   };
 
   const getPropertyDraft = (property: Property) => {
@@ -216,8 +293,12 @@ export function GrupoOLXIntegrationSettings() {
 
   const saveSettings = () => {
     saveIntegration.mutate({
-      isActive: integration?.is_active !== false,
+      isActive: integration?.is_active ?? false,
       leadWebhookSecret: settingsDraft.leadWebhookSecret.trim() || undefined,
+      defaultPipelineId: settingsDraft.defaultPipelineId || null,
+      defaultStageId: settingsDraft.defaultStageId || null,
+      defaultAssignedUserId: settingsDraft.defaultAssignedUserId || null,
+      defaultRoundRobinId: settingsDraft.defaultRoundRobinId || null,
       settings: {
         contact_name: settingsDraft.contactName.trim(),
         contact_email: settingsDraft.contactEmail.trim(),
@@ -244,6 +325,13 @@ export function GrupoOLXIntegrationSettings() {
     }
 
     savePublications.mutate(payload);
+  };
+
+  const confirmTokenRegeneration = () => {
+    const target = pendingTokenRegeneration;
+    setPendingTokenRegeneration(null);
+    if (target === "feed") regenerateFeedToken.mutate();
+    if (target === "webhook") regenerateWebhookToken.mutate();
   };
 
   const toggleAllVisible = (checked: boolean) => {
@@ -287,7 +375,7 @@ export function GrupoOLXIntegrationSettings() {
             variant="outline"
             className="gap-2"
             onClick={() => activateIntegration.mutate()}
-            disabled={activateIntegration.isPending}
+            disabled={!canActivate || activateIntegration.isPending}
           >
             {activateIntegration.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
             Ativar
@@ -295,11 +383,20 @@ export function GrupoOLXIntegrationSettings() {
           <Button
             variant="outline"
             className="gap-2"
-            onClick={() => regenerateFeedToken.mutate()}
+            onClick={() => setPendingTokenRegeneration("feed")}
             disabled={!integration || regenerateFeedToken.isPending}
           >
             {regenerateFeedToken.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Regenerar XML
+          </Button>
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => setPendingTokenRegeneration("webhook")}
+            disabled={!integration || regenerateWebhookToken.isPending}
+          >
+            {regenerateWebhookToken.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Regenerar webhooks
           </Button>
         </div>
       </div>
@@ -310,6 +407,26 @@ export function GrupoOLXIntegrationSettings() {
           <AlertDescription>{integration.last_error}</AlertDescription>
         </Alert>
       ) : null}
+
+      <AlertDialog
+        open={pendingTokenRegeneration !== null}
+        onOpenChange={(open) => !open && setPendingTokenRegeneration(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingTokenRegeneration === "feed" ? "Regenerar URL do XML?" : "Regenerar URLs dos webhooks?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              A URL atual deixará de funcionar imediatamente. Depois desta ação, a nova URL precisa ser atualizada no Canal Pro.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmTokenRegeneration}>Regenerar</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
         <section className="space-y-4 rounded-[8px] border border-white/[0.055] p-4">
@@ -345,8 +462,8 @@ export function GrupoOLXIntegrationSettings() {
       <section className="space-y-4 rounded-[8px] border border-white/[0.055] p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h4 className="font-medium">Dados enviados no XML</h4>
-            <p className="text-sm text-muted-foreground">Contato comercial, URL pública do imóvel e segredo opcional do webhook.</p>
+            <h4 className="font-medium">Configuração e destino dos leads</h4>
+            <p className="text-sm text-muted-foreground">Contato do XML, autenticação dos webhooks e destino padrão dos leads recebidos.</p>
           </div>
           <Button className="gap-2" onClick={saveSettings} disabled={saveIntegration.isPending}>
             {saveIntegration.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -354,11 +471,42 @@ export function GrupoOLXIntegrationSettings() {
           </Button>
         </div>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-          <Field label="Nome do contato" value={settingsDraft.contactName} onChange={(value) => updateSettingsDraft("contactName", value)} />
-          <Field label="E-mail do contato" type="email" value={settingsDraft.contactEmail} onChange={(value) => updateSettingsDraft("contactEmail", value)} />
-          <Field label="Telefone do contato" value={settingsDraft.contactPhone} onChange={(value) => updateSettingsDraft("contactPhone", value)} />
-          <Field label="Base URL do imóvel" value={settingsDraft.detailBaseURL} onChange={(value) => updateSettingsDraft("detailBaseURL", value)} />
-          <Field label="Segredo webhook" type="password" value={settingsDraft.leadWebhookSecret} placeholder={integration?.lead_webhook_secret_configured ? "Ja configurado" : "Opcional"} onChange={(value) => updateSettingsDraft("leadWebhookSecret", value)} />
+          <Field label="Nome do contato" autoComplete="name" value={settingsDraft.contactName} onChange={(value) => updateSettingsDraft("contactName", value)} />
+          <Field label="E-mail do contato" type="email" autoComplete="email" value={settingsDraft.contactEmail} onChange={(value) => updateSettingsDraft("contactEmail", value)} />
+          <Field label="Telefone do contato" autoComplete="tel" value={settingsDraft.contactPhone} onChange={(value) => updateSettingsDraft("contactPhone", value)} />
+          <Field label="Base URL do imóvel" type="url" autoComplete="url" value={settingsDraft.detailBaseURL} onChange={(value) => updateSettingsDraft("detailBaseURL", value)} />
+          <Field label="Segredo webhook" type="password" autoComplete="new-password" value={settingsDraft.leadWebhookSecret} placeholder={integration?.lead_webhook_secret_configured ? "Já configurado" : "Mínimo de 16 caracteres"} onChange={(value) => updateSettingsDraft("leadWebhookSecret", value)} />
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <SelectField
+            label="Pipeline de entrada"
+            value={settingsDraft.defaultPipelineId || "none"}
+            onValueChange={selectPipeline}
+            items={pipelines.filter((pipeline) => pipeline.is_active !== false).map((pipeline) => ({ value: pipeline.id, label: pipeline.name }))}
+            emptyLabel="Pipeline padrão"
+          />
+          <SelectField
+            label="Etapa de entrada"
+            value={settingsDraft.defaultStageId || "none"}
+            onValueChange={(value) => updateSettingsDraft("defaultStageId", value === "none" ? "" : value)}
+            items={stages.filter((stage) => stage.is_active !== false).map((stage) => ({ value: stage.id, label: stage.name }))}
+            emptyLabel="Primeira etapa"
+            disabled={!settingsDraft.defaultPipelineId}
+          />
+          <SelectField
+            label="Responsável fixo"
+            value={settingsDraft.defaultAssignedUserId || "none"}
+            onValueChange={(value) => selectDestination("defaultAssignedUserId", value)}
+            items={users.filter((user) => user.is_active).map((user) => ({ value: user.id, label: user.name || user.email }))}
+            emptyLabel="Sem responsável fixo"
+          />
+          <SelectField
+            label="Roleta de distribuição"
+            value={settingsDraft.defaultRoundRobinId || "none"}
+            onValueChange={(value) => selectDestination("defaultRoundRobinId", value)}
+            items={roundRobins.filter((roundRobin) => roundRobin.is_active !== false).map((roundRobin) => ({ value: roundRobin.id, label: roundRobin.name }))}
+            emptyLabel="Sem roleta"
+          />
         </div>
       </section>
 
@@ -509,17 +657,52 @@ function Field({
   onChange,
   placeholder,
   type = "text",
+  autoComplete,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   type?: string;
+  autoComplete?: string;
 }) {
   return (
     <div className="space-y-1.5">
       <Label>{label}</Label>
-      <Input type={type} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
+      <Input type={type} autoComplete={autoComplete} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
+    </div>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  onValueChange,
+  items,
+  emptyLabel,
+  disabled = false,
+}: {
+  label: string;
+  value: string;
+  onValueChange: (value: string) => void;
+  items: Array<{ value: string; label: string }>;
+  emptyLabel: string;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label>{label}</Label>
+      <Select value={value} onValueChange={onValueChange} disabled={disabled}>
+        <SelectTrigger>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="none">{emptyLabel}</SelectItem>
+          {items.map((item) => (
+            <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

@@ -57,17 +57,11 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 	if err != nil {
 		return SessionOperationResponse{}, err
 	}
-	if webhookRolloutAllowsSession(repo.functions.webhookRolloutSessionIDs, session.ID) {
-		// Store the rollout intent before the provider can receive the backend
-		// webhook. This keeps rollback recoverable even across a partial failure.
-		setWebhookRolloutManaged(settings, true)
-		if err := repo.updateSessionSettings(ctx, tenantContext.OrganizationID, session.ID, settings); err != nil {
-			_ = repo.deleteSessionRow(ctx, tenantContext.OrganizationID, session.ID)
-			return SessionOperationResponse{}, err
-		}
+	initialWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, instanceName)
+	if initialWebhookURL == "" {
+		_ = repo.deleteSessionRow(ctx, tenantContext.OrganizationID, session.ID)
+		return SessionOperationResponse{}, fmt.Errorf("%w: Evolution Go backend webhook is not configured", ErrProviderFailed)
 	}
-
-	initialWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, instanceName, webhookToken)
 	createBody := evolutionWebhookConnectBody(initialWebhookURL)
 	createBody["name"] = instanceName
 	createBody["token"] = token
@@ -95,7 +89,7 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 	if webhookInstanceID == "" {
 		webhookInstanceID = instanceName
 	}
-	configuredWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, webhookInstanceID, webhookToken)
+	configuredWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, webhookInstanceID)
 	_, err = repo.functions.invokeEvolution(ctx, "instance.connect", map[string]any{
 		"session_id":  session.ID,
 		"instance_id": evoID,
@@ -113,7 +107,7 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 	settings["webhook_url"] = configuredWebhookURL
 	settings["webhook_last_configured_at"] = time.Now().UTC().Format(time.RFC3339)
 	settings["webhook_subscription_version"] = whatsappWebhookSubscriptionVersion
-	setWebhookRolloutManaged(settings, webhookRolloutAllowsSession(repo.functions.webhookRolloutSessionIDs, session.ID))
+	delete(settings, "webhook_rollout_managed")
 	if err := repo.updateSessionInstance(ctx, tenantContext.OrganizationID, session.ID, evoID, settings); err != nil {
 		_ = repo.deleteSessionRow(ctx, tenantContext.OrganizationID, session.ID)
 		return SessionOperationResponse{}, err
@@ -298,7 +292,6 @@ func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant
 		webhookToken = createSecretToken()
 	}
 	if webhookRolloutAllowsSession(repo.functions.webhookRolloutSessionIDs, session.ID) {
-		setWebhookRolloutManaged(settings, true)
 		delete(settings, "notification_safe_settings_applied_at")
 		delete(settings, "notification_safe_settings_version")
 		if err := repo.updateSessionSettings(ctx, tenantContext.OrganizationID, session.ID, settings); err != nil {
@@ -306,7 +299,10 @@ func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant
 		}
 	}
 
-	initialWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, session.InstanceName, webhookToken)
+	initialWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, session.InstanceName)
+	if initialWebhookURL == "" {
+		return SessionOperationResponse{}, fmt.Errorf("%w: Evolution Go backend webhook is not configured", ErrProviderFailed)
+	}
 	createBody := evolutionWebhookConnectBody(initialWebhookURL)
 	createBody["name"] = session.InstanceName
 	createBody["token"] = token
@@ -324,7 +320,7 @@ func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant
 	if webhookInstanceID == "" {
 		webhookInstanceID = session.InstanceName
 	}
-	configuredWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, webhookInstanceID, webhookToken)
+	configuredWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, webhookInstanceID)
 	_, err = repo.functions.invokeEvolution(ctx, "instance.connect", map[string]any{
 		"session_id":  session.ID,
 		"instance_id": evoID,
@@ -341,7 +337,7 @@ func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant
 	settings["webhook_url"] = configuredWebhookURL
 	settings["webhook_last_configured_at"] = time.Now().UTC().Format(time.RFC3339)
 	settings["webhook_subscription_version"] = whatsappWebhookSubscriptionVersion
-	setWebhookRolloutManaged(settings, webhookRolloutAllowsSession(repo.functions.webhookRolloutSessionIDs, session.ID))
+	delete(settings, "webhook_rollout_managed")
 
 	_, err = repo.db.Pool().Exec(ctx, `
 		update public.whatsapp_sessions

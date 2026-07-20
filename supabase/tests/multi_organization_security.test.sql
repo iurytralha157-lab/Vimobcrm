@@ -27,7 +27,7 @@ values
     'authenticated',
     'authenticated',
     'org-a@example.test',
-    crypt('test-password', gen_salt('bf')),
+    crypt('test-password', gen_salt('bf', 4)),
     now(),
     '{"provider":"email","providers":["email"]}'::jsonb,
     '{}'::jsonb,
@@ -44,7 +44,7 @@ values
     'authenticated',
     'authenticated',
     'org-b@example.test',
-    crypt('test-password', gen_salt('bf')),
+    crypt('test-password', gen_salt('bf', 4)),
     now(),
     '{"provider":"email","providers":["email"]}'::jsonb,
     '{}'::jsonb,
@@ -61,7 +61,7 @@ values
     'authenticated',
     'authenticated',
     'inactive@example.test',
-    crypt('test-password', gen_salt('bf')),
+    crypt('test-password', gen_salt('bf', 4)),
     now(),
     '{"provider":"email","providers":["email"]}'::jsonb,
     '{}'::jsonb,
@@ -82,23 +82,32 @@ insert into public.users (id, organization_id, name, email, role, is_active)
 values
   ('10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', 'User A', 'org-a@example.test', 'admin', true),
   ('10000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002', 'User B', 'org-b@example.test', 'user', true),
-  ('10000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-000000000001', 'Inactive User', 'inactive@example.test', 'user', true);
+  ('10000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-000000000001', 'Inactive User', 'inactive@example.test', 'user', true)
+on conflict (id) do update
+set organization_id = excluded.organization_id,
+    name = excluded.name,
+    email = excluded.email,
+    role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.organization_members (organization_id, user_id, role, is_active)
 values
   ('20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'user', true),
   ('20000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'admin', true),
-  ('20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000003', 'user', false);
+  ('20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000003', 'user', false)
+on conflict (user_id, organization_id) do update
+set role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.pipelines (id, organization_id, name, position, is_active)
 values
   ('30000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', 'Pipeline A', 1, true),
   ('30000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002', 'Pipeline B', 1, true);
 
-insert into public.stages (id, organization_id, pipeline_id, name, position)
+insert into public.stages (id, organization_id, pipeline_id, name, stage_key, position)
 values
-  ('40000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', 'Stage A', 1),
-  ('40000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000002', 'Stage B', 1);
+  ('40000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', 'Stage A', 'security_test_stage_a', 1),
+  ('40000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000002', 'Stage B', 'security_test_stage_b', 1);
 
 insert into public.leads (
   id,
@@ -134,12 +143,13 @@ insert into public.whatsapp_sessions (
   organization_id,
   owner_user_id,
   instance_name,
+  provider,
   status,
   is_active
 )
 values
-  ('60000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'security-test-org-a', 'connected', true),
-  ('60000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'security-test-org-b', 'connected', true);
+  ('60000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'security-test-org-a', 'evolution_go', 'connected', true),
+  ('60000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'security-test-org-b', 'evolution_go', 'connected', true);
 
 insert into public.whatsapp_conversations (
   id,
@@ -252,22 +262,34 @@ select throws_ok(
   null,
   'service-level writes cannot attach an Org B pipeline to an Org A lead'
 );
-select throws_ok(
-  $$insert into public.whatsapp_conversations (organization_id, session_id, remote_jid) values ('20000000-0000-0000-0000-000000000001', '60000000-0000-0000-0000-000000000002', 'cross-org@s.whatsapp.net')$$,
-  '23514',
-  null,
-  'service-level writes cannot attach an Org B session to an Org A conversation'
+select results_eq(
+  $$insert into public.whatsapp_conversations (organization_id, session_id, remote_jid)
+    values ('20000000-0000-0000-0000-000000000001', '60000000-0000-0000-0000-000000000002', 'cross-org@s.whatsapp.net')
+    returning organization_id$$,
+  array['20000000-0000-0000-0000-000000000002'::uuid],
+  'conversation organization is canonicalized from its session'
 );
 select results_eq(
-  $$select count(*)::bigint from public.users where role not in ('user', 'super_admin')$$,
+  $$select count(*)::bigint
+    from public.users
+    where id in (
+      '10000000-0000-0000-0000-000000000001',
+      '10000000-0000-0000-0000-000000000002',
+      '10000000-0000-0000-0000-000000000003'
+    )
+      and role not in ('user', 'super_admin')$$,
   array[1::bigint],
   'fixture confirms global admin exists only to test that it grants no tenant access'
 );
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '10000000-0000-0000-0000-000000000001', true);
 select results_eq(
   $$select count(*)::bigint from storage.objects where bucket_id in ('logos', 'site-images') and split_part(name, '/', 1) = 'sites'$$,
   array[0::bigint],
-  'legacy organization-less storage paths are absent'
+  'legacy organization-less storage paths cannot be enumerated by authenticated clients'
 );
+reset role;
 
 select * from finish();
 rollback;

@@ -61,6 +61,24 @@ function cleanText(value: unknown) {
   return text || null;
 }
 
+function redactLogText(value: unknown) {
+  const text = value instanceof Error ? value.message : String(value ?? "");
+  return text
+    .replace(/([?&](?:webhook_token|apikey|token|access_token|signature)=)[^&\s"']+/gi, "$1[REDACTED]")
+    .replace(/((?:webhook_token|instanceToken|instance_token|apikey|api_key|token|access_token|authorization|signature)["']?\s*[:=]\s*["']?)[^"',}\s&]+/gi, "$1[REDACTED]")
+    .replace(/(Bearer\s+)[A-Za-z0-9._~-]+/gi, "$1[REDACTED]")
+    .slice(0, 1000);
+}
+
+function safeUrlForLog(value: unknown) {
+  try {
+    const parsed = new URL(normalizeText(value));
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return "[invalid-url]";
+  }
+}
+
 function optionalUuid(value: unknown) {
   const text = normalizeText(value).trim();
   if (!text) return null;
@@ -451,27 +469,33 @@ async function resolveSession(payload: any, url: URL) {
   return { session: data[0], reason: null, signals };
 }
 
-function validateWebhookAuth(req: Request, url: URL, session: JsonRecord) {
+function hasQueryCredential(url: URL) {
+  for (const name of url.searchParams.keys()) {
+    if (["webhook_token", "apikey", "token"].includes(name.trim().toLowerCase())) return true;
+  }
+  return false;
+}
+
+function validateWebhookAuth(req: Request, session: JsonRecord) {
   const expectedWebhookToken = session.advanced_settings?.webhook_token;
-  const incomingWebhookToken = firstPresent(
-    url.searchParams.get("webhook_token"),
+  const incomingWebhookTokens = [
     req.headers.get("x-webhook-token"),
     req.headers.get("x-evolution-webhook-token"),
-  );
+  ].filter((value): value is string => Boolean(value));
 
   if (expectedWebhookToken) {
-    return incomingWebhookToken === expectedWebhookToken;
+    return incomingWebhookTokens.length > 0 &&
+      incomingWebhookTokens.every((value) => value === expectedWebhookToken);
   }
 
-  const incomingKey = firstPresent(
+  const incomingKeys = [
     req.headers.get("apikey"),
     req.headers.get("x-api-key"),
     req.headers.get("authorization")?.replace(/^Bearer\s+/i, ""),
-    url.searchParams.get("apikey"),
-  );
+  ].filter((value): value is string => Boolean(value));
 
   if (EVOLUTION_GO_API_KEY) {
-    return incomingKey === EVOLUTION_GO_API_KEY;
+    return incomingKeys.length > 0 && incomingKeys.every((value) => value === EVOLUTION_GO_API_KEY);
   }
 
   console.warn("Evolution webhook rejected because no session webhook token or provider API key is configured.");
@@ -857,7 +881,10 @@ async function fetchInboundMedia(sourceUrl: string | null) {
         size: bytes.byteLength,
       };
     } catch (error) {
-      console.warn("Unable to fetch inbound WhatsApp media", { sourceUrl: url, error });
+      console.warn("Unable to fetch inbound WhatsApp media", {
+        sourceUrl: safeUrlForLog(url),
+        error: redactLogText(error),
+      });
     }
   }
 
@@ -1652,7 +1679,7 @@ async function resolveGroupName(session: JsonRecord, remoteJid: string, incoming
     .maybeSingle();
 
   if (error) {
-    console.warn("[evolution-go-webhook] group name lookup failed", error.message);
+    console.warn("[evolution-go-webhook] group name lookup failed", redactLogText(error));
     return null;
   }
 
@@ -1794,7 +1821,7 @@ async function safelyUpsertWhatsAppIdentityAliases(
     console.warn("[evolution-go-webhook] identity alias update failed; message processing will continue", {
       session_id: session.id,
       conversation_id: conversation.id,
-      error: error instanceof Error ? error.message : String(error),
+      error: redactLogText(error),
     });
   }
 }
@@ -1812,7 +1839,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
     console.warn("[evolution-go-webhook] identity alias lookup failed; direct identity matching will continue", {
       session_id: session.id,
       remote_jid: remoteJid,
-      error: error instanceof Error ? error.message : String(error),
+      error: redactLogText(error),
     });
   }
 
@@ -2203,7 +2230,7 @@ async function triggerAutoReply(
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      console.warn("AI auto-reply request failed", response.status, body.slice(0, 500));
+      console.warn("AI auto-reply request failed", response.status, redactLogText(body));
     } else {
       const body = await response.json().catch(() => null);
       if (body?.skipped) {
@@ -2211,7 +2238,7 @@ async function triggerAutoReply(
       }
     }
   } catch (error) {
-    console.warn("AI auto-reply request failed", error);
+    console.warn("AI auto-reply request failed", redactLogText(error));
   } finally {
     clearTimeout(timeout);
   }
@@ -2228,7 +2255,7 @@ function scheduleAutoReply(
     EdgeRuntime.waitUntil(task);
     return;
   }
-  task.catch((error) => console.warn("AI auto-reply background task failed", error));
+  task.catch((error) => console.warn("AI auto-reply background task failed", redactLogText(error)));
 }
 
 async function handleMessages(session: JsonRecord, payload: any) {
@@ -2259,7 +2286,7 @@ async function handleMessages(session: JsonRecord, payload: any) {
         console.warn("[evolution-go-webhook] inbound rule lookup failed; message will still be stored", {
           session_id: session.id,
           remote_jid: diagnosticRemoteJid,
-          error: error instanceof Error ? error.message : String(error),
+          error: redactLogText(error),
         });
       }
 
@@ -2269,7 +2296,7 @@ async function handleMessages(session: JsonRecord, payload: any) {
         console.warn("[evolution-go-webhook] lead resolution failed; message will still be stored", {
           session_id: session.id,
           remote_jid: diagnosticRemoteJid,
-          error: error instanceof Error ? error.message : String(error),
+          error: redactLogText(error),
         });
       }
     }
@@ -2556,12 +2583,15 @@ async function upsertGroups(session: JsonRecord, payload: any) {
 }
 
 Deno.serve(async (req) => {
+  const url = new URL(req.url);
+  if (hasQueryCredential(url)) {
+    return json({ ok: false, error: "Webhook credentials must be sent in headers" }, 400);
+  }
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method === "GET") return json({ ok: true, service: "evolution-go-webhook" });
   if (req.method !== "POST") return json({ ok: false, error: "Method not allowed" }, 405);
 
   try {
-    const url = new URL(req.url);
     const payload = await req.json().catch(() => ({}));
     const event = normalizeText(firstPresent(payload.event, payload.type, payload.action, payload.Event, payload.data?.event)).toLowerCase();
     const resolved = await resolveSession(payload, url);
@@ -2570,7 +2600,7 @@ Deno.serve(async (req) => {
       return json({ ok: true, ignored: true, reason: resolved.reason, signals: resolved.signals, matches: resolved.matches || 0 });
     }
 
-    if (!validateWebhookAuth(req, url, resolved.session)) {
+    if (!validateWebhookAuth(req, resolved.session)) {
       return json({ ok: false, error: "Invalid webhook token" }, 403);
     }
 
@@ -2619,7 +2649,8 @@ Deno.serve(async (req) => {
       groupsProcessed,
     });
   } catch (error) {
-    console.error("evolution-go-webhook error:", error);
-    return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
+    const safeError = redactLogText(error);
+    console.error("evolution-go-webhook error:", safeError);
+    return json({ ok: false, error: "Webhook processing failed" }, 500);
   }
 });

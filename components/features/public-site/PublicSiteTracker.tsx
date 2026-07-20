@@ -2,35 +2,7 @@
 
 import { useEffect } from "react";
 
-import { createClientId } from "@/lib/client-id";
-import { publicSiteAPI } from "@/lib/api/public-site";
-
-function getSessionId() {
-  const key = "vimob_session_id";
-  let sessionId = window.localStorage.getItem(key);
-
-  if (!sessionId) {
-    sessionId = createClientId("session");
-    window.localStorage.setItem(key, sessionId);
-  }
-
-  return sessionId;
-}
-
-function getDeviceType() {
-  if (window.innerWidth <= 768) return "mobile";
-  if (window.innerWidth <= 1024) return "tablet";
-  return "desktop";
-}
-
-function getBrowserName() {
-  const ua = navigator.userAgent;
-  if (ua.includes("Edg")) return "edge";
-  if (ua.includes("Chrome")) return "chrome";
-  if (ua.includes("Firefox")) return "firefox";
-  if (ua.includes("Safari")) return "safari";
-  return "other";
-}
+import { trackEvent } from "@/hooks/useTracking";
 
 export function PublicSiteTracker({
   organizationId,
@@ -42,26 +14,44 @@ export function PublicSiteTracker({
   propertyId?: string;
 }>) {
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    const startedAt = Date.now();
+    let durationRecorded = false;
+    void trackEvent({ organizationId, eventType: "pageview", pageTitle, propertyId });
 
-    void publicSiteAPI.track({
-      organization_id: organizationId,
-      event_type: "pageview",
-      page_path: window.location.pathname,
-      page_title: pageTitle,
-      referrer: document.referrer || null,
-      session_id: getSessionId(),
-      property_id: propertyId || null,
-      device_type: getDeviceType(),
-      browser: getBrowserName(),
-      screen_width: window.screen.width,
-      screen_height: window.screen.height,
-      utm_source: params.get("utm_source"),
-      utm_medium: params.get("utm_medium"),
-      utm_campaign: params.get("utm_campaign"),
-    }).catch(() => {
-      // Tracking is useful, but it should never interrupt the public site.
-    });
+    const query = Object.fromEntries(new URLSearchParams(window.location.search));
+    const searchKeys = ["search", "cidade", "bairro", "tipo", "finalidade", "min_price", "max_price", "quartos", "suites", "banheiros", "vagas"];
+    if (searchKeys.some((key) => query[key])) {
+      void trackEvent({
+        organizationId,
+        eventType: "property_search",
+        pageTitle,
+        metadata: { filters: query, search_term: query.search || null },
+      });
+    }
+
+    const sessionMarker = `vimob_session_started:${organizationId}`;
+    if (!window.sessionStorage.getItem(sessionMarker)) {
+      window.sessionStorage.setItem(sessionMarker, "1");
+      void trackEvent({ organizationId, eventType: "session_start", pageTitle, propertyId });
+    }
+
+    const recordDuration = () => {
+	  if (durationRecorded) return;
+	  durationRecorded = true;
+      const durationSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+      void trackEvent({
+        organizationId,
+        eventType: "page_duration",
+        pageTitle,
+        propertyId,
+        metadata: { duration_seconds: durationSeconds },
+      });
+    };
+    window.addEventListener("pagehide", recordDuration);
+    return () => {
+	  window.removeEventListener("pagehide", recordDuration);
+	  recordDuration();
+	};
   }, [organizationId, pageTitle, propertyId]);
 
   return null;

@@ -79,7 +79,7 @@ export const apiStageSchema = z.object({
   pipelineId: uuidSchema,
   name: z.string().min(1),
   color: z.string().optional(),
-  stageKey: z.string().optional(),
+  stageKey: z.string().min(1),
   position: nonNegativeIntegerSchema,
   isWon: z.boolean(),
   isLost: z.boolean(),

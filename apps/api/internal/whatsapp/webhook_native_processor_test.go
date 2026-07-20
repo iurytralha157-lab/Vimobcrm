@@ -323,6 +323,11 @@ func TestNativeFallbackStillForwardsNonMessageLifecycleEvent(t *testing.T) {
 		if got := r.Header.Get("x-webhook-token"); got != "legacy-secret" {
 			t.Errorf("legacy fallback token = %q", got)
 		}
+		for _, credential := range []string{"webhook_token", "apikey", "token"} {
+			if r.URL.Query().Has(credential) {
+				t.Errorf("forwarded webhook leaked %s in its URL", credential)
+			}
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer edge.Close()

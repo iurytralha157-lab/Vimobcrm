@@ -76,12 +76,14 @@ interface ActivityCardProps {
   isDragging?: boolean;
   style?: React.CSSProperties;
   className?: string;
+  editable?: boolean;
 }
 
-function ActivityCard({ event, onEditEvent, onEventUpdate, isDragging, style, className }: ActivityCardProps) {
+function ActivityCard({ event, onEditEvent, onEventUpdate, isDragging, style, className, editable = false }: ActivityCardProps) {
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: event.id,
-    data: event
+    data: event,
+    disabled: !editable,
   });
 
   const [resizing, setResizing] = useState(false);
@@ -105,6 +107,7 @@ function ActivityCard({ event, onEditEvent, onEventUpdate, isDragging, style, cl
   } : undefined;
 
   const handleResizeMouseDown = (e: React.MouseEvent) => {
+    if (!editable) return;
     e.stopPropagation();
     e.preventDefault();
     setResizing(true);
@@ -150,7 +153,8 @@ function ActivityCard({ event, onEditEvent, onEventUpdate, isDragging, style, cl
         onClick={(e) => { e.stopPropagation(); onEditEvent?.(event); }}
         title={`${format(start, 'HH:mm')} - ${format(end, 'HH:mm')} · ${event.title}`}
         className={cn(
-          "absolute left-0.5 right-0.5 rounded-[4px] border-0 text-white overflow-hidden shadow-sm hover:shadow-md z-10 cursor-grab active:cursor-grabbing group flex items-center px-1.5 gap-1",
+          "absolute left-0.5 right-0.5 rounded-[4px] border-0 text-white overflow-hidden shadow-sm hover:shadow-md z-10 group flex items-center px-1.5 gap-1",
+          editable && "cursor-grab active:cursor-grabbing",
           isDragging && "opacity-50 grayscale",
           className
         )}
@@ -177,7 +181,8 @@ function ActivityCard({ event, onEditEvent, onEventUpdate, isDragging, style, cl
       }}
       title={`${format(start, 'HH:mm')} - ${format(end, 'HH:mm')} · ${event.title}`}
       className={cn(
-        "absolute left-0.5 right-0.5 rounded-[4px] border-0 text-white overflow-hidden shadow-sm transition-shadow hover:shadow-md z-10 cursor-grab active:cursor-grabbing group",
+        "absolute left-0.5 right-0.5 rounded-[4px] border-0 text-white overflow-hidden shadow-sm transition-shadow hover:shadow-md z-10 group",
+        editable && "cursor-grab active:cursor-grabbing",
         isDragging && "opacity-50 grayscale",
         resizing && "z-50 ring-2 ring-primary ring-offset-1",
         className
@@ -220,12 +225,14 @@ function ActivityCard({ event, onEditEvent, onEventUpdate, isDragging, style, cl
         </div>
 
         {/* Resize handle */}
-        <div
-          className="absolute bottom-0 left-0 right-0 h-1.5 cursor-ns-resize hover:bg-white/20 active:bg-white/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-          onMouseDown={handleResizeMouseDown}
-        >
-          <div className="w-4 h-0.5 bg-white/40 rounded-full" />
-        </div>
+        {editable && (
+          <div
+            className="absolute bottom-0 left-0 right-0 h-1.5 cursor-ns-resize hover:bg-white/20 active:bg-white/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+            onMouseDown={handleResizeMouseDown}
+          >
+            <div className="w-4 h-0.5 bg-white/40 rounded-full" />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -271,6 +278,7 @@ interface CalendarViewProps {
   onEventUpdate?: (id: string, updates: Partial<ScheduleEvent>) => void;
   onQuickCreate?: (date: Date) => void;
   showThirtyMinLines?: boolean;
+  canManageEvents?: boolean;
 }
 
 export function CalendarView({
@@ -283,8 +291,13 @@ export function CalendarView({
   onEditEvent,
   onEventUpdate,
   onQuickCreate,
-  showThirtyMinLines = false
+  showThirtyMinLines = false,
+  canManageEvents = false,
 }: CalendarViewProps) {
+  const isEventEditable = useCallback(
+    (event: ScheduleEvent) => canManageEvents && !event.is_masked && event.status !== 'completed',
+    [canManageEvents],
+  );
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -295,6 +308,7 @@ export function CalendarView({
   const [activeEvent, setActiveEvent] = useState<ScheduleEvent | null>(null);
 
   const handleDragStart = (event: DragStartEvent) => {
+    if (!canManageEvents) return;
     setActiveEvent(event.active.data.current as ScheduleEvent);
   };
 
@@ -369,7 +383,7 @@ export function CalendarView({
     setActiveEvent(null);
     const { active, over } = event;
 
-    if (over && active.id !== over.id) {
+    if (canManageEvents && over && active.id !== over.id) {
       const scheduleEvent = active.data.current as ScheduleEvent;
       const [dateStr, hourStr] = (over.id as string).split('|');
 
@@ -594,6 +608,7 @@ export function CalendarView({
                     event={event}
                     onEditEvent={onEditEvent}
                     onEventUpdate={onEventUpdate}
+                    editable={isEventEditable(event)}
                     style={{
                       top: `${top}px`,
                       height: `${height}px`,
@@ -712,6 +727,7 @@ export function CalendarView({
                         event={event}
                         onEditEvent={onEditEvent}
                         onEventUpdate={onEventUpdate}
+                        editable={isEventEditable(event)}
                         style={{
                           top: `${top}px`,
                           height: `${height}px`,

@@ -43,6 +43,9 @@ const auditLogSchema = z.object({
   entity_id: z.string().nullish(),
   old_data: dynamicRecordSchema.nullish(),
   new_data: dynamicRecordSchema.nullish(),
+  diff: dynamicRecordSchema.nullish(),
+  source: z.string().nullish(),
+  metadata: dynamicRecordSchema.nullish(),
   ip_address: z.string().nullish(),
   user_agent: z.string().nullish(),
   created_at: timestampSchema,
@@ -51,6 +54,33 @@ export const apiAuditLogListResponseSchema = z.object({
   data: z.array(auditLogSchema),
   count: nonNegativeIntegerSchema,
   totalPages: nonNegativeIntegerSchema,
+}).passthrough()
+
+export const userActivitySessionStatusSchema = z.enum(['online', 'idle', 'offline'])
+export const userActivitySessionMutationInputSchema = z.object({
+  organizationId: uuidSchema,
+  userId: uuidSchema,
+  sessionId: z.string().trim().min(8).max(160),
+  status: userActivitySessionStatusSchema.optional(),
+  currentPath: z.string().trim().max(4_000).nullish(),
+  currentPageTitle: z.string().trim().max(500).nullish(),
+  userAgent: z.string().max(2_000).nullish(),
+  metadata: dynamicRecordSchema.optional(),
+}).strict()
+export const userActivityPresenceSessionInputSchema = userActivitySessionMutationInputSchema.strip()
+export const onlineUserActivityListInputSchema = z.object({
+  organizationId: uuidSchema,
+  activeWithinMinutes: z.number().int().min(1).max(24 * 60).optional(),
+  limit: z.number().int().min(1).max(500).optional(),
+}).strict()
+export const auditFeedEventPayloadSchema = z.object({
+  auditId: uuidSchema,
+  organizationId: uuidSchema,
+  actorUserId: uuidSchema.nullish(),
+  action: z.string().trim().min(1).max(120),
+  entityType: z.string().trim().min(1).max(120),
+  entityId: z.string().trim().max(160).nullish(),
+  createdAt: timestampSchema,
 }).passthrough()
 
 const conversationLeadDetailSchema = z.object({

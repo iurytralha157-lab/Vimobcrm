@@ -9,21 +9,18 @@ import (
 	"testing"
 )
 
-func TestConfiguredEvolutionWebhookURLDefaultsToSupabaseEdge(t *testing.T) {
+func TestConfiguredEvolutionWebhookURLRequiresBackendReceiver(t *testing.T) {
 	const sessionID = "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"
 	client := functionsClient{
-		projectURL:                 "https://project.supabase.co",
-		evolutionBackendWebhookURL: "https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go",
+		projectURL: "https://project.supabase.co",
 	}
 
-	got := client.configuredEvolutionWebhookURL(sessionID, "instance-1", "token-1")
-	want := "https://project.supabase.co/functions/v1/evolution-go-webhook?instance_id=instance-1&session_id=" + sessionID + "&webhook_token=token-1"
-	if got != want {
-		t.Fatalf("unexpected default webhook URL\nwant: %s\n got: %s", want, got)
+	if got := client.configuredEvolutionWebhookURL(sessionID, "instance-1"); got != "" {
+		t.Fatalf("expected missing backend receiver to fail closed, got %q", got)
 	}
 }
 
-func TestConfiguredEvolutionWebhookURLKeepsNonCanaryOnLegacyEdge(t *testing.T) {
+func TestConfiguredEvolutionWebhookURLRoutesEverySessionToBackend(t *testing.T) {
 	const sessionID = "c15fe784-741b-4764-a60c-c60ffc50d606"
 	client := functionsClient{
 		projectURL:                 "https://project.supabase.co",
@@ -32,14 +29,17 @@ func TestConfiguredEvolutionWebhookURLKeepsNonCanaryOnLegacyEdge(t *testing.T) {
 		webhookRolloutSessionIDs:   []string{"13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"},
 	}
 
-	got := client.configuredEvolutionWebhookURL(sessionID, "instance-1", "token-1")
-	want := "https://project.supabase.co/functions/v1/evolution-go-webhook?instance_id=instance-1&session_id=" + sessionID + "&webhook_token=token-1"
+	got := client.configuredEvolutionWebhookURL(sessionID, "instance-1")
+	want := "https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go?instance_id=instance-1&session_id=" + sessionID
 	if got != want {
 		t.Fatalf("unexpected webhook URL\nwant: %s\n got: %s", want, got)
 	}
+	if strings.Contains(got, "token") || strings.Contains(got, "apikey") {
+		t.Fatalf("webhook URL leaked a credential: %q", got)
+	}
 }
 
-func TestConfiguredEvolutionWebhookURLRoutesCanaryToBackend(t *testing.T) {
+func TestConfiguredEvolutionWebhookURLIsIndependentFromNativeProcessorRollout(t *testing.T) {
 	const sessionID = "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"
 	client := functionsClient{
 		projectURL:                 "https://project.supabase.co",
@@ -48,7 +48,7 @@ func TestConfiguredEvolutionWebhookURLRoutesCanaryToBackend(t *testing.T) {
 		webhookRolloutSessionIDs:   []string{sessionID},
 	}
 
-	got := client.configuredEvolutionWebhookURL(sessionID, "instance-1", "token-1")
+	got := client.configuredEvolutionWebhookURL(sessionID, "instance-1")
 	want := "https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go?instance_id=instance-1&session_id=" + sessionID
 	if got != want {
 		t.Fatalf("unexpected webhook URL\nwant: %s\n got: %s", want, got)
@@ -58,7 +58,7 @@ func TestConfiguredEvolutionWebhookURLRoutesCanaryToBackend(t *testing.T) {
 	}
 }
 
-func TestConfiguredEvolutionWebhookURLWildcardRoutesEverySessionToBackend(t *testing.T) {
+func TestConfiguredEvolutionWebhookURLWildcardStillUsesTokenlessBackend(t *testing.T) {
 	const sessionID = "c15fe784-741b-4764-a60c-c60ffc50d606"
 	client := functionsClient{
 		evolutionWebhookURL:        "https://project.supabase.co/functions/v1/evolution-go-webhook",
@@ -66,7 +66,7 @@ func TestConfiguredEvolutionWebhookURLWildcardRoutesEverySessionToBackend(t *tes
 		webhookRolloutSessionIDs:   []string{"*"},
 	}
 
-	got := client.configuredEvolutionWebhookURL(sessionID, "instance-1", "token-1")
+	got := client.configuredEvolutionWebhookURL(sessionID, "instance-1")
 	want := "https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go?instance_id=instance-1&session_id=" + sessionID
 	if got != want {
 		t.Fatalf("unexpected webhook URL\nwant: %s\n got: %s", want, got)
@@ -80,23 +80,23 @@ func TestConfiguredEvolutionWebhookURLRemovesSecretAlreadyPresentInBackendBaseUR
 		webhookRolloutSessionIDs:   []string{sessionID},
 	}
 
-	got := client.configuredEvolutionWebhookURL(sessionID, "instance-1", "new-secret")
+	got := client.configuredEvolutionWebhookURL(sessionID, "instance-1")
 	want := "https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go?fixed=1&instance_id=instance-1&session_id=" + sessionID
 	if got != want {
 		t.Fatalf("unexpected backend webhook URL\nwant: %s\n got: %s", want, got)
 	}
 }
 
-func TestConfiguredEvolutionWebhookURLCanaryFailsClosedWithoutBackendURL(t *testing.T) {
+func TestConfiguredEvolutionWebhookURLStripsEveryLegacyQueryCredential(t *testing.T) {
 	const sessionID = "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"
 	client := functionsClient{
-		projectURL:               "https://project.supabase.co",
-		evolutionWebhookURL:      "https://project.supabase.co/functions/v1/evolution-go-webhook",
-		webhookRolloutSessionIDs: []string{sessionID},
+		evolutionBackendWebhookURL: "https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go?Webhook_Token=old&APIKEY=old-api&ToKeN=old-token&fixed=1",
 	}
 
-	if got := client.configuredEvolutionWebhookURL(sessionID, "instance-1", "token-1"); got != "" {
-		t.Fatalf("expected missing backend URL to fail closed, got %q", got)
+	got := client.configuredEvolutionWebhookURL(sessionID, "instance-1")
+	want := "https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go?fixed=1&instance_id=instance-1&session_id=" + sessionID
+	if got != want {
+		t.Fatalf("unexpected sanitized webhook URL\nwant: %s\n got: %s", want, got)
 	}
 }
 

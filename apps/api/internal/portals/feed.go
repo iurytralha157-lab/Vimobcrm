@@ -18,11 +18,12 @@ type feedListing struct {
 }
 
 type vrSyncFeed struct {
-	XMLName  xml.Name       `xml:"ListingDataFeed"`
-	XMLNS    string         `xml:"xmlns,attr"`
-	XMLNSXSI string         `xml:"xmlns:xsi,attr"`
-	Header   vrSyncHeader   `xml:"Header"`
-	Listings vrSyncListings `xml:"Listings"`
+	XMLName        xml.Name       `xml:"ListingDataFeed"`
+	XMLNS          string         `xml:"xmlns,attr"`
+	XMLNSXSI       string         `xml:"xmlns:xsi,attr"`
+	SchemaLocation string         `xml:"xsi:schemaLocation,attr"`
+	Header         vrSyncHeader   `xml:"Header"`
+	Listings       vrSyncListings `xml:"Listings"`
 }
 
 type vrSyncHeader struct {
@@ -30,6 +31,7 @@ type vrSyncHeader struct {
 	Email       string `xml:"Email,omitempty"`
 	ContactName string `xml:"ContactName,omitempty"`
 	PublishDate string `xml:"PublishDate"`
+	Telephone   string `xml:"Telephone,omitempty"`
 }
 
 type vrSyncListings struct {
@@ -42,6 +44,7 @@ type vrSyncListing struct {
 	TransactionType string            `xml:"TransactionType"`
 	PublicationType string            `xml:"PublicationType,omitempty"`
 	DetailViewURL   string            `xml:"DetailViewUrl,omitempty"`
+	VirtualTourLink string            `xml:"VirtualTourLink,omitempty"`
 	Details         vrSyncDetails     `xml:"Details"`
 	Location        vrSyncLocation    `xml:"Location"`
 	Media           *vrSyncMedia      `xml:"Media,omitempty"`
@@ -49,33 +52,49 @@ type vrSyncListing struct {
 }
 
 type vrSyncDetails struct {
-	PropertyType              string   `xml:"PropertyType"`
-	Description               string   `xml:"Description"`
-	ListPrice                 *float64 `xml:"ListPrice,omitempty"`
-	RentalPrice               *float64 `xml:"RentalPrice,omitempty"`
-	PropertyAdministrationFee *float64 `xml:"PropertyAdministrationFee,omitempty"`
-	YearlyTax                 *float64 `xml:"YearlyTax,omitempty"`
-	LivingArea                *float64 `xml:"LivingArea,omitempty"`
-	LotArea                   *float64 `xml:"LotArea,omitempty"`
-	Bedrooms                  *int     `xml:"Bedrooms,omitempty"`
-	Bathrooms                 *int     `xml:"Bathrooms,omitempty"`
-	Suites                    *int     `xml:"Suites,omitempty"`
-	Garage                    *int     `xml:"Garage,omitempty"`
-	Features                  []string `xml:"Features>Feature,omitempty"`
+	PropertyType              string       `xml:"PropertyType"`
+	Description               string       `xml:"Description"`
+	ListPrice                 *vrSyncMoney `xml:"ListPrice,omitempty"`
+	RentalPrice               *vrSyncMoney `xml:"RentalPrice,omitempty"`
+	PropertyAdministrationFee *vrSyncMoney `xml:"PropertyAdministrationFee,omitempty"`
+	Iptu                      *vrSyncMoney `xml:"Iptu,omitempty"`
+	LivingArea                *vrSyncArea  `xml:"LivingArea,omitempty"`
+	LotArea                   *vrSyncArea  `xml:"LotArea,omitempty"`
+	Bedrooms                  *int         `xml:"Bedrooms,omitempty"`
+	Bathrooms                 *int         `xml:"Bathrooms,omitempty"`
+	Suites                    *int         `xml:"Suites,omitempty"`
+	Garage                    *int         `xml:"Garage,omitempty"`
+	Features                  []string     `xml:"Features>Feature,omitempty"`
+}
+
+type vrSyncMoney struct {
+	Currency string `xml:"currency,attr"`
+	Period   string `xml:"period,attr,omitempty"`
+	Value    int64  `xml:",chardata"`
+}
+
+type vrSyncArea struct {
+	Unit  string `xml:"unit,attr"`
+	Value int64  `xml:",chardata"`
 }
 
 type vrSyncLocation struct {
-	Country        string   `xml:"Country"`
-	State          string   `xml:"State"`
-	City           string   `xml:"City"`
-	Neighborhood   string   `xml:"Neighborhood,omitempty"`
-	Address        string   `xml:"Address,omitempty"`
-	StreetNumber   string   `xml:"StreetNumber,omitempty"`
-	Complement     string   `xml:"Complement,omitempty"`
-	PostalCode     string   `xml:"PostalCode,omitempty"`
-	Latitude       *float64 `xml:"Latitude,omitempty"`
-	Longitude      *float64 `xml:"Longitude,omitempty"`
-	DisplayAddress string   `xml:"DisplayAddress,omitempty"`
+	DisplayAddress string           `xml:"displayAddress,attr"`
+	Country        vrSyncRegionName `xml:"Country"`
+	State          vrSyncRegionName `xml:"State"`
+	City           string           `xml:"City"`
+	Neighborhood   string           `xml:"Neighborhood,omitempty"`
+	Address        string           `xml:"Address,omitempty"`
+	StreetNumber   string           `xml:"StreetNumber,omitempty"`
+	Complement     string           `xml:"Complement,omitempty"`
+	PostalCode     string           `xml:"PostalCode,omitempty"`
+	Latitude       *float64         `xml:"Latitude,omitempty"`
+	Longitude      *float64         `xml:"Longitude,omitempty"`
+}
+
+type vrSyncRegionName struct {
+	Abbreviation string `xml:"abbreviation,attr"`
+	Value        string `xml:",chardata"`
 }
 
 type vrSyncMedia struct {
@@ -83,25 +102,30 @@ type vrSyncMedia struct {
 }
 
 type vrSyncMediaItem struct {
-	Medium string `xml:"medium,attr"`
-	Value  string `xml:",chardata"`
+	Medium  string `xml:"medium,attr"`
+	Caption string `xml:"caption,attr,omitempty"`
+	Primary bool   `xml:"primary,attr,omitempty"`
+	Value   string `xml:",chardata"`
 }
 
 type vrSyncContactInfo struct {
 	Name      string `xml:"Name,omitempty"`
 	Email     string `xml:"Email,omitempty"`
+	Website   string `xml:"Website,omitempty"`
 	Telephone string `xml:"Telephone,omitempty"`
 }
 
 func buildVRSyncFeed(integration publicIntegration, items []feedListing) ([]byte, error) {
 	feed := vrSyncFeed{
-		XMLNS:    "http://www.vivareal.com/schemas/1.0/VRSync",
-		XMLNSXSI: "http://www.w3.org/2001/XMLSchema-instance",
+		XMLNS:          "http://www.vivareal.com/schemas/1.0/VRSync",
+		XMLNSXSI:       "http://www.w3.org/2001/XMLSchema-instance",
+		SchemaLocation: "http://www.vivareal.com/schemas/1.0/VRSync http://xml.vivareal.com/vrsync.xsd",
 		Header: vrSyncHeader{
 			Provider:    "Vimob CRM",
 			Email:       textFromSettings(integration.Settings, "contact_email"),
 			ContactName: textFromSettings(integration.Settings, "contact_name"),
 			PublishDate: nowISO(),
+			Telephone:   onlyDigits(textFromSettings(integration.Settings, "contact_phone")),
 		},
 		Listings: vrSyncListings{Listing: []vrSyncListing{}},
 	}
@@ -135,35 +159,43 @@ func mapToVRSyncListing(integration publicIntegration, item feedListing) (vrSync
 	}
 	transactionType := normalizeTransactionType(firstPropertyText(property, "tipo_de_negocio", "finalidade"))
 	images := propertyImages(property)
-	mediaItems := make([]vrSyncMediaItem, 0, len(images)+2)
-	for _, image := range images {
-		mediaItems = append(mediaItems, vrSyncMediaItem{Medium: "image", Value: image})
+	mediaItems := make([]vrSyncMediaItem, 0, len(images)+1)
+	for index, image := range images {
+		mediaItems = append(mediaItems, vrSyncMediaItem{
+			Medium:  "image",
+			Caption: fmt.Sprintf("img%d", index+1),
+			Primary: index == 0,
+			Value:   image,
+		})
 	}
-	if video := firstPropertyText(property, "video_imovel"); isURL(video) {
+	if video := firstPropertyText(property, "video_imovel"); isYouTubeURL(video) {
 		mediaItems = append(mediaItems, vrSyncMediaItem{Medium: "video", Value: video})
 	}
-	if tour := firstPropertyText(property, "tour_virtual"); isURL(tour) {
-		mediaItems = append(mediaItems, vrSyncMediaItem{Medium: "virtualtour", Value: tour})
+	tour := firstPropertyText(property, "tour_virtual")
+	if !isHTTPSURL(tour) {
+		tour = ""
 	}
 
 	details := vrSyncDetails{
-		PropertyType:              normalizePropertyType(firstPropertyText(property, "tipo_de_imovel")),
+		PropertyType:              normalizePropertyType(firstPropertyText(property, "tipo_de_imovel", "tipo")),
 		Description:               html.UnescapeString(description),
-		ListPrice:                 priceForSale(property, transactionType),
-		RentalPrice:               priceForRent(property, transactionType),
-		PropertyAdministrationFee: positiveFloatPointer(firstPropertyNumber(property, "condominio")),
-		YearlyTax:                 positiveFloatPointer(firstPropertyNumber(property, "iptu", "valor_itr")),
-		LivingArea:                positiveFloatPointer(firstPropertyNumber(property, "area_util")),
-		LotArea:                   positiveFloatPointer(firstPropertyNumber(property, "area_total")),
+		ListPrice:                 moneyValue(priceForSale(property, transactionType), ""),
+		RentalPrice:               moneyValue(priceForRent(property, transactionType), rentalPeriod(property)),
+		PropertyAdministrationFee: moneyValue(positiveFloatPointer(firstPropertyNumber(property, "condominio")), ""),
+		Iptu:                      moneyValue(positiveFloatPointer(firstPropertyNumber(property, "iptu", "valor_itr")), iptuPeriod(property)),
+		LivingArea:                areaValue(firstPropertyNumber(property, "area_util")),
+		LotArea:                   areaValue(firstPropertyNumber(property, "area_total")),
 		Bedrooms:                  positiveIntPointer(firstPropertyNumber(property, "quartos")),
 		Bathrooms:                 positiveIntPointer(firstPropertyNumber(property, "banheiros")),
 		Suites:                    positiveIntPointer(firstPropertyNumber(property, "suites")),
 		Garage:                    positiveIntPointer(firstPropertyNumber(property, "vagas")),
-		Features:                  propertyStringSlice(property, "detalhes_extras", "proximidades", "marcadores"),
+		Features:                  normalizedFeatures(propertyStringSlice(property, "detalhes_extras", "proximidades", "marcadores")),
 	}
+	stateAbbreviation := strings.ToUpper(firstPropertyText(property, "uf"))
 	location := vrSyncLocation{
-		Country:        "BR",
-		State:          strings.ToUpper(firstPropertyText(property, "uf")),
+		DisplayAddress: normalizeDisplayAddress(firstPropertyText(property, "public_address_visibility", "address_visibility")),
+		Country:        vrSyncRegionName{Abbreviation: "BR", Value: "Brasil"},
+		State:          vrSyncRegionName{Abbreviation: stateAbbreviation, Value: brazilianStateName(stateAbbreviation)},
 		City:           firstPropertyText(property, "cidade"),
 		Neighborhood:   firstPropertyText(property, "bairro"),
 		Address:        firstPropertyText(property, "endereco"),
@@ -172,11 +204,12 @@ func mapToVRSyncListing(integration publicIntegration, item feedListing) (vrSync
 		PostalCode:     onlyDigits(firstPropertyText(property, "cep")),
 		Latitude:       coordinatePointer(firstPropertyNumber(property, "latitude")),
 		Longitude:      coordinatePointer(firstPropertyNumber(property, "longitude")),
-		DisplayAddress: normalizeDisplayAddress(firstPropertyText(property, "public_address_visibility", "address_visibility")),
 	}
+	website := textFromSettings(integration.Settings, "detail_base_url")
 	contact := vrSyncContactInfo{
 		Name:      textFromSettings(integration.Settings, "contact_name"),
 		Email:     textFromSettings(integration.Settings, "contact_email"),
+		Website:   website,
 		Telephone: onlyDigits(textFromSettings(integration.Settings, "contact_phone")),
 	}
 	detailURL := textFromSettings(integration.Settings, "detail_base_url")
@@ -195,6 +228,7 @@ func mapToVRSyncListing(integration publicIntegration, item feedListing) (vrSync
 		TransactionType: transactionType,
 		PublicationType: normalizePublicationType(item.PublicationType),
 		DetailViewURL:   detailURL,
+		VirtualTourLink: tour,
 		Details:         details,
 		Location:        location,
 		Media:           media,
@@ -202,7 +236,7 @@ func mapToVRSyncListing(integration publicIntegration, item feedListing) (vrSync
 	}, true
 }
 
-func validateFeedListing(item feedListing) []string {
+func validateFeedListing(integration publicIntegration, item feedListing) []string {
 	property := item.Property
 	errors := []string{}
 	title := firstPropertyText(property, "title")
@@ -212,21 +246,47 @@ func validateFeedListing(item feedListing) []string {
 	if normalizeTransactionType(firstPropertyText(property, "tipo_de_negocio", "finalidade")) == "" {
 		errors = append(errors, "Tipo de negocio e obrigatorio.")
 	}
-	if normalizePropertyType(firstPropertyText(property, "tipo_de_imovel")) == "" {
+	if normalizePropertyType(firstPropertyText(property, "tipo_de_imovel", "tipo")) == "" {
 		errors = append(errors, "Tipo de imovel e obrigatorio.")
 	}
-	if firstPropertyText(property, "cidade") == "" || firstPropertyText(property, "uf") == "" {
-		errors = append(errors, "Cidade e UF sao obrigatorios.")
+	status := normalizeText(firstPropertyText(property, "status"))
+	if status == "draft" || status == "sold" || status == "rented" || status == "inactive" || status == "archived" ||
+		status == "vendido" || status == "alugado" || status == "inativo" || status == "arquivado" {
+		errors = append(errors, "Imovel nao esta ativo para publicacao.")
+	}
+	description := firstPropertyText(property, "descricao_site", "status_descritivo")
+	if len([]rune(strings.TrimSpace(description))) < 50 || len([]rune(strings.TrimSpace(description))) > 3000 {
+		errors = append(errors, "Descricao precisa ter entre 50 e 3000 caracteres.")
+	}
+	if firstPropertyText(property, "cidade") == "" || firstPropertyText(property, "uf") == "" || firstPropertyText(property, "bairro") == "" {
+		errors = append(errors, "Cidade, UF e bairro sao obrigatorios.")
+	}
+	if len(onlyDigits(firstPropertyText(property, "cep"))) != 8 {
+		errors = append(errors, "CEP com 8 digitos e obrigatorio.")
 	}
 	if len(propertyImages(property)) == 0 {
 		errors = append(errors, "Pelo menos uma foto e obrigatoria.")
 	}
 	transactionType := normalizeTransactionType(firstPropertyText(property, "tipo_de_negocio", "finalidade"))
-	if transactionType == "For Sale" && priceForSale(property, transactionType) == nil {
+	if (transactionType == "For Sale" || transactionType == "Sale/Rent") && priceForSale(property, transactionType) == nil {
 		errors = append(errors, "Preco de venda e obrigatorio.")
 	}
-	if transactionType == "For Rent" && priceForRent(property, transactionType) == nil {
+	if (transactionType == "For Rent" || transactionType == "Sale/Rent") && priceForRent(property, transactionType) == nil {
 		errors = append(errors, "Valor de locacao e obrigatorio.")
+	}
+	propertyType := normalizePropertyType(firstPropertyText(property, "tipo_de_imovel", "tipo"))
+	if requiresLotArea(propertyType) {
+		if firstPropertyNumber(property, "area_total") <= 0 {
+			errors = append(errors, "Area total e obrigatoria para este tipo de imovel.")
+		}
+	} else if firstPropertyNumber(property, "area_util") <= 0 {
+		errors = append(errors, "Area util e obrigatoria.")
+	}
+	if strings.TrimSpace(textFromSettings(integration.Settings, "contact_name")) == "" || strings.TrimSpace(textFromSettings(integration.Settings, "contact_email")) == "" {
+		errors = append(errors, "Nome e e-mail de contato da imobiliaria sao obrigatorios.")
+	}
+	if !validPublicationType(item.PublicationType) {
+		errors = append(errors, "Tipo de publicacao invalido.")
 	}
 	return errors
 }
@@ -250,23 +310,36 @@ func normalizeTransactionType(value string) string {
 func normalizePropertyType(value string) string {
 	normalized := normalizeText(value)
 	switch {
+	case strings.Contains(normalized, "condominio") && strings.Contains(normalized, "casa"):
+		return "Residential / Condo"
+	case strings.Contains(normalized, "sobrado"):
+		return "Residential / Sobrado"
+	case strings.Contains(normalized, "casa"):
+		return "Residential / Home"
+	case strings.Contains(normalized, "cobertura"):
+		return "Residential / Penthouse"
+	case strings.Contains(normalized, "flat"):
+		return "Residential / Flat"
+	case strings.Contains(normalized, "kitnet"), strings.Contains(normalized, "conjugado"):
+		return "Residential / Kitnet"
+	case strings.Contains(normalized, "studio"):
+		return "Residential / Studio"
+	case strings.Contains(normalized, "loft"):
+		return "Residential / Loft"
 	case strings.Contains(normalized, "apart"):
 		return "Residential / Apartment"
-	case strings.Contains(normalized, "casa"), strings.Contains(normalized, "sobrado"):
-		return "Residential / Home"
 	case strings.Contains(normalized, "terreno"), strings.Contains(normalized, "lote"):
 		return "Residential / Land Lot"
-	case strings.Contains(normalized, "comercial"), strings.Contains(normalized, "sala"), strings.Contains(normalized, "loja"):
+	case strings.Contains(normalized, "sala"), strings.Contains(normalized, "conjunto"):
+		return "Commercial / Office"
+	case strings.Contains(normalized, "comercial"), strings.Contains(normalized, "loja"):
 		return "Commercial / Business"
 	case strings.Contains(normalized, "galpao"):
 		return "Commercial / Industrial"
 	case strings.Contains(normalized, "fazenda"), strings.Contains(normalized, "sitio"), strings.Contains(normalized, "chacara"):
-		return "Rural / Farm Ranch"
+		return "Residential / Agricultural"
 	default:
-		if strings.TrimSpace(value) == "" {
-			return ""
-		}
-		return "Residential / Apartment"
+		return ""
 	}
 }
 
@@ -280,6 +353,108 @@ func normalizeDisplayAddress(value string) string {
 	default:
 		return "All"
 	}
+}
+
+func validPublicationType(value string) bool {
+	switch normalizePublicationType(value) {
+	case "STANDARD", "PREMIUM", "SUPER_PREMIUM", "PREMIERE_1", "PREMIERE_2", "TRIPLE":
+		return true
+	default:
+		return false
+	}
+}
+
+func requiresLotArea(propertyType string) bool {
+	return strings.Contains(propertyType, "Land Lot") ||
+		strings.Contains(propertyType, "Agricultural") ||
+		strings.Contains(propertyType, "Industrial")
+}
+
+func moneyValue(value *float64, period string) *vrSyncMoney {
+	if value == nil || *value <= 0 || !isFiniteFloat(*value) {
+		return nil
+	}
+	return &vrSyncMoney{
+		Currency: "BRL",
+		Period:   period,
+		Value:    int64(math.Trunc(*value)),
+	}
+}
+
+func areaValue(value float64) *vrSyncArea {
+	if value <= 0 || !isFiniteFloat(value) {
+		return nil
+	}
+	return &vrSyncArea{Unit: "square metres", Value: int64(math.Trunc(value))}
+}
+
+func rentalPeriod(property map[string]any) string {
+	value := normalizeText(metadataText(property, "rental_period"))
+	switch value {
+	case "diario", "diaria", "daily":
+		return "Daily"
+	case "semanal", "weekly":
+		return "Weekly"
+	case "trimestral", "quarterly":
+		return "Quarterly"
+	case "anual", "yearly":
+		return "Yearly"
+	default:
+		return "Monthly"
+	}
+}
+
+func iptuPeriod(property map[string]any) string {
+	value := normalizeText(metadataText(property, "iptu_period"))
+	if value == "mensal" || value == "monthly" {
+		return "Monthly"
+	}
+	return "Yearly"
+}
+
+func metadataText(property map[string]any, key string) string {
+	metadata, ok := property["metadata"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return firstText(metadata, key)
+}
+
+func brazilianStateName(abbreviation string) string {
+	states := map[string]string{
+		"AC": "Acre", "AL": "Alagoas", "AP": "Amapa", "AM": "Amazonas",
+		"BA": "Bahia", "CE": "Ceara", "DF": "Distrito Federal", "ES": "Espirito Santo",
+		"GO": "Goias", "MA": "Maranhao", "MT": "Mato Grosso", "MS": "Mato Grosso do Sul",
+		"MG": "Minas Gerais", "PA": "Para", "PB": "Paraiba", "PR": "Parana",
+		"PE": "Pernambuco", "PI": "Piaui", "RJ": "Rio de Janeiro", "RN": "Rio Grande do Norte",
+		"RS": "Rio Grande do Sul", "RO": "Rondonia", "RR": "Roraima", "SC": "Santa Catarina",
+		"SP": "Sao Paulo", "SE": "Sergipe", "TO": "Tocantins",
+	}
+	if name := states[strings.ToUpper(strings.TrimSpace(abbreviation))]; name != "" {
+		return name
+	}
+	return strings.ToUpper(strings.TrimSpace(abbreviation))
+}
+
+func normalizedFeatures(values []string) []string {
+	translations := map[string]string{
+		"academia": "Gym", "alarme": "Alarm System", "aquecimento": "Heating",
+		"ar condicionado": "Cooling", "churrasqueira": "BBQ", "elevador": "Elevator",
+		"garagem": "Parking Garage", "interfone": "Intercom", "jardim": "Garden Area",
+		"mobiliado": "Furnished", "piscina": "Pool", "playground": "Playground",
+		"portaria 24 horas": "Security Guard on Duty", "quintal": "Backyard",
+		"salao de festas": "Party Room", "sauna": "Sauna", "varanda": "Balcony",
+	}
+	seen := map[string]bool{}
+	result := []string{}
+	for _, value := range values {
+		mapped := translations[normalizeText(value)]
+		if mapped != "" && !seen[mapped] {
+			seen[mapped] = true
+			result = append(result, mapped)
+		}
+	}
+	return result
 }
 
 func priceForSale(property map[string]any, transactionType string) *float64 {
@@ -422,7 +597,21 @@ func trimMax(value string, max int) string {
 
 func isURL(value string) bool {
 	parsed, err := url.Parse(strings.TrimSpace(value))
-	return err == nil && parsed.Scheme != "" && parsed.Host != ""
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
+}
+
+func isHTTPSURL(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	return err == nil && parsed.Scheme == "https" && parsed.Host != ""
+}
+
+func isYouTubeURL(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "youtube.com" || host == "www.youtube.com" || host == "m.youtube.com" || host == "youtu.be" || host == "www.youtu.be"
 }
 
 func normalizeText(value string) string {

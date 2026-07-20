@@ -37,6 +37,7 @@ import { FinancialDrawer } from '@/components/features/financial/FinancialDrawer
 import { useContracts, useActivateContract, useDeleteContract, useRegenerateCommissions, Contract } from '@/hooks/use-contracts';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { formatCurrency, formatDate, exportToExcel, prepareContractsExport } from '@/lib/export-financial';
+import { normalizeSearchText } from '@/lib/search-text';
 import {
   Plus,
   Search,
@@ -153,9 +154,9 @@ export default function Contracts() {
   const regenerateCommissions = useRegenerateCommissions();
 
   const filteredContracts = contracts?.filter(contract => {
-    const leadName = contract.lead?.name?.toLowerCase() || '';
-    const contractNumber = contract.contract_number?.toLowerCase() || '';
-    const query = searchQuery.toLowerCase();
+    const leadName = normalizeSearchText(contract.lead?.name);
+    const contractNumber = normalizeSearchText(contract.contract_number);
+    const query = normalizeSearchText(searchQuery);
     return leadName.includes(query) || contractNumber.includes(query);
   }) || [];
 

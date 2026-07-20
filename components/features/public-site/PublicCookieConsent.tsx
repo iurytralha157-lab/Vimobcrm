@@ -9,14 +9,14 @@ type PublicCookieConsentProps = Readonly<{
   siteTitle: string;
 }>;
 
-const consentKey = "vimob_public_cookie_consent_v1";
-const consentEvent = "vimob:cookie-consent-changed";
+export const PUBLIC_COOKIE_CONSENT_KEY = "vimob_public_cookie_consent_v1";
+export const PUBLIC_COOKIE_CONSENT_EVENT = "vimob:cookie-consent-changed";
 
 export function PublicCookieConsent({ primaryColor, privacyHref, siteTitle }: PublicCookieConsentProps) {
   const visible = useSyncExternalStore(subscribeConsent, getConsentSnapshot, getServerConsentSnapshot);
   const acceptCookies = useCallback(() => {
-    window.localStorage.setItem(consentKey, "accepted");
-    window.dispatchEvent(new Event(consentEvent));
+    window.localStorage.setItem(PUBLIC_COOKIE_CONSENT_KEY, "accepted");
+    window.dispatchEvent(new Event(PUBLIC_COOKIE_CONSENT_EVENT));
   }, []);
 
   if (!visible) return null;
@@ -45,16 +45,16 @@ export function PublicCookieConsent({ primaryColor, privacyHref, siteTitle }: Pu
 }
 
 function subscribeConsent(onStoreChange: () => void) {
-  window.addEventListener(consentEvent, onStoreChange);
+  window.addEventListener(PUBLIC_COOKIE_CONSENT_EVENT, onStoreChange);
   window.addEventListener("storage", onStoreChange);
   return () => {
-    window.removeEventListener(consentEvent, onStoreChange);
+    window.removeEventListener(PUBLIC_COOKIE_CONSENT_EVENT, onStoreChange);
     window.removeEventListener("storage", onStoreChange);
   };
 }
 
 function getConsentSnapshot() {
-  return window.localStorage.getItem(consentKey) !== "accepted";
+  return window.localStorage.getItem(PUBLIC_COOKIE_CONSENT_KEY) !== "accepted";
 }
 
 function getServerConsentSnapshot() {

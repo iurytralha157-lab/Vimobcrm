@@ -16,6 +16,7 @@ type OrganizationUpdateRequest struct {
 	Name                        *string  `json:"name"`
 	IsActive                    *bool    `json:"is_active"`
 	SubscriptionStatus          *string  `json:"subscription_status"`
+	SubscriptionType            *string  `json:"subscription_type"`
 	MaxUsers                    *int     `json:"max_users"`
 	AdminNotes                  *string  `json:"admin_notes"`
 	PlanID                      *string  `json:"plan_id"`
@@ -25,6 +26,9 @@ type OrganizationUpdateRequest struct {
 	TrialEndsAt                 *string  `json:"trial_ends_at"`
 	Creci                       *string  `json:"creci"`
 	MaxWhatsappSessionsOverride *int     `json:"max_whatsapp_sessions_override"`
+	ClearPlanID                 bool     `json:"clear_plan_id"`
+	ClearNextBillingDate        bool     `json:"clear_next_billing_date"`
+	ClearTrialEndsAt            bool     `json:"clear_trial_ends_at"`
 }
 
 type OrganizationAccessRequest struct {

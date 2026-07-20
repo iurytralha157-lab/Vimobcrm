@@ -130,7 +130,7 @@ export function useCreateWhatsAppSession() {
   return useMutation({
     mutationFn: async (input: string | { displayName: string; provider?: WhatsAppProvider }) => {
       if (!scope.organizationId || !scope.userId) {
-        throw new Error("User not authenticated");
+        throw new Error("Usuário não autenticado.");
       }
 
       const displayName = typeof input === "string" ? input : input.displayName;

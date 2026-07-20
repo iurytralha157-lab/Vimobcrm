@@ -78,6 +78,9 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 			al.entity_id,
 			al.old_data::text,
 			al.new_data::text,
+			al.diff::text,
+			al.source,
+			al.metadata::text,
 			al.ip_address::text,
 			al.user_agent,
 			al.created_at,
@@ -180,7 +183,7 @@ func scanAuditLogWithTotal(row scanner) (AuditLog, int64, error) {
 
 func scanAuditLogFields(row scanner, total *int64) (AuditLog, error) {
 	var log AuditLog
-	var organizationID, userID, entityID, oldData, newData, ipAddress, userAgent pgtype.Text
+	var organizationID, userID, entityID, oldData, newData, diff, source, metadata, ipAddress, userAgent pgtype.Text
 	var userIDValue, userName, userEmail, orgID, orgName pgtype.Text
 
 	dest := []any{
@@ -192,6 +195,9 @@ func scanAuditLogFields(row scanner, total *int64) (AuditLog, error) {
 		&entityID,
 		&oldData,
 		&newData,
+		&diff,
+		&source,
+		&metadata,
 		&ipAddress,
 		&userAgent,
 		&log.CreatedAt,
@@ -214,6 +220,9 @@ func scanAuditLogFields(row scanner, total *int64) (AuditLog, error) {
 	log.EntityID = textValue(entityID)
 	log.OldData = jsonMap(textValue(oldData))
 	log.NewData = jsonMap(textValue(newData))
+	log.Diff = jsonMap(textValue(diff))
+	log.Source = textValue(source)
+	log.Metadata = jsonMap(textValue(metadata))
 	log.IPAddress = textValue(ipAddress)
 	log.UserAgent = textValue(userAgent)
 	if userIDValue.Valid {

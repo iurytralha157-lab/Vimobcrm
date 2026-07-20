@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
+import { searchTextIncludes } from '@/lib/search-text';
 import { propertiesAPI } from '@/lib/api/properties';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -70,7 +71,7 @@ type AssignmentTarget = {
   id: string;
   title: string;
   subtitle?: string;
-  payload: Partial<Property>;
+  payload: Parameters<typeof propertiesAPI.updateProperty>[1];
 };
 
 const EMPTY_OWNER_FORM: OwnerFormState = {
@@ -185,22 +186,21 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
   const updateOwner = useUpdatePropertyOwner();
 
   const filteredCities = useMemo(
-    () => cities.filter((city) => city.name.toLowerCase().includes(search.toLowerCase())),
+    () => cities.filter((city) => searchTextIncludes(city.name, search)),
     [cities, search],
   );
 
   const filteredNeighborhoods = useMemo(
-    () => neighborhoods.filter((neighborhood) => neighborhood.name.toLowerCase().includes(search.toLowerCase())),
+    () => neighborhoods.filter((neighborhood) => searchTextIncludes(neighborhood.name, search)),
     [neighborhoods, search],
   );
 
   const filteredCondominiums = useMemo(
-    () => condominiums.filter((condominium) => condominium.name.toLowerCase().includes(search.toLowerCase())),
+    () => condominiums.filter((condominium) => searchTextIncludes(condominium.name, search)),
     [condominiums, search],
   );
 
   const filteredOwners = useMemo(() => {
-    const searchTerm = search.toLowerCase();
     return owners.filter((owner) =>
       [
         owner.name,
@@ -209,7 +209,7 @@ export default function PropertyLocations({ initialTab = 'cities' }: PropertyLoc
         canSeeOwnerContact ? owner.phone_commercial : null,
         owner.email,
         owner.media_source,
-      ].some((value) => value?.toLowerCase().includes(searchTerm)),
+      ].some((value) => searchTextIncludes(value, search)),
     );
   }, [owners, search, canSeeOwnerContact]);
 

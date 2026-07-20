@@ -42,6 +42,7 @@ import { FinancialDrawer } from '@/components/features/financial/FinancialDrawer
 import { FinancialEmptyState } from '@/components/features/financial/FinancialEmptyState';
 
 import { useIsMobile } from '@/hooks/use-mobile';
+import { searchTextIncludes } from '@/lib/search-text';
 import {
   useCommissions,
   useCommissionRules,
@@ -252,8 +253,8 @@ export default function Commissions() {
   const deleteRule = useDeleteCommissionRule();
 
   const filteredCommissions = commissions?.filter(c =>
-    c.user?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.contract?.contract_number?.toLowerCase().includes(searchQuery.toLowerCase())
+    searchTextIncludes(c.user?.name, searchQuery) ||
+    searchTextIncludes(c.contract?.contract_number, searchQuery)
   ) || [];
 
   const handleExport = () => {

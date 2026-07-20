@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/command";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { cn } from '@/lib/utils';
+import { commandSearchFilter } from '@/lib/search-text';
 import { format, type Locale } from 'date-fns';
 import { ptBR, enUS } from 'date-fns/locale';
 import { useLeadTasks, useCompleteCadenceTask } from '@/hooks/use-lead-tasks';
@@ -74,6 +75,7 @@ import { ReentryBadge } from '@/components/features/leads/ReentryBadge';
 import { LostReasonDialog } from '@/components/features/leads/LostReasonDialog';
 import { LeadAttachmentViewer } from '@/components/features/leads/LeadAttachmentViewer';
 import { SdrDistributionButton } from '@/components/features/leads/SdrDistributionButton';
+import { CopyLeadPhoneButton } from '@/components/features/leads/CopyLeadPhoneButton';
 
 import { TaskOutcomeDialog, TaskOutcome } from '@/components/features/leads/TaskOutcomeDialog';
 import { formatResponseTime } from '@/hooks/use-lead-timeline';
@@ -1633,7 +1635,6 @@ export function LeadDetailDialog({
       toast.success('Dados salvos com sucesso!');
     } catch (error) {
       console.error('Erro ao salvar dados do lead:', error);
-      toast.error('Erro ao salvar dados. Tente novamente.');
     }
   };
   const handleMoveToStage = async (stageId: string) => {
@@ -2140,6 +2141,7 @@ export function LeadDetailDialog({
 
               <EventsList
                 events={scheduleEvents}
+                canManage={canManageLeadSchedule}
                 onEditEvent={canManageLeadSchedule ? handleEditScheduleEvent : undefined}
                 onAddEvent={() => {
                   setEditingScheduleEvent(null);
@@ -2418,7 +2420,7 @@ export function LeadDetailDialog({
                     onWheelCapture={(event) => event.stopPropagation()}
                     onTouchMoveCapture={(event) => event.stopPropagation()}
                   >
-                    <Command className="max-h-[min(72vh,460px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
+                    <Command filter={commandSearchFilter} className="max-h-[min(72vh,460px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
                       <CommandInput placeholder="Buscar responsável..." className="h-10 border-none focus:ring-0" />
                       <CommandList
                         className="max-h-[min(58vh,360px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin [-webkit-overflow-scrolling:touch]"
@@ -2787,6 +2789,12 @@ export function LeadDetailDialog({
                 <h2 className="truncate text-base font-semibold leading-tight">{leadName}</h2>
                 <ReentryBadge count={lead.reentry_count} lastEntryAt={lead.last_entry_at} />
               </div>
+              {lead.phone && (
+                <div className="mt-1 flex min-w-0 items-center gap-1.5">
+                  <p className="truncate text-xs text-[var(--app-text-tertiary)]">{formatPhoneForDisplay(lead.phone)}</p>
+                  <CopyLeadPhoneButton phone={lead.phone} className="h-6 w-6 bg-transparent hover:bg-[var(--app-surface-soft)]" />
+                </div>
+              )}
 
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {leadTags.slice(0, 4).map((tag) => {
@@ -2845,7 +2853,7 @@ export function LeadDetailDialog({
                 onWheelCapture={(event) => event.stopPropagation()}
                 onTouchMoveCapture={(event) => event.stopPropagation()}
               >
-                <Command className="max-h-[min(72vh,430px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
+                <Command filter={commandSearchFilter} className="max-h-[min(72vh,430px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
                   <CommandInput placeholder="Buscar responsável..." className="h-10 border-none focus:ring-0" />
                   <CommandList
                     className="max-h-[min(58vh,340px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin [-webkit-overflow-scrolling:touch]"
@@ -3268,7 +3276,7 @@ export function LeadDetailDialog({
                       onWheelCapture={(event) => event.stopPropagation()}
                       onTouchMoveCapture={(event) => event.stopPropagation()}
                     >
-                      <Command className="max-h-[min(72vh,420px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
+                      <Command filter={commandSearchFilter} className="max-h-[min(72vh,420px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
                         <CommandInput placeholder="Buscar..." className="h-9 border-none focus:ring-0" />
                         <CommandList
                           className="max-h-[min(56vh,320px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin [-webkit-overflow-scrolling:touch]"
@@ -3677,7 +3685,7 @@ export function LeadDetailDialog({
                     onWheelCapture={(event) => event.stopPropagation()}
                     onTouchMoveCapture={(event) => event.stopPropagation()}
                   >
-                    <Command className="max-h-[min(70vh,430px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
+                    <Command filter={commandSearchFilter} className="max-h-[min(70vh,430px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
                       <CommandInput placeholder="Buscar..." className="h-10 border-none focus:ring-0" />
                       <CommandList
                         className="max-h-[min(58vh,350px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin [-webkit-overflow-scrolling:touch]"
@@ -3936,6 +3944,7 @@ export function LeadDetailDialog({
 
               <EventsList
                 events={scheduleEvents}
+                canManage={canManageLeadSchedule}
                 onEditEvent={canManageLeadSchedule ? handleEditScheduleEvent : undefined}
                 onAddEvent={() => {
                   setEditingScheduleEvent(null);

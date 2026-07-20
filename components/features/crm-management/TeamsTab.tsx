@@ -133,7 +133,7 @@ export function TeamsTab() {
             </p>
           </div>
           {canManageAllTeams && (
-            <Button data-tour="management-team-new" onClick={handleNewTeam} className="gap-2">
+            <Button data-tour="management-team-new" onClick={handleNewTeam} className="h-9 gap-2 rounded-[8px] px-3 shadow-none">
               <Plus className="h-4 w-4" />
               Nova Equipe
             </Button>
@@ -211,8 +211,8 @@ export function TeamsTab() {
 
                       <TableCell>
                         {members.length > 0 ? (
-                          <div className="flex max-w-[560px] items-center gap-0.5 overflow-x-auto overflow-y-hidden py-1 pr-1 [scrollbar-width:thin]">
-                            {members.map((member) => {
+                          <div className="flex max-w-[560px] items-center gap-0.5 py-1 pr-1">
+                            {members.slice(0, 8).map((member) => {
                               const availabilitySummary = formatAvailabilitySummary(getMemberAvailability(member.id));
 
                               return (
@@ -257,6 +257,11 @@ export function TeamsTab() {
                                 </Tooltip>
                               );
                             })}
+                            {members.length > 8 && (
+                              <span className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--app-surface-soft)] text-[10px] text-muted-foreground">
+                                +{members.length - 8}
+                              </span>
+                            )}
                           </div>
                         ) : (
                           <Button

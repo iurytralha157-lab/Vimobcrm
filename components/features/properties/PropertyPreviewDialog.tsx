@@ -103,7 +103,10 @@ export function PropertyPreviewDialog({
 
   // Use full property if available, otherwise fallback to list property
   const property = fullProperty || propertyFromList;
-  const { data: condominiums = [] } = usePropertyCondominiums(property?.neighborhood_id || undefined);
+  const { data: condominiums = [] } = usePropertyCondominiums(
+    property?.neighborhood_id || undefined,
+    { enabled: open && Boolean(property) },
+  );
   const propertyId = property?.id ?? null;
   const currentImageIndex = imageSelection.propertyId === propertyId ? imageSelection.index : 0;
   const cadastroUserId = property?.cadastrado_por && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(property.cadastrado_por)

@@ -120,6 +120,17 @@ export const publicSiteContactSchema = z.object({
   property_id: z.string().uuid().optional(),
   property_code: z.string().trim().max(80).optional(),
   session_id: z.string().trim().optional().nullable(),
+  submission_id: z.string().trim().min(8).max(120),
+  website: z.string().trim().max(200).optional().or(z.literal('')),
+  landing_page: z.string().trim().max(500).optional().or(z.literal('')),
+  referrer: z.string().trim().max(1000).optional().or(z.literal('')),
+  utm_source: z.string().trim().max(300).optional().nullable(),
+  utm_medium: z.string().trim().max(300).optional().nullable(),
+  utm_campaign: z.string().trim().max(300).optional().nullable(),
+  utm_term: z.string().trim().max(300).optional().nullable(),
+  utm_content: z.string().trim().max(300).optional().nullable(),
+  gclid: z.string().trim().max(300).optional().nullable(),
+  fbclid: z.string().trim().max(300).optional().nullable(),
 })
 
 export type PublicSiteContactInput = z.infer<typeof publicSiteContactSchema>

@@ -26,7 +26,7 @@ values (
   'authenticated',
   'authenticated',
   'attention-engine@example.test',
-  crypt('test-password', gen_salt('bf')),
+  crypt('test-password', gen_salt('bf', 4)),
   now(),
   '{"provider":"email","providers":["email"]}'::jsonb,
   '{}'::jsonb,
@@ -54,7 +54,13 @@ values (
   'attention-engine@example.test',
   'admin',
   true
-);
+)
+on conflict (id) do update
+set organization_id = excluded.organization_id,
+    name = excluded.name,
+    email = excluded.email,
+    role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.organization_members (organization_id, user_id, role, is_active)
 values (
@@ -62,7 +68,10 @@ values (
   'a1000000-0000-0000-0000-000000000001',
   'admin',
   true
-);
+)
+on conflict (user_id, organization_id) do update
+set role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.pipelines (id, organization_id, name, position, is_active)
 values (
@@ -73,13 +82,14 @@ values (
   true
 );
 
-insert into public.stages (id, organization_id, pipeline_id, name, position, is_active)
+insert into public.stages (id, organization_id, pipeline_id, name, stage_key, position, is_active)
 values
   (
     'a4000000-0000-0000-0000-000000000001',
     'a2000000-0000-0000-0000-000000000001',
     'a3000000-0000-0000-0000-000000000001',
     'New',
+    'attention_test_new',
     1,
     true
   ),
@@ -88,6 +98,7 @@ values
     'a2000000-0000-0000-0000-000000000001',
     'a3000000-0000-0000-0000-000000000001',
     'Contacted',
+    'attention_test_contacted',
     2,
     true
   );

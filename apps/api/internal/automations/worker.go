@@ -115,22 +115,18 @@ func (repo Repository) withWorkerLock(ctx context.Context, lockName string, lock
 	if err != nil {
 		return err
 	}
+	defer conn.Release()
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(context.Background())
 
 	locked := false
-	defer func() {
-		if locked {
-			unlockCtx, unlockCancel := context.WithTimeout(context.Background(), lockTimeout)
-			_, _ = conn.Exec(unlockCtx, `
-				select pg_catalog.pg_advisory_unlock(pg_catalog.hashtextextended($1, 0))
-			`, lockName)
-			unlockCancel()
-		}
-		conn.Release()
-	}()
-
 	lockCtx, cancel = context.WithTimeout(ctx, lockTimeout)
-	err = conn.QueryRow(lockCtx, `
-		select pg_catalog.pg_try_advisory_lock(pg_catalog.hashtextextended($1, 0))
+	err = tx.QueryRow(lockCtx, `
+		select pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))
 	`, lockName).Scan(&locked)
 	cancel()
 	if err != nil || !locked {

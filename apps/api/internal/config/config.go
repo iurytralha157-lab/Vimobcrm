@@ -80,10 +80,13 @@ type EmailConfig struct {
 }
 
 type PushConfig struct {
-	VAPIDPublicKey  string
-	VAPIDPrivateKey string
-	VAPIDSubject    string
-	FCMServerKey    string
+	VAPIDPublicKey        string
+	VAPIDPrivateKey       string
+	VAPIDSubject          string
+	FCMServerKey          string
+	FCMProjectID          string
+	FCMServiceAccountJSON string
+	FCMServiceAccountFile string
 }
 
 type AIConfig struct {
@@ -174,8 +177,11 @@ func Load() (Config, error) {
 				"WEB_PUSH_VAPID_PRIVATE_KEY",
 				getEnv("VAPID_PRIVATE_KEY", getEnv("WEB_PUSH_PRIVATE_KEY", "")),
 			),
-			VAPIDSubject: getEnv("WEB_PUSH_VAPID_SUBJECT", getEnv("RESEND_REPLY_TO", "mailto:contato@vimobcrm.com.br")),
-			FCMServerKey: getEnv("FCM_SERVER_KEY", getEnv("FIREBASE_SERVER_KEY", "")),
+			VAPIDSubject:          getEnv("WEB_PUSH_VAPID_SUBJECT", getEnv("RESEND_REPLY_TO", "mailto:contato@vimobcrm.com.br")),
+			FCMServerKey:          getEnv("FCM_SERVER_KEY", getEnv("FIREBASE_SERVER_KEY", "")),
+			FCMProjectID:          getEnv("FCM_PROJECT_ID", getEnv("FIREBASE_PROJECT_ID", getEnv("GOOGLE_CLOUD_PROJECT", ""))),
+			FCMServiceAccountJSON: getEnv("FCM_SERVICE_ACCOUNT_JSON", getEnv("FIREBASE_SERVICE_ACCOUNT_JSON", "")),
+			FCMServiceAccountFile: getEnv("FCM_SERVICE_ACCOUNT_FILE", os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")),
 		},
 		AI: AIConfig{
 			OpenAIAPIKey:   os.Getenv("OPENAI_API_KEY"),
@@ -318,13 +324,13 @@ func (cfg Config) Validate() error {
 		}
 	}
 	if cfg.EvolutionGo.WebhookURL != "" {
-		if _, err := url.ParseRequestURI(cfg.EvolutionGo.WebhookURL); err != nil {
-			validationErrors = append(validationErrors, fmt.Errorf("EVOLUTION_GO_WEBHOOK_URL is invalid: %w", err))
+		if err := validateEvolutionWebhookURL("EVOLUTION_GO_WEBHOOK_URL", cfg.EvolutionGo.WebhookURL, cfg.Environment == "production"); err != nil {
+			validationErrors = append(validationErrors, err)
 		}
 	}
 	if cfg.EvolutionGo.BackendWebhookURL != "" {
-		if _, err := url.ParseRequestURI(cfg.EvolutionGo.BackendWebhookURL); err != nil {
-			validationErrors = append(validationErrors, fmt.Errorf("EVOLUTION_GO_BACKEND_WEBHOOK_URL is invalid: %w", err))
+		if err := validateEvolutionWebhookURL("EVOLUTION_GO_BACKEND_WEBHOOK_URL", cfg.EvolutionGo.BackendWebhookURL, cfg.Environment == "production"); err != nil {
+			validationErrors = append(validationErrors, err)
 		}
 	}
 	switch cfg.EvolutionGo.WebhookProcessorMode {
@@ -335,8 +341,9 @@ func (cfg Config) Validate() error {
 	if err := validateWebhookRolloutSessionIDs(cfg.EvolutionGo.WebhookRolloutSessionIDs); err != nil {
 		validationErrors = append(validationErrors, err)
 	}
-	if len(cfg.EvolutionGo.WebhookRolloutSessionIDs) > 0 && strings.TrimSpace(cfg.EvolutionGo.BackendWebhookURL) == "" {
-		validationErrors = append(validationErrors, errors.New("EVOLUTION_GO_BACKEND_WEBHOOK_URL is required when WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS is enabled"))
+	if (strings.TrimSpace(cfg.EvolutionGo.APIURL) != "" || strings.TrimSpace(cfg.EvolutionGo.APIKey) != "" || len(cfg.EvolutionGo.WebhookRolloutSessionIDs) > 0) &&
+		strings.TrimSpace(cfg.EvolutionGo.BackendWebhookURL) == "" {
+		validationErrors = append(validationErrors, errors.New("EVOLUTION_GO_BACKEND_WEBHOOK_URL is required when Evolution Go is enabled"))
 	}
 	if cfg.Meta.GraphBaseURL != "" {
 		if _, err := url.ParseRequestURI(cfg.Meta.GraphBaseURL); err != nil {
@@ -362,6 +369,32 @@ func (cfg Config) Validate() error {
 	}
 
 	return errors.Join(validationErrors...)
+}
+
+func validateEvolutionWebhookURL(name string, value string, requireHTTPS bool) error {
+	parsed, err := url.ParseRequestURI(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		if err == nil {
+			err = errors.New("absolute URL with host is required")
+		}
+		return fmt.Errorf("%s is invalid: %w", name, err)
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("%s must not contain URL credentials", name)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("%s must use http or https", name)
+	}
+	if requireHTTPS && parsed.Scheme != "https" {
+		return fmt.Errorf("%s must use https in production", name)
+	}
+	for queryName := range parsed.Query() {
+		switch strings.ToLower(strings.TrimSpace(queryName)) {
+		case "webhook_token", "apikey", "token":
+			return fmt.Errorf("%s must not contain credentials in the query string", name)
+		}
+	}
+	return nil
 }
 
 func validateWebhookRolloutSessionIDs(values []string) error {

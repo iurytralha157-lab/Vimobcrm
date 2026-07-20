@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { SharedFilters } from '@/components/shared/SharedFilters';
 import { useSharedFilters } from '@/hooks/use-shared-filters';
+import { normalizeSearchText, searchTextIncludes } from '@/lib/search-text';
 
 import { LeadCard } from '@/components/features/leads/LeadCard';
 
@@ -76,7 +77,7 @@ import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useHasPermission } from '@/hooks/use-organization-roles';
 import { notifyLeadRealtimeChange } from '@/contexts/LeadRealtimeBus';
 import { toast } from 'sonner';
-import { enforceClientActionRateLimit, getClientRateLimitMessage } from '@/lib/client-action-rate-limit';
+import { getClientRateLimitMessage } from '@/lib/client-action-rate-limit';
 import { leadsAPI } from '@/lib/api/leads';
 import { getLeadEnrichments } from '@/lib/api/lead-enrichments';
 import { pipelinesAPI } from '@/lib/api/pipelines';
@@ -220,6 +221,76 @@ function reconcileMovedLeadInBoard(
   });
 }
 
+function restoreLeadFromBoardSnapshot(
+  current: StageWithLeads[] | undefined,
+  snapshot: StageWithLeads[] | undefined,
+  leadId: string,
+) {
+  if (!snapshot) return current;
+  if (!current) return snapshot;
+
+  let snapshotStageId: string | null = null;
+  let snapshotLeadIndex = -1;
+  let snapshotLead: PipelineLead | null = null;
+
+  for (const stage of snapshot) {
+    const leadIndex = stage.leads?.findIndex((lead) => lead.id === leadId) ?? -1;
+    if (leadIndex === -1) continue;
+
+    snapshotStageId = stage.id;
+    snapshotLeadIndex = leadIndex;
+    snapshotLead = stage.leads[leadIndex];
+    break;
+  }
+
+  if (!snapshotStageId || !snapshotLead) return current;
+
+  let currentStageId: string | null = null;
+  const stagesWithoutLead = current.map((stage) => {
+    if (!Array.isArray(stage.leads)) return stage;
+
+    const nextLeads = stage.leads.filter((lead) => {
+      if (lead.id !== leadId) return true;
+      currentStageId = stage.id;
+      return false;
+    });
+
+    return nextLeads.length === stage.leads.length ? stage : { ...stage, leads: nextLeads };
+  });
+
+  const targetStageIndex = stagesWithoutLead.findIndex((stage) => stage.id === snapshotStageId);
+  if (targetStageIndex === -1) return current;
+
+  const targetStage = stagesWithoutLead[targetStageIndex];
+  const targetLeads = [...(targetStage.leads || [])];
+  targetLeads.splice(Math.min(snapshotLeadIndex, targetLeads.length), 0, snapshotLead);
+
+  return stagesWithoutLead.map((stage, index) => {
+    const isTargetStage = index === targetStageIndex;
+    const leads = isTargetStage ? targetLeads : stage.leads;
+    let countDelta = 0;
+
+    if (isTargetStage && currentStageId !== snapshotStageId) {
+      countDelta += 1;
+    }
+    if (currentStageId && stage.id === currentStageId && currentStageId !== snapshotStageId) {
+      countDelta -= 1;
+    }
+
+    if (!isTargetStage && countDelta === 0) return stage;
+
+    const leadCount = Array.isArray(leads) ? leads.length : 0;
+    const totalLeadCount = Math.max(Number(stage.total_lead_count ?? stage.leads?.length ?? leadCount) + countDelta, leadCount);
+
+    return {
+      ...stage,
+      leads,
+      total_lead_count: totalLeadCount,
+      has_more: totalLeadCount > leadCount,
+    };
+  });
+}
+
 const NO_VISIBLE_USER_ID = '00000000-0000-0000-0000-000000000000';
 const PIPELINE_AUTO_SCROLLER_OPTIONS = {
   startFromPercentage: 0.2,
@@ -230,6 +301,8 @@ const PIPELINE_AUTO_SCROLLER_OPTIONS = {
     stopDampeningAt: 900,
   },
 };
+const PIPELINE_MOVE_PERSISTENCE_INTERVAL_MS = 135;
+const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) return error.message;
@@ -366,6 +439,8 @@ export default function Pipelines() {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const isDraggingRef = useRef(false);
+  const latestMoveVersionByLeadRef = useRef(new Map<string, number>());
+  const nextMovePersistenceStartAtRef = useRef(0);
 
   const { data: pipelines = [], isLoading: pipelinesLoading } = usePipelines();
   const createPipeline = useCreatePipeline();
@@ -531,6 +606,7 @@ export default function Pipelines() {
   const { data: users = [] } = useOrganizationUsers({ enabled: shouldLoadLeadDialogResources });
   const { data: allTags = [] } = useTags({ enabled: shouldLoadLeadDialogResources });
   const assignLeadRoundRobin = useAssignLeadRoundRobin();
+  const assignLeadRoundRobinMutate = assignLeadRoundRobin.mutate;
   const shouldLoadPipelineManagementAccess = Boolean(selectedPipelineId) && (!leadsLoading || stagesWithLeads.length > 0);
   const canEditPipeline = useCanEditCadences({ enabled: shouldLoadPipelineManagementAccess });
   const isMobile = useIsMobile();
@@ -545,6 +621,26 @@ export default function Pipelines() {
 
   const handleDragStart = useCallback(() => {
     isDraggingRef.current = true;
+  }, []);
+
+  const handleOpenLead = useCallback((lead: PipelineLead | { id: string }) => {
+    setSelectedLead(lead as PipelineLead);
+  }, []);
+
+  const handleAssignLeadNow = useCallback((leadId: string) => {
+    assignLeadRoundRobinMutate(leadId);
+  }, [assignLeadRoundRobinMutate]);
+
+  const enqueueLeadMovePersistence = useCallback((task: () => Promise<void>) => {
+    const now = Date.now();
+    const scheduledAt = Math.max(now, nextMovePersistenceStartAtRef.current + PIPELINE_MOVE_PERSISTENCE_INTERVAL_MS);
+    nextMovePersistenceStartAtRef.current = scheduledAt;
+
+    return (async () => {
+      const delayMs = scheduledAt - Date.now();
+      if (delayMs > 0) await wait(delayMs);
+      await task();
+    })();
   }, []);
 
   const handleLoadMore = useCallback((stageId: string) => {
@@ -685,7 +781,7 @@ export default function Pipelines() {
   const queryClient = useQueryClient();
   const realtimeOrganizationId = organization?.id || profile?.organization_id || '';
 
-  const executeLeadMove = useCallback(async (
+  const executeLeadMove = useCallback((
     result: DropResult,
     options?: { isOwnResource?: boolean }
   ) => {
@@ -693,18 +789,6 @@ export default function Pipelines() {
 
     const { destination, source, draggableId } = result;
     if (!destination) {
-      isDraggingRef.current = false;
-      return;
-    }
-
-    try {
-      enforceClientActionRateLimit(`lead:move:${profile?.id || 'anonymous'}:${draggableId}`, [
-        { limit: 2, windowMs: 1000 },
-        { limit: 30, windowMs: 60_000 },
-      ]);
-    } catch (error) {
-      const rateLimitMessage = getClientRateLimitMessage(error);
-      if (rateLimitMessage) toast.error(rateLimitMessage);
       isDraggingRef.current = false;
       return;
     }
@@ -736,7 +820,7 @@ export default function Pipelines() {
     const dateToISO = dateRange.to.toISOString();
     const effectiveFilterTag = filterTag !== 'all' ? filterTag : undefined;
     const effectiveFilterDealStatus = filterDealStatus && filterDealStatus !== 'all' ? filterDealStatus : undefined;
-    const effectiveSearchQuery = searchQuery || undefined;
+    const effectiveSearchQuery = deferredSearchQuery || undefined;
     const effectiveFilterCampaign = filterCampaign !== 'all' ? filterCampaign : undefined;
     const effectiveFilterAdSet = filterAdSet !== 'all' ? filterAdSet : undefined;
     const effectiveFilterAd = filterAd !== 'all' ? filterAd : undefined;
@@ -763,7 +847,11 @@ export default function Pipelines() {
       effectiveScopedUserIds
     ];
     const previousData = queryClient.getQueryData<StageWithLeads[]>(queryKey);
+    const moveVersion = (latestMoveVersionByLeadRef.current.get(draggableId) ?? 0) + 1;
+    latestMoveVersionByLeadRef.current.set(draggableId, moveVersion);
+    const isLatestMoveForLead = () => latestMoveVersionByLeadRef.current.get(draggableId) === moveVersion;
 
+    void queryClient.cancelQueries({ queryKey, exact: true });
     queryClient.setQueryData<StageWithLeads[]>(queryKey, (old) => {
       if (!old) return old;
 
@@ -816,7 +904,13 @@ export default function Pipelines() {
       return newStages;
     });
 
-    try {
+    window.setTimeout(() => {
+      if (isLatestMoveForLead()) {
+        isDraggingRef.current = false;
+      }
+    }, 150);
+
+    void enqueueLeadMovePersistence(async () => {
       const currentStages = queryClient.getQueryData<StageWithLeads[]>(queryKey) || stages;
       const persistedStage = currentStages.find((stage) => stage.id === newStageId);
       const persistedLead = persistedStage?.leads?.find((lead) => lead.id === draggableId);
@@ -829,6 +923,8 @@ export default function Pipelines() {
       }, realtimeOrganizationId);
 
       if (updateResult.error) throw updateResult.error;
+
+      if (!isLatestMoveForLead()) return;
 
       const movedLeadFromRpc = updateResult.data as unknown as Partial<PipelineLead> | null;
       if (movedLeadFromRpc) {
@@ -844,7 +940,6 @@ export default function Pipelines() {
       });
 
       if (isSameStage) {
-        toast.success('Ordem do lead atualizada');
         queryClient.invalidateQueries({ queryKey: ['stages-with-leads'], refetchType: 'none' });
         return;
       }
@@ -856,58 +951,38 @@ export default function Pipelines() {
       const newDealStatus = movedLeadFromRpc?.deal_status && movedLeadFromRpc.deal_status !== originalLead?.deal_status
         ? movedLeadFromRpc.deal_status as string
         : null;
-      const wasAssigneeChanged = Boolean(
-        movedLeadFromRpc?.assigned_user_id &&
-        movedLeadFromRpc.assigned_user_id !== originalLead?.assigned_user_id
-      );
-
       if (newDealStatus) {
-        const statusLabels: Record<string, string> = {
-          won: 'Ganho',
-          lost: 'Perdido',
-          open: 'Aberto'
-        };
-        const statusLabel = statusLabels[newDealStatus] || newDealStatus;
-        toast.success(`Lead alterado para ${statusLabel}`, {
-          description: `Movido para ${newStage?.name || 'nova etapa'}`
-        });
-
         if (newDealStatus === 'lost') {
           const sourceStage = stages.find(s => s.id === oldStageId);
           const originalLead = sourceStage?.leads?.find((lead) => lead.id === draggableId);
           setLostReasonLead(originalLead || { id: draggableId, name: 'Lead' } as PipelineLead);
         }
-      } else if (wasAssigneeChanged) {
-        toast.success(`Lead movido para ${newStage?.name || 'nova etapa'}`, {
-          description: 'Responsável atualizado pela automação da coluna'
-        });
-      } else {
-        toast.success(`Lead movido para ${newStage?.name || 'nova etapa'}`);
       }
 
       queryClient.invalidateQueries({ queryKey: ['stages-with-leads'], refetchType: 'none' });
+    }).catch((error: unknown) => {
+      if (!isLatestMoveForLead()) return;
 
-    } catch (error: unknown) {
-      queryClient.setQueryData(queryKey, previousData);
+      queryClient.setQueryData<StageWithLeads[]>(queryKey, (current) =>
+        restoreLeadFromBoardSnapshot(current, previousData, draggableId),
+      );
       const rateLimitMessage = getClientRateLimitMessage(error);
       toast.error(rateLimitMessage || 'Erro ao mover lead: ' + getErrorMessage(error));
-    } finally {
-      setTimeout(() => {
-        isDraggingRef.current = false;
-      }, 500);
-    }
-  }, [stages, stageAutomations, dateRange, filterTag, filterDealStatus, searchQuery, filterCampaign, filterAdSet, filterAd, filterSource, selectedPipelineId, activeOrganizationId, effectivePipelineFilterUser, effectivePipelineFilterUserIds, queryClient, profile, realtimeOrganizationId]);
+    });
+  }, [stages, stageAutomations, dateRange, filterTag, filterDealStatus, deferredSearchQuery, filterCampaign, filterAdSet, filterAd, filterSource, selectedPipelineId, activeOrganizationId, effectivePipelineFilterUser, effectivePipelineFilterUserIds, queryClient, realtimeOrganizationId, enqueueLeadMovePersistence]);
 
   const handleDragEnd = useCallback(async (result: DropResult) => {
-    isDraggingRef.current = false;
-
     const { destination, source } = result;
 
-    if (!destination) return;
+    if (!destination) {
+      isDraggingRef.current = false;
+      return;
+    }
     if (
       destination.droppableId === source.droppableId &&
       destination.index === source.index
     ) {
+      isDraggingRef.current = false;
       return;
     }
 
@@ -1021,11 +1096,11 @@ export default function Pipelines() {
       let stageLeads: PipelineLead[] = [...(stage.leads || [])];
 
       if (searchQuery) {
-        const lowerSearch = searchQuery.toLowerCase();
+        const lowerSearch = normalizeSearchText(searchQuery);
         stageLeads = stageLeads.filter((lead) => {
-          const nameMatch = (lead.name || '').toLowerCase().includes(lowerSearch);
+          const nameMatch = searchTextIncludes(lead.name, lowerSearch);
           const phoneMatch = (lead.phone || '').includes(lowerSearch);
-          const emailMatch = (lead.email || '').toLowerCase().includes(lowerSearch);
+          const emailMatch = searchTextIncludes(lead.email, lowerSearch);
           return nameMatch || phoneMatch || emailMatch;
         });
       }
@@ -1516,7 +1591,7 @@ export default function Pipelines() {
                         >
                           <div
                             className={cn(
-                              "flex-1 min-h-0 overflow-y-auto px-2 pb-2 space-y-2 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+                              "flex flex-1 min-h-0 flex-col gap-2 overflow-y-auto px-2 pb-2 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
                               snapshot.isDraggingOver && "bg-[var(--app-surface-soft)]"
                             )}
                           >
@@ -1531,8 +1606,8 @@ export default function Pipelines() {
                                   tourTarget={stageIndex === 0 && index === 0 ? "pipeline-lead-card" : undefined}
                                   lead={lead}
                                   index={index}
-                                  onClick={() => setSelectedLead(lead)}
-                                  onAssignNow={(leadId) => assignLeadRoundRobin.mutate(leadId)}
+                                  onClick={handleOpenLead}
+                                  onAssignNow={handleAssignLeadNow}
                                   isDragDisabled={isDragDisabled || isMobile}
                                 />
                               ))

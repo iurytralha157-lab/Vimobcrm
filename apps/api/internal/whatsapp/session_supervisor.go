@@ -9,9 +9,8 @@ import (
 )
 
 const (
-	whatsappWebhookSubscriptionVersion   = "lead-message-events-v2"
-	whatsappWebhookRolloutManagedSetting = "webhook_rollout_managed"
-	whatsappNotificationSafeVersion      = "evolution-advanced-settings-v1"
+	whatsappWebhookSubscriptionVersion = "lead-message-events-v2"
+	whatsappNotificationSafeVersion    = "evolution-advanced-settings-v1"
 )
 
 var whatsappWebhookSubscriptions = []string{
@@ -67,7 +66,7 @@ func (repo Repository) superviseActiveSessionsWithLimit(ctx context.Context, log
 		  and ws.provider = 'evolution_go'
 		order by
 		  case
-		    when coalesce(ws.advanced_settings->>'webhook_rollout_managed', 'false') = 'true' then 0
+		    when coalesce(ws.advanced_settings->>'webhook_url', '') ~* '([?&])(webhook_token|apikey|token)=' then 0
 		    else 1
 		  end,
 		  ws.updated_at asc,
@@ -128,7 +127,7 @@ func (repo Repository) superviseSession(ctx context.Context, session Session, no
 		return nil
 	}
 
-	configuredWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, instanceKey, webhookToken)
+	configuredWebhookURL := repo.functions.configuredEvolutionWebhookURL(session.ID, instanceKey)
 	connectBody, shouldConnect, appliesWebhook := evolutionSupervisorConnectPlan(
 		repo.functions.webhookRolloutSessionIDs,
 		session.ID,
@@ -136,17 +135,6 @@ func (repo Repository) superviseSession(ctx context.Context, session Session, no
 		configuredWebhookURL,
 		session.Status,
 	)
-	rolloutAllowed := webhookRolloutAllowsSession(repo.functions.webhookRolloutSessionIDs, session.ID)
-	if appliesWebhook && rolloutAllowed && !webhookRolloutManaged(settings) {
-		// Persist rollout intent before touching the provider. If the provider
-		// succeeds but a later database write fails, rollback still knows this
-		// session may be pointing at the backend.
-		setWebhookRolloutManaged(settings, true)
-		if err := repo.updateSessionSettings(ctx, session.OrganizationID, session.ID, settings); err != nil {
-			return err
-		}
-		settingsChanged = false
-	}
 	if shouldConnect {
 		_, err := repo.functions.invokeEvolution(ctx, "instance.connect", map[string]any{
 			"session_id":  session.ID,
@@ -162,7 +150,7 @@ func (repo Repository) superviseSession(ctx context.Context, session Session, no
 			settings["webhook_last_configured_at"] = now.Format(time.RFC3339)
 			settings["webhook_subscription_version"] = whatsappWebhookSubscriptionVersion
 			settings["evolution_go_resolved_instance_key"] = instanceKey
-			setWebhookRolloutManaged(settings, rolloutAllowed)
+			delete(settings, "webhook_rollout_managed")
 			settingsChanged = true
 			if err := repo.updateSessionSettings(ctx, session.OrganizationID, session.ID, settings); err != nil {
 				return err
@@ -219,11 +207,6 @@ func evolutionSupervisorConnectPlan(
 	if webhookConfigurationAllowed(allowlist, sessionID, settings, expectedURL, status) {
 		return evolutionWebhookConnectBody(expectedURL), true, true
 	}
-	if !webhookRolloutAllowsSession(allowlist, sessionID) && !webhookRolloutManaged(settings) && strings.EqualFold(strings.TrimSpace(status), "disconnected") {
-		// Keep the existing disconnected-session supervision without sending any
-		// webhook, subscription or advanced-setting fields to the provider.
-		return map[string]any{}, true, false
-	}
 	return nil, false, false
 }
 
@@ -234,33 +217,12 @@ func webhookConfigurationAllowed(
 	expectedURL string,
 	status string,
 ) bool {
-	rolloutAllowed := webhookRolloutAllowsSession(allowlist, sessionID)
-	rollbackManaged := !rolloutAllowed && webhookRolloutManaged(settings)
-	if (!rolloutAllowed && !rollbackManaged) || strings.TrimSpace(expectedURL) == "" {
+	_ = allowlist
+	_ = sessionID
+	if strings.TrimSpace(expectedURL) == "" {
 		return false
 	}
-	if rollbackManaged {
-		// The marker is the source of truth for rollback. Re-apply the legacy URL
-		// even if cached settings already claim it, then clear the marker only
-		// after the provider accepts the request.
-		return true
-	}
-
 	return webhookConfigurationDue(settings, expectedURL) || strings.EqualFold(strings.TrimSpace(status), "disconnected")
-}
-
-func webhookRolloutManaged(settings map[string]any) bool {
-	managed, ok := settings[whatsappWebhookRolloutManagedSetting].(bool)
-	return ok && managed
-}
-
-func setWebhookRolloutManaged(settings map[string]any, managed bool) {
-	if managed {
-		settings[whatsappWebhookRolloutManagedSetting] = true
-		return
-	}
-	delete(settings, whatsappWebhookRolloutManagedSetting)
-	delete(settings, "notification_safe_settings_version")
 }
 
 func notificationSafeSettingsDue(allowlist []string, sessionID string, settings map[string]any) bool {

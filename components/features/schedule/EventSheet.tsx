@@ -21,6 +21,7 @@ import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from "@/components/ui/command";
 import { cn, getCurrentTimeForInput, getBrasiliaTime } from "@/lib/utils";
+import { commandSearchFilter } from "@/lib/search-text";
 import {
   useCreateScheduleEvent, useUpdateScheduleEvent, useDeleteScheduleEvent,
   EventType, ScheduleEvent, ScheduleEventVisibility,
@@ -35,6 +36,7 @@ import Link from "next/link";
 import { PropertyPickerDialog } from "@/components/features/properties/PropertyPickerDialog";
 import { PropertyPreviewDialog } from "@/components/features/properties/PropertyPreviewDialog";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 
 const eventTypes: { type: EventType; label: string; icon: React.ElementType; color: string }[] = [
   { type: "call", label: "Ligação", icon: Phone, color: "#6366f1" },
@@ -124,16 +126,17 @@ export function EventSheet({
 }: EventSheetProps) {
   const { hasPermission } = useUserPermissions();
   const canManageSchedule = hasPermission("schedule_manage");
-  const { data: users = [] } = useScheduleUsers();
-  const { data: teams = [] } = useTeams();
-  const createEvent = useCreateScheduleEvent();
-  const updateEvent = useUpdateScheduleEvent();
-  const deleteEvent = useDeleteScheduleEvent();
-
+  const canViewProperties = hasPermission("property_view");
   const isExisting = !!event;
   const isCompleted = event?.status === "completed";
   const isMasked = Boolean(event?.is_masked);
   const [isEditing, setIsEditing] = useState(false);
+  const { data: users = [] } = useScheduleUsers({ enabled: open });
+  const { data: teams = [] } = useTeams({ enabled: open && canManageSchedule && !isMasked && isEditing });
+  const createEvent = useCreateScheduleEvent();
+  const updateEvent = useUpdateScheduleEvent();
+  const deleteEvent = useDeleteScheduleEvent();
+
   const locked = !canManageSchedule || isMasked || isCompleted || (isExisting && !isEditing);
 
   const [selectedType, setSelectedType] = useState<EventType>("task");
@@ -153,12 +156,23 @@ export function EventSheet({
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedLeadName, setSelectedLeadName] = useState<string | null>(null);
   const [showLeadSelector, setShowLeadSelector] = useState(false);
-  const { data: searchedLeads = [] } = useLeads({ search: leadSearch, limit: 20 });
+  const { data: searchedLeads = [] } = useLeads(
+    { search: leadSearch, limit: 20 },
+    { enabled: open && showLeadSelector },
+  );
 
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
   const [selectedPropertyLabel, setSelectedPropertyLabel] = useState<string | null>(null);
   const [propertyPreviewOpen, setPropertyPreviewOpen] = useState(false);
-  const { data: allProperties = [] } = useProperties();
+  const [propertyPickerOpen, setPropertyPickerOpen] = useState(false);
+  const [propertySearch, setPropertySearch] = useState("");
+  const deferredPropertySearch = useDebouncedValue(propertySearch.trim(), 300);
+  const { data: allProperties = [], isLoading: propertiesInitialLoading, isFetching: propertiesFetching } = useProperties(
+    deferredPropertySearch,
+    {},
+    { enabled: propertyPickerOpen || propertyPreviewOpen, limit: 50 },
+  );
+  const propertiesLoading = propertiesInitialLoading || propertiesFetching;
   const previewProperty = useMemo(
     () => (selectedPropertyId ? allProperties.find((property) => property.id === selectedPropertyId) || null : null),
     [allProperties, selectedPropertyId],
@@ -167,9 +181,20 @@ export function EventSheet({
   const [showAssigneePicker, setShowAssigneePicker] = useState(false);
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [pendingAssigneeIds, setPendingAssigneeIds] = useState<string[]>([]);
-  const { assignees, addAssignee, removeAssignee } = useScheduleEventAssignees(event?.id);
-  const { comments, addComment, isAdding } = useScheduleComments(isMasked ? undefined : event?.id);
+  const { assignees, addAssignee, removeAssignee } = useScheduleEventAssignees(open ? event?.id : undefined);
+  const { comments, addComment, isAdding } = useScheduleComments(open && !isMasked ? event?.id : undefined);
   const [commentText, setCommentText] = useState("");
+
+  const assignableUserIds = useMemo(() => new Set(users.map((user) => user.id)), [users]);
+  const assignableTeams = useMemo(
+    () => teams
+      .map((team) => ({
+        ...team,
+        members: (team.members || []).filter((member) => assignableUserIds.has(member.user?.id || member.user_id)),
+      }))
+      .filter((team) => team.members.length > 0),
+    [assignableUserIds, teams],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -289,9 +314,9 @@ export function EventSheet({
     (u) => u.id !== primaryUserId && !assignees.some((a) => a.id === u.id) && !pendingAssigneeIds.includes(u.id),
   );
 
-  const handleTeamSelect = (teamId: string) => {
+  const handleTeamSelect = async (teamId: string) => {
     setSelectedTeamId(teamId);
-    const team = teams.find((item) => item.id === teamId);
+    const team = assignableTeams.find((item) => item.id === teamId);
     if (!team) return;
 
     const memberIds = (team.members || [])
@@ -305,7 +330,9 @@ export function EventSheet({
     if (!primaryUserId && memberIds[0]) {
       setPrimaryUserId(memberIds[0]);
     }
-    if (nextPending.length > 0) {
+    if (isExisting && nextPending.length > 0) {
+      await Promise.all(nextPending.map((id) => addAssignee(id)));
+    } else if (nextPending.length > 0) {
       setPendingAssigneeIds((prev) => Array.from(new Set([...prev, ...nextPending])));
     }
   };
@@ -352,8 +379,14 @@ export function EventSheet({
   };
 
   const handleMarkDone = async () => {
-    if (!event || isMasked) return;
+    if (!canManageSchedule || !event || isMasked) return;
     await updateEvent.mutateAsync({ id: event.id, status: "completed" });
+    onOpenChange(false);
+  };
+
+  const handleReopen = async () => {
+    if (!canManageSchedule || !event || isMasked) return;
+    await updateEvent.mutateAsync({ id: event.id, status: "scheduled" });
     onOpenChange(false);
   };
 
@@ -608,7 +641,7 @@ export function EventSheet({
                     </button>
                   </PopoverTrigger>
                   <PopoverContent className={cn("w-[260px] p-0", agendaPopoverClass)} align="start">
-                    <Command className="bg-transparent">
+                    <Command filter={commandSearchFilter} className="bg-transparent">
                       <CommandInput placeholder="Adicionar responsável..." />
                       <CommandList>
                         <CommandEmpty>Sem usuários disponíveis.</CommandEmpty>
@@ -636,13 +669,13 @@ export function EventSheet({
                   </PopoverContent>
                 </Popover>
               )}
-              {!locked && teams.length > 0 && (
-                <Select value={selectedTeamId} onValueChange={handleTeamSelect}>
+              {!locked && assignableTeams.length > 0 && (
+                <Select value={selectedTeamId} onValueChange={(teamId) => void handleTeamSelect(teamId)}>
                   <SelectTrigger className={cn("h-8 w-[132px] px-3 text-xs", agendaControlClass)}>
                     <SelectValue placeholder="Equipe" />
                   </SelectTrigger>
                   <SelectContent className={agendaPopoverClass}>
-                    {teams.map((team) => (
+                    {assignableTeams.map((team) => (
                       <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>
                     ))}
                   </SelectContent>
@@ -743,7 +776,7 @@ export function EventSheet({
             )}
           </AgendaRow>
 
-          <AgendaRow dataTour="agenda-event-property" icon={<Building2 size={18} />} label="Imóvel vinculado" inline>
+          {canViewProperties && <AgendaRow dataTour="agenda-event-property" icon={<Building2 size={18} />} label="Imóvel vinculado" inline>
             {selectedPropertyId ? (
               <div className="flex items-center justify-between gap-2">
                 <button type="button" onClick={() => setPropertyPreviewOpen(true)} className="truncate text-left text-sm font-medium text-primary hover:text-primary/80">
@@ -759,6 +792,12 @@ export function EventSheet({
               <PropertyPickerDialog
                 properties={allProperties}
                 selectedPropertyId={selectedPropertyId}
+                isLoading={propertiesLoading}
+                onOpenChange={(nextOpen) => {
+                  setPropertyPickerOpen(nextOpen);
+                  if (!nextOpen) setPropertySearch("");
+                }}
+                onSearchChange={setPropertySearch}
                 onSelect={(p) => {
                   setSelectedPropertyId(p.id);
                   setSelectedPropertyLabel(`${p.code ? `${p.code} · ` : ""}${p.title || "Imóvel"}`);
@@ -773,7 +812,7 @@ export function EventSheet({
             ) : (
               <span className="text-sm text-[var(--app-text-tertiary)]">{isMasked ? "Informacao privada" : "Sem imóvel"}</span>
             )}
-          </AgendaRow>
+          </AgendaRow>}
 
           <AgendaRow dataTour="agenda-event-notes" icon={<MessageSquare size={19} />}>
             {locked ? (
@@ -883,7 +922,12 @@ export function EventSheet({
                 <CheckCircle size={13} /> Concluir
               </Button>
             )}
-            <Button variant="ghost" size="sm" onClick={() => (canManageSchedule && isExisting && !isMasked ? setIsEditing((value) => !value) : onOpenChange(false))} disabled={isLoading || isCompleted} className={cn("rounded-[8px] border-0 font-semibold shadow-none", !locked ? "order-1 h-11 flex-[3] bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]" : "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground")}>
+            {canManageSchedule && isExisting && !isMasked && isCompleted && (
+              <Button variant="ghost" size="sm" onClick={handleReopen} disabled={isLoading} className="gap-1.5 rounded-lg bg-amber-500 text-white hover:bg-amber-600 hover:text-white">
+                <Clock size={13} /> Reabrir
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => (canManageSchedule && isExisting && !isMasked && !isCompleted ? setIsEditing((value) => !value) : onOpenChange(false))} disabled={isLoading} className={cn("rounded-[8px] border-0 font-semibold shadow-none", !locked ? "order-1 h-11 flex-[3] bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]" : "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground")}>
               {canManageSchedule && isExisting && !isMasked && !isEditing ? "Editar" : "Fechar"}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => (isExisting ? setIsEditing(true) : onOpenChange(false))} disabled={isLoading || isCompleted} className="hidden">

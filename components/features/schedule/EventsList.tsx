@@ -59,9 +59,10 @@ interface EventsListProps {
   showUser?: boolean;
   showLead?: boolean;
   onAddEvent?: () => void;
+  canManage?: boolean;
 }
 
-export function EventsList({ events, onEditEvent, onAddEvent, showUser = true, showLead = true }: EventsListProps) {
+export function EventsList({ events, onEditEvent, onAddEvent, showUser = true, showLead = true, canManage = false }: EventsListProps) {
   const completeEvent = useCompleteScheduleEvent();
   const deleteEvent = useDeleteScheduleEvent();
 
@@ -97,7 +98,7 @@ export function EventsList({ events, onEditEvent, onAddEvent, showUser = true, s
         <p className="text-sm font-medium">Nenhuma atividade encontrada</p>
         <p className="text-xs mb-4">Você ainda não agendou nenhuma atividade para este lead.</p>
 
-        {onAddEvent && (
+        {onAddEvent && canManage && (
           <Button
             variant="default"
             size="sm"
@@ -136,6 +137,7 @@ export function EventsList({ events, onEditEvent, onAddEvent, showUser = true, s
                 >
                   <Checkbox
                     checked={isCompleted}
+                    disabled={!canManage || Boolean(event.is_masked)}
                     onCheckedChange={(checked) => {
                       completeEvent.mutate({ id: event.id, status: checked ? 'completed' : 'scheduled' });
                     }}
@@ -172,7 +174,7 @@ export function EventsList({ events, onEditEvent, onAddEvent, showUser = true, s
                         </div>
                       </div>
 
-                      <DropdownMenu>
+                      {canManage && !event.is_masked && <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
                             variant="ghost"
@@ -195,7 +197,7 @@ export function EventsList({ events, onEditEvent, onAddEvent, showUser = true, s
                             Excluir
                           </DropdownMenuItem>
                         </DropdownMenuContent>
-                      </DropdownMenu>
+                      </DropdownMenu>}
                     </div>
 
                     {event.description && (

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -105,16 +106,12 @@ func (repo Repository) List(ctx context.Context, filter ListFilter) (ListRespons
 	}
 
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, searchtext.Pattern(filter.Search))
 		searchIndex := len(args)
-		where = append(where, fmt.Sprintf(`(
-			e.message ilike $%d
-			or e.error_code ilike $%d
-			or e.path ilike $%d
-			or e.component ilike $%d
-			or e.request_id ilike $%d
-			or e.fingerprint ilike $%d
-		)`, searchIndex, searchIndex, searchIndex, searchIndex, searchIndex, searchIndex))
+		where = append(where, searchtext.AnySQL(
+			[]string{"e.message", "e.error_code", "e.path", "e.component", "e.request_id", "e.fingerprint"},
+			fmt.Sprintf("$%d", searchIndex),
+		))
 	}
 	if filter.Severity != "" {
 		addFilter("e.severity = $%d", filter.Severity)

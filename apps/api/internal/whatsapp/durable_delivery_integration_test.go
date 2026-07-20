@@ -85,6 +85,11 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"messageId": requestBody["id"]})
 		case "/functions/v1/evolution-go-webhook":
 			edgeCalls.Add(1)
+			for _, credential := range []string{"webhook_token", "apikey", "token"} {
+				if r.URL.Query().Has(credential) {
+					t.Errorf("edge forwarding leaked %s in its URL", credential)
+				}
+			}
 			if r.Header.Get("x-webhook-token") != "webhook-secret" {
 				t.Error("edge forwarding did not use the scoped webhook token header")
 			}

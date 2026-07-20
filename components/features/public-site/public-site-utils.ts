@@ -51,7 +51,14 @@ export function getSiteTitle(site: PublicSiteConfig) {
 }
 
 export function getSiteDescription(site: PublicSiteConfig) {
-  return site.site_description || `Encontre o imóvel dos seus sonhos com a ${getSiteTitle(site)}.`;
+  if (site.site_description?.trim()) return site.site_description.trim();
+
+  const location = [site.city, site.state].filter(Boolean).join(", ");
+  if (location) {
+    return `${getSiteTitle(site)}: imóveis para comprar e alugar em ${location}, com atendimento especializado.`;
+  }
+
+  return `Encontre imóveis para comprar e alugar com a ${getSiteTitle(site)}.`;
 }
 
 export function buildSiteHref(basePath: string, href: string) {

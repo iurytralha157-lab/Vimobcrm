@@ -3,7 +3,7 @@ import { Bot, Building2, Key, Lock, MessageCircle, Search, Settings2, Webhook } 
 import NextImage from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { WhatsAppTab } from "@/components/features/settings/WhatsAppTab";
@@ -22,6 +22,7 @@ import { useImoviewIntegration } from "@/hooks/use-imoview-integration";
 import { useGoogleCalendarStatus } from "@/hooks/use-google-calendar";
 import { useGrupoOLXIntegration } from "@/hooks/use-grupo-olx-integration";
 import { FEATURES } from "@/config/constants";
+import { normalizeSearchText } from "@/lib/search-text";
 
 type IntegrationKey = "whatsapp" | "ai" | "meta" | "grupo-olx" | "google-calendar" | "vista" | "imoview" | "webhooks" | "api";
 const ADMIN_ONLY_INTEGRATIONS = new Set<IntegrationKey>(["meta", "grupo-olx", "vista", "imoview"]);
@@ -93,6 +94,7 @@ interface IntegrationItem {
 
 interface IntegrationsTabProps {
   defaultIntegration?: string;
+  onCloseIntegration?: () => void;
   hasWhatsAppModule: boolean;
   hasAIModule: boolean;
   hasWebhooksModule: boolean;
@@ -105,6 +107,7 @@ interface IntegrationsTabProps {
 
 export function IntegrationsTab({
   defaultIntegration,
+  onCloseIntegration,
   hasWhatsAppModule,
   hasAIModule,
   hasWebhooksModule,
@@ -147,10 +150,12 @@ export function IntegrationsTab({
     defaultIntegrationKey && !defaultIntegrationLocked && !defaultIntegrationUnavailable ? defaultIntegrationKey : null,
   );
   const handledMetaOAuthEventRef = useRef<string | number | null>(null);
+  const openedDefaultIntegrationRef = useRef<IntegrationKey | null>(null);
   const disabledIntegrations = TEMPORARILY_DISABLED_INTEGRATIONS;
 
   useEffect(() => {
     if (!defaultIntegrationKey || defaultIntegrationLocked || defaultIntegrationUnavailable) {
+      openedDefaultIntegrationRef.current = null;
       if (defaultIntegrationKey && activeIntegration === defaultIntegrationKey) {
         // eslint-disable-next-line react-hooks/set-state-in-effect -- Mantem links diretos para modulos indisponiveis sem modal vazio.
         setActiveIntegration(null);
@@ -158,10 +163,16 @@ export function IntegrationsTab({
       return;
     }
 
-    if (activeIntegration !== defaultIntegrationKey) {
+    if (openedDefaultIntegrationRef.current !== defaultIntegrationKey) {
+      openedDefaultIntegrationRef.current = defaultIntegrationKey;
       setActiveIntegration(defaultIntegrationKey);
     }
   }, [activeIntegration, defaultIntegrationKey, defaultIntegrationLocked, defaultIntegrationUnavailable]);
+
+  const closeIntegration = useCallback(() => {
+    setActiveIntegration(null);
+    onCloseIntegration?.();
+  }, [onCloseIntegration]);
 
   const handleMetaOAuthMessage = useCallback((message: MetaOAuthWindowMessage) => {
     if (!message?.type) return;
@@ -384,9 +395,9 @@ export function IntegrationsTab({
   }, [canManageAI, canManageIntegrations, canManageWhatsApp, googleCalendarStatus, grupoOLXIntegration, hasAIModule, hasAPIModule, hasPortalsModule, hasWebhooksModule, hasWhatsAppAccess, imoviewIntegration, metaIntegrations, vistaIntegration, whatsappSessions]);
 
   const filteredIntegrations = integrations.filter((item) => {
-    const query = search.trim().toLowerCase();
+    const query = normalizeSearchText(search);
     if (!query) return true;
-    return `${item.title} ${item.description}`.toLowerCase().includes(query);
+    return normalizeSearchText(`${item.title} ${item.description}`).includes(query);
   });
 
   const effectiveActiveIntegration =
@@ -452,7 +463,7 @@ export function IntegrationsTab({
                   </div>
                   <Badge
                     variant={isAccessLocked || !item.connected ? "outline" : "default"}
-                    className={isAccessLocked || !item.connected ? "border-transparent bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-soft)]" : ""}
+                    className={isAccessLocked || !item.connected ? "!rounded-[6px] border-transparent bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-soft)]" : "!rounded-[6px]"}
                   >
                     {isAccessLocked ? "Sem acesso" : isTemporarilyDisabled ? "Desativado" : item.connected ? "Integrado" : "Não integrado"}
                   </Badge>
@@ -487,7 +498,7 @@ export function IntegrationsTab({
 
       <Dialog
         open={!!effectiveActiveIntegration && effectiveActiveIntegration !== "vista" && effectiveActiveIntegration !== "imoview"}
-        onOpenChange={(open) => !open && setActiveIntegration(null)}
+        onOpenChange={(open) => !open && closeIntegration()}
       >
         <DialogContent
           data-tour={effectiveActiveIntegration ? `${effectiveActiveIntegration}-integration-dialog` : undefined}
@@ -499,6 +510,9 @@ export function IntegrationsTab({
         >
           <DialogHeader>
             <DialogTitle>{activeTitle ? `Integração com ${activeTitle}` : "Integração"}</DialogTitle>
+            <DialogDescription className="sr-only">
+              Configure credenciais, destinos e opções da integração selecionada.
+            </DialogDescription>
           </DialogHeader>
           {effectiveActiveIntegration === "whatsapp" && <WhatsAppTab embedded />}
           {effectiveActiveIntegration === "ai" && <AIAssistantTab />}
@@ -515,8 +529,8 @@ export function IntegrationsTab({
           {effectiveActiveIntegration === "api" && <APITab />}
         </DialogContent>
       </Dialog>
-      <VistaImportDialog open={effectiveActiveIntegration === "vista"} onOpenChange={(open) => !open && setActiveIntegration(null)} />
-      <ImoviewImportDialog open={effectiveActiveIntegration === "imoview"} onOpenChange={(open) => !open && setActiveIntegration(null)} />
+      <VistaImportDialog open={effectiveActiveIntegration === "vista"} onOpenChange={(open) => !open && closeIntegration()} />
+      <ImoviewImportDialog open={effectiveActiveIntegration === "imoview"} onOpenChange={(open) => !open && closeIntegration()} />
     </div>
   );
 }

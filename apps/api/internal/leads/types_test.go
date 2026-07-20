@@ -48,16 +48,29 @@ func TestParseListFilterRejectsInvalidValues(t *testing.T) {
 func TestCreateRequestValidate(t *testing.T) {
 	interestValue := "450000.00"
 	request := CreateRequest{
-		Name:             "Ana Silva",
-		Email:            "ana@example.com",
-		Source:           "",
-		InterestValue:    &interestValue,
-		DealStatus:       "won",
-		PropertyID:       "11111111-1111-1111-1111-111111111111",
+		Name:          "Ana Silva",
+		Email:         "ana@example.com",
+		Source:        "",
+		InterestValue: &interestValue,
+		DealStatus:    "won",
+		PropertyID:    "11111111-1111-1111-1111-111111111111",
+		InterestPropertyIDs: []string{
+			"11111111-1111-1111-1111-111111111111",
+			"55555555-5555-4555-8555-555555555555",
+		},
 		ConversationID:   "22222222-2222-2222-2222-222222222222",
+		TeamID:           "44444444-4444-4444-4444-444444444444",
 		TagIDs:           []string{"33333333-3333-3333-3333-333333333333", "33333333-3333-3333-3333-333333333333"},
 		RendaFamiliar:    "12000",
 		FaixaValorImovel: "500k-700k",
+		Profile: &LeadProfileRequest{
+			PersonType: "individual",
+			Gender:     "female",
+			SocialName: "Ana",
+			BirthDate:  "1990-04-10",
+			CPF:        "123.456.789-01",
+			RG:         "12.345.678-9",
+		},
 	}
 
 	input, err := request.Validate()
@@ -71,11 +84,18 @@ func TestCreateRequestValidate(t *testing.T) {
 	if input.InterestValue == nil || *input.InterestValue != interestValue {
 		t.Fatalf("Validate() interest value = %#v", input.InterestValue)
 	}
-	if input.DealStatus != "won" || input.PropertyID == nil || input.ConversationID == nil {
+	if input.DealStatus != "won" || input.PropertyID == nil || input.ConversationID == nil || input.TeamID == nil {
 		t.Fatalf("Validate() new fields = %#v", input)
 	}
 	if len(input.TagIDs) != 1 || input.TagIDs[0] != "33333333-3333-3333-3333-333333333333" {
 		t.Fatalf("Validate() tag ids = %#v", input.TagIDs)
+	}
+	if len(input.InterestPropertyIDs) != 2 || input.InterestPropertyIDs[1] != "55555555-5555-4555-8555-555555555555" {
+		t.Fatalf("Validate() interest property ids = %#v", input.InterestPropertyIDs)
+	}
+	profile, ok := input.Metadata["profile"].(LeadMetadata)
+	if !ok || profile["personType"] != "individual" || profile["cpf"] != "12345678901" {
+		t.Fatalf("Validate() profile metadata = %#v", input.Metadata)
 	}
 }
 
@@ -85,10 +105,16 @@ func TestCreateRequestRejectsInvalidValues(t *testing.T) {
 		{Name: "A"},
 		{Name: "Ana", Email: "not-email"},
 		{Name: "Ana", PipelineID: "not-a-uuid"},
+		{Name: "Ana", TeamID: "not-a-uuid"},
 		{Name: "Ana", InterestValue: &invalidInterestValue},
 		{Name: "Ana", DealStatus: "archived"},
 		{Name: "Ana", DealStatus: "lost"},
 		{Name: "Ana", TagIDs: []string{"not-a-uuid"}},
+		{Name: "Ana", InterestPropertyIDs: []string{"not-a-uuid"}},
+		{Name: "Ana", Profile: &LeadProfileRequest{PersonType: "person"}},
+		{Name: "Ana", Profile: &LeadProfileRequest{CPF: "123"}},
+		{Name: "Ana", Profile: &LeadProfileRequest{CNPJ: "123"}},
+		{Name: "Ana", Profile: &LeadProfileRequest{BirthDate: "2035-01-01"}},
 	}
 
 	for _, request := range tests {
@@ -280,18 +306,19 @@ func TestLeadPropertyUnavailableErrorMessage(t *testing.T) {
 }
 
 func TestStoragePathFromPublicURL(t *testing.T) {
+	projectURL := "https://example.supabase.co"
 	publicURL := "https://example.supabase.co/storage/v1/object/public/whatsapp-media/orgs/org-1/leads/lead-1/docs/70.png"
-	if got := storagePathFromPublicURL(publicURL, "70.png"); got != "orgs/org-1/leads/lead-1/docs/70.png" {
+	if got := storagePathFromPublicURL(publicURL, projectURL); got != "orgs/org-1/leads/lead-1/docs/70.png" {
 		t.Fatalf("storagePathFromPublicURL(public) = %q", got)
 	}
 
 	signedURL := "https://example.supabase.co/storage/v1/object/sign/whatsapp-media/orgs/org-1/leads/lead-1/docs/70.png?token=abc"
-	if got := storagePathFromPublicURL(signedURL, "70.png"); got != "orgs/org-1/leads/lead-1/docs/70.png" {
+	if got := storagePathFromPublicURL(signedURL, projectURL); got != "orgs/org-1/leads/lead-1/docs/70.png" {
 		t.Fatalf("storagePathFromPublicURL(signed) = %q", got)
 	}
 
 	externalURL := "https://cdn.example.com/files/70.png"
-	if got := storagePathFromPublicURL(externalURL, "70.png"); got != "" {
+	if got := storagePathFromPublicURL(externalURL, projectURL); got != "" {
 		t.Fatalf("storagePathFromPublicURL(external) = %q, want empty", got)
 	}
 }

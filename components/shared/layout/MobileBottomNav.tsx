@@ -1,92 +1,87 @@
 "use client";
 
-import { useState, useMemo, type ElementType } from 'react';
+import { useState, useMemo } from 'react';
+import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
-import {
-  LayoutDashboard,
-  Kanban,
-  MessageSquare,
-  MoreHorizontal,
-  Plus,
-  Users,
-  Calendar,
-  Building2,
-  DollarSign,
-  CreditCard
-} from 'lucide-react';
+import { MoreHorizontal, Plus } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
+import { useLocationHash } from '@/hooks/use-location-hash';
 import { MobileSidebar } from './MobileSidebar';
-import { CreateLeadDialog } from '@/components/features/leads/CreateLeadDialog';
 import { isBillingBlockedStatus } from '@/lib/billing-access';
 import { canUseFinancialModule } from '@/lib/financial-access';
 import { canManageOrganization } from '@/lib/access/organization';
+import {
+  filterNavigationItems,
+  isNavigationPathActive,
+  resolveMobileFabAction,
+  selectMobileNavigationItems,
+} from '@/lib/access/navigation';
+import {
+  APP_NAVIGATION_ITEMS,
+  BILLING_NAVIGATION_ITEM,
+  type AppNavigationItem,
+} from '@/config/navigation';
+import { getNavigationIcon } from './navigation-icons';
 
-interface TabItem {
-  icon: ElementType;
-  labelKey: string;
-  path: string;
-}
+const CreateLeadDialog = dynamic(
+  () => import('@/components/features/leads/CreateLeadDialog').then((module) => module.CreateLeadDialog),
+  { ssr: false },
+);
 
 export function MobileBottomNav() {
   const [createLeadOpen, setCreateLeadOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname() || '';
   const searchParams = useSearchParams();
-  const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
+  const currentHash = useLocationHash();
+  const { profile, isSuperAdmin, organization, tenantContext, userOrganizations } = useAuth();
   const { t } = useLanguage();
-  const { hasModule } = useOrganizationModules();
+  const { hasModule, isLoading: modulesLoading } = useOrganizationModules();
+  const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
   const isBillingBlocked = !isSuperAdmin && isBillingBlockedStatus(organization?.subscription_status);
   const canAccessFinancialModule = canUseFinancialModule(organization);
   const activeOrganizationId = organization?.id || profile?.organization_id;
-  const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
+  const activeMembership = userOrganizations.find((org) => org.organization_id === activeOrganizationId);
+  const fallbackMemberRole = tenantContext && tenantContext.organizationId === activeOrganizationId
+    ? tenantContext.memberRole
+    : undefined;
+  const activeMemberRole = activeMembership?.member_role || fallbackMemberRole;
+  const isTeamLeader = Boolean(tenantContext?.isTeamLeader);
   const canManageCurrentOrganization = canManageOrganization({ isSuperAdmin, memberRole: activeMemberRole });
+  const navigationLoading = modulesLoading || permissionsLoading;
 
-  // Build the 4 visible tabs dynamically based on modules
   const tabs = useMemo(() => {
+    if (navigationLoading) {
+      return ['loading', 'loading', 'loading', 'loading', 'loading'] as const;
+    }
+
     if (isBillingBlocked) {
-      return [{ icon: CreditCard, labelKey: 'Faturamento', path: '/settings?tab=subscription' }] as TabItem[];
+      return [BILLING_NAVIGATION_ITEM];
     }
 
-    const result: (TabItem | 'fab' | 'more')[] = [];
-
-    // Slot 1: Dashboard (always)
-    result.push({ icon: LayoutDashboard, labelKey: 'dashboard', path: '/dashboard' });
-
-    // Slot 2: Pipelines or fallback
-    if (hasModule('crm')) {
-      result.push({ icon: Kanban, labelKey: 'pipelines', path: '/crm/pipelines' });
-    } else if (hasModule('agenda')) {
-      result.push({ icon: Calendar, labelKey: 'schedule', path: '/agenda' });
-    } else if (hasModule('properties')) {
-      result.push({ icon: Building2, labelKey: 'properties', path: '/properties' });
-    } else if (hasModule('financial') && canAccessFinancialModule && canManageCurrentOrganization) {
-      result.push({ icon: DollarSign, labelKey: 'financial', path: '/financeiro' });
-    }
-
-    // Slot 3: FAB
-    result.push('fab');
-
-    // Slot 4: Conversas or fallback
-    if (hasModule('whatsapp')) {
-      result.push({ icon: MessageSquare, labelKey: 'conversations', path: '/crm/conversas' });
-    } else if (hasModule('crm')) {
-      result.push({ icon: Users, labelKey: 'contacts', path: '/crm/contacts' });
-    } else if (hasModule('agenda') && !result.some((r) => typeof r !== 'string' && r.path === '/agenda')) {
-      result.push({ icon: Calendar, labelKey: 'schedule', path: '/agenda' });
-    }
-
-    // Slot 5: More
+    const authorizedItems = filterNavigationItems(APP_NAVIGATION_ITEMS, {
+      canAccessAdminItems: canManageCurrentOrganization,
+      canAccessFinancialModule,
+      hasModule,
+      hasPermission,
+      isSuperAdmin,
+      isTeamLeader,
+    });
+    const { primary, secondary } = selectMobileNavigationItems(authorizedItems);
+    const result: (AppNavigationItem | 'fab' | 'more' | 'loading')[] = [...primary, 'fab'];
+    if (secondary) result.push(secondary);
     result.push('more');
-
     return result;
-  }, [canAccessFinancialModule, canManageCurrentOrganization, hasModule, isBillingBlocked]);
+  }, [canAccessFinancialModule, canManageCurrentOrganization, hasModule, hasPermission, isBillingBlocked, isSuperAdmin, isTeamLeader, navigationLoading]);
 
   const isActive = (path: string) => {
-    return pathname === path || pathname.startsWith(path + '/');
+    return isNavigationPathActive(path, pathname, searchParams, { parent: true, currentHash });
   };
 
   const getLabel = (labelKey: string): string => {
@@ -94,55 +89,79 @@ export function MobileBottomNav() {
   };
 
   const managementTab = searchParams.get('tab');
-  const isContextualFabRoute =
-    pathname.startsWith('/properties') ||
-    pathname === '/agenda' ||
-    pathname.startsWith('/crm/management') ||
-    pathname.startsWith('/settings');
-  const showFab = !isBillingBlocked && (hasModule('crm') || isContextualFabRoute);
+  const fabAction = resolveMobileFabAction({
+    pathname,
+    tab: managementTab,
+    isBillingBlocked,
+    hasPermission,
+  });
+  const fabLabel = fabAction ? {
+    lead: 'Novo lead',
+    property: 'Novo imóvel',
+    schedule: 'Novo agendamento',
+    team: 'Nova equipe',
+    distribution: 'Nova distribuição',
+    user: 'Novo usuário',
+  }[fabAction] : '';
 
   const handleFabClick = () => {
-    if (pathname.startsWith('/properties')) {
+    if (fabAction === 'property') {
       router.push('/properties/new');
       return;
     }
 
-    if (pathname === '/agenda') {
+    if (fabAction === 'schedule') {
       window.dispatchEvent(new CustomEvent('vimob:mobile-create-agenda'));
       return;
     }
 
-    if (pathname.startsWith('/crm/management') && managementTab === 'teams') {
+    if (fabAction === 'team') {
       window.dispatchEvent(new CustomEvent('vimob:mobile-create-team'));
       return;
     }
 
-    if (pathname.startsWith('/crm/management') && managementTab === 'distribution') {
+    if (fabAction === 'distribution') {
       window.dispatchEvent(new CustomEvent('vimob:mobile-create-distribution'));
       return;
     }
 
-    if (pathname.startsWith('/settings') && (managementTab === 'team' || managementTab === 'users')) {
+    if (fabAction === 'user') {
       window.dispatchEvent(new CustomEvent('vimob:mobile-create-user'));
       return;
     }
 
-    setCreateLeadOpen(true);
+    if (fabAction === 'lead') setCreateLeadOpen(true);
   };
 
   return (
     <>
-      <nav className="app-mobile-bottom-nav fixed bottom-0 left-0 right-0 z-50 border-t border-[var(--app-border)] bg-[var(--app-sidebar)] pb-[env(safe-area-inset-bottom)]">
+      <nav
+        className="app-mobile-bottom-nav fixed bottom-0 left-0 right-0 z-50 border-t border-[var(--app-border)] bg-[var(--app-sidebar)] pb-[env(safe-area-inset-bottom)]"
+        aria-busy={navigationLoading}
+      >
         <div className="flex items-end justify-around px-1 h-16 py-[4px] pb-[10px]">
-          {tabs.map((tab) => {
+          {tabs.map((tab, index) => {
+            if (tab === 'loading') {
+              return (
+                <div
+                  key={`loading-${index}`}
+                  className="flex min-h-12 min-w-[56px] items-center justify-center px-1 py-2"
+                  aria-hidden="true"
+                >
+                  <div className="h-8 w-8 animate-pulse rounded-[6px] bg-[var(--app-surface-soft)]" />
+                </div>
+              );
+            }
+
             if (tab === 'fab') {
               return (
                 <div key="fab" className="flex flex-col items-center justify-center -mt-4">
-                  {showFab ? (
+                  {fabAction ? (
                     <button
+                      type="button"
                       onClick={handleFabClick}
-                      className="h-12 w-12 rounded-[6px] bg-[#FF4529] text-white flex items-center justify-center shadow-none active:scale-95 transition-transform"
-                      aria-label="Criar novo item"
+                      className="flex h-12 w-12 touch-manipulation items-center justify-center rounded-[6px] bg-[#FF4529] text-white shadow-none transition-transform duration-150 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF4529]/40 focus-visible:ring-offset-2"
+                      aria-label={fabLabel}
                     >
                       <Plus className="h-6 w-6" />
                     </button>
@@ -160,16 +179,18 @@ export function MobileBottomNav() {
             }
 
             const active = isActive(tab.path);
-            const Icon = tab.icon;
+            const Icon = getNavigationIcon(tab.icon);
 
             return (
-              <button
+              <Link
                 key={tab.path}
-                onClick={() => router.push(tab.path)}
+                href={tab.path}
                 className={cn(
-                  "flex flex-col items-center justify-center gap-0.5 py-2 px-1 min-w-[56px] transition-colors duration-200 active:scale-95",
+                  "relative flex min-h-12 min-w-[56px] touch-manipulation flex-col items-center justify-center gap-0.5 px-1 py-2 transition-colors duration-150 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF4529]/30",
                   active ? "text-[#FF4529]" : "text-[var(--app-text-tertiary)] hover:text-[var(--app-text-secondary)]"
                 )}
+                aria-current={active ? 'page' : undefined}
+                aria-label={getLabel(tab.labelKey)}
               >
                 {active && (
                   <span className="absolute top-0 h-0.5 w-8 rounded-full bg-[#FF4529]" />
@@ -180,13 +201,15 @@ export function MobileBottomNav() {
                 <span className="text-[10px] font-extralight tracking-wide leading-tight truncate max-w-[56px]">
                   {getLabel(tab.labelKey)}
                 </span>
-              </button>
+              </Link>
             );
           })}
         </div>
       </nav>
 
-      <CreateLeadDialog open={createLeadOpen} onOpenChange={setCreateLeadOpen} />
+      {createLeadOpen && (
+        <CreateLeadDialog open={createLeadOpen} onOpenChange={setCreateLeadOpen} />
+      )}
     </>
   );
 }
@@ -194,17 +217,25 @@ export function MobileBottomNav() {
 // Wrapper that renders the More tab button and triggers MobileSidebar sheet
 function MobileSidebarTab({ label }: { label: string; }) {
   const [open, setOpen] = useState(false);
+  const [hasOpened, setHasOpened] = useState(false);
+
+  const handleOpen = () => {
+    setHasOpened(true);
+    setOpen(true);
+  };
 
   return (
     <>
       <button
-        onClick={() => setOpen(true)}
-        className="flex flex-col items-center justify-center gap-0.5 py-2 px-1 min-w-[56px] text-[var(--app-text-tertiary)] hover:text-[var(--app-text-secondary)] transition-colors duration-200 active:scale-95"
+        type="button"
+        onClick={handleOpen}
+        className="flex min-h-12 min-w-[56px] touch-manipulation flex-col items-center justify-center gap-0.5 px-1 py-2 text-[var(--app-text-tertiary)] transition-colors duration-150 hover:text-[var(--app-text-secondary)] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF4529]/30"
+        aria-label={label}
       >
         <MoreHorizontal className="h-5 w-5 mb-0.5" />
         <span className="text-[10px] font-extralight tracking-wide leading-tight">{label}</span>
       </button>
-      <MobileSidebarSheet open={open} onOpenChange={setOpen} />
+      {hasOpened && <MobileSidebarSheet open={open} onOpenChange={setOpen} />}
     </>
   );
 }

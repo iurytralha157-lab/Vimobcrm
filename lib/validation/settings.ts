@@ -48,6 +48,7 @@ export const pushTokenInputSchema = z.object({
   p256dh: z.string().trim().max(1_000).nullish(),
   auth: z.string().trim().max(1_000).nullish(),
   userAgent: z.string().trim().max(1_000).nullish(),
+  syncOnly: z.boolean().optional(),
 }).strict()
 export const createApiKeyInputSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),

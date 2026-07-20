@@ -1,4 +1,3 @@
-import type { TablesInsert } from '@/integrations/supabase/types';
 import { propertiesAPI } from '@/lib/api/properties';
 
 const DEMO_PROPERTIES = [
@@ -92,7 +91,7 @@ export async function seedDemoProperties(organizationId: string) {
   for (const property of DEMO_PROPERTIES) {
     const { error } = await propertiesAPI.createProperty(
       organizationId,
-      property as unknown as Partial<TablesInsert<'properties'>>,
+      property,
     );
 
     if (error) {

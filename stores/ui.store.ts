@@ -26,7 +26,7 @@ export const useUIStore = create<UIStore>()(
   persist(
     (set) => ({
       // Sidebar
-      sidebarOpen: true,
+      sidebarOpen: false,
       setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
       toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
 
@@ -52,8 +52,16 @@ export const useUIStore = create<UIStore>()(
     }),
     {
       name: 'ui-store',
+      version: 1,
+      migrate: (persistedState) => {
+        const persistedTheme = (persistedState as { theme?: UIStore['theme'] } | null)?.theme;
+        return {
+          theme: persistedTheme === 'light' || persistedTheme === 'dark' || persistedTheme === 'system'
+            ? persistedTheme
+            : 'system',
+        };
+      },
       partialize: (state) => ({
-        sidebarOpen: state.sidebarOpen,
         theme: state.theme,
       }),
     }

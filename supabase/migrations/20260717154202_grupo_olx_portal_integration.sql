@@ -129,6 +129,100 @@ create index if not exists portal_webhook_events_lead_idx
   on public.portal_webhook_events (lead_id)
   where lead_id is not null;
 
+create or replace function private.enforce_portal_tenant_scope()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+  if tg_table_name = 'portal_integrations' then
+    if new.default_pipeline_id is not null and not exists (
+      select 1 from public.pipelines p
+      where p.id = new.default_pipeline_id and p.organization_id = new.organization_id
+    ) then
+      raise exception using errcode = '23514', message = 'portal pipeline must belong to the integration organization';
+    end if;
+    if new.default_stage_id is not null and not exists (
+      select 1 from public.stages s
+      where s.id = new.default_stage_id
+        and s.organization_id = new.organization_id
+        and (new.default_pipeline_id is null or s.pipeline_id = new.default_pipeline_id)
+    ) then
+      raise exception using errcode = '23514', message = 'portal stage must belong to the integration organization and pipeline';
+    end if;
+    if new.default_assigned_user_id is not null and not exists (
+      select 1 from public.organization_members om
+      where om.organization_id = new.organization_id and om.user_id = new.default_assigned_user_id
+    ) then
+      raise exception using errcode = '23514', message = 'portal assignee must belong to the integration organization';
+    end if;
+    if new.default_round_robin_id is not null and not exists (
+      select 1 from public.round_robins rr
+      where rr.id = new.default_round_robin_id and rr.organization_id = new.organization_id
+    ) then
+      raise exception using errcode = '23514', message = 'portal round robin must belong to the integration organization';
+    end if;
+  elsif tg_table_name = 'portal_listing_publications' then
+    if not exists (
+      select 1 from public.portal_integrations pi
+      where pi.id = new.integration_id
+        and pi.organization_id = new.organization_id
+        and pi.portal = new.portal
+    ) or not exists (
+      select 1 from public.properties p
+      where p.id = new.property_id and p.organization_id = new.organization_id
+    ) then
+      raise exception using errcode = '23514', message = 'portal publication references must belong to one organization';
+    end if;
+  elsif tg_table_name in ('portal_import_reports', 'portal_webhook_events') then
+    if not exists (
+      select 1 from public.portal_integrations pi
+      where pi.id = new.integration_id
+        and pi.organization_id = new.organization_id
+        and pi.portal = new.portal
+    ) then
+      raise exception using errcode = '23514', message = 'portal event integration must belong to the event organization';
+    end if;
+    if tg_table_name = 'portal_webhook_events' then
+      if new.lead_id is not null and not exists (
+        select 1 from public.leads l where l.id = new.lead_id and l.organization_id = new.organization_id
+      ) then
+        raise exception using errcode = '23514', message = 'portal event lead must belong to the event organization';
+      end if;
+      if new.property_id is not null and not exists (
+        select 1 from public.properties p where p.id = new.property_id and p.organization_id = new.organization_id
+      ) then
+        raise exception using errcode = '23514', message = 'portal event property must belong to the event organization';
+      end if;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function private.enforce_portal_tenant_scope() from public;
+
+drop trigger if exists enforce_portal_integrations_tenant_scope on public.portal_integrations;
+create trigger enforce_portal_integrations_tenant_scope
+before insert or update on public.portal_integrations
+for each row execute function private.enforce_portal_tenant_scope();
+
+drop trigger if exists enforce_portal_publications_tenant_scope on public.portal_listing_publications;
+create trigger enforce_portal_publications_tenant_scope
+before insert or update on public.portal_listing_publications
+for each row execute function private.enforce_portal_tenant_scope();
+
+drop trigger if exists enforce_portal_reports_tenant_scope on public.portal_import_reports;
+create trigger enforce_portal_reports_tenant_scope
+before insert or update on public.portal_import_reports
+for each row execute function private.enforce_portal_tenant_scope();
+
+drop trigger if exists enforce_portal_events_tenant_scope on public.portal_webhook_events;
+create trigger enforce_portal_events_tenant_scope
+before insert or update on public.portal_webhook_events
+for each row execute function private.enforce_portal_tenant_scope();
+
 drop trigger if exists set_updated_at_portal_integrations on public.portal_integrations;
 create trigger set_updated_at_portal_integrations
 before update on public.portal_integrations

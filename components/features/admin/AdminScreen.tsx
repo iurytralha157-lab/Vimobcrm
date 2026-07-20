@@ -6,19 +6,24 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
   Building2,
   CalendarDays,
   Check,
   CheckCircle2,
+  Clipboard,
   CreditCard,
   Database,
   Loader2,
   Inbox,
+  KeyRound,
   Pencil,
   Plus,
+  Power,
   Search,
   Settings,
   ShieldCheck,
+  UserPlus,
   Users,
   X,
 } from "lucide-react";
@@ -48,9 +53,18 @@ import {
   type SystemModuleKey,
 } from "@/config/constants";
 import { useAuth } from "@/contexts/AuthContext";
+import {
+  useDashboardFeed,
+  useDashboardOverview,
+  useDashboardPendingBoards,
+  useDashboardTimeseries,
+  type DashboardPeriod,
+} from "@/hooks/use-admin-dashboard";
 import { useAdminPlans, type SubscriptionPlan } from "@/hooks/use-admin-plans";
 import { adminAPI } from "@/lib/api/admin";
 import { notificationsAPI } from "@/lib/api/notifications";
+import { usersAPI } from "@/lib/api/users";
+import { normalizeSearchText } from "@/lib/search-text";
 import { cn } from "@/lib/utils";
 
 type AdminRecord = Record<string, unknown>;
@@ -296,7 +310,7 @@ function getInitials(name?: string | null) {
 }
 
 function normalizeText(value: unknown) {
-  return String(value || "").toLowerCase();
+  return normalizeSearchText(String(value || ""));
 }
 
 function normalizeValue(value: unknown) {
@@ -554,7 +568,7 @@ function useAdminOrganizationPayments(organizationId?: string) {
     ["admin-organization-payments", organizationId],
     async () => {
       if (!organizationId) return [];
-      return [];
+      return adminAPI.listOrganizationPayments(organizationId) as Promise<OrganizationPaymentRow[]>;
     },
     [],
     Boolean(organizationId),
@@ -612,111 +626,195 @@ function EmptyState({ title, description }: { title: string; description: string
   );
 }
 
-function AdminDashboardContent() {
-  const organizations = useAdminRows("organizations", 100);
-  const users = useAdminRows("users", 100);
-  const plans = useAdminRows("admin_subscription_plans", 50);
-  const onboarding = useAdminRows("onboarding_requests", 50);
-  const requests = useAdminRows("feature_requests", 50);
+function AdminDashboardV2Content() {
+  const [period, setPeriod] = useState<DashboardPeriod>(30);
+  const overview = useDashboardOverview(period);
+  const timeseries = useDashboardTimeseries(period);
+  const pendingBoards = useDashboardPendingBoards();
+  const feed = useDashboardFeed(24);
 
-  const orgRows = organizations.data?.data || [];
-  const userRows = users.data?.data || [];
-  const planRows = plans.data?.data || [];
-  const onboardingRows = onboarding.data?.data || [];
-  const requestRows = requests.data?.data || [];
-
-  const activeOrgs = orgRows.filter((org) => org.is_active !== false).length;
-  const trialOrgs = orgRows.filter((org) => getString(org, "subscription_status", "").toLowerCase() === "trial").length;
-  const pendingRequests = requestRows.filter((request) => getString(request, "status", "").toLowerCase() === "pending").length;
-  const pendingOnboarding = onboardingRows.filter((request) => {
-    const status = getString(request, "status", "").toLowerCase();
-    return status === "pending" || status === "new" || status === "submitted";
-  }).length;
+  const data = overview.data;
+  const financial = data?.financial;
+  const platform = data?.platform;
+  const operational = data?.operational;
+  const health = timeseries.data?.health;
+  const isLoading = overview.isLoading || timeseries.isLoading || pendingBoards.isLoading;
+  const errorMessage = [overview.error, timeseries.error, pendingBoards.error, feed.error].find(Boolean);
+  const periodLabel = `${period} dias`;
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
-        <KpiCard title="Organizações" value={formatNumber(orgRows.length)} icon={Building2} helper={`${activeOrgs} ativas`} />
-        <KpiCard title="Usuários" value={formatNumber(userRows.length)} icon={Users} helper="Contas carregadas" />
-        <KpiCard title="Planos" value={formatNumber(planRows.length)} icon={CreditCard} helper={`${trialOrgs} orgs em trial`} />
-        <KpiCard title="Pendências" value={formatNumber(pendingRequests + pendingOnboarding)} icon={Inbox} helper="Onboarding e melhorias" />
+      <AdminWarning message={errorMessage ? getErrorMessage(errorMessage) : null} />
+
+      <div className="app-card flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-base font-semibold">Controle executivo</h2>
+          <p className="text-sm text-muted-foreground">
+            Receita, carteira, uso, retenÃ§Ã£o e saÃºde operacional em {periodLabel}.
+          </p>
+        </div>
+        <div className="grid grid-cols-4 gap-1 rounded-[6px] bg-[var(--app-surface-soft)] p-1">
+          {([7, 30, 90, 365] as DashboardPeriod[]).map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => setPeriod(item)}
+              className={cn(
+                "h-8 rounded-[5px] px-2 text-xs font-semibold transition-colors",
+                period === item ? "bg-[#FF4529] text-white" : "text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground",
+              )}
+            >
+              {item}d
+            </button>
+          ))}
+        </div>
       </div>
+
+      {isLoading ? (
+        <div className="flex min-h-[220px] items-center justify-center">
+          <VimobLoader label="Carregando indicadores..." />
+        </div>
+      ) : null}
 
       <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-        <div className="app-card p-4">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold">Saúde da carteira</h2>
-              <p className="text-sm text-muted-foreground">Resumo visual das organizações carregadas.</p>
-            </div>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
+            <KpiCard title="MRR" value={formatCurrency(financial?.mrr)} icon={CreditCard} helper={`${formatPercent(financial?.revenue_growth_pct)} vs. perÃ­odo`} />
+            <KpiCard title="Receita recebida" value={formatCurrency(financial?.revenue_period)} icon={BarChart3} helper={periodLabel} />
+            <KpiCard title="PrevisÃ£o" value={formatCurrency(financial?.revenue_forecast)} icon={CalendarDays} helper="Trial, pendente e ativa" />
+            <KpiCard title="Ticket mÃ©dio" value={formatCurrency(financial?.avg_ticket)} icon={CreditCard} helper={`Atraso: ${formatCurrency(financial?.overdue_total)}`} />
           </div>
-          <div className="grid grid-cols-3 gap-2 md:gap-3">
-            <StatusTile label="Ativas" value={activeOrgs} total={orgRows.length} tone="success" />
-            <StatusTile label="Trial" value={trialOrgs} total={orgRows.length} tone="warning" />
-            <StatusTile label="Inativas" value={Math.max(orgRows.length - activeOrgs, 0)} total={orgRows.length} tone="danger" />
+
+          <div className="grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
+            <KpiCard title="OrganizaÃ§Ãµes" value={formatNumber(platform?.total_orgs)} icon={Building2} helper={`${formatNumber(platform?.active_orgs)} ativas`} />
+            <KpiCard title="Trial" value={formatNumber(platform?.trial_orgs)} icon={Inbox} helper={`${formatNumber(platform?.cancelled_orgs)} canceladas`} />
+            <KpiCard title="UsuÃ¡rios hoje" value={formatNumber(platform?.active_users_today)} icon={Users} helper="Ativos no dia" />
+            <KpiCard title="Leads hoje" value={formatNumber(operational?.leads_today)} icon={Activity} helper={`${formatNumber(operational?.activities_today)} atividades`} />
+          </div>
+
+          <div className="app-card p-4">
+            <div className="mb-4">
+              <h2 className="text-base font-semibold">SaÃºde da carteira</h2>
+              <p className="text-sm text-muted-foreground">DistribuiÃ§Ã£o atual de clientes por status comercial.</p>
+            </div>
+            <div className="grid grid-cols-3 gap-2 md:gap-3">
+              <StatusTile label="Ativas" value={Number(health?.active ?? platform?.active_orgs ?? 0)} total={Number(platform?.total_orgs || 0)} tone="success" />
+              <StatusTile label="Trial" value={Number(health?.trial ?? platform?.trial_orgs ?? 0)} total={Number(platform?.total_orgs || 0)} tone="warning" />
+              <StatusTile label="Atrasadas/canceladas" value={Number((health?.overdue || 0) + (health?.cancelled || 0))} total={Number(platform?.total_orgs || 0)} tone="danger" />
+            </div>
           </div>
         </div>
 
-        <div className="app-card p-4">
-          <h2 className="text-base font-semibold">Próximas ações</h2>
-          <div className="mt-4 space-y-3">
-            {[
-              "Validar schema final do Supabase novo antes de habilitar ações de escrita.",
-              "Conectar métricas financeiras depois das tabelas de assinatura e Asaas ficarem definitivas.",
-              "Revisar permissões RLS para leitura global exclusiva de superadmin.",
-            ].map((item) => (
-              <div key={item} className="app-card-soft flex gap-3 p-3 text-sm text-muted-foreground">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[#FF4529]" />
-                <span>{item}</span>
-              </div>
-            ))}
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-2 sm:gap-3">
+            <KpiCard title="AutomaÃ§Ãµes hoje" value={formatNumber(operational?.automations_today)} icon={Activity} helper="ExecuÃ§Ãµes" />
+            <KpiCard title="Erros recentes" value={formatNumber(operational?.errors_recent)} icon={AlertTriangle} helper="Ãšltimas 24h" />
           </div>
+
+          <DashboardRowsCard
+            title="Trials vencendo"
+            empty="Nenhum trial com data de fim prÃ³xima."
+            rows={pendingBoards.data?.trials || []}
+            renderRow={(trial) => (
+              <DashboardRow
+                title={trial.name}
+                detail={`${trial.days_left} dias restantes Â· ${trial.email || trial.whatsapp || trial.telefone || "sem contato"}`}
+                badge={formatDateOnly(trial.trial_ends_at)}
+              />
+            )}
+          />
+
+          <DashboardRowsCard
+            title="Carteira parada"
+            empty="Nenhuma organizaÃ§Ã£o ativa sem acesso recente."
+            rows={pendingBoards.data?.idle || []}
+            renderRow={(item) => (
+              <DashboardRow
+                title={item.name}
+                detail={item.last_access_at ? `Ãšltimo acesso em ${formatDate(item.last_access_at)}` : "Sem acesso registrado"}
+                badge={item.days_idle === null ? "--" : `${item.days_idle}d`}
+              />
+            )}
+          />
         </div>
       </div>
 
-      <RecentOrganizationsPreview rows={orgRows.slice(0, 6)} />
+      <div className="grid gap-4 xl:grid-cols-2">
+        <DashboardRowsCard
+          title="Receita por dia"
+          empty="A API ainda nÃ£o retornou sÃ©rie financeira para este perÃ­odo."
+          rows={(timeseries.data?.revenue || []).slice(-8)}
+          renderRow={(item) => (
+            <DashboardRow title={formatDateOnly(item.date)} detail="Receita reconhecida" badge={formatCurrency(item.value)} />
+          )}
+        />
+        <DashboardRowsCard
+          title="Feed de auditoria"
+          empty="Nenhum evento de auditoria recente."
+          rows={feed.data || []}
+          renderRow={(item) => (
+            <DashboardRow
+              title={item.title}
+              detail={`${item.organization_name || "Plataforma"} Â· ${formatDate(item.created_at)}`}
+              badge={item.severity}
+            />
+          )}
+        />
+      </div>
     </div>
   );
 }
 
-function RecentOrganizationsPreview({ rows }: { rows: AdminRecord[] }) {
-  if (rows.length === 0) {
-    return <EmptyState title="Organizações recentes" description="Nenhuma organização encontrada." />;
-  }
+function formatPercent(value: unknown) {
+  const numericValue = Number(value || 0);
+  const safeValue = Number.isFinite(numericValue) ? numericValue : 0;
+  const formatted = new Intl.NumberFormat("pt-BR", {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: 0,
+  }).format(safeValue);
+  return `${safeValue > 0 ? "+" : ""}${formatted}%`;
+}
 
+function DashboardRow({ title, detail, badge }: { title: string; detail: string; badge: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 p-3 transition-colors hover:bg-[var(--app-surface-hover)]">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium">{title}</p>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">{detail}</p>
+      </div>
+      <Badge className="shrink-0 border-0 bg-[var(--app-surface-soft)] text-muted-foreground">
+        {badge}
+      </Badge>
+    </div>
+  );
+}
+
+function DashboardRowsCard<T>({
+  title,
+  rows,
+  empty,
+  renderRow,
+}: {
+  title: string;
+  rows: T[];
+  empty: string;
+  renderRow: (row: T, index: number) => ReactNode;
+}) {
   return (
     <div className="app-card overflow-hidden">
-      <div className="flex items-center justify-between gap-3 border-b border-white/[0.045] px-4 py-3">
-        <div>
-          <h2 className="text-base font-semibold">Organizações recentes</h2>
-          <p className="text-sm text-muted-foreground">{formatRecordsCount(rows.length)}</p>
+      <div className="border-b border-white/[0.045] px-4 py-3">
+        <h2 className="text-base font-semibold">{title}</h2>
+        <p className="text-sm text-muted-foreground">{formatRecordsCount(rows.length)}</p>
+      </div>
+      {rows.length > 0 ? (
+        <div className="divide-y divide-white/[0.045]">
+          {rows.map((row, index) => (
+            <div key={index}>{renderRow(row, index)}</div>
+          ))}
         </div>
-      </div>
-      <div className="divide-y divide-white/[0.045]">
-        {rows.map((row, index) => {
-          const id = getString(row, "id", String(index));
-          const status = getOrganizationStatus(row);
-          const content = (
-            <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 px-4 py-3 transition-colors hover:bg-[var(--app-surface-hover)]">
-              <p className="min-w-0 truncate text-sm font-semibold">
-                {getString(row, "name", "Organização sem nome")}
-              </p>
-              <StatusBadge value={status} activeLabel="Ativa" />
-              <p className="whitespace-nowrap text-xs text-muted-foreground">{formatDate(row.created_at)}</p>
-            </div>
-          );
-
-          if (row.id) {
-            return (
-              <Link key={id} href={`/admin/organizations/${id}`} className="block">
-                {content}
-              </Link>
-            );
-          }
-
-          return <div key={id}>{content}</div>;
-        })}
-      </div>
+      ) : (
+        <div className="p-4 text-sm text-muted-foreground">{empty}</div>
+      )}
     </div>
   );
 }
@@ -755,7 +853,7 @@ function OrganizationsContent() {
   const rows = organizations.data?.data || [];
   const filteredRows = rows.filter((org) => {
     const haystack = [org.name, org.email, org.cnpj, org.cidade, org.subscription_status].map(normalizeText).join(" ");
-    return haystack.includes(search.toLowerCase());
+    return haystack.includes(normalizeSearchText(search));
   });
 
   return (
@@ -846,6 +944,8 @@ export function OrganizationDetailContent({ organizationId }: { organizationId?:
         title="Usuários vinculados"
         rows={orgUsers}
         organizationsById={organizationsById}
+        createOrganizationId={organizationId}
+        renderActions={(user) => <AdminUserActions user={user} />}
         empty="Nenhum usuário retornado para esta organização."
       />
     </div>
@@ -974,13 +1074,16 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
     const maxUsersFallback = Number(organization.max_users || 1);
     const organizationUpdates: OrganizationUpdatePayload = {
       plan_id: accessForm.planId === NO_PLAN_VALUE ? null : accessForm.planId,
+      clear_plan_id: accessForm.planId === NO_PLAN_VALUE,
       subscription_status: accessForm.subscriptionStatus || "active",
       subscription_value: parseNullableNumberInput(accessForm.subscriptionValue),
       max_users: Math.max(1, parseNumberInput(accessForm.maxUsers, maxUsersFallback)),
       max_whatsapp_sessions_override: parseNullableNumberInput(accessForm.maxWhatsappSessions),
       billing_day: parseNullableNumberInput(accessForm.billingDay),
       next_billing_date: accessForm.nextBillingDate || null,
+      clear_next_billing_date: !accessForm.nextBillingDate,
       trial_ends_at: accessForm.trialEndsAt ? new Date(`${accessForm.trialEndsAt}T23:59:59`).toISOString() : null,
+      clear_trial_ends_at: !accessForm.trialEndsAt,
       subscription_type: selectedPlan ? "paid" : getOptionalString(organization, "subscription_type") || null,
     };
 
@@ -1267,6 +1370,7 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
         title="Usuários vinculados"
         rows={orgUsers}
         organizationsById={organizationsById}
+        createOrganizationId={organizationId}
         empty="Nenhum usuário retornado para esta organização."
       />
     </div>
@@ -1302,14 +1406,41 @@ function UsersRowsPreview({
   rows,
   organizationsById,
   empty,
+  createOrganizationId,
+  renderActions = (user) => <AdminUserActions user={user} />,
 }: {
   title: string;
   rows: AdminRecord[];
   organizationsById: Map<string, AdminRecord>;
   empty: string;
+  createOrganizationId?: string;
+  renderActions?: (user: AdminRecord) => ReactNode;
 }) {
+  const headerAction = createOrganizationId ? (
+    <CreateOrganizationUserDialog organizationId={createOrganizationId} />
+  ) : null;
+
   if (rows.length === 0) {
-    return <EmptyState title={title} description={empty} />;
+    if (!headerAction) {
+      return <EmptyState title={title} description={empty} />;
+    }
+
+    return (
+      <div className="app-card overflow-hidden">
+        <div className="flex items-center justify-between gap-3 border-b border-white/[0.045] p-4">
+          <div>
+            <h2 className="text-base font-semibold">{title}</h2>
+            <p className="text-sm text-muted-foreground">{formatRecordsCount(0)}</p>
+          </div>
+          {headerAction}
+        </div>
+        <div className="flex min-h-[220px] flex-col items-center justify-center p-8 text-center">
+          <ShieldCheck className="mb-4 h-10 w-10 text-muted-foreground/50" />
+          <h3 className="text-base font-semibold">{title}</h3>
+          <p className="mt-2 max-w-md text-sm text-muted-foreground">{empty}</p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -1319,14 +1450,19 @@ function UsersRowsPreview({
           <h2 className="text-base font-semibold">{title}</h2>
           <p className="text-sm text-muted-foreground">{formatRecordsCount(rows.length)}</p>
         </div>
+        {headerAction}
       </div>
 
-      <div className="hidden grid-cols-[minmax(260px,1.6fr)_130px_110px_minmax(180px,1fr)_145px] gap-4 border-b border-white/[0.045] px-4 py-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground lg:grid">
+      <div className={cn(
+        "hidden gap-4 border-b border-white/[0.045] px-4 py-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground lg:grid",
+        "grid-cols-[minmax(240px,1.5fr)_120px_100px_minmax(160px,1fr)_130px_150px]",
+      )}>
         <span>Usuário</span>
         <span>Perfil</span>
         <span>Status</span>
         <span>Organização</span>
         <span>Criado em</span>
+        <span>Ações</span>
       </div>
 
       <div className="divide-y divide-white/[0.045]">
@@ -1364,9 +1500,15 @@ function UsersRowsPreview({
                   <UserMetaTile label="Criado em" value={createdAt} />
                   <UserMetaTile label="Organização" value={organizationName} className="col-span-2" />
                 </div>
+                <div className="mt-3 flex justify-end">
+                  {renderActions(user)}
+                </div>
               </div>
 
-              <div className="hidden gap-4 px-4 py-3 lg:grid lg:grid-cols-[minmax(260px,1.6fr)_130px_110px_minmax(180px,1fr)_145px] lg:items-center">
+              <div className={cn(
+                "hidden gap-4 px-4 py-3 lg:grid lg:items-center",
+                "lg:grid-cols-[minmax(240px,1.5fr)_120px_100px_minmax(160px,1fr)_130px_150px]",
+              )}>
                 <div className="flex min-w-0 items-center gap-3">
                   <Avatar className="h-9 w-9 shrink-0 border border-white/[0.055]">
                     {avatarUrl ? <AvatarImage src={avatarUrl} className="object-cover" /> : <AvatarImage src={undefined} />}
@@ -1395,12 +1537,290 @@ function UsersRowsPreview({
                 <div className="min-w-0">
                   <p className="truncate text-sm text-muted-foreground">{createdAt}</p>
                 </div>
+
+                <div className="flex justify-end">
+                  {renderActions(user)}
+                </div>
               </div>
             </div>
           );
         })}
       </div>
     </div>
+  );
+}
+
+type PasswordSharePayload = {
+  name: string;
+  email: string;
+  password: string;
+};
+
+function buildPasswordShareText(payload: PasswordSharePayload) {
+  return [
+    `Nome: ${payload.name || "Nao informado"}`,
+    `E-mail: ${payload.email || "Nao informado"}`,
+    `Senha temporaria: ${payload.password}`,
+  ].join("\n");
+}
+
+async function copyCredentials(payload: PasswordSharePayload) {
+  await navigator.clipboard.writeText(buildPasswordShareText(payload));
+}
+
+function AdminUserActions({ user }: { user: AdminRecord }) {
+  const queryClient = useQueryClient();
+  const userId = getOptionalString(user, "id") || "";
+  const isActive = user.is_active !== false;
+  const [resetResult, setResetResult] = useState<PasswordSharePayload | null>(null);
+
+  const invalidateUsers = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["admin-rows", "users"] }),
+      queryClient.invalidateQueries({ queryKey: ["admin-organizations-list"] }),
+    ]);
+  };
+
+  const toggleStatus = useMutation({
+    mutationFn: async () => adminAPI.updateUser({ userId, is_active: !isActive }),
+    onSuccess: async () => {
+      toast.success(isActive ? "UsuÃ¡rio inativado." : "UsuÃ¡rio reativado.");
+      await invalidateUsers();
+    },
+    onError: (error) => {
+      toast.error(`Erro ao alterar usuÃ¡rio: ${getErrorMessage(error)}`);
+    },
+  });
+
+  const resetPassword = useMutation({
+    mutationFn: async () => adminAPI.resetUserPassword(userId),
+    onSuccess: (result) => {
+      const payload = {
+        name: getString(result, "name", getString(user, "name", "")),
+        email: getString(result, "email", getString(user, "email", "")),
+        password: getString(result, "temporary_password", ""),
+      };
+      setResetResult(payload);
+      toast.success("Senha temporÃ¡ria gerada.");
+    },
+    onError: (error) => {
+      toast.error(`Erro ao resetar senha: ${getErrorMessage(error)}`);
+    },
+  });
+
+  return (
+    <>
+      <div className="flex items-center justify-end gap-1.5">
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="h-8 w-8 border-0 bg-[var(--app-surface-soft)]"
+          onClick={() => resetPassword.mutate()}
+          disabled={!userId || resetPassword.isPending || toggleStatus.isPending}
+          aria-label="Resetar senha"
+          title="Resetar senha"
+        >
+          {resetPassword.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="h-8 w-8 border-0 bg-[var(--app-surface-soft)]"
+          onClick={() => toggleStatus.mutate()}
+          disabled={!userId || resetPassword.isPending || toggleStatus.isPending}
+          aria-label={isActive ? "Inativar usuario" : "Reativar usuario"}
+          title={isActive ? "Inativar usuario" : "Reativar usuario"}
+        >
+          {toggleStatus.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Power className={cn("h-3.5 w-3.5", isActive ? "text-amber-400" : "text-emerald-400")} />}
+        </Button>
+      </div>
+
+      <Dialog open={Boolean(resetResult)} onOpenChange={(open) => !open && setResetResult(null)}>
+        <DialogContent className="max-w-md rounded-[8px]">
+          <DialogHeader>
+            <DialogTitle>Senha temporÃ¡ria</DialogTitle>
+          </DialogHeader>
+          {resetResult ? (
+            <div className="space-y-3">
+              <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-3 text-sm">
+                <p><span className="text-muted-foreground">Nome:</span> {resetResult.name}</p>
+                <p><span className="text-muted-foreground">E-mail:</span> {resetResult.email}</p>
+                <p><span className="text-muted-foreground">Senha:</span> <span className="font-mono">{resetResult.password}</span></p>
+              </div>
+              <Button
+                className="w-full bg-[#FF4529] text-white hover:bg-[#FF4529]/90"
+                onClick={async () => {
+                  try {
+                    await copyCredentials(resetResult);
+                    toast.success("Dados copiados.");
+                  } catch {
+                    toast.error("NÃ£o foi possÃ­vel copiar automaticamente.");
+                  }
+                }}
+              >
+                <Clipboard className="h-4 w-4" />
+                Copiar nome, e-mail e senha
+              </Button>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function CreateOrganizationUserDialog({ organizationId }: { organizationId?: string }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [createdCredentials, setCreatedCredentials] = useState<PasswordSharePayload | null>(null);
+  const [form, setForm] = useState({
+    name: "",
+    email: "",
+    whatsapp: "",
+    role: "user" as "admin" | "user",
+  });
+
+  const resetForm = () => {
+    setForm({ name: "", email: "", whatsapp: "", role: "user" });
+    setCreatedCredentials(null);
+  };
+
+  const createUser = useMutation({
+    mutationFn: async () => {
+      if (!organizationId) throw new Error("OrganizaÃ§Ã£o nÃ£o informada.");
+      return usersAPI.createUser({
+        name: form.name.trim(),
+        email: form.email.trim(),
+        whatsapp: form.whatsapp.trim() || null,
+        role: form.role,
+      }, organizationId);
+    },
+    onSuccess: async (result) => {
+      toast.success(result.generatedPassword ? "UsuÃ¡rio criado com senha temporÃ¡ria." : "UsuÃ¡rio vinculado Ã  organizaÃ§Ã£o.");
+      if (result.generatedPassword) {
+        setCreatedCredentials({
+          name: result.user.name,
+          email: result.user.email,
+          password: result.generatedPassword,
+        });
+      } else {
+        setOpen(false);
+        resetForm();
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["admin-rows", "users"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-organizations-list"] }),
+      ]);
+    },
+    onError: (error) => {
+      toast.error(`Erro ao criar usuÃ¡rio: ${getErrorMessage(error)}`);
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      setOpen(nextOpen);
+      if (!nextOpen) resetForm();
+    }}>
+      <Button
+        type="button"
+        className="h-9 rounded-[6px] bg-[#FF4529] text-white hover:bg-[#FF4529]/90"
+        onClick={() => setOpen(true)}
+      >
+        <UserPlus className="h-4 w-4" />
+        Novo usuÃ¡rio
+      </Button>
+      <DialogContent className="max-w-lg rounded-[8px] p-0">
+        <DialogHeader className="border-b border-white/[0.045] px-4 py-3">
+          <DialogTitle>Novo usuÃ¡rio</DialogTitle>
+        </DialogHeader>
+
+        {createdCredentials ? (
+          <div className="space-y-3 px-4 py-3">
+            <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-3 text-sm">
+              <p><span className="text-muted-foreground">Nome:</span> {createdCredentials.name}</p>
+              <p><span className="text-muted-foreground">E-mail:</span> {createdCredentials.email}</p>
+              <p><span className="text-muted-foreground">Senha:</span> <span className="font-mono">{createdCredentials.password}</span></p>
+            </div>
+            <Button
+              className="w-full bg-[#FF4529] text-white hover:bg-[#FF4529]/90"
+              onClick={async () => {
+                try {
+                  await copyCredentials(createdCredentials);
+                  toast.success("Dados copiados.");
+                } catch {
+                  toast.error("NÃ£o foi possÃ­vel copiar automaticamente.");
+                }
+              }}
+            >
+              <Clipboard className="h-4 w-4" />
+              Copiar acesso
+            </Button>
+          </div>
+        ) : (
+          <div className="grid gap-3 px-4 py-3">
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="space-y-2">
+                <span className="text-sm font-medium">Nome</span>
+                <Input
+                  value={form.name}
+                  onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                  className="border-0 bg-[var(--app-surface-soft)]"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium">E-mail</span>
+                <Input
+                  type="email"
+                  value={form.email}
+                  onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
+                  className="border-0 bg-[var(--app-surface-soft)]"
+                />
+              </label>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="space-y-2">
+                <span className="text-sm font-medium">WhatsApp</span>
+                <Input
+                  value={form.whatsapp}
+                  onChange={(event) => setForm((current) => ({ ...current, whatsapp: event.target.value }))}
+                  className="border-0 bg-[var(--app-surface-soft)]"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium">Perfil</span>
+                <select
+                  value={form.role}
+                  onChange={(event) => setForm((current) => ({ ...current, role: event.target.value as "admin" | "user" }))}
+                  className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-sm outline-none"
+                >
+                  <option value="user">UsuÃ¡rio</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        )}
+
+        <DialogFooter className="border-t border-white/[0.045] px-4 py-3">
+          <Button variant="outline" className="border-0 bg-[var(--app-surface-soft)]" onClick={() => setOpen(false)}>
+            Fechar
+          </Button>
+          {!createdCredentials ? (
+            <Button
+              className="bg-[#FF4529] text-white hover:bg-[#FF4529]/90"
+              onClick={() => createUser.mutate()}
+              disabled={createUser.isPending || form.name.trim().length < 2 || !form.email.trim()}
+            >
+              {createUser.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+              Criar
+            </Button>
+          ) : null}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1416,7 +1836,7 @@ function UsersContent() {
   const filteredRows = rows.filter((user) => {
     const organizationName = getOrganizationName(user, organizationsById);
     const haystack = [user.name, user.email, user.role, user.organization_id, organizationName].map(normalizeText).join(" ");
-    return haystack.includes(search.toLowerCase());
+    return haystack.includes(normalizeSearchText(search));
   });
 
   return (
@@ -1862,7 +2282,7 @@ function GenericTable({
   const query = useAdminRows(tableConfig.table, 120);
   const rows = query.data?.data || [];
   const filteredRows = rows.filter((row) =>
-    tableConfig.fields.some((field) => normalizeText(row[field]).includes(search.toLowerCase())),
+    tableConfig.fields.some((field) => normalizeText(row[field]).includes(normalizeSearchText(search))),
   );
 
   return (
@@ -2262,7 +2682,7 @@ function GenericRowsPreview({
 function renderAdminContent(section: AdminSection, organizationId?: string) {
   switch (section) {
     case "dashboard":
-      return <AdminDashboardContent />;
+      return <AdminDashboardV2Content />;
     case "organizations":
       return <OrganizationsContent />;
     case "organization-detail":

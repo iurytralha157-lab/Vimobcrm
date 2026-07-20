@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useId, useRef } from 'react';
-import { maskPhone } from '@/lib/masks';
+import { maskCNPJ, maskCPF, maskPhone, maskRG } from '@/lib/masks';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { leadAttachmentsAPI } from '@/lib/api/lead-attachments';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -12,7 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TagSelector } from '@/components/ui/tag-selector';
-import { Loader2, User, Briefcase, Building2, DollarSign, Trophy, XCircle, CircleDot, FileText, X, Home, ChevronRight } from 'lucide-react';
+import { Loader2, User, Briefcase, Building2, DollarSign, Trophy, XCircle, CircleDot, FileText, X, Home, Paperclip, Trash2, Plus } from 'lucide-react';
 import { PropertyPickerDialog } from '@/components/features/properties/PropertyPickerDialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
@@ -20,6 +21,7 @@ import { useOrganizationUsers } from '@/hooks/use-users';
 import { usePipelines, useStages } from '@/hooks/use-stages';
 import { useProperties } from '@/hooks/use-properties';
 import { useCreateLead } from '@/hooks/use-leads';
+import { useTeams } from '@/hooks/use-teams';
 
 interface CreateLeadDialogProps {
   open: boolean;
@@ -32,9 +34,27 @@ interface CreateLeadDialogProps {
 }
 
 type LeadFormErrors = Partial<Record<
-  'name' | 'contact' | 'phone' | 'email' | 'assigned_user_id' | 'pipeline_id' | 'stage_id',
+  'name' | 'contact' | 'phone' | 'email' | 'cpf' | 'cnpj' | 'birth_date' | 'assigned_user_id' | 'team_id' | 'pipeline_id' | 'stage_id',
   string
 >>;
+
+const MAX_PENDING_ATTACHMENTS = 10;
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+function formatCurrencyInput(value: string | number) {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return '';
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+  }
+  const digits = value.replace(/\D/g, '').slice(0, 15);
+  if (!digits) return '';
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(digits) / 100);
+}
+
+function parseCurrencyInput(value: string) {
+  const digits = value.replace(/\D/g, '');
+  return digits ? Number(digits) / 100 : undefined;
+}
 
 function omitBasicErrors(errors: LeadFormErrors) {
   const next = { ...errors };
@@ -64,10 +84,12 @@ export function CreateLeadDialog({
   const fieldIdPrefix = useId();
   const { hasPermission } = useUserPermissions();
   const { data: allUsers = [] } = useOrganizationUsers();
-  const users = hasPermission('lead_operate') ? allUsers : allUsers.filter(u => u.id === profile?.id);
+  const allAssignableUsers = hasPermission('lead_operate') ? allUsers : allUsers.filter(u => u.id === profile?.id);
+  const canSelectTeam = hasPermission('lead_view_all') || hasPermission('lead_view_team');
+  const { data: teams = [] } = useTeams({ enabled: open && canSelectTeam });
   const canViewProperties = hasPermission('property_view') || hasPermission('property_manage');
   const { data: pipelines = [] } = usePipelines();
-  const { data: properties = [] } = useProperties(undefined, {}, { enabled: canViewProperties });
+  const { data: properties = [] } = useProperties(undefined, {}, { enabled: canViewProperties && open });
   const createLead = useCreateLead();
 
   // Form state
@@ -82,10 +104,18 @@ export function CreateLeadDialog({
     phone2: '',
     email: '',
     message: '',
+    feedback: '',
     source: '',
+    person_type: 'individual' as 'individual' | 'company',
+    gender: '' as '' | 'male' | 'female' | 'other',
+    social_name: '',
     cpf: '',
     rg: '',
     birth_date: '',
+    cnpj: '',
+    corporate_name: '',
+    trade_name: '',
+    state_registration: '',
     is_portability: false,
     mother_name: '',
     uf: '',
@@ -104,9 +134,11 @@ export function CreateLeadDialog({
     faixa_valor_imovel: '',
     valor_interesse: '',
     assigned_user_id: profile?.id || '',
+    team_id: '',
     pipeline_id: defaultPipelineId || '',
     stage_id: defaultStageId || '',
     property_id: '',
+    interest_property_ids: [] as string[],
     deal_status: 'open',
     is_own_resource: false,
     tag_ids: [] as string[],
@@ -114,6 +146,13 @@ export function CreateLeadDialog({
   }), [profile?.id, defaultPipelineId, defaultStageId]);
 
   const [formData, setFormData] = useState(getEmptyFormData);
+  const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const selectedTeam = teams.find((team) => team.id === formData.team_id);
+  const selectedTeamUserIds = new Set((selectedTeam?.members || []).map((member) => member.user_id));
+  const users = formData.team_id
+    ? allAssignableUsers.filter((user) => selectedTeamUserIds.has(user.id))
+    : allAssignableUsers;
   const [errors, setErrors] = useState<LeadFormErrors>({});
   const [dialogPosition, setDialogPosition] = useState({ x: 0, y: 0 });
   const dialogContentRef = useRef<HTMLDivElement | null>(null);
@@ -136,10 +175,18 @@ export function CreateLeadDialog({
       && !data.phone2
       && !data.email.trim()
       && !data.message.trim()
+      && !data.feedback.trim()
       && !data.source
+      && data.person_type === 'individual'
+      && !data.gender
+      && !data.social_name
       && !data.cpf
       && !data.rg
       && !data.birth_date
+      && !data.cnpj
+      && !data.corporate_name
+      && !data.trade_name
+      && !data.state_registration
       && !data.mother_name
       && !data.uf
       && !data.cidade
@@ -157,6 +204,7 @@ export function CreateLeadDialog({
       && !data.faixa_valor_imovel
       && !data.valor_interesse
       && !data.property_id
+      && data.interest_property_ids.length === 0
       && data.tag_ids.length === 0
       && !data.is_portability;
   }, []);
@@ -235,6 +283,7 @@ export function CreateLeadDialog({
 
   const discardDraft = useCallback(() => {
     if (draftKey) localStorage.removeItem(draftKey);
+    setPendingAttachments([]);
     setDraftRestored(false);
     setActiveTab('basic');
     setErrors({});
@@ -258,10 +307,10 @@ export function CreateLeadDialog({
 
   // Prevent accidental close on backdrop click when form has data
   const handleInteractOutside = useCallback((e: Event) => {
-    if (dragStateRef.current || Date.now() < suppressOutsideCloseUntilRef.current || !isFormEmpty(formData)) {
+    if (dragStateRef.current || Date.now() < suppressOutsideCloseUntilRef.current || !isFormEmpty(formData) || pendingAttachments.length > 0) {
       e.preventDefault();
     }
-  }, [formData, isFormEmpty]);
+  }, [formData, isFormEmpty, pendingAttachments.length]);
 
   const handleDragStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -359,22 +408,32 @@ export function CreateLeadDialog({
     }
 
     if (activeTab === 'profile') {
+      if (validateProfileStep()) setActiveTab('interest');
+      return;
+    }
+
+    if (activeTab === 'interest') {
       setActiveTab('management');
       return;
     }
 
     if (!validateBasicStep()) return;
+    if (!validateProfileStep()) return;
     if (!validateManagementStep()) return;
 
+    setIsSubmitting(true);
     try {
-      await createLead.mutateAsync({
+      const initialFeedback = formData.feedback.trim() || formData.message.trim();
+      const createdLead = await createLead.mutateAsync({
         name: formData.name,
         phone: formData.phone || undefined,
         email: formData.email || undefined,
-        message: formData.message || undefined,
+        message: initialFeedback || undefined,
+        feedback: initialFeedback || undefined,
         pipeline_id: formData.pipeline_id || undefined,
         stage_id: formData.stage_id || undefined,
         assigned_user_id: formData.assigned_user_id || undefined,
+        team_id: formData.team_id || undefined,
         tag_ids: formData.tag_ids.length > 0 ? formData.tag_ids : undefined,
         source: formData.source || 'manual',
         conversation_id: formData.conversation_id || undefined,
@@ -384,19 +443,50 @@ export function CreateLeadDialog({
         profissao: formData.profissao || undefined,
         renda_familiar: formData.renda_familiar || undefined,
         faixa_valor_imovel: formData.faixa_valor_imovel || undefined,
-        valor_interesse: formData.valor_interesse ? parseFloat(formData.valor_interesse) : undefined,
+        valor_interesse: parseCurrencyInput(formData.valor_interesse),
         property_id: formData.property_id || undefined,
+        interest_property_ids: formData.interest_property_ids.length > 0 ? formData.interest_property_ids : undefined,
         deal_status: formData.deal_status || 'open',
         is_own_resource: false,
+        profile: {
+          personType: formData.person_type,
+          gender: formData.gender || undefined,
+          socialName: formData.social_name || undefined,
+          birthDate: formData.birth_date || undefined,
+          cpf: formData.cpf || undefined,
+          rg: formData.rg || undefined,
+          cnpj: formData.cnpj || undefined,
+          corporateName: formData.corporate_name || undefined,
+          tradeName: formData.trade_name || undefined,
+          stateRegistration: formData.state_registration || undefined,
+        },
       });
+
+      let failedAttachments = 0;
+      for (const file of pendingAttachments) {
+        try {
+          await leadAttachmentsAPI.upload(createdLead.id, file);
+        } catch {
+          failedAttachments += 1;
+        }
+      }
+
+      if (failedAttachments > 0) {
+        toast.warning(`Lead criado, mas ${failedAttachments} documento(s) não foram enviados.`);
+      } else if (pendingAttachments.length > 0) {
+        toast.success(`${pendingAttachments.length} documento(s) anexado(s).`);
+      }
 
       // Clear draft on success
       if (draftKey) localStorage.removeItem(draftKey);
+      setPendingAttachments([]);
       setDraftRestored(false);
       setErrors({});
       onOpenChange(false);
     } catch {
       // Error handled by mutation
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -421,6 +511,9 @@ export function CreateLeadDialog({
         remove('email');
         remove('contact');
       }
+      if (field === 'cpf') remove('cpf');
+      if (field === 'cnpj') remove('cnpj');
+      if (field === 'birth_date') remove('birth_date');
       if (field === 'assigned_user_id') remove('assigned_user_id');
       if (field === 'pipeline_id') {
         remove('pipeline_id');
@@ -438,10 +531,27 @@ export function CreateLeadDialog({
   const hasContactChannel = (!!formData.phone && hasValidPhone) || (!!formData.email.trim() && hasValidEmail);
   const hasRequiredLeadIdentity = !!formData.name.trim() && hasContactChannel;
   const hasRequiredManagement = !!formData.assigned_user_id && !!formData.pipeline_id && !!formData.stage_id;
-  const selectedLeadProperty = properties.find((property) => property.id === formData.property_id);
-  const selectedLeadPropertyLabel = selectedLeadProperty
-    ? [selectedLeadProperty.code, selectedLeadProperty.title].filter(Boolean).join(' - ')
-    : '';
+  const selectedInterestProperties = formData.interest_property_ids
+    .map((propertyId) => properties.find((property) => property.id === propertyId))
+    .filter((property): property is NonNullable<typeof property> => Boolean(property));
+  const handleAttachmentSelection = (files: FileList | null) => {
+    if (!files) return;
+    const incoming = Array.from(files);
+    const oversized = incoming.filter((file) => file.size > MAX_ATTACHMENT_BYTES);
+    if (oversized.length > 0) {
+      toast.error('Cada documento pode ter no máximo 25 MB.');
+    }
+
+    setPendingAttachments((current) => {
+      const keys = new Set(current.map((file) => `${file.name}:${file.size}:${file.lastModified}`));
+      const valid = incoming.filter((file) => file.size <= MAX_ATTACHMENT_BYTES && !keys.has(`${file.name}:${file.size}:${file.lastModified}`));
+      const next = [...current, ...valid].slice(0, MAX_PENDING_ATTACHMENTS);
+      if (current.length + valid.length > MAX_PENDING_ATTACHMENTS) {
+        toast.warning(`Você pode anexar até ${MAX_PENDING_ATTACHMENTS} documentos por cadastro.`);
+      }
+      return next;
+    });
+  };
   const fieldIds = {
     name: `${fieldIdPrefix}-lead-name`,
     contact: `${fieldIdPrefix}-lead-contact`,
@@ -450,7 +560,7 @@ export function CreateLeadDialog({
   };
   const describedBy = (...ids: Array<string | false | null | undefined>) => ids.filter(Boolean).join(' ') || undefined;
   const leadDialogSurfaceClass = cn(
-    "!left-1/2 !right-auto !top-1/2 !bottom-auto !h-auto max-h-[86vh] !w-[94vw] !border-0 bg-[var(--app-surface)] !p-0 text-[var(--app-text-primary)] shadow-[0_24px_80px_rgba(0,0,0,0.34)] backdrop-blur-2xl sm:!w-[560px] sm:!max-w-[560px]",
+    "!left-1/2 !right-auto !top-1/2 !bottom-auto !h-auto max-h-[88vh] !w-[96vw] !border-0 bg-[var(--app-surface)] !p-0 text-[var(--app-text-primary)] shadow-[0_24px_80px_rgba(0,0,0,0.34)] backdrop-blur-2xl sm:!w-[720px] sm:!max-w-[720px]",
     "!duration-0 !transition-none flex flex-col overflow-hidden rounded-none will-change-transform sm:rounded-[24px]",
     "data-[state=open]:!animate-none data-[state=closed]:!animate-none data-[state=closed]:!slide-out-to-right data-[state=open]:!slide-in-from-right",
     "[&_label]:text-[var(--app-text-secondary)] [&_label]:font-medium",
@@ -491,6 +601,41 @@ export function CreateLeadDialog({
     }
 
     setErrors(prev => omitBasicErrors(prev));
+    return true;
+  };
+
+  const validateProfileStep = () => {
+    const nextErrors: LeadFormErrors = {};
+    const cpfDigits = formData.cpf.replace(/\D/g, '');
+    const cnpjDigits = formData.cnpj.replace(/\D/g, '');
+
+    if (formData.person_type === 'individual' && formData.cpf && cpfDigits.length !== 11) {
+      nextErrors.cpf = 'CPF incompleto';
+    }
+    if (formData.person_type === 'company' && formData.cnpj && cnpjDigits.length !== 14) {
+      nextErrors.cnpj = 'CNPJ incompleto';
+    }
+    if (formData.birth_date) {
+      const birthDate = new Date(`${formData.birth_date}T00:00:00`);
+      if (Number.isNaN(birthDate.getTime()) || birthDate > new Date()) {
+        nextErrors.birth_date = 'Data de nascimento inválida';
+      }
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors((previous) => ({ ...previous, ...nextErrors }));
+      toast.error(Object.values(nextErrors)[0]);
+      setActiveTab('profile');
+      return false;
+    }
+
+    setErrors((previous) => {
+      const next = { ...previous };
+      delete next.cpf;
+      delete next.cnpj;
+      delete next.birth_date;
+      return next;
+    });
     return true;
   };
 
@@ -536,6 +681,11 @@ export function CreateLeadDialog({
     }
 
     if (activeTab === 'profile') {
+      if (validateProfileStep()) setActiveTab('interest');
+      return;
+    }
+
+    if (activeTab === 'interest') {
       setActiveTab('management');
     }
   };
@@ -588,9 +738,10 @@ export function CreateLeadDialog({
           <div className="flex-1 min-h-0 overflow-y-auto">
             <div className="px-6 pb-4 pt-3">
               <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                <TabsList data-tour="lead-form-tabs" className="mb-4 grid h-10 w-full grid-cols-3 rounded-xl bg-[var(--app-surface-soft)] p-1">
-                  <TabsTrigger data-tour="lead-form-tab-basic" value="basic" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Básico</TabsTrigger>
-                  <TabsTrigger data-tour="lead-form-tab-profile" value="profile" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Perfil</TabsTrigger>
+                <TabsList data-tour="lead-form-tabs" className="mb-5 grid h-10 w-full grid-cols-4 rounded-xl bg-[var(--app-surface-soft)] p-1">
+                  <TabsTrigger data-tour="lead-form-tab-basic" value="basic" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Contato</TabsTrigger>
+                  <TabsTrigger data-tour="lead-form-tab-profile" value="profile" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Pessoa</TabsTrigger>
+                  <TabsTrigger data-tour="lead-form-tab-interest" value="interest" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Interesse</TabsTrigger>
                   <TabsTrigger data-tour="lead-form-tab-management" value="management" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Gestão</TabsTrigger>
                 </TabsList>
 
@@ -599,12 +750,14 @@ export function CreateLeadDialog({
                     <div className="space-y-4">
                       {/* Real Estate: Basic Info - Clean Layout */}
                       <div className="space-y-1.5">
-                        <Label htmlFor={fieldIds.name} className="text-sm font-medium">Nome *</Label>
+                        <Label htmlFor={fieldIds.name} className="text-sm font-medium">
+                          {formData.person_type === 'company' ? 'Nome do contato / responsável *' : 'Nome completo *'}
+                        </Label>
                         <Input
                           id={fieldIds.name}
                           value={formData.name}
                           onChange={(e) => updateField('name', e.target.value)}
-                          placeholder="Nome do lead"
+                          placeholder={formData.person_type === 'company' ? 'Pessoa responsável pelo contato' : 'Nome do lead'}
                           required
                           aria-invalid={Boolean(errors.name)}
                           aria-describedby={errors.name ? `${fieldIds.name}-error` : undefined}
@@ -668,7 +821,7 @@ export function CreateLeadDialog({
                       ) : null}
 
                       <div className="space-y-1.5">
-                        <Label className="text-sm font-medium">Fonte</Label>
+                        <Label className="text-sm font-medium">Origem</Label>
                         <Select
                           value={formData.source || "__none__"}
                           onValueChange={(v) => updateField('source', v === "__none__" ? '' : v)}
@@ -691,134 +844,247 @@ export function CreateLeadDialog({
                       </div>
 
                       <div className="space-y-1.5">
-                        <Label className="text-sm font-medium">Observações</Label>
+                        <Label className="text-sm font-medium">Observações / feedback inicial</Label>
                         <Textarea
-                          value={formData.message}
-                          onChange={(e) => updateField('message', e.target.value)}
-                          placeholder="Interesse, observações iniciais..."
-                          rows={2}
+                          value={formData.feedback}
+                          onChange={(e) => updateField('feedback', e.target.value)}
+                          placeholder="Contexto do atendimento, necessidades ou próximos passos..."
+                          rows={4}
                         />
+                        <p className="text-xs text-[var(--app-text-tertiary)]">Este texto entra no histórico como o primeiro feedback do lead.</p>
                       </div>
                     </div>
                 </TabsContent>
 
                 {/* Profile/Contract Tab */}
-                <TabsContent data-tour="lead-form-profile" value="profile" className="space-y-4 mt-0">
-                    <>
-                      {/* Real Estate: Profile */}
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <div className="space-y-2">
-                          <Label className="flex items-center gap-2">
-                            <Briefcase className="h-3.5 w-3.5" />
-                            Cargo
-                          </Label>
-                          <Input
-                            value={formData.cargo}
-                            onChange={(e) => updateField('cargo', e.target.value)}
-                            placeholder="Ex: Gerente, Diretor..."
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label className="flex items-center gap-2">
-                            <Building2 className="h-3.5 w-3.5" />
-                            Empresa
-                          </Label>
-                          <Input
-                            value={formData.empresa}
-                            onChange={(e) => updateField('empresa', e.target.value)}
-                            placeholder="Nome da empresa"
-                          />
-                        </div>
-                      </div>
+                <TabsContent data-tour="lead-form-profile" value="profile" className="mt-0 space-y-5">
+                  <div className="space-y-2">
+                    <Label>Tipo de pessoa</Label>
+                    <div className="grid grid-cols-2 gap-2 rounded-xl bg-[var(--app-surface-soft)] p-1">
+                      {([
+                        ['individual', 'Pessoa física'],
+                        ['company', 'Pessoa jurídica'],
+                      ] as const).map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => updateField('person_type', value)}
+                          className={cn(
+                            'h-9 rounded-lg text-xs font-medium transition-colors',
+                            formData.person_type === value
+                              ? 'bg-primary text-white shadow-sm'
+                              : 'text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]',
+                          )}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
+                  {formData.person_type === 'individual' ? (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>Gênero</Label>
+                        <Select value={formData.gender || '__none__'} onValueChange={(value) => updateField('gender', value === '__none__' ? '' : value as typeof formData.gender)}>
+                          <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">Não informado</SelectItem>
+                            <SelectItem value="male">Masculino</SelectItem>
+                            <SelectItem value="female">Feminino</SelectItem>
+                            <SelectItem value="other">Outro</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Nome social</Label>
+                        <Input value={formData.social_name} onChange={(e) => updateField('social_name', e.target.value)} placeholder="Como prefere ser chamado(a)" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Data de nascimento</Label>
+                        <Input type="date" value={formData.birth_date} max={new Date().toISOString().slice(0, 10)} onChange={(e) => updateField('birth_date', e.target.value)} aria-invalid={Boolean(errors.birth_date)} />
+                        {errors.birth_date && <p className="text-xs font-medium text-destructive">{errors.birth_date}</p>}
+                      </div>
+                      <div className="space-y-2">
+                        <Label>CPF</Label>
+                        <Input value={formData.cpf} onChange={(e) => updateField('cpf', maskCPF(e.target.value))} placeholder="000.000.000-00" inputMode="numeric" aria-invalid={Boolean(errors.cpf)} />
+                        {errors.cpf && <p className="text-xs font-medium text-destructive">{errors.cpf}</p>}
+                      </div>
+                      <div className="space-y-2">
+                        <Label>RG</Label>
+                        <Input value={formData.rg} onChange={(e) => updateField('rg', maskRG(e.target.value))} placeholder="00.000.000-0" inputMode="numeric" />
+                      </div>
                       <div className="space-y-2">
                         <Label>Profissão</Label>
-                        <Input
-                          value={formData.profissao}
-                          onChange={(e) => updateField('profissao', e.target.value)}
-                          placeholder="Área de atuação"
-                        />
+                        <Input value={formData.profissao} onChange={(e) => updateField('profissao', e.target.value)} placeholder="Área de atuação" />
                       </div>
-
-                      <div className="space-y-2">
-                        <Label className="flex items-center gap-2">
-                          <DollarSign className="h-3.5 w-3.5" />
-                          Renda Familiar
-                        </Label>
-                        <Input
-                          value={formData.renda_familiar}
-                          onChange={(e) => updateField('renda_familiar', e.target.value)}
-                          placeholder="Ex: R$ 10.000"
-                        />
+                      <div className="space-y-2 sm:col-span-2">
+                        <Label className="flex items-center gap-2"><DollarSign className="h-3.5 w-3.5" />Renda</Label>
+                        <Input value={formData.renda_familiar} onChange={(e) => updateField('renda_familiar', formatCurrencyInput(e.target.value))} placeholder="R$ 0,00" inputMode="decimal" />
                       </div>
-
-                      <div className="space-y-2">
-                        <Label>Valor de Interesse (R$)</Label>
-                        <Input
-                          type="number"
-                          value={formData.valor_interesse}
-                          onChange={(e) => updateField('valor_interesse', e.target.value)}
-                          placeholder="Ex: 500000"
-                        />
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2 sm:col-span-2">
+                        <Label>Razão social</Label>
+                        <Input value={formData.corporate_name} onChange={(e) => updateField('corporate_name', e.target.value)} placeholder="Razão social da empresa" />
                       </div>
-
                       <div className="space-y-2">
-                        <Label className="flex items-center gap-2">
-                          <Home className="h-3.5 w-3.5" />
-                          Imóvel de Interesse
-                        </Label>
-                        <PropertyPickerDialog
-                          properties={properties.map((p) => ({
-                            id: p.id,
-                            code: p.code,
-                            title: p.title,
-                            bairro: p.bairro,
-                            cidade: p.cidade,
-                            preco: p.preco,
-                            imagem_principal: p.imagem_principal,
-                            tipo_de_imovel: p.tipo_de_imovel,
-                            tipo_de_negocio: p.tipo_de_negocio,
-                            commission_percentage: p.commission_percentage,
-                            status: p.status,
-                          }))}
-                          selectedPropertyId={formData.property_id || null}
-                          disabled={!canViewProperties}
-                          onSelect={(p) => {
-                            updateField('property_id', p.id);
-                            if (p.preco && !formData.valor_interesse) {
-                              updateField('valor_interesse', String(p.preco));
-                            }
+                        <Label>Nome fantasia</Label>
+                        <Input value={formData.trade_name} onChange={(e) => updateField('trade_name', e.target.value)} placeholder="Nome comercial" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>CNPJ</Label>
+                        <Input value={formData.cnpj} onChange={(e) => updateField('cnpj', maskCNPJ(e.target.value))} placeholder="00.000.000/0000-00" inputMode="numeric" aria-invalid={Boolean(errors.cnpj)} />
+                        {errors.cnpj && <p className="text-xs font-medium text-destructive">{errors.cnpj}</p>}
+                      </div>
+                      <div className="space-y-2 sm:col-span-2">
+                        <Label>Inscrição estadual</Label>
+                        <Input value={formData.state_registration} onChange={(e) => updateField('state_registration', e.target.value)} placeholder="Opcional" />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid gap-4 border-t border-[var(--app-border)] pt-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-2"><Briefcase className="h-3.5 w-3.5" />Cargo</Label>
+                      <Input value={formData.cargo} onChange={(e) => updateField('cargo', e.target.value)} placeholder="Ex: Gerente, Diretor..." />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-2"><Building2 className="h-3.5 w-3.5" />Empresa</Label>
+                      <Input value={formData.empresa} onChange={(e) => updateField('empresa', e.target.value)} placeholder="Nome da empresa" />
+                    </div>
+                  </div>
+                </TabsContent>
+
+                <TabsContent data-tour="lead-form-interest" value="interest" className="mt-0 space-y-5">
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-2"><DollarSign className="h-3.5 w-3.5" />Valor de interesse</Label>
+                    <Input value={formData.valor_interesse} onChange={(e) => updateField('valor_interesse', formatCurrencyInput(e.target.value))} placeholder="R$ 0,00" inputMode="decimal" />
+                    <p className="text-xs text-[var(--app-text-tertiary)]">Digite somente os números; a moeda é formatada automaticamente.</p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <Label className="flex items-center gap-2"><Home className="h-3.5 w-3.5" />Imóveis de interesse</Label>
+                    {selectedInterestProperties.map((property, index) => (
+                      <div key={property.id} className="flex items-center gap-3 rounded-xl bg-[var(--app-surface-soft)] px-3 py-2.5">
+                        <Building2 className="h-4 w-4 shrink-0 text-primary" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-[var(--app-text-primary)]">{[property.code, property.title].filter(Boolean).join(' - ')}</p>
+                          <p className="truncate text-xs text-[var(--app-text-tertiary)]">{[property.bairro, property.cidade].filter(Boolean).join(' · ')}{index === 0 ? ' · Principal' : ''}</p>
+                        </div>
+                        <button
+                          type="button"
+                          aria-label={`Remover ${property.title || property.code || 'imóvel'}`}
+                          onClick={() => {
+                            const nextIds = formData.interest_property_ids.filter((id) => id !== property.id);
+                            setFormData((previous) => ({ ...previous, interest_property_ids: nextIds, property_id: nextIds[0] || '' }));
                           }}
-                          trigger={
-                            selectedLeadProperty ? (
-                              <button
-                                type="button"
-                                className="flex min-h-10 w-full items-center gap-2 rounded-xl bg-transparent px-0 text-left text-sm font-medium text-primary hover:text-primary/85"
-                              >
-                                <Building2 className="h-4 w-4 shrink-0 text-[var(--app-text-tertiary)]" />
-                                <span className="truncate">{selectedLeadPropertyLabel}</span>
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                className="flex h-10 w-full items-center justify-between rounded-xl bg-primary/20 px-3 text-left text-xs font-medium text-primary hover:bg-primary/25"
-                              >
-                                <span className="flex min-w-0 items-center gap-2">
-                                  <Building2 className="h-3.5 w-3.5 shrink-0" />
-                                  <span className="truncate">Selecionar imóvel</span>
-                                </span>
-                                <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-                              </button>
-                            )
-                          }
-                        />
+                          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[var(--app-text-tertiary)] hover:bg-destructive/10 hover:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
-                    </>
+                    ))}
+                    <PropertyPickerDialog
+                      properties={properties.map((p) => ({
+                        id: p.id, code: p.code, title: p.title, bairro: p.bairro, cidade: p.cidade,
+                        preco: p.preco, imagem_principal: p.imagem_principal, tipo_de_imovel: p.tipo_de_imovel,
+                        tipo_de_negocio: p.tipo_de_negocio, commission_percentage: p.commission_percentage, status: p.status,
+                      }))}
+                      selectedPropertyId={null}
+                      disabled={!canViewProperties}
+                      onSelect={(property) => {
+                        setFormData((previous) => {
+                          if (previous.interest_property_ids.includes(property.id)) return previous;
+                          const nextIds = [...previous.interest_property_ids, property.id];
+                          return {
+                            ...previous,
+                            interest_property_ids: nextIds,
+                            property_id: previous.property_id || property.id,
+                            valor_interesse: previous.valor_interesse || (property.preco ? formatCurrencyInput(property.preco) : ''),
+                          };
+                        });
+                      }}
+                      trigger={(
+                        <button type="button" disabled={!canViewProperties} className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-primary/40 bg-primary/10 px-3 text-xs font-medium text-primary hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-50">
+                          <Plus className="h-3.5 w-3.5" />{selectedInterestProperties.length > 0 ? 'Adicionar outro imóvel' : 'Adicionar imóvel'}
+                        </button>
+                      )}
+                    />
+                    {!canViewProperties && <p className="text-xs text-[var(--app-text-tertiary)]">Seu perfil não possui acesso aos imóveis.</p>}
+                  </div>
+
+                  <div className="space-y-3 border-t border-[var(--app-border)] pt-4">
+                    <div>
+                      <Label className="flex items-center gap-2"><Paperclip className="h-3.5 w-3.5" />Documentos</Label>
+                      <p className="mt-1 text-xs text-[var(--app-text-tertiary)]">Até 10 arquivos de 25 MB. O envio acontece depois que o lead é criado.</p>
+                    </div>
+                    <Input
+                      id={`${fieldIdPrefix}-lead-attachments`}
+                      type="file"
+                      multiple
+                      accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp"
+                      className="sr-only"
+                      onChange={(event) => {
+                        handleAttachmentSelection(event.target.files);
+                        event.currentTarget.value = '';
+                      }}
+                    />
+                    <label htmlFor={`${fieldIdPrefix}-lead-attachments`} className="flex h-10 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-primary/40 bg-primary/10 text-xs font-medium text-primary hover:bg-primary/15">
+                      <Plus className="h-3.5 w-3.5" />Adicionar documentos
+                    </label>
+                    {pendingAttachments.map((file) => (
+                      <div key={`${file.name}:${file.size}:${file.lastModified}`} className="flex items-center gap-3 rounded-xl bg-[var(--app-surface-soft)] px-3 py-2">
+                        <FileText className="h-4 w-4 shrink-0 text-primary" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-medium text-[var(--app-text-primary)]">{file.name}</p>
+                          <p className="text-[11px] text-[var(--app-text-tertiary)]">{(file.size / 1024 / 1024).toFixed(1)} MB</p>
+                        </div>
+                        <button type="button" aria-label={`Remover ${file.name}`} onClick={() => setPendingAttachments((current) => current.filter((item) => item !== file))} className="grid h-8 w-8 place-items-center rounded-lg text-[var(--app-text-tertiary)] hover:bg-destructive/10 hover:text-destructive">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </TabsContent>
 
                 {/* Management Tab */}
                 <TabsContent data-tour="lead-form-management" value="management" className="space-y-4 mt-0">
                   <div className="grid gap-4 sm:grid-cols-2">
+                    {canSelectTeam && (
+                      <div className="space-y-2">
+                        <Label className="flex items-center gap-2">
+                          <Building2 className="h-3.5 w-3.5" />
+                          Escopo do lead
+                        </Label>
+                        <Select
+                          value={formData.team_id || 'personal'}
+                          onValueChange={(value) => {
+                            const nextTeamId = value === 'personal' ? '' : value;
+                            const nextTeam = teams.find((team) => team.id === nextTeamId);
+                            const memberIds = new Set((nextTeam?.members || []).map((member) => member.user_id));
+                            const currentAssigneeIsValid = !nextTeamId || memberIds.has(formData.assigned_user_id);
+                            const fallbackAssignee = allAssignableUsers.find((user) => memberIds.has(user.id))?.id || '';
+                            setFormData((previous) => ({
+                              ...previous,
+                              team_id: nextTeamId,
+                              assigned_user_id: currentAssigneeIsValid ? previous.assigned_user_id : fallbackAssignee,
+                            }));
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione o escopo" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="personal">Pessoal</SelectItem>
+                            {teams.filter((team) => team.is_active !== false).map((team) => (
+                              <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
                     <div className="space-y-2">
                       <Label className="flex items-center gap-2">
                         <User className="h-3.5 w-3.5" />
@@ -947,7 +1213,11 @@ export function CreateLeadDialog({
                     if (!validateBasicStep()) return;
                     setActiveTab('profile');
                   }
-                  else if (activeTab === 'profile') setActiveTab('management');
+                  else if (activeTab === 'profile') {
+                    if (!validateProfileStep()) return;
+                    setActiveTab('interest');
+                  }
+                  else if (activeTab === 'interest') setActiveTab('management');
                 }}
               >
                 Avançar
@@ -958,10 +1228,10 @@ export function CreateLeadDialog({
                 key="btn-submit"
                 type="submit"
                 className="h-10 w-[60%] bg-primary text-white hover:bg-primary/90"
-                disabled={createLead.isPending || !hasRequiredLeadIdentity || !hasRequiredManagement}
+                disabled={isSubmitting || !hasRequiredLeadIdentity || !hasRequiredManagement}
               >
-                {createLead.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                Criar Lead
+                {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                {isSubmitting ? 'Criando...' : 'Criar Lead'}
               </Button>
             )}
           </div>

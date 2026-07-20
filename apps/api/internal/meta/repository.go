@@ -820,6 +820,7 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 				utm_medium,
 				utm_campaign,
 				valor_interesse,
+				team_id,
 				stage_entered_at,
 				board_order_at,
 				last_entry_at
@@ -852,12 +853,13 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 				'lead_ads',
 				$22,
 				$23::numeric,
+				$24::uuid,
 				case when $3::uuid is null then null else now() end,
 				case when $3::uuid is null then null else now() end,
 				now()
 			)
 			returning id::text
-		`, integration.OrganizationID, nullablePointer(destination.PipelineID), nullablePointer(destination.StageID), nullablePointer(destination.AssignedUserID), nullablePointer(propertyID), lead.Name, nullablePointer(lead.Email), nullablePointer(lead.Phone), source, nullablePointer(lead.Message), status, nullablePointer(lead.Cargo), nullablePointer(lead.Empresa), nullablePointer(lead.Cidade), nullablePointer(lead.Bairro), nullablePointer(formConfig.Purpose), change.LeadgenID, change.FormID, nullableString(metaText(details, change.Raw, "campaign_id")), nullableString(metaText(details, change.Raw, "adset_id")), nullableString(metaText(details, change.Raw, "ad_id")), nullableString(metaText(details, change.Raw, "campaign_name")), nullablePointer(interestValue)).Scan(&leadID)
+		`, integration.OrganizationID, nullablePointer(destination.PipelineID), nullablePointer(destination.StageID), nullablePointer(destination.AssignedUserID), nullablePointer(propertyID), lead.Name, nullablePointer(lead.Email), nullablePointer(lead.Phone), source, nullablePointer(lead.Message), status, nullablePointer(lead.Cargo), nullablePointer(lead.Empresa), nullablePointer(lead.Cidade), nullablePointer(lead.Bairro), nullablePointer(formConfig.Purpose), change.LeadgenID, change.FormID, nullableString(metaText(details, change.Raw, "campaign_id")), nullableString(metaText(details, change.Raw, "adset_id")), nullableString(metaText(details, change.Raw, "ad_id")), nullableString(metaText(details, change.Raw, "campaign_name")), nullablePointer(interestValue), nullablePointer(destination.TeamID)).Scan(&leadID)
 	}
 	if err != nil {
 		return "", false, err
@@ -1070,12 +1072,13 @@ func (repo Repository) resolveRoundRobin(ctx context.Context, tx pgx.Tx, organiz
 		destination.StageID = stageID
 	}
 
-	memberID, userID, err := repo.selectRoundRobinMember(ctx, tx, organizationID, roundRobinID)
+	memberID, userID, teamID, err := repo.selectRoundRobinMember(ctx, tx, organizationID, roundRobinID)
 	if err != nil {
 		return resolvedDestination{}, err
 	}
 	destination.RoundRobinMemberID = memberID
 	destination.AssignedUserID = userID
+	destination.TeamID = teamID
 	return destination, nil
 }
 
@@ -1155,9 +1158,10 @@ func (repo Repository) defaultDestination(ctx context.Context, tx pgx.Tx, organi
 	return textPointer(pipelineID), textPointer(stageID), nil
 }
 
-func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, organizationID string, roundRobinID string) (*string, *string, error) {
+func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, organizationID string, roundRobinID string) (*string, *string, *string, error) {
 	var memberID pgtype.Text
 	var userID pgtype.Text
+	var teamID pgtype.Text
 	err := tx.QueryRow(ctx, `
 		with entries as (
 			select
@@ -1193,6 +1197,7 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 				entries.round_robin_id,
 				entries.organization_id,
 				entries.user_id,
+				entries.team_id,
 				entries.position,
 				entries.created_at,
 				entries.entry_total,
@@ -1213,6 +1218,7 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 				entries.round_robin_id,
 				entries.organization_id,
 				tm.user_id,
+				entries.team_id,
 				entries.position,
 				entries.created_at,
 				entries.entry_total,
@@ -1230,7 +1236,7 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 			where entries.user_id is null
 			  and entries.team_id is not null
 		)
-		select candidates.id::text, candidates.user_id::text
+		select candidates.id::text, candidates.user_id::text, candidates.team_id::text
 		from candidates
 		join public.organization_members om
 		  on om.organization_id = candidates.organization_id
@@ -1276,14 +1282,14 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 		  )
 		order by candidates.entry_total asc, candidates.position asc, candidates.created_at asc, coalesce(user_logs.total, 0) asc, candidates.team_member_created_at asc nulls last, candidates.user_id asc
 		limit 1
-	`, organizationID, roundRobinID).Scan(&memberID, &userID)
+	`, organizationID, roundRobinID).Scan(&memberID, &userID, &teamID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return textPointer(memberID), textPointer(userID), nil
+	return textPointer(memberID), textPointer(userID), textPointer(teamID), nil
 }
 
 func (repo Repository) findLeadByMetaLeadID(ctx context.Context, organizationID string, leadgenID string) (string, error) {

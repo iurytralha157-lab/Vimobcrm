@@ -4,12 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import NextImage from 'next/image';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import {
-  LayoutDashboard, Kanban, Building2, Shuffle,
-  ChevronLeft, ChevronRight, Users, MessageSquare, Calendar, DollarSign,
-  FileText, Receipt, TrendingUp, BarChart3, Zap, MapPin,
-  Globe, Trophy, CreditCard, Tags, Activity, History, Megaphone, Settings, Plug, Bot, BellRing
-} from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
@@ -19,6 +14,7 @@ import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useSidebar } from '@/contexts/SidebarContext';
 import { useSystemSettings } from '@/hooks/use-system-settings';
+import { useLocationHash } from '@/hooks/use-location-hash';
 import { useTheme } from 'next-themes';
 import { isBillingBlockedStatus } from '@/lib/billing-access';
 import { canUseFinancialModule } from '@/lib/financial-access';
@@ -26,8 +22,16 @@ import { Button } from '@/components/ui/button';
 import { canManageOrganization } from '@/lib/access/organization';
 import {
   filterNavigationItems,
-  type NavigationAccessItem,
+  getNavigationLocationKey,
+  isNavigationPathActive,
 } from '@/lib/access/navigation';
+import {
+  APP_BOTTOM_NAVIGATION_ITEMS,
+  APP_NAVIGATION_ITEMS,
+  BILLING_NAVIGATION_ITEM,
+  type AppNavigationItem,
+} from '@/config/navigation';
+import { getNavigationIcon } from './navigation-icons';
 
 const DEFAULT_BRAND_LOGO_DARK = "/images/logo-white.png";
 const DEFAULT_BRAND_LOGO_LIGHT = "/images/logo-black.png";
@@ -40,248 +44,19 @@ const SIDEBAR_NAV_RESET =
 const SIDEBAR_NAV_TEXT = "font-sans text-sm font-extralight leading-none tracking-wide";
 const SIDEBAR_NAV_CHILD_TEXT = "font-sans text-sm font-extralight leading-none tracking-wide";
 
-interface NavItem extends NavigationAccessItem {
-  icon: React.ElementType;
-  labelKey: string;
-  children?: NavItem[];
-}
-
-const allNavItems: NavItem[] = [
-  {
-    icon: LayoutDashboard,
-    labelKey: 'dashboard',
-    path: '/dashboard',
-    anyPermissions: ['dashboard_view', 'dashboard_site_view', 'dashboard_campaigns_view'],
-    children: [{
-      icon: LayoutDashboard,
-      labelKey: 'dashboardGeneral',
-      path: '/dashboard',
-      permission: 'dashboard_view'
-    }, {
-      icon: Globe,
-      labelKey: 'dashboardSite',
-      path: '/dashboard/site',
-      permission: 'dashboard_site_view',
-      module: 'site'
-    }, {
-      icon: Megaphone,
-      labelKey: 'dashboardCampaigns',
-      path: '/dashboard/campaigns',
-      permission: 'dashboard_campaigns_view'
-    }]
-  }, {
-    icon: Kanban,
-    labelKey: 'pipelines',
-    path: '/crm/pipelines',
-    module: 'crm'
-  }, {
-    icon: BellRing,
-    labelKey: 'attentionCenter',
-    path: '/attention',
-    module: 'crm',
-    feature: 'ENABLE_ATTENTION_CENTER'
-  }, {
-    icon: MessageSquare, // Substituído o WhatsAppIcon pelo padrão
-    labelKey: 'conversations',
-    path: '/crm/conversas',
-    module: 'whatsapp'
-  }, {
-    icon: Users,
-    labelKey: 'contacts',
-    path: '/crm/contacts',
-    module: 'crm'
-  },
-  // Admin modules
-  {
-    icon: Shuffle,
-    labelKey: 'crmManagement',
-    path: '/crm/management',
-    module: 'crm',
-    anyPermissions: ['team_manage', 'distribution_manage', 'pipeline_manage', 'tag_manage'],
-    children: [{
-      icon: Users,
-      labelKey: 'managementTeams',
-      path: '/crm/management?tab=teams',
-      anyPermissions: ['team_manage']
-    }, {
-      icon: Shuffle,
-      labelKey: 'managementDistribution',
-      path: '/crm/management?tab=distribution',
-      permission: 'distribution_manage'
-    }, {
-      icon: Kanban,
-      labelKey: 'managementPipelines',
-      path: '/crm/management?tab=pipelines',
-      permission: 'pipeline_manage'
-    }, {
-      icon: Tags,
-      labelKey: 'managementTags',
-      path: '/crm/management?tab=tags',
-      permission: 'tag_manage'
-    }]
-  }, {
-    icon: Building2,
-    labelKey: 'properties',
-    path: '/properties',
-    module: 'properties',
-    children: [{
-      icon: Building2,
-      labelKey: 'propertiesAll',
-      path: '/properties'
-    }, {
-      icon: Building2,
-      labelKey: 'propertiesCondos',
-      path: '/properties/condominiums'
-    }, {
-      icon: MapPin,
-      labelKey: 'propertiesLocations',
-      path: '/properties/locations'
-    }, {
-      icon: Users,
-      labelKey: 'propertiesOwners',
-      path: '/properties/owners'
-    }]
-  }, {
-    icon: Calendar,
-    labelKey: 'schedule',
-    path: '/agenda',
-    module: 'agenda'
-  }, {
-    icon: Zap,
-    labelKey: 'automations',
-    path: '/automations',
-    module: 'automations',
-    permission: 'automations_view',
-    children: [{
-      icon: Zap,
-      labelKey: 'automationList',
-      path: '/automations?tab=automations',
-      permission: 'automations_view'
-    }, {
-      icon: FileText,
-      labelKey: 'automationTemplates',
-      path: '/automations?tab=templates',
-      permission: 'automations_manage'
-    }, {
-      icon: Activity,
-      labelKey: 'automationHistory',
-      path: '/automations?tab=history',
-      permission: 'automations_view'
-    }]
-  }, {
-    icon: DollarSign,
-    labelKey: 'financial',
-    path: '/financeiro',
-    module: 'financial',
-    permission: 'financial_view',
-    children: [{
-      icon: TrendingUp,
-      labelKey: 'financialDashboard',
-      path: '/financeiro'
-    }, {
-      icon: Receipt,
-      labelKey: 'entries',
-      path: '/financeiro/contas'
-    }, {
-      icon: FileText,
-      labelKey: 'contracts',
-      path: '/financeiro/contratos'
-    }, {
-      icon: DollarSign,
-      labelKey: 'commissions',
-      path: '/financeiro/comissoes'
-    }, {
-      icon: BarChart3,
-      labelKey: 'reports',
-      path: '/financeiro/relatorios'
-    }, {
-      icon: BarChart3,
-      labelKey: 'dre',
-      path: '/financeiro/dre'
-    }]
-  }, {
-    icon: Trophy,
-    labelKey: 'arena',
-    path: '/gamificacao',
-    module: 'gamification',
-    children: [{
-      icon: Trophy,
-      labelKey: 'arenaOverview',
-      path: '/gamificacao'
-    }, {
-      icon: BarChart3,
-      labelKey: 'dashboard',
-      path: '/gamificacao#dashboard'
-    }, {
-      icon: History,
-      labelKey: 'history',
-      path: '/gamificacao#history'
-    }, {
-      icon: Settings,
-      labelKey: 'arenaSettings',
-      path: '/gamificacao#config',
-      permission: 'gamification_manage'
-    }]
-  }
-];
-
-const bottomItems: NavItem[] = [
-  {
-    icon: Settings,
-    labelKey: 'settings',
-    path: '/settings',
-    children: [{
-      icon: Settings,
-      labelKey: 'settingsAccount',
-      path: '/settings?tab=account'
-    }, {
-      icon: Users,
-      labelKey: 'settingsUsers',
-      path: '/settings?tab=team',
-      anyPermissions: ['users_manage', 'permissions_manage']
-    }, {
-      icon: CreditCard,
-      labelKey: 'settingsBilling',
-      path: '/settings?tab=subscription',
-      permission: 'settings_billing'
-    }, {
-      icon: Plug,
-      labelKey: 'settingsIntegrations',
-      path: '/settings?tab=integrations',
-      anyPermissions: ['settings_integrations', 'whatsapp_manage', 'settings_ai']
-    }, {
-      icon: Bot,
-      labelKey: 'settingsAI',
-      path: '/settings?tab=ai',
-      permission: 'settings_ai',
-      module: 'ai_agent'
-    }, {
-      icon: Building2,
-      labelKey: 'settingsProperties',
-      path: '/settings?tab=properties',
-      permission: 'property_manage'
-    }, {
-      icon: Globe,
-      labelKey: 'site',
-      path: '/settings/site',
-      permission: 'settings_site',
-      module: 'site'
-    }]
-  }
-];
-
 export const AppSidebar = React.memo(function AppSidebar() {
   const pathname = usePathname() || '';
   const searchParams = useSearchParams();
+  const currentHash = useLocationHash();
   const { profile, isSuperAdmin, organization, tenantContext, userOrganizations } = useAuth();
   const { t } = useLanguage();
-  const { hasModule } = useOrganizationModules();
-  const { hasPermission } = useUserPermissions();
-  const { collapsed, toggleCollapsed } = useSidebar();
+  const { hasModule, isLoading: modulesLoading } = useOrganizationModules();
+  const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
+  const { collapsed, setCollapsed, toggleCollapsed } = useSidebar();
   const { data: systemSettings } = useSystemSettings();
   const { resolvedTheme } = useTheme();
   const [pendingPath, setPendingPath] = useState<string | null>(null);
-  const searchKey = searchParams.toString();
+  const locationKey = getNavigationLocationKey(pathname, searchParams, currentHash);
 
   const logoUrl = useMemo(() => {
     if (!systemSettings) return null;
@@ -308,17 +83,14 @@ export const AppSidebar = React.memo(function AppSidebar() {
     isSuperAdmin,
     memberRole: activeMemberRole,
   });
+  const navigationLoading = modulesLoading || permissionsLoading;
 
-  const navItems = useMemo<NavItem[]>(() => {
+  const navItems = useMemo<AppNavigationItem[]>(() => {
     if (isBillingBlocked) {
-      return [{
-        icon: CreditCard,
-        labelKey: 'Faturamento',
-        path: '/settings?tab=subscription'
-      }];
+      return [BILLING_NAVIGATION_ITEM];
     }
 
-    return filterNavigationItems(allNavItems, {
+    return filterNavigationItems(APP_NAVIGATION_ITEMS, {
       canAccessAdminItems,
       canAccessFinancialModule,
       hasModule,
@@ -331,7 +103,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
   const computedBottomItems = useMemo(() => {
     if (isBillingBlocked) return [];
 
-    return filterNavigationItems(bottomItems, {
+    return filterNavigationItems(APP_BOTTOM_NAVIGATION_ITEMS, {
       canAccessAdminItems,
       canAccessFinancialModule,
       hasModule,
@@ -347,7 +119,8 @@ export const AppSidebar = React.memo(function AppSidebar() {
 
   useEffect(() => {
     setPendingPath(null);
-  }, [pathname, searchKey]);
+    setCollapsed(true);
+  }, [locationKey, setCollapsed]);
 
   const parseNavPath = (path: string) => {
     const [withoutHash, hash] = path.split('#');
@@ -360,22 +133,8 @@ export const AppSidebar = React.memo(function AppSidebar() {
     };
   };
 
-  const isPathActive = (path: string, options?: { parent?: boolean }) => {
-    const { basePath, hash, tab } = parseNavPath(path);
-
-    if (pathname !== basePath && !pathname.startsWith(`${basePath}/`)) return false;
-    if (tab) {
-      const currentTab = searchParams.get('tab');
-      return currentTab === tab
-        || (!currentTab && basePath === '/crm/management' && tab === 'teams')
-        || (!currentTab && basePath === '/automations' && tab === 'automations')
-        || (!currentTab && basePath === '/settings' && tab === 'account');
-    }
-    if (hash) return false;
-    if (options?.parent) return true;
-    if (searchParams.get('tab') && pathname === basePath) return false;
-    return pathname === basePath;
-  };
+  const isPathActive = (path: string, options?: { parent?: boolean }) =>
+    isNavigationPathActive(path, pathname, searchParams, { ...options, currentHash });
 
   const isPathPending = (path: string, options?: { parent?: boolean }) => {
     if (!pendingPath) return false;
@@ -390,7 +149,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
     return pending.basePath === target.basePath;
   };
 
-  const isActiveParent = (item: NavItem) => {
+  const isActiveParent = (item: AppNavigationItem) => {
     if (item.children) {
       return isPathActive(item.path, { parent: true })
         || isPathPending(item.path, { parent: true })
@@ -399,9 +158,26 @@ export const AppSidebar = React.memo(function AppSidebar() {
     return isPathActive(item.path, { parent: true }) || isPathPending(item.path, { parent: true });
   };
 
-  const renderNavItem = (item: NavItem) => {
-    const Icon = item.icon;
-    const isActive = item.children ? isActiveParent(item) : isPathActive(item.path, { parent: true });
+  const handleDirectNavigation = (event: React.MouseEvent<HTMLAnchorElement>, path: string) => {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return;
+    }
+
+    setPendingPath(path);
+  };
+
+  const renderNavItem = (item: AppNavigationItem) => {
+    const Icon = getNavigationIcon(item.icon);
+    const isActive = item.children
+      ? isActiveParent(item)
+      : isPathActive(item.path, { parent: true }) || isPathPending(item.path, { parent: true });
     const shouldLiftDropdown = item.path === '/settings';
     const dropdownAlignOffset = shouldLiftDropdown ? -180 : 0;
 
@@ -419,6 +195,8 @@ export const AppSidebar = React.memo(function AppSidebar() {
                 collapsed && "justify-center"
               )}
               aria-label={getLabel(item.labelKey)}
+              aria-current={isActive ? 'page' : undefined}
+              title={collapsed ? getLabel(item.labelKey) : undefined}
             >
               <Icon className="h-5 w-5 flex-shrink-0" strokeWidth={SIDEBAR_ICON_STROKE} />
               {!collapsed && (
@@ -437,7 +215,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
             className="w-60 space-y-1 rounded-[6px] border-0 bg-[var(--app-sidebar)] p-1.5 text-[var(--app-text-primary)] shadow-[0_8px_18px_rgba(0,0,0,0.045)] backdrop-blur-md dark:shadow-[0_8px_18px_rgba(0,0,0,0.14)]"
           >
             {item.children.map(child => {
-              const ChildIcon = child.icon;
+              const ChildIcon = getNavigationIcon(child.icon);
               const childActive = isPathActive(child.path) || isPathPending(child.path);
 
               return (
@@ -463,7 +241,6 @@ export const AppSidebar = React.memo(function AppSidebar() {
                   {(!child.path.includes('#') || pathname !== child.path.split('#')[0]) ? (
                     <Link
                       href={child.path}
-                      onPointerDown={() => setPendingPath(child.path)}
                       className={cn("flex w-full items-center gap-3 px-3 py-2", SIDEBAR_NAV_CHILD_TEXT, SIDEBAR_NAV_RESET)}
                     >
                       <ChildIcon className="h-4 w-4 flex-shrink-0" strokeWidth={SIDEBAR_ICON_STROKE} />
@@ -488,7 +265,10 @@ export const AppSidebar = React.memo(function AppSidebar() {
     return (
       <Link
         href={item.path}
-        onPointerDown={() => setPendingPath(item.path)}
+        onClick={(event) => handleDirectNavigation(event, item.path)}
+        aria-label={getLabel(item.labelKey)}
+        aria-current={isActive ? 'page' : undefined}
+        title={collapsed ? getLabel(item.labelKey) : undefined}
         className={cn(
           "flex items-center gap-3 rounded-[6px] px-3 py-2.5 transition-colors",
           SIDEBAR_NAV_TEXT,
@@ -506,7 +286,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
 
   return (
     <aside className={cn(
-      "app-sidebar h-[calc(100%-16px)] rounded-[6px] relative flex flex-col transition-all duration-300 my-2 ml-2 mr-0 flex-shrink-0",
+      "app-sidebar h-[calc(100%-16px)] rounded-[6px] relative flex flex-col transition-[width] duration-200 ease-out my-2 ml-2 mr-0 flex-shrink-0",
       collapsed ? "w-16" : "w-56"
     )}
     style={{ backgroundColor: SIDEBAR_BACKGROUND }}>
@@ -529,7 +309,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
                   alt="Logo"
                   width={logoWidth}
                   height={logoHeight}
-                  style={{ maxWidth: logoWidth, maxHeight: logoHeight }}
+                  style={{ width: 'auto', height: 'auto', maxWidth: logoWidth, maxHeight: logoHeight }}
                   className="object-contain"
                   priority
                   unoptimized
@@ -559,20 +339,36 @@ export const AppSidebar = React.memo(function AppSidebar() {
       )}
 
       {/* Navegação */}
-      <nav className="flex-1 py-4 px-2 overflow-y-auto scrollbar-thin">
+      <nav className="flex-1 py-4 px-2 overflow-y-auto scrollbar-thin" aria-busy={navigationLoading}>
         <ul className="space-y-1">
-          {navItems.map(item => (
-            <li key={item.path}>{renderNavItem(item)}</li>
-          ))}
+          {navigationLoading
+            ? Array.from({ length: 6 }, (_, index) => (
+                <li key={`navigation-loading-${index}`} aria-hidden="true">
+                  <div className={cn(
+                    "h-10 animate-pulse rounded-[6px] bg-[var(--app-surface-soft)]",
+                    collapsed ? "mx-auto w-10" : "w-full",
+                  )} />
+                </li>
+              ))
+            : navItems.map(item => (
+                <li key={item.path}>{renderNavItem(item)}</li>
+              ))}
         </ul>
       </nav>
 
       {/* Bottom Itens */}
       <div className="py-3 px-2">
         <ul className="space-y-1">
-          {computedBottomItems.map(item => (
-            <li key={item.path}>{renderNavItem(item)}</li>
-          ))}
+          {navigationLoading ? (
+            <li aria-hidden="true">
+              <div className={cn(
+                "h-10 animate-pulse rounded-[6px] bg-[var(--app-surface-soft)]",
+                collapsed ? "mx-auto w-10" : "w-full",
+              )} />
+            </li>
+          ) : computedBottomItems.map(item => (
+              <li key={item.path}>{renderNavItem(item)}</li>
+            ))}
         </ul>
       </div>
     </aside>

@@ -104,6 +104,7 @@ type resolvedDestination struct {
 	PipelineID             *string
 	StageID                *string
 	AssignedUserID         *string
+	TeamID                 *string
 	RoundRobinID           *string
 	RoundRobinMemberID     *string
 	RedistributionSettings map[string]any

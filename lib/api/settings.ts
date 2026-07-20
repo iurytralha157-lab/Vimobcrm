@@ -303,9 +303,10 @@ export const settingsAPI = {
     p256dh?: string | null;
     auth?: string | null;
     userAgent?: string | null;
+    syncOnly?: boolean;
   }, organizationId?: string | null) {
     const body = parseDomainInput(pushTokenInputSchema, input, 'settings.push-token.save');
-    const response = await vimobAPIRequest<{ ok: boolean }>('/v1/settings/push-tokens', {
+    const response = await vimobAPIRequest<{ ok: boolean; active?: boolean; requiresResubscribe?: boolean }>('/v1/settings/push-tokens', {
       method: 'POST',
       organizationId,
       body,

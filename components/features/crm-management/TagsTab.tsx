@@ -1,17 +1,28 @@
 import { useState, useMemo } from 'react';
+import { searchTextIncludes } from '@/lib/search-text';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,15 +32,12 @@ import {
 import {
   Plus,
   MoreHorizontal,
-  Users,
   Pencil,
   Trash2,
   Loader2,
   Check,
   Tags as TagsIcon,
-  Search,
-  TrendingUp,
-  Hash
+  Search
 } from 'lucide-react';
 import { useTags, useCreateTag, useUpdateTag, useDeleteTag } from '@/hooks/use-tags';
 
@@ -51,28 +59,15 @@ export function TagsTab() {
   const deleteTag = useDeleteTag();
 
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingTag, setEditingTag] = useState<{ id: string; name: string; color: string; description?: string } | null>(null);
-  const [formData, setFormData] = useState({ name: '', color: '#3b82f6', description: '' });
+  const [editingTag, setEditingTag] = useState<{ id: string; name: string; color: string } | null>(null);
+  const [formData, setFormData] = useState({ name: '', color: '#3b82f6' });
   const [searchTerm, setSearchTerm] = useState('');
+  const [tagToDelete, setTagToDelete] = useState<{ id: string; name: string } | null>(null);
 
   const filteredTags = useMemo(() => {
     if (!searchTerm) return tags;
-    const lower = searchTerm.toLowerCase();
-    return tags.filter(tag =>
-      tag.name.toLowerCase().includes(lower) ||
-      tag.description?.toLowerCase().includes(lower)
-    );
+    return tags.filter(tag => searchTextIncludes(tag.name, searchTerm));
   }, [tags, searchTerm]);
-
-  // Stats
-  const totalLeadsTagged = useMemo(() =>
-    tags.reduce((acc, tag) => acc + (tag.lead_count || 0), 0)
-  , [tags]);
-
-  const topTag = useMemo(() => {
-    if (tags.length === 0) return null;
-    return [...tags].sort((a, b) => (b.lead_count || 0) - (a.lead_count || 0))[0];
-  }, [tags]);
 
   const maxLeadCount = useMemo(() =>
     Math.max(...tags.map(t => t.lead_count || 0), 1)
@@ -89,17 +84,19 @@ export function TagsTab() {
 
     setDialogOpen(false);
     setEditingTag(null);
-    setFormData({ name: '', color: '#3b82f6', description: '' });
+    setFormData({ name: '', color: '#3b82f6' });
   };
 
-  const openEdit = (tag: { id: string; name: string; color: string; description?: string | null }) => {
-    setEditingTag({ id: tag.id, name: tag.name, color: tag.color, description: tag.description || '' });
-    setFormData({ name: tag.name, color: tag.color, description: tag.description || '' });
+  const openEdit = (tag: { id: string; name: string; color: string }) => {
+    setEditingTag({ id: tag.id, name: tag.name, color: tag.color });
+    setFormData({ name: tag.name, color: tag.color });
     setDialogOpen(true);
   };
 
-  const handleDelete = async (id: string) => {
-    await deleteTag.mutateAsync(id);
+  const handleDelete = async () => {
+    if (!tagToDelete) return;
+    await deleteTag.mutateAsync(tagToDelete.id);
+    setTagToDelete(null);
   };
 
   if (isLoading) {
@@ -111,60 +108,7 @@ export function TagsTab() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card className="rounded-lg border-0 bg-[var(--app-surface)] p-4 shadow-none">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
-              <TagsIcon className="h-5 w-5 text-primary" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{tags.length}</p>
-              <p className="text-xs text-muted-foreground">Tags criadas</p>
-            </div>
-          </div>
-        </Card>
-        <Card className="rounded-lg border-0 bg-[var(--app-surface)] p-4 shadow-none">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
-              <Users className="h-5 w-5 text-blue-500" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{totalLeadsTagged}</p>
-              <p className="text-xs text-muted-foreground">Leads tagueados</p>
-            </div>
-          </div>
-        </Card>
-        <Card className="rounded-lg border-0 bg-[var(--app-surface)] p-4 shadow-none">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-green-500/10 flex items-center justify-center">
-              <TrendingUp className="h-5 w-5 text-green-500" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{topTag?.lead_count || 0}</p>
-              <p className="text-xs text-muted-foreground truncate" title={topTag?.name}>
-                {topTag?.name || 'Tag mais usada'}
-              </p>
-            </div>
-          </div>
-        </Card>
-        <Card className="rounded-lg border-0 bg-[var(--app-surface)] p-4 shadow-none">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
-              <Hash className="h-5 w-5 text-amber-500" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">
-                {tags.length > 0 ? Math.round(totalLeadsTagged / tags.length) : 0}
-              </p>
-              <p className="text-xs text-muted-foreground">Média por tag</p>
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      {/* Header with Search and Actions */}
+    <div className="space-y-4">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex-1 w-full sm:max-w-sm">
           <div className="relative">
@@ -173,7 +117,7 @@ export function TagsTab() {
               placeholder="Buscar tags..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="border-0 bg-[var(--app-surface)] pl-9 shadow-none"
+              className="h-9 rounded-[8px] border-0 bg-[var(--app-surface)] pl-9 shadow-none"
             />
           </div>
         </div>
@@ -181,11 +125,11 @@ export function TagsTab() {
           setDialogOpen(open);
           if (!open) {
             setEditingTag(null);
-            setFormData({ name: '', color: '#3b82f6', description: '' });
+            setFormData({ name: '', color: '#3b82f6' });
           }
         }}>
           <DialogTrigger asChild>
-            <Button className="w-full gap-2 rounded-lg shadow-none sm:w-auto">
+            <Button className="h-9 w-full gap-2 rounded-[8px] px-3 shadow-none sm:w-auto">
               <Plus className="h-4 w-4 mr-2" />
               Nova Tag
             </Button>
@@ -193,6 +137,9 @@ export function TagsTab() {
           <DialogContent className="w-[90%] sm:max-w-md sm:w-full rounded-lg border-0 shadow-none max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{editingTag ? 'Editar Tag' : 'Nova Tag'}</DialogTitle>
+              <DialogDescription className="sr-only">
+                {editingTag ? 'Altere o nome e a cor da tag.' : 'Defina o nome e a cor da nova tag.'}
+              </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4 mt-4">
               <div className="space-y-2">
@@ -228,16 +175,6 @@ export function TagsTab() {
                     </button>
                   ))}
                 </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="description">Descrição (opcional)</Label>
-                <Input
-                  id="description"
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  placeholder="Descrição da tag..."
-                />
               </div>
 
               <div className="flex gap-2 pt-4">
@@ -277,26 +214,26 @@ export function TagsTab() {
 
       {/* Tags Grid */}
       {filteredTags.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {filteredTags.map((tag) => {
             const percentage = maxLeadCount > 0 ? ((tag.lead_count || 0) / maxLeadCount) * 100 : 0;
 
             return (
-              <Card key={tag.id} className="group rounded-lg border-0 bg-[var(--app-surface)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)]">
-                <CardContent className="p-5">
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center gap-3">
+              <Card key={tag.id} className="group rounded-[8px] border-0 bg-[var(--app-surface)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)]">
+                <CardContent className="p-4">
+                  <div className="mb-3 flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2.5">
                       <div
-                        className="w-12 h-12 rounded-lg flex items-center justify-center"
+                        className="h-10 w-10 rounded-[7px] flex items-center justify-center"
                         style={{ backgroundColor: `${tag.color}20` }}
                       >
-                        <TagsIcon className="h-6 w-6" style={{ color: tag.color }} />
+                        <TagsIcon className="h-5 w-5" style={{ color: tag.color }} />
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <Badge
                           variant="secondary"
                           style={{ backgroundColor: tag.color, color: '#FFFFFF' }}
-                          className="rounded-md text-sm font-semibold border-0"
+                          className="max-w-full truncate rounded-[5px] border-0 text-xs font-semibold"
                         >
                           {tag.name}
                         </Badge>
@@ -319,7 +256,7 @@ export function TagsTab() {
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="text-destructive"
-                          onClick={() => handleDelete(tag.id)}
+                          onClick={() => setTagToDelete({ id: tag.id, name: tag.name })}
                         >
                           <Trash2 className="h-4 w-4 mr-2" />
                           Excluir
@@ -328,24 +265,14 @@ export function TagsTab() {
                     </DropdownMenu>
                   </div>
 
-                  {tag.description && (
-                    <p className="text-sm text-muted-foreground mb-4 line-clamp-2">
-                      {tag.description}
-                    </p>
-                  )}
-
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">Leads</span>
                       <span className="font-semibold">{tag.lead_count || 0}</span>
                     </div>
-                    <Progress
-                      value={percentage}
-                      className="h-2"
-                      style={{
-                        '--progress-color': tag.color
-                      } as React.CSSProperties}
-                    />
+                    <div className="h-2 overflow-hidden rounded-full bg-[var(--app-surface-soft)]">
+                      <div className="h-full rounded-full transition-[width]" style={{ width: `${percentage}%`, backgroundColor: tag.color }} />
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -365,6 +292,24 @@ export function TagsTab() {
           </CardContent>
         </Card>
       )}
+
+      <AlertDialog open={!!tagToDelete} onOpenChange={(open) => !open && setTagToDelete(null)}>
+        <AlertDialogContent className="w-[calc(100vw-24px)] rounded-[8px] sm:max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir tag?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A tag &quot;{tagToDelete?.name}&quot; será removida. Os leads permanecem cadastrados, mas perdem essa classificação.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="rounded-[7px]">Cancelar</AlertDialogCancel>
+            <AlertDialogAction className="rounded-[7px] bg-destructive text-destructive-foreground hover:bg-destructive/90" disabled={deleteTag.isPending} onClick={handleDelete}>
+              {deleteTag.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

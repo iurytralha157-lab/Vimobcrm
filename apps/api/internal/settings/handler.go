@@ -244,11 +244,12 @@ func (handler Handler) SavePushToken(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(w, r, &request); err != nil {
 		return
 	}
-	if err := handler.repo.SavePushToken(r.Context(), tenantContext, request); err != nil {
+	result, err := handler.repo.SavePushToken(r.Context(), tenantContext, request)
+	if err != nil {
 		writeSettingsError(w, r, err)
 		return
 	}
-	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	httpserver.WriteJSON(w, http.StatusOK, result)
 }
 
 func (handler Handler) DeactivatePushToken(w http.ResponseWriter, r *http.Request) {

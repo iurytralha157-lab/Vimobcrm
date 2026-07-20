@@ -57,6 +57,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
+import { normalizeSearchText } from "@/lib/search-text";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   MetaIntegration,
@@ -113,7 +114,7 @@ interface AccountGroup {
 }
 
 const getPagePicture = (page?: MetaPage | null) => page?.picture?.data?.url || "";
-const searchableText = (value: unknown) => String(value ?? "").toLowerCase();
+const searchableText = (value: unknown) => normalizeSearchText(String(value ?? ""));
 const META_OAUTH_CHANNEL = "vimob-meta-oauth";
 const META_OAUTH_STORAGE_KEY = "vimob:meta-oauth";
 
@@ -552,7 +553,7 @@ export function MetaIntegrationSettings({
             ) : (
               configs
                 .filter((config) => {
-                  const search = formSearch.trim().toLowerCase();
+                  const search = searchableText(formSearch);
                   if (!search) return true;
                   const integration = integrationById.get(config.integration_id);
                   return [
@@ -563,7 +564,7 @@ export function MetaIntegrationSettings({
                     config.created_by_name,
                   ]
                     .filter(Boolean)
-                    .some((value) => String(value).toLowerCase().includes(search));
+                    .some((value) => searchableText(value).includes(search));
                 })
                 .map((config) => {
                   const integration = integrationById.get(config.integration_id);

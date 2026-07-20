@@ -10,8 +10,10 @@ import {
   ChevronRight,
   LogOut,
   Menu,
+  Moon,
   Settings,
   ShieldCheck,
+  Sun,
   UserRound,
 } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -388,10 +390,12 @@ export function SuperAdminLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname() || "";
   const router = useRouter();
   const { loading, isSuperAdmin, profile, signOut } = useAuth();
+  const { resolvedTheme, setTheme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const accountLabel = profile?.name?.trim() || "Nome não informado";
   const accountEmail = profile?.email?.trim() || "E-mail não informado";
+  const isDarkTheme = resolvedTheme === "dark";
 
   const pageTitle = useMemo(() => getPageTitle(pathname), [pathname]);
 
@@ -423,8 +427,8 @@ export function SuperAdminLayout({ children }: { children: ReactNode }) {
   return (
     <SidebarProvider>
       <div className="app-shell flex h-[100dvh] w-full flex-col overflow-hidden pt-[env(safe-area-inset-top)]">
-      <AnnouncementBanner />
-      <div className="flex flex-1 overflow-hidden">
+        <AnnouncementBanner />
+        <div className="flex flex-1 overflow-hidden">
         <div className="hidden flex-shrink-0 lg:block">
           <SuperAdminSidebar pathname={pathname} />
         </div>
@@ -457,6 +461,16 @@ export function SuperAdminLayout({ children }: { children: ReactNode }) {
             </h1>
 
             <div className="ml-auto flex items-center gap-3">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-10 w-10 rounded-[6px] bg-[var(--app-surface-soft)] text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground"
+                onClick={() => setTheme(isDarkTheme ? "light" : "dark")}
+                aria-label={isDarkTheme ? "Ativar tema claro" : "Ativar tema escuro"}
+                title={isDarkTheme ? "Ativar tema claro" : "Ativar tema escuro"}
+              >
+                {isDarkTheme ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button

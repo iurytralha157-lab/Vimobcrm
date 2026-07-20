@@ -49,6 +49,28 @@
   --app-text-primary: #ffffff;
   --app-text-secondary: rgb(255 255 255 / 0.72);
   --app-text-tertiary: rgb(255 255 255 / 0.48);
+  /* KPI values share one neutral color; status accents stay in icons and rates. */
+  --dashboard-kpi-leads: #f8fafc;
+  --dashboard-kpi-open: var(--dashboard-kpi-leads);
+  --dashboard-kpi-lost: var(--dashboard-kpi-leads);
+  --dashboard-kpi-won: var(--dashboard-kpi-leads);
+  --dashboard-kpi-visits: var(--dashboard-kpi-leads);
+  --dashboard-kpi-vgv: var(--dashboard-kpi-leads);
+  --dashboard-kpi-response: var(--dashboard-kpi-leads);
+  --dashboard-kpi-properties: var(--dashboard-kpi-leads);
+  --dashboard-kpi-site: var(--dashboard-kpi-leads);
+  --app-font-weight-body: 300;
+  --app-font-weight-title: 400;
+  --app-font-weight-emphasis: 400;
+  --app-font-weight-strong: 500;
+  --app-font-weight-display: 600;
+  --app-font-size-page-title: 1.125rem;
+  --app-font-size-section-title: 1rem;
+  --app-font-size-card-title: 0.875rem;
+  --app-font-size-body: 0.875rem;
+  --app-font-size-caption: 0.75rem;
+  --app-line-height-title: 1.28;
+  --app-line-height-body: 1.5;
   --app-icon-stroke: 1.45;
   --app-sidebar-icon-stroke: 1.32;
   --card: var(--app-surface);
@@ -155,6 +177,15 @@
   --app-text-primary: #ffffff;
   --app-text-secondary: rgb(255 255 255 / 0.72);
   --app-text-tertiary: rgb(255 255 255 / 0.48);
+  --dashboard-kpi-leads: #f8fafc;
+  --dashboard-kpi-open: var(--dashboard-kpi-leads);
+  --dashboard-kpi-lost: var(--dashboard-kpi-leads);
+  --dashboard-kpi-won: var(--dashboard-kpi-leads);
+  --dashboard-kpi-visits: var(--dashboard-kpi-leads);
+  --dashboard-kpi-vgv: var(--dashboard-kpi-leads);
+  --dashboard-kpi-response: var(--dashboard-kpi-leads);
+  --dashboard-kpi-properties: var(--dashboard-kpi-leads);
+  --dashboard-kpi-site: var(--dashboard-kpi-leads);
   --card: var(--app-surface);
   --card-foreground: var(--app-text-primary);
   --popover: var(--app-surface-solid);
@@ -229,6 +260,15 @@
   --app-text-primary: #151515;
   --app-text-secondary: rgb(21 21 21 / 0.68);
   --app-text-tertiary: rgb(21 21 21 / 0.46);
+  --dashboard-kpi-leads: var(--app-text-primary);
+  --dashboard-kpi-open: var(--app-text-primary);
+  --dashboard-kpi-lost: var(--app-text-primary);
+  --dashboard-kpi-won: var(--app-text-primary);
+  --dashboard-kpi-visits: var(--app-text-primary);
+  --dashboard-kpi-vgv: var(--app-text-primary);
+  --dashboard-kpi-response: var(--app-text-primary);
+  --dashboard-kpi-properties: var(--app-text-primary);
+  --dashboard-kpi-site: var(--app-text-primary);
   --card: #ffffff;
   --card-foreground: var(--app-text-primary);
   --popover: #ffffff;
@@ -298,7 +338,7 @@ body {
 .app-shell {
   background: var(--app-background);
   color: var(--app-text-primary);
-  font-weight: 300;
+  font-weight: var(--app-font-weight-body);
   letter-spacing: 0;
 }
 
@@ -307,54 +347,91 @@ body {
 }
 
 .app-shell :where(input, textarea, select, button) {
-  font-weight: 300;
+  font-weight: var(--app-font-weight-body);
 }
 
 .app-shell :where(h1, h2, h3, h4, h5, h6) {
   color: var(--app-text-primary);
-  font-weight: 300;
-  line-height: 1.28;
+  font-weight: var(--app-font-weight-body);
+  line-height: var(--app-line-height-title);
 }
 
 .app-shell h1 {
-  font-size: 1.125rem;
+  font-size: var(--app-font-size-page-title);
 }
 
 .app-shell h2 {
-  font-size: 1rem;
+  font-size: var(--app-font-size-section-title);
 }
 
 .app-shell h3 {
-  font-size: 0.95rem;
+  font-size: var(--app-font-size-card-title);
 }
 
 .app-shell h4,
 .app-shell h5,
 .app-shell h6 {
-  font-size: 0.9rem;
+  font-size: var(--app-font-size-card-title);
 }
 
 .app-shell :where(p, label, li) {
-  font-weight: 300;
-  line-height: 1.5;
+  font-weight: var(--app-font-weight-body);
+  line-height: var(--app-line-height-body);
 }
 
 .app-shell label {
-  font-size: 0.875rem;
+  font-size: var(--app-font-size-body);
   color: var(--app-text-primary);
+}
+
+/*
+ * Tipografia do produto: Dashboard clara como referência.
+ * Corpo, controles e títulos de cards usam 300; títulos de página e
+ * ênfases usam 400; pesos superiores ficam reservados para destaques raros.
+ */
+.app-shell :where(.font-thin, .font-extralight, .font-light, .font-normal) {
+  font-weight: var(--app-font-weight-body) !important;
 }
 
 .app-shell .font-medium,
 .app-shell .font-semibold {
-  font-weight: 400 !important;
+  font-weight: var(--app-font-weight-emphasis) !important;
 }
 
 .app-shell .font-bold {
-  font-weight: 500 !important;
+  font-weight: var(--app-font-weight-strong) !important;
 }
 
 .app-shell .font-black {
-  font-weight: 600 !important;
+  font-weight: var(--app-font-weight-display) !important;
+}
+
+.app-shell .app-page-title {
+  color: var(--app-text-primary) !important;
+  font-size: var(--app-font-size-page-title) !important;
+  font-weight: var(--app-font-weight-title) !important;
+  line-height: var(--app-line-height-title) !important;
+}
+
+.app-shell .app-section-title {
+  color: var(--app-text-primary) !important;
+  font-size: var(--app-font-size-section-title) !important;
+  font-weight: var(--app-font-weight-body) !important;
+  line-height: var(--app-line-height-title) !important;
+}
+
+.app-shell .app-card-title {
+  color: var(--app-text-primary) !important;
+  font-size: var(--app-font-size-card-title) !important;
+  font-weight: var(--app-font-weight-body) !important;
+  line-height: var(--app-line-height-title) !important;
+}
+
+.app-shell .app-caption {
+  color: var(--app-text-tertiary) !important;
+  font-size: var(--app-font-size-caption) !important;
+  font-weight: var(--app-font-weight-body) !important;
+  line-height: var(--app-line-height-body) !important;
 }
 
 .app-shell :where(.tracking-tight, .tracking-wide, .tracking-wider, .tracking-widest) {
@@ -385,7 +462,7 @@ body {
   border: 0 !important;
   border-radius: 8px !important;
   color: var(--app-text-primary) !important;
-  font-weight: 300;
+  font-weight: var(--app-font-weight-body);
   letter-spacing: 0 !important;
   box-shadow: 0 20px 54px rgb(0 0 0 / 0.26) !important;
   backdrop-filter: blur(18px) saturate(1.08);
@@ -408,29 +485,57 @@ body {
   letter-spacing: 0 !important;
 }
 
-.vimob-dialog-content :where(h1, h2, h3, h4, h5, h6, [data-radix-dialog-title], [data-radix-alert-dialog-title]) {
+.vimob-dialog-content :is(h1, h2, h3, h4, h5, h6, [data-radix-dialog-title], [data-radix-alert-dialog-title]) {
   color: var(--app-text-primary) !important;
-  font-weight: 300 !important;
-  line-height: 1.28;
+  font-weight: var(--app-font-weight-title) !important;
+  line-height: var(--app-line-height-title);
 }
 
 .vimob-dialog-content :where(p, label, li),
 .vimob-dialog-content :where(.text-muted-foreground) {
-  font-weight: 300 !important;
+  font-weight: var(--app-font-weight-body) !important;
+}
+
+.vimob-dialog-content :where(.font-thin, .font-extralight, .font-light, .font-normal),
+.vimob-popover-content :where(.font-thin, .font-extralight, .font-light, .font-normal) {
+  font-weight: var(--app-font-weight-body) !important;
+}
+
+.vimob-dialog-content:is(.font-thin, .font-extralight, .font-light, .font-normal),
+.vimob-popover-content:is(.font-thin, .font-extralight, .font-light, .font-normal) {
+  font-weight: var(--app-font-weight-body) !important;
 }
 
 .vimob-dialog-content .font-medium,
 .vimob-dialog-content .font-semibold,
 .vimob-popover-content .font-medium,
 .vimob-popover-content .font-semibold {
-  font-weight: 400 !important;
+  font-weight: var(--app-font-weight-emphasis) !important;
+}
+
+.vimob-dialog-content:is(.font-medium, .font-semibold),
+.vimob-popover-content:is(.font-medium, .font-semibold) {
+  font-weight: var(--app-font-weight-emphasis) !important;
 }
 
 .vimob-dialog-content .font-bold,
+.vimob-popover-content .font-bold {
+  font-weight: var(--app-font-weight-strong) !important;
+}
+
+.vimob-dialog-content.font-bold,
+.vimob-popover-content.font-bold {
+  font-weight: var(--app-font-weight-strong) !important;
+}
+
 .vimob-dialog-content .font-black,
-.vimob-popover-content .font-bold,
 .vimob-popover-content .font-black {
-  font-weight: 500 !important;
+  font-weight: var(--app-font-weight-display) !important;
+}
+
+.vimob-dialog-content.font-black,
+.vimob-popover-content.font-black {
+  font-weight: var(--app-font-weight-display) !important;
 }
 
 .vimob-dialog-content :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), textarea, button[role="combobox"]) {
@@ -438,7 +543,7 @@ body {
   border: 0 !important;
   border-radius: 6px !important;
   color: var(--app-text-primary) !important;
-  font-weight: 300 !important;
+  font-weight: var(--app-font-weight-body) !important;
   box-shadow: none !important;
 }
 
@@ -459,8 +564,38 @@ body {
 
 .vimob-dialog-content :where(button:not([role="combobox"])) {
   border-radius: 6px;
-  font-weight: 300;
+  font-weight: var(--app-font-weight-body);
   letter-spacing: 0 !important;
+}
+
+:where([role="tooltip"], .toaster .toast) {
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-weight: var(--app-font-weight-body);
+  letter-spacing: 0 !important;
+}
+
+:where([role="tooltip"], .toaster .toast) :where(.font-thin, .font-extralight, .font-light, .font-normal) {
+  font-weight: var(--app-font-weight-body) !important;
+}
+
+:where([role="tooltip"], .toaster .toast):where(.font-thin, .font-extralight, .font-light, .font-normal) {
+  font-weight: var(--app-font-weight-body) !important;
+}
+
+:where([role="tooltip"], .toaster .toast) :where(.font-medium, .font-semibold) {
+  font-weight: var(--app-font-weight-emphasis) !important;
+}
+
+:where([role="tooltip"], .toaster .toast):where(.font-medium, .font-semibold) {
+  font-weight: var(--app-font-weight-emphasis) !important;
+}
+
+:where([role="tooltip"], .toaster .toast) :where(.font-bold, .font-black) {
+  font-weight: var(--app-font-weight-strong) !important;
+}
+
+:where([role="tooltip"], .toaster .toast):where(.font-bold, .font-black) {
+  font-weight: var(--app-font-weight-strong) !important;
 }
 
 .vimob-dialog-content :where(.border, .border-t, .border-b, .border-l, .border-r, [class*="border-white/"], [class*="border-white\\["]) {
@@ -898,22 +1033,22 @@ body {
 }
 
 .app-shell .dashboard-borderless .dashboard-card-title {
-  color: #272727 !important;
+  color: var(--app-text-primary) !important;
   font-size: 14px !important;
-  font-weight: 300 !important;
+  font-weight: var(--app-font-weight-body) !important;
   line-height: 1.2 !important;
 }
 
 .app-shell .dashboard-borderless :is([data-tour="dashboard-date-filter"], [data-tour="dashboard-advanced-filters"]) {
-  color: #272727 !important;
+  color: var(--app-text-primary) !important;
   font-size: 10px !important;
-  font-weight: 300 !important;
+  font-weight: var(--app-font-weight-body) !important;
 }
 
 .app-shell .dashboard-borderless :is([data-tour="dashboard-date-filter"], [data-tour="dashboard-advanced-filters"]) :where(span) {
-  color: #272727 !important;
+  color: var(--app-text-primary) !important;
   font-size: 10px !important;
-  font-weight: 300 !important;
+  font-weight: var(--app-font-weight-body) !important;
 }
 
 .dashboard-recharts-focusless .recharts-wrapper,
@@ -1017,6 +1152,43 @@ body {
   border-bottom-style: solid !important;
   border-bottom-color: transparent !important;
   box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--app-border) 42%, transparent);
+}
+
+.contacts-table tbody tr {
+  --contacts-row-bg: var(--app-surface);
+}
+
+.contacts-table tbody tr:hover {
+  --contacts-row-bg: var(--app-surface-hover);
+}
+
+.contacts-table tbody tr[data-deal-status="lost"] {
+  --contacts-row-bg: var(--lead-status-lost-card);
+}
+
+.contacts-table tbody tr[data-deal-status="lost"]:hover {
+  --contacts-row-bg: var(--lead-status-lost-card-hover);
+}
+
+.contacts-table tbody tr[data-deal-status="won"] {
+  --contacts-row-bg: var(--lead-status-won-card);
+}
+
+.contacts-table tbody tr[data-deal-status="won"]:hover {
+  --contacts-row-bg: var(--lead-status-won-card-hover);
+}
+
+.contacts-table .contacts-actions-cell {
+  position: sticky;
+  right: 0;
+  z-index: 10;
+  background-color: var(--contacts-row-bg, var(--app-surface));
+  box-shadow: -12px 0 18px -18px rgb(0 0 0 / 0.45);
+}
+
+.contacts-table thead .contacts-actions-cell {
+  --contacts-row-bg: var(--app-surface-soft);
+  z-index: 20;
 }
 
 .contacts-table th,
@@ -1402,6 +1574,33 @@ body {
   --auth-background: #121212;
   background: var(--auth-background);
   color: #ffffff;
+  font-weight: var(--app-font-weight-body);
+  letter-spacing: 0;
+}
+
+.auth-page :where(p, span, label, button, a, input, textarea, select, li) {
+  font-weight: var(--app-font-weight-body);
+}
+
+.auth-page :where(.font-thin, .font-extralight, .font-light, .font-normal) {
+  font-weight: var(--app-font-weight-body) !important;
+}
+
+.auth-page :where(.font-medium, .font-semibold) {
+  font-weight: var(--app-font-weight-emphasis) !important;
+}
+
+.auth-page .font-bold {
+  font-weight: var(--app-font-weight-strong) !important;
+}
+
+.auth-page .font-black {
+  font-weight: var(--app-font-weight-display) !important;
+}
+
+.auth-page :where(h1, h2) {
+  font-weight: var(--app-font-weight-title) !important;
+  line-height: var(--app-line-height-title);
 }
 
 .auth-page-light {

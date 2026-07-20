@@ -141,7 +141,7 @@ export function useSaveFormConfig() {
       customFieldsConfig?: string[];
       isActive?: boolean;
     }) => {
-      if (!organizationId) throw new Error("No organization");
+      if (!organizationId) throw new Error("Organização não encontrada.");
 
       return integrationsAPI.saveMetaFormConfig({
         integrationId: config.integrationId,
@@ -178,7 +178,7 @@ export function useToggleFormConfig() {
 
   return useMutation({
     mutationFn: ({ formId, isActive, integrationId }: { formId: string; isActive: boolean; integrationId: string }) => {
-      if (!organizationId) throw new Error("No organization");
+      if (!organizationId) throw new Error("Organização não encontrada.");
       return integrationsAPI.toggleMetaFormConfig({ integrationId, formId, isActive }, organizationId);
     },
     onSuccess: (_, variables) => {
@@ -198,7 +198,7 @@ export function useDeleteFormConfig() {
 
   return useMutation({
     mutationFn: ({ formId, integrationId }: { formId: string; integrationId: string }) => {
-      if (!organizationId) throw new Error("No organization");
+      if (!organizationId) throw new Error("Organização não encontrada.");
       return integrationsAPI.deleteMetaFormConfig({ integrationId, formId }, organizationId);
     },
     onSuccess: (_, variables) => {

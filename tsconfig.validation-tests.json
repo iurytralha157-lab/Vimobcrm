@@ -30,6 +30,8 @@
     "lib/access/tenant-query-cache.ts",
     "lib/access/tenant-query-cache.test.ts",
     "lib/whatsapp-query-cache.ts",
-    "lib/whatsapp-query-cache.test.ts"
+    "lib/whatsapp-query-cache.test.ts",
+    "lib/search-text.ts",
+    "lib/search-text.test.ts"
   ]
 }

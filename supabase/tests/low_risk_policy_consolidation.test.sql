@@ -29,8 +29,15 @@ select is(
 );
 
 select ok(
-  (select count(*) from pg_policies where schemaname = 'public' and policyname like 'system settings consolidated %') in (0, 1),
-  'system settings consolidation is complete or not required'
+  not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'system_settings'
+      and cmd = 'SELECT'
+      and ('anon' = any(roles) or 'authenticated' = any(roles) or 'public' = any(roles))
+  ),
+  'system settings has no client-readable select policy'
 );
 
 select ok(
@@ -53,7 +60,7 @@ select ok(
   'organization modules consolidation is complete or not required'
 );
 
-select ok(has_table_privilege('anon', 'public.system_settings', 'SELECT'), 'public settings read privilege remains');
+select ok(not has_table_privilege('anon', 'public.system_settings', 'SELECT'), 'anonymous system settings reads are revoked');
 select ok(has_table_privilege('authenticated', 'public.cadence_templates', 'SELECT'), 'cadence read privilege remains');
 select ok(has_table_privilege('authenticated', 'public.financial_categories', 'SELECT'), 'financial category read privilege remains');
 select ok(has_table_privilege('authenticated', 'public.tags', 'SELECT'), 'tag read privilege remains');

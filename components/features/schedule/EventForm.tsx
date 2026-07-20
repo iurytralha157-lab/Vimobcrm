@@ -26,6 +26,7 @@ import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { cn, getCurrentTimeForInput, getBrasiliaTime } from '@/lib/utils';
+import { commandSearchFilter } from '@/lib/search-text';
 import { useCreateScheduleEvent, useUpdateScheduleEvent, useDeleteScheduleEvent, EventType, ScheduleEvent } from '@/hooks/use-schedule-events';
 import { useScheduleUsers } from '@/hooks/use-schedule-users';
 import { useLeads } from '@/hooks/use-leads';
@@ -270,7 +271,7 @@ export function EventForm({ open, onOpenChange, event, leadId, leadName, default
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="p-0 w-[400px]" align="start">
-                      <Command className="rounded-xl">
+                      <Command filter={commandSearchFilter} className="rounded-xl">
                         <CommandInput
                           placeholder="Buscar por nome, telefone ou email..."
                           value={leadSearch}

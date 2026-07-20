@@ -125,6 +125,13 @@ export default function Settings() {
     replaceSearchParams(next);
   };
 
+  const handleIntegrationClose = useCallback(() => {
+    setActiveTab('integrations');
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', 'integrations');
+    replaceSearchParams(next);
+  }, [replaceSearchParams, searchParams]);
+
   const hasWhatsAppModule = hasModule('whatsapp');
   const hasAIModule = canManageAI && hasModule('ai_agent');
   const hasWebhooksModule = hasModule('webhooks');
@@ -155,6 +162,7 @@ export default function Settings() {
             <TabsContent value="integrations">
               <IntegrationsTab
                 defaultIntegration={initialIntegration}
+                onCloseIntegration={handleIntegrationClose}
                 hasWhatsAppModule={hasWhatsAppModule}
                 hasAIModule={hasAIModule}
                 hasWebhooksModule={hasWebhooksModule}

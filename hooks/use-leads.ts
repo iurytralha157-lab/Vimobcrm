@@ -12,12 +12,15 @@ type CreateLeadInput = {
   phone?: string;
   email?: string;
   message?: string;
+  feedback?: string;
   source?: string;
   stage_id?: string;
   pipeline_id?: string;
   property_code?: string;
   property_id?: string;
+  interest_property_ids?: string[];
   assigned_user_id?: string;
+  team_id?: string;
   tag_ids?: string[];
   conversation_id?: string;
   cargo?: string;
@@ -36,6 +39,18 @@ type CreateLeadInput = {
   lost_reason?: string;
   is_own_resource?: boolean;
   import_mode?: boolean;
+  profile?: {
+    personType?: 'individual' | 'company';
+    gender?: 'male' | 'female' | 'other';
+    socialName?: string;
+    birthDate?: string;
+    cpf?: string;
+    rg?: string;
+    cnpj?: string;
+    corporateName?: string;
+    tradeName?: string;
+    stateRegistration?: string;
+  };
 };
 type CreateLeadResult = Lead & { reentry?: boolean; assignedUserName?: string };
 
@@ -70,7 +85,7 @@ export function useLeads(filters?: {
   assigneeId?: string;
   search?: string;
   limit?: number;
-}) {
+}, options: { enabled?: boolean } = {}) {
   const { user, profile, organization } = useAuth();
   const organizationId = organization?.id || profile?.organization_id || undefined;
   const limit = filters?.limit || 200;
@@ -91,7 +106,7 @@ export function useLeads(filters?: {
 
       return (data || []) as Lead[];
     },
-    enabled: !!user?.id && !!organizationId,
+    enabled: !!user?.id && !!organizationId && options.enabled !== false,
   });
 }
 

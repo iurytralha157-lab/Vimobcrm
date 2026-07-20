@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { scheduleAPI, type AssigneeUser } from '@/lib/api/schedule'
 import { useAuth } from '@/contexts/AuthContext'
+import { toast } from 'sonner'
+import { getFriendlyErrorMessage } from '@/lib/error-handler'
 
 export type { AssigneeUser }
 
@@ -27,6 +29,7 @@ export function useScheduleEventAssignees(eventId: string | undefined) {
       queryClient.invalidateQueries({ queryKey: ['schedule_assignees', organizationId, eventId] })
       queryClient.invalidateQueries({ queryKey: ['schedule-events'] })
     },
+    onError: (error) => toast.error(getFriendlyErrorMessage(error)),
   })
 
   const removeAssignee = useMutation({
@@ -38,12 +41,13 @@ export function useScheduleEventAssignees(eventId: string | undefined) {
       queryClient.invalidateQueries({ queryKey: ['schedule_assignees', organizationId, eventId] })
       queryClient.invalidateQueries({ queryKey: ['schedule-events'] })
     },
+    onError: (error) => toast.error(getFriendlyErrorMessage(error)),
   })
 
   return {
     assignees,
     isLoading,
-    addAssignee: addAssignee.mutate,
-    removeAssignee: removeAssignee.mutate,
+    addAssignee: addAssignee.mutateAsync,
+    removeAssignee: removeAssignee.mutateAsync,
   }
 }

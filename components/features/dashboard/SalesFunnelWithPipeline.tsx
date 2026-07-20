@@ -74,7 +74,7 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
     <Card className="app-card overflow-hidden h-full flex flex-col">
       <CardHeader className="pb-3 pt-4 px-4 shrink-0">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[#272727]">
+          <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[var(--app-text-primary)]">
             <TrendingDown className="h-3.5 w-3.5 text-primary" />
             Funil de vendas
           </CardTitle>
@@ -89,7 +89,7 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
                   });
                 }}
               >
-                <SelectTrigger className="h-7 w-[140px] border-white/[0.055] bg-white/[0.045] text-[10px] font-medium">
+                <SelectTrigger className="h-7 w-[140px] border-[var(--app-border)] bg-[var(--app-surface-soft)] text-[10px] font-medium text-[var(--app-text-primary)]">
                   <SelectValue placeholder="Pipeline" />
                 </SelectTrigger>
                 <SelectContent>
@@ -113,7 +113,7 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
           <FunnelSkeleton />
         ) : funnelData.length === 0 ? (
           <div className="flex h-full min-h-[180px] flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-white/[0.045]">
+            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[var(--app-surface-soft)]">
               <TrendingDown className="h-6 w-6 opacity-45" />
             </div>
             <p className="text-xs font-medium">Nenhum dado para este pipeline</p>
@@ -163,18 +163,18 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
                     </TooltipTrigger>
                     <TooltipContent
                       side="right"
-                      className="min-w-[160px] animate-in rounded-xl border-0 bg-[var(--app-surface-solid)] p-3 text-[#232323] shadow-[0_8px_20px_rgba(0,0,0,0.18)] fade-in zoom-in duration-200"
+                      className="min-w-[160px] animate-in rounded-xl border-0 bg-[var(--app-surface-solid)] p-3 text-[var(--app-text-primary)] shadow-[0_8px_20px_rgba(0,0,0,0.18)] fade-in zoom-in duration-200"
                     >
                       <div className="space-y-2">
-                        <p className="text-[10px] font-light uppercase tracking-wider text-[#272727]">{item.name}</p>
+                        <p className="text-[10px] font-light uppercase tracking-wider text-[var(--app-text-secondary)]">{item.name}</p>
                         <div className="space-y-1.5 pt-2">
                           <div className="flex justify-between items-center gap-4">
-                            <span className="text-[11px] font-light text-[#272727]/70">Quantidade:</span>
-                            <span className="text-[11px] font-medium text-[#232323] tabular-nums">{item.value} leads</span>
+                            <span className="text-[11px] font-light text-[var(--app-text-tertiary)]">Quantidade:</span>
+                            <span className="text-[11px] font-medium text-[var(--app-text-primary)] tabular-nums">{item.value} leads</span>
                           </div>
                           <div className="flex justify-between items-center gap-4">
-                            <span className="text-[11px] font-light text-[#272727]/70">Percentual:</span>
-                            <span className="text-[11px] font-medium text-[#232323] tabular-nums">{item.percentage}% do funil</span>
+                            <span className="text-[11px] font-light text-[var(--app-text-tertiary)]">Percentual:</span>
+                            <span className="text-[11px] font-medium text-[var(--app-text-primary)] tabular-nums">{item.percentage}% do funil</span>
                           </div>
                         </div>
                       </div>

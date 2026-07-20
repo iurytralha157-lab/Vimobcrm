@@ -18,6 +18,281 @@ func NewRepository(db *dbpkg.Postgres) Repository {
 	return Repository{db: db}
 }
 
+func (repo Repository) SiteSummary(ctx context.Context, tenantContext tenant.Context, values url.Values) (map[string]any, error) {
+	return repo.queryJSONObject(ctx, `
+		with bounds as (
+			select coalesce(nullif($2, '')::date, current_date - 6) as date_from,
+			       coalesce(nullif($3, '')::date, current_date) as date_to
+		), periods as (
+			select date_from, date_to, (date_to - date_from + 1) as days from bounds
+		), current_events as (
+			select e.* from public.site_analytics_events e, periods p
+			where e.organization_id = $1::uuid and e.created_at >= p.date_from and e.created_at < p.date_to + 1
+		), previous_events as (
+			select e.* from public.site_analytics_events e, periods p
+			where e.organization_id = $1::uuid and e.created_at >= p.date_from - p.days and e.created_at < p.date_from
+		), session_sources as (
+			select distinct on (session_id) session_id, utm_source, utm_medium, referrer
+			from current_events where session_id is not null order by session_id, created_at
+		), totals as (
+			select count(*) filter (where event_type in ('pageview','page_view'))::int views,
+			       count(distinct page_path) filter (where event_type in ('pageview','page_view'))::int unique_pages,
+			       count(distinct session_id)::int sessions,
+			       coalesce(round(sum(duration_seconds)::numeric / nullif(count(distinct session_id), 0)), 0)::int avg_duration,
+			       count(*) filter (where event_type = 'form_submit')::int conversions,
+			       count(distinct session_id) filter (where device_type = 'desktop')::numeric desktop,
+			       count(distinct session_id) filter (where device_type = 'mobile')::numeric mobile,
+			       count(distinct session_id) filter (where device_type = 'tablet')::numeric tablet
+			from current_events
+		), previous as (
+			select count(*) filter (where event_type in ('pageview','page_view'))::int views,
+			       count(distinct page_path) filter (where event_type in ('pageview','page_view'))::int unique_pages,
+			       count(distinct session_id)::int sessions,
+			       coalesce(round(sum(duration_seconds)::numeric / nullif(count(distinct session_id), 0)), 0)::int avg_duration,
+			       count(*) filter (where event_type = 'form_submit')::int conversions,
+			       count(distinct session_id) filter (where device_type = 'desktop')::numeric desktop,
+			       count(distinct session_id) filter (where device_type = 'mobile')::numeric mobile
+			from previous_events
+		), classified_sources as (
+			select case
+			 when lower(coalesce(utm_source,'')) ~ '(facebook|instagram|meta|linkedin|tiktok)' or lower(coalesce(referrer,'')) ~ '(facebook|instagram|linkedin|tiktok)' then 'social'
+			 when lower(coalesce(utm_medium,'')) in ('organic','search','cpc','ppc') or lower(coalesce(referrer,'')) ~ '(google|bing|yahoo)' then 'search'
+			 when utm_source is not null or utm_medium is not null then 'campaign'
+			 when coalesce(referrer,'') = '' then 'direct'
+			 else 'referral' end source_type
+			from session_sources
+		), sources as (
+			select count(*)::numeric total,
+			 count(*) filter (where source_type='direct')::numeric direct,
+			 count(*) filter (where source_type='search')::numeric search,
+			 count(*) filter (where source_type='social')::numeric social,
+			 count(*) filter (where source_type='campaign')::numeric campaign,
+			 count(*) filter (where source_type='referral')::numeric referral
+			from classified_sources
+		)
+		select jsonb_build_object(
+		 'totalViews', t.views, 'totalPages', t.views, 'uniquePages', t.unique_pages, 'uniqueSessions', t.sessions,
+		 'avgDuration', t.avg_duration,
+		 'desktopPct', case when t.sessions>0 then round(t.desktop*100/t.sessions) else 0 end,
+		 'mobilePct', case when t.sessions>0 then round(t.mobile*100/t.sessions) else 0 end,
+		 'tabletPct', case when t.sessions>0 then round(t.tablet*100/t.sessions) else 0 end,
+		 'directPct', case when s.total>0 then round(s.direct*100/s.total) else 0 end,
+		 'searchPct', case when s.total>0 then round(s.search*100/s.total) else 0 end,
+		 'socialPct', case when s.total>0 then round(s.social*100/s.total) else 0 end,
+		 'campaignPct', case when s.total>0 then round(s.campaign*100/s.total) else 0 end,
+		 'referralPct', case when s.total>0 then round(s.referral*100/s.total) else 0 end,
+		 'conversions', t.conversions,
+		 'prevSessions', p.sessions, 'prevViews', p.views, 'prevPages', p.views, 'prevUniquePages', p.unique_pages, 'prevAvgDuration', p.avg_duration,
+		 'prevDesktopPct', case when p.sessions>0 then round(p.desktop*100/p.sessions) else 0 end,
+		 'prevMobilePct', case when p.sessions>0 then round(p.mobile*100/p.sessions) else 0 end,
+		 'prevConversions', p.conversions,
+		 'prevConversionRate', case when p.sessions>0 then round(p.conversions::numeric*100/p.sessions,2) else 0 end)
+		from totals t cross join previous p cross join sources s
+	`, tenantContext.OrganizationID, dateOnly(values, "dateFrom"), dateOnly(values, "dateTo"))
+}
+
+func (repo Repository) SiteDetailed(ctx context.Context, tenantContext tenant.Context, values url.Values) (map[string]any, error) {
+	trackingV2, err := repo.hasSiteAnalyticsV2(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !trackingV2 {
+		return repo.siteDetailedLegacy(ctx, tenantContext, values)
+	}
+	return repo.queryJSONObject(ctx, `
+		with events as (
+		 select * from public.site_analytics_events e
+		 where e.organization_id=$1::uuid
+		   and ($2='' or e.created_at >= nullif($2,'')::date)
+		   and ($3='' or e.created_at < nullif($3,'')::date + 1)
+		), top_properties as (
+		 select e.property_id, coalesce(max(p.title),'Imovel') title, coalesce(max(p.code),'') code,
+		   count(*) filter(where e.event_type in ('pageview','page_view'))::int views,
+		   count(*) filter(where e.event_type='favorite')::int favorites
+		 from events e join public.properties p on p.id=e.property_id and p.organization_id=e.organization_id
+		 where e.property_id is not null group by e.property_id order by views desc limit 20
+		), top_pages as (
+		 select page_path, count(*)::int views from events where event_type in ('pageview','page_view')
+		 group by page_path order by views desc limit 20
+		), daily as (
+		 select created_at::date::text date, count(*)::int views from events where event_type in ('pageview','page_view')
+		 group by created_at::date order by created_at::date
+		), session_metrics as (
+		 select session_id,
+		   count(*) filter(where event_type in ('pageview','page_view'))::int pageviews,
+		   bool_or(event_type='form_submit') converted,
+		   max(created_at) last_seen
+		 from events where session_id is not null group by session_id
+		), totals as (
+		 select count(*)::int sessions,
+		   count(*) filter(where converted)::int converted_sessions,
+		   (select count(*)::int from events where event_type='form_submit') conversions,
+		   coalesce(round(sum(pageviews)::numeric/nullif(count(*),0),2),0) pages_per_session,
+		   coalesce(round(count(*) filter(where pageviews<=1 and not converted)::numeric*100/nullif(count(*),0),2),0) bounce_rate,
+		   count(*) filter(where last_seen >= now()-interval '5 minutes')::int live_visitors
+		 from session_metrics
+		), site_leads as (
+		 select count(*)::int total from public.leads l
+		 where l.organization_id=$1::uuid and (l.source in ('site','website') or l.source_detail='public_site')
+		   and ($2='' or l.created_at >= nullif($2,'')::date) and ($3='' or l.created_at < nullif($3,'')::date + 1)
+		), campaigns as (
+		 select coalesce(utm_source,'Direto') source, coalesce(utm_campaign,'Sem campanha') campaign,
+		   count(distinct session_id)::int sessions, count(*) filter(where event_type='form_submit')::int conversions
+		 from events group by 1,2 order by sessions desc limit 20
+		), searches as (
+		 select coalesce(nullif(metadata->>'search_term',''), 'Busca por filtros') term, count(*)::int searches
+		 from events where event_type='property_search'
+		 group by 1 order by searches desc limit 20
+		)
+		select jsonb_build_object(
+		 'topProperties', coalesce((select jsonb_agg(to_jsonb(x)) from top_properties x),'[]'::jsonb),
+		 'topPages', coalesce((select jsonb_agg(to_jsonb(x)) from top_pages x),'[]'::jsonb),
+		 'dailyViews', coalesce((select jsonb_agg(to_jsonb(x)) from daily x),'[]'::jsonb),
+		 'campaigns', coalesce((select jsonb_agg(to_jsonb(x)) from campaigns x),'[]'::jsonb),
+		 'searchTerms', coalesce((select jsonb_agg(to_jsonb(x)) from searches x),'[]'::jsonb),
+		 'conversionRate', case when t.sessions>0 then round(t.converted_sessions::numeric*100/t.sessions,2) else 0 end,
+		 'totalSessions', t.sessions, 'totalConversions', t.conversions, 'siteLeads', s.total,
+		 'pagesPerSession', t.pages_per_session, 'bounceRate', t.bounce_rate, 'liveVisitors', t.live_visitors)
+		from totals t cross join site_leads s
+	`, tenantContext.OrganizationID, dateOnly(values, "dateFrom"), dateOnly(values, "dateTo"))
+}
+
+func (repo Repository) LeadAnalytics(ctx context.Context, tenantContext tenant.Context, values url.Values) (map[string]any, error) {
+	trackingV2, err := repo.hasSiteAnalyticsV2(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !trackingV2 {
+		return repo.leadAnalyticsLegacy(ctx, tenantContext, values)
+	}
+	return repo.queryJSONObject(ctx, `
+		with events as (
+		 select * from public.site_analytics_events e where e.organization_id=$1::uuid
+		 and ($2='' or e.created_at >= nullif($2,'')::date) and ($3='' or e.created_at < nullif($3,'')::date + 1)
+		), journeys as (
+		 select session_id, array_agg(page_path order by created_at) path_sequence,
+		   array_agg(event_type order by created_at) event_sequence, min(created_at)::text first_event,
+		   max(created_at)::text last_event, count(*)::int total_events,
+		   bool_or(event_type='form_submit') converted, max(device_type) device_type, max(browser) browser,
+		   max(metadata->>'os') os, max(metadata->>'city') city, max(metadata->>'region') region
+		 from events where session_id is not null group by session_id order by max(created_at) desc limit 100
+		), funnel as (
+		 select event_type, count(*)::int total from events group by event_type order by total desc
+		), pages as (
+		 select page_path, count(*)::int views from events where event_type in ('pageview','page_view') group by page_path order by views desc limit 20
+		), daily as (
+		 select created_at::date::text date, count(*)::int views from events where event_type in ('pageview','page_view') group by created_at::date order by created_at::date
+		), devices as (
+		 select coalesce(device_type,'unknown') device_type, count(distinct session_id)::int total from events group by device_type
+		), locations as (
+		 select max(metadata->>'city') city, max(metadata->>'region') region,
+		   max(case when metadata->>'lat' ~ '^-?[0-9]+([.][0-9]+)?$' then (metadata->>'lat')::numeric end) lat,
+		   max(case when metadata->>'lng' ~ '^-?[0-9]+([.][0-9]+)?$' then (metadata->>'lng')::numeric end) lng,
+		   count(distinct session_id)::int sessions
+		 from events where metadata->>'city' is not null group by metadata->>'city', metadata->>'region' order by sessions desc limit 50
+		)
+		select jsonb_build_object(
+		 'journeys',coalesce((select jsonb_agg(to_jsonb(x)) from journeys x),'[]'::jsonb),
+		 'funnel',coalesce((select jsonb_agg(to_jsonb(x)) from funnel x),'[]'::jsonb),
+		 'top_pages',coalesce((select jsonb_agg(to_jsonb(x)) from pages x),'[]'::jsonb),
+		 'daily_views',coalesce((select jsonb_agg(to_jsonb(x)) from daily x),'[]'::jsonb),
+		 'total_sessions',(select count(distinct session_id) from events),
+		 'total_conversions',(select count(*) from events where event_type='form_submit'),
+		 'device_breakdown',coalesce((select jsonb_agg(to_jsonb(x)) from devices x),'[]'::jsonb),
+		 'locations',coalesce((select jsonb_agg(to_jsonb(x)) from locations x),'[]'::jsonb))
+	`, tenantContext.OrganizationID, dateOnly(values, "dateFrom"), dateOnly(values, "dateTo"))
+}
+
+func (repo Repository) hasSiteAnalyticsV2(ctx context.Context) (bool, error) {
+	var available bool
+	err := repo.db.Pool().QueryRow(ctx, `
+		select count(*) = 3
+		from information_schema.columns
+		where table_schema='public' and table_name='site_analytics_events'
+		  and column_name in ('property_id','lead_id','metadata')
+	`).Scan(&available)
+	return available, err
+}
+
+func (repo Repository) siteDetailedLegacy(ctx context.Context, tenantContext tenant.Context, values url.Values) (map[string]any, error) {
+	return repo.queryJSONObject(ctx, `
+		with events as (
+		 select * from public.site_analytics_events e
+		 where e.organization_id=$1::uuid
+		   and ($2='' or e.created_at >= nullif($2,'')::date)
+		   and ($3='' or e.created_at < nullif($3,'')::date + 1)
+		), top_pages as (
+		 select page_path, count(*)::int views from events where event_type in ('pageview','page_view')
+		 group by page_path order by views desc limit 20
+		), daily as (
+		 select created_at::date::text date, count(*)::int views from events where event_type in ('pageview','page_view')
+		 group by created_at::date order by created_at::date
+		), session_metrics as (
+		 select session_id, count(*) filter(where event_type in ('pageview','page_view'))::int pageviews,
+		   bool_or(event_type='form_submit') converted, max(created_at) last_seen
+		 from events where session_id is not null group by session_id
+		), totals as (
+		 select count(*)::int sessions, count(*) filter(where converted)::int converted_sessions,
+		   (select count(*)::int from events where event_type='form_submit') conversions,
+		   coalesce(round(sum(pageviews)::numeric/nullif(count(*),0),2),0) pages_per_session,
+		   coalesce(round(count(*) filter(where pageviews<=1 and not converted)::numeric*100/nullif(count(*),0),2),0) bounce_rate,
+		   count(*) filter(where last_seen >= now()-interval '5 minutes')::int live_visitors
+		 from session_metrics
+		), site_leads as (
+		 select count(*)::int total from public.leads l
+		 where l.organization_id=$1::uuid and (l.source in ('site','website') or l.source_detail='public_site')
+		   and ($2='' or l.created_at >= nullif($2,'')::date) and ($3='' or l.created_at < nullif($3,'')::date + 1)
+		), campaigns as (
+		 select coalesce(utm_source,'Direto') source, coalesce(utm_campaign,'Sem campanha') campaign,
+		   count(distinct session_id)::int sessions, count(*) filter(where event_type='form_submit')::int conversions
+		 from events group by 1,2 order by sessions desc limit 20
+		)
+		select jsonb_build_object(
+		 'topProperties','[]'::jsonb,
+		 'topPages',coalesce((select jsonb_agg(to_jsonb(x)) from top_pages x),'[]'::jsonb),
+		 'dailyViews',coalesce((select jsonb_agg(to_jsonb(x)) from daily x),'[]'::jsonb),
+		 'campaigns',coalesce((select jsonb_agg(to_jsonb(x)) from campaigns x),'[]'::jsonb),
+		 'searchTerms','[]'::jsonb,
+		 'conversionRate',case when t.sessions>0 then round(t.converted_sessions::numeric*100/t.sessions,2) else 0 end,
+		 'totalSessions',t.sessions,'totalConversions',t.conversions,'siteLeads',s.total,
+		 'pagesPerSession',t.pages_per_session,'bounceRate',t.bounce_rate,'liveVisitors',t.live_visitors)
+		from totals t cross join site_leads s
+	`, tenantContext.OrganizationID, dateOnly(values, "dateFrom"), dateOnly(values, "dateTo"))
+}
+
+func (repo Repository) leadAnalyticsLegacy(ctx context.Context, tenantContext tenant.Context, values url.Values) (map[string]any, error) {
+	return repo.queryJSONObject(ctx, `
+		with events as (
+		 select * from public.site_analytics_events e where e.organization_id=$1::uuid
+		 and ($2='' or e.created_at >= nullif($2,'')::date) and ($3='' or e.created_at < nullif($3,'')::date + 1)
+		), journeys as (
+		 select session_id, array_agg(page_path order by created_at) path_sequence,
+		   array_agg(event_type order by created_at) event_sequence, min(created_at)::text first_event,
+		   max(created_at)::text last_event, count(*)::int total_events,
+		   bool_or(event_type='form_submit') converted, max(device_type) device_type, max(browser) browser,
+		   null::text os, null::text city, null::text region
+		 from events where session_id is not null group by session_id order by max(created_at) desc limit 100
+		), funnel as (
+		 select event_type, count(*)::int total from events group by event_type order by total desc
+		), pages as (
+		 select page_path, count(*)::int views from events where event_type in ('pageview','page_view') group by page_path order by views desc limit 20
+		), daily as (
+		 select created_at::date::text date, count(*)::int views from events where event_type in ('pageview','page_view') group by created_at::date order by created_at::date
+		), devices as (
+		 select coalesce(device_type,'unknown') device_type, count(distinct session_id)::int total from events group by device_type
+		)
+		select jsonb_build_object(
+		 'journeys',coalesce((select jsonb_agg(to_jsonb(x)) from journeys x),'[]'::jsonb),
+		 'funnel',coalesce((select jsonb_agg(to_jsonb(x)) from funnel x),'[]'::jsonb),
+		 'top_pages',coalesce((select jsonb_agg(to_jsonb(x)) from pages x),'[]'::jsonb),
+		 'daily_views',coalesce((select jsonb_agg(to_jsonb(x)) from daily x),'[]'::jsonb),
+		 'total_sessions',(select count(distinct session_id) from events),
+		 'total_conversions',(select count(*) from events where event_type='form_submit'),
+		 'device_breakdown',coalesce((select jsonb_agg(to_jsonb(x)) from devices x),'[]'::jsonb),
+		 'locations','[]'::jsonb)
+	`, tenantContext.OrganizationID, dateOnly(values, "dateFrom"), dateOnly(values, "dateTo"))
+}
+
 func (repo Repository) MetaInsights(ctx context.Context, tenantContext tenant.Context, values url.Values) ([]map[string]any, error) {
 	return repo.queryJSONRows(ctx, `
 		select to_jsonb(mi)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -56,10 +57,13 @@ func (repo Repository) StartNotificationDispatchWorker(ctx context.Context, logg
 			case <-ctx.Done():
 				return
 			case <-timer.C:
-				if err := repo.CreateDueScheduleReminderNotifications(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				created, err := repo.createDueScheduleReminderNotifications(ctx)
+				if err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("schedule reminder notification worker failed", "error", err)
+				} else if created > 0 {
+					logger.Info("schedule reminder notifications enqueued", "count", created)
 				}
-				if err := repo.ProcessNotificationDeliveries(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				if err := repo.processNotificationDeliveries(ctx, logger); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("notification delivery worker failed", "error", err)
 				}
 				timer.Reset(notificationDispatchWorkerInterval)
@@ -73,6 +77,10 @@ func (repo Repository) ProcessLeadWhatsAppNotifications(ctx context.Context) err
 }
 
 func (repo Repository) ProcessNotificationDeliveries(ctx context.Context) error {
+	return repo.processNotificationDeliveries(ctx, nil)
+}
+
+func (repo Repository) processNotificationDeliveries(ctx context.Context, logger *slog.Logger) error {
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return err
@@ -103,6 +111,16 @@ func (repo Repository) ProcessNotificationDeliveries(ctx context.Context) error 
 
 	for _, notification := range notifications {
 		delivery := repo.dispatchPendingNotification(ctx, notification, nil)
+		if logger != nil && delivery.Error != "" {
+			logger.Warn(
+				"notification delivery failed",
+				"notification_id", notification.ID,
+				"organization_id", notification.OrganizationID,
+				"user_id", notification.UserID,
+				"event_key", stringFromMap(notification.Metadata, "event_key"),
+				"error", delivery.Error,
+			)
+		}
 		if err := repo.markNotificationDeliveryDirect(ctx, notification, delivery); err != nil {
 			return err
 		}
@@ -299,7 +317,7 @@ func (repo Repository) dispatchPendingWhatsAppNotification(ctx context.Context, 
 }
 
 func (repo Repository) dispatchPendingPushNotification(ctx context.Context, notification pendingNotification) DispatchChannelResult {
-	if repo.notificationPush.vapidPrivateKey == "" && repo.notificationPush.fcmServerKey == "" {
+	if repo.notificationPush == nil || !repo.notificationPush.hasAnySender() {
 		return DispatchChannelResult{Enabled: false, Error: "push_sender_not_configured"}
 	}
 	subscriptions, err := repo.listActivePushSubscriptions(ctx, notification.OrganizationID, notification.UserID)
@@ -342,17 +360,24 @@ func (repo Repository) dispatchPendingPushNotification(ctx context.Context, noti
 }
 
 func isPermanentPushDeliveryFailure(result DispatchChannelResult) bool {
-	switch result.Status {
-	case 404, 410:
+	errorText := strings.ToLower(strings.TrimSpace(result.Error))
+	provider := strings.ToLower(strings.TrimSpace(result.Provider))
+	if strings.Contains(errorText, "web_push_subscription_incomplete") {
 		return true
 	}
 
-	errorText := strings.ToLower(strings.TrimSpace(result.Error))
-	return strings.Contains(errorText, "unregistered") ||
+	if provider == "web_push" {
+		return result.Status == http.StatusUnauthorized ||
+			result.Status == http.StatusNotFound ||
+			result.Status == http.StatusGone ||
+			strings.Contains(errorText, "vapid") ||
+			strings.Contains(errorText, "push subscription has unsubscribed or expired")
+	}
+
+	return strings.Contains(errorText, "fcm_unregistered") ||
+		strings.Contains(errorText, "unregistered") ||
 		strings.Contains(errorText, "notregistered") ||
-		strings.Contains(errorText, "registration-token-not-registered") ||
-		strings.Contains(errorText, "requested entity was not found") ||
-		strings.Contains(errorText, "push subscription has unsubscribed or expired")
+		strings.Contains(errorText, "registration-token-not-registered")
 }
 
 func (repo Repository) deactivateDeadPushSubscription(ctx context.Context, organizationID string, userID string, subscription pushSubscription) error {
@@ -614,10 +639,13 @@ func (repo Repository) listActivePushSubscriptions(ctx context.Context, organiza
 		item.P256DH = firstNotificationText(item.P256DH, stringFromMap(deviceInfo, "p256dh"))
 		item.Auth = firstNotificationText(item.Auth, stringFromMap(deviceInfo, "auth"))
 		item.Platform = strings.ToLower(firstNotificationText(item.Platform, stringFromMap(deviceInfo, "platform")))
-		if item.Endpoint == "" && item.Token != "" {
+		if item.Endpoint == "" && item.Token != "" && isNativePushSubscription(item) {
 			item.Endpoint = "native:" + firstNotificationText(item.Platform, "unknown") + ":" + item.Token
 		}
-		if item.Endpoint != "" {
+		if item.Endpoint == "" && item.Token != "" && item.Platform == "web" {
+			item.Endpoint = item.Token
+		}
+		if item.Endpoint != "" || item.Token != "" {
 			subscriptions = append(subscriptions, item)
 		}
 	}
@@ -625,42 +653,51 @@ func (repo Repository) listActivePushSubscriptions(ctx context.Context, organiza
 }
 
 func (repo Repository) CreateDueScheduleReminderNotifications(ctx context.Context) error {
+	_, err := repo.createDueScheduleReminderNotifications(ctx)
+	return err
+}
+
+func (repo Repository) createDueScheduleReminderNotifications(ctx context.Context) (int64, error) {
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback(ctx)
 
 	var locked bool
 	if err := tx.QueryRow(ctx, `select pg_try_advisory_xact_lock($1)`, scheduleReminderLockKey).Scan(&locked); err != nil {
-		return err
+		return 0, err
 	}
 	if !locked {
-		return nil
+		return 0, nil
 	}
 
-	_, err = tx.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
 		with due_events as (
 			select
 				se.id,
 				se.organization_id,
 				se.user_id,
 				se.lead_id,
+				se.property_id,
 				se.title,
-				se.start_time
+				se.event_type,
+				coalesce(se.reminder_minutes, 5) as reminder_minutes,
+				se.start_time,
+				se.start_time - make_interval(mins => greatest(coalesce(se.reminder_minutes, 5), 0)) as reminder_due_at,
+				l.name as lead_name,
+				p.title as property_title,
+				p.code as property_code
 			from public.schedule_events se
+			left join public.leads l
+			  on l.organization_id = se.organization_id
+			 and l.id = se.lead_id
+			left join public.properties p
+			  on p.organization_id = se.organization_id
+			 and p.id = se.property_id
 			where coalesce(se.status, 'scheduled') = 'scheduled'
 			  and se.start_time > now()
-			  and se.start_time <= now() + interval '5 minutes'
-			  and not exists (
-			    select 1
-			    from public.notifications n
-			    where n.organization_id = se.organization_id
-			      and n.metadata->>'event_key' = 'schedule_reminder'
-			      and n.metadata->>'schedule_event_id' = se.id::text
-			  )
-			order by se.start_time asc
-			limit 50
+			  and se.start_time - make_interval(mins => greatest(coalesce(se.reminder_minutes, 5), 0)) <= now() + interval '30 seconds'
 		),
 		recipients as (
 			select distinct
@@ -668,8 +705,15 @@ func (repo Repository) CreateDueScheduleReminderNotifications(ctx context.Contex
 				due_events.organization_id,
 				due_events.user_id,
 				due_events.lead_id,
+				due_events.property_id,
 				due_events.title,
-				due_events.start_time
+				due_events.event_type,
+				due_events.reminder_minutes,
+				due_events.start_time,
+				due_events.reminder_due_at,
+				due_events.lead_name,
+				due_events.property_title,
+				due_events.property_code
 			from due_events
 			union
 			select distinct
@@ -677,12 +721,33 @@ func (repo Repository) CreateDueScheduleReminderNotifications(ctx context.Contex
 				due_events.organization_id,
 				sea.user_id,
 				due_events.lead_id,
+				due_events.property_id,
 				due_events.title,
-				due_events.start_time
+				due_events.event_type,
+				due_events.reminder_minutes,
+				due_events.start_time,
+				due_events.reminder_due_at,
+				due_events.lead_name,
+				due_events.property_title,
+				due_events.property_code
 			from due_events
 			join public.schedule_event_assignees sea
 			  on sea.event_id = due_events.id
 			 and sea.organization_id = due_events.organization_id
+		),
+		pending_recipients as (
+			select recipients.*
+			from recipients
+			where user_id is not null
+			  and not exists (
+			    select 1
+			    from public.notifications n
+			    where n.organization_id = recipients.organization_id
+			      and n.user_id = recipients.user_id
+			      and n.metadata->>'dedupe_key' = 'schedule_reminder:' || recipients.id::text || ':' || recipients.user_id::text
+			  )
+			order by reminder_due_at asc, start_time asc, id asc, user_id asc
+			limit 50
 		)
 		insert into public.notifications (
 			organization_id,
@@ -710,7 +775,16 @@ func (repo Repository) CreateDueScheduleReminderNotifications(ctx context.Contex
 				'event_key', 'schedule_reminder',
 				'dedupe_key', 'schedule_reminder:' || id::text || ':' || user_id::text,
 				'schedule_event_id', id::text,
+				'schedule_title', title,
+				'schedule_event_type', event_type,
+				'reminder_minutes', reminder_minutes,
 				'start_time', start_time,
+				'reminder_due_at', reminder_due_at,
+				'lead_id', lead_id,
+				'lead_name', nullif(lead_name, ''),
+				'property_id', property_id,
+				'property_title', nullif(property_title, ''),
+				'property_code', nullif(property_code, ''),
 				'dispatch', jsonb_build_object(
 					'push', jsonb_build_object('required', true, 'status', 'pending'),
 					'whatsapp', jsonb_build_object('required', true, 'status', 'pending')
@@ -718,17 +792,19 @@ func (repo Repository) CreateDueScheduleReminderNotifications(ctx context.Contex
 				'whatsapp_dispatch_required', true,
 				'whatsapp_dispatch', jsonb_build_object('status', 'pending')
 			)
-		from recipients
-		where user_id is not null
+		from pending_recipients
 		on conflict do nothing
 	`)
 	if isUndefinedTableError(err) || isUndefinedColumnError(err) {
-		return nil
+		return 0, nil
 	}
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func notificationTargetURL(notification pendingNotification) string {

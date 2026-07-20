@@ -21,6 +21,22 @@ var (
 	ErrConditionConflict  = errors.New("round robin condition conflict")
 )
 
+type ConditionConflictError struct {
+	QueueName string
+}
+
+func (err ConditionConflictError) Error() string {
+	queueName := strings.TrimSpace(err.QueueName)
+	if queueName == "" {
+		return "Esta condição de entrada já está sendo usada em outra fila de distribuição."
+	}
+	return fmt.Sprintf("Esta condição de entrada já está sendo usada na fila %q. Altere a regra ou edite a fila existente.", queueName)
+}
+
+func (ConditionConflictError) Unwrap() error {
+	return ErrConditionConflict
+}
+
 type RoundRobin struct {
 	ID                string           `json:"id"`
 	OrganizationID    string           `json:"organizationId"`

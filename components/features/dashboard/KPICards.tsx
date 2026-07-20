@@ -23,6 +23,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import {
+  getDashboardKPIValueStyle,
+  type DashboardKPIAccent,
+} from '@/components/features/dashboard/dashboard-kpi-theme';
 
 interface KPIData {
   totalLeads: number;
@@ -75,7 +79,7 @@ interface KPICardItemProps {
   icon: LucideIcon;
   tooltip: string;
   format?: 'number' | 'currency' | 'percent' | 'time';
-  accentColor?: string;
+  accentColor?: DashboardKPIAccent;
   iconColor?: string;
   iconBgColor?: string;
   onClick?: () => void;
@@ -120,6 +124,7 @@ function KPICardItem({
   className,
   compact = false,
   isHighlighted = false,
+  accentColor = 'leads',
 }: KPICardItemProps & { isHighlighted?: boolean }) {
   const hasTrend = trend !== undefined && trend !== 0;
   const isPositive = (trend ?? 0) >= 0;
@@ -182,9 +187,9 @@ function KPICardItem({
 
                 <div className="flex flex-col">
                   <p className={cn(
-                    "font-medium leading-tight break-words text-[#232323]",
+                    "font-medium leading-tight break-words text-[var(--app-text-primary)]",
                     isHighlighted ? "text-xl sm:text-3xl" : "text-lg sm:text-2xl"
-                  )}>
+                  )} style={getDashboardKPIValueStyle(accentColor)}>
                     {formatValue(value, format)}
                   </p>
 
@@ -213,7 +218,7 @@ function KPICardItem({
             </CardContent>
           </Card>
         </TooltipTrigger>
-        <TooltipContent className="text-[#272727]">
+        <TooltipContent className="text-[var(--app-text-primary)]">
           <p className="text-[11px] font-light leading-snug">{tooltip}</p>
         </TooltipContent>
       </Tooltip>
@@ -268,7 +273,7 @@ export function KPICards({ data, isLoading, periodLabel = 'Últimos 30 dias', sc
       icon: Users,
       tooltip: `Total de leads captados - ${periodLabel}`,
       format: 'number',
-      accentColor: 'primary',
+      accentColor: 'leads',
       tourTarget: 'dashboard-kpi-leads',
     },
     {
@@ -278,7 +283,7 @@ export function KPICards({ data, isLoading, periodLabel = 'Últimos 30 dias', sc
       icon: CircleDot,
       tooltip: `Percentual de leads em aberto dentro do total do período - ${periodLabel}`,
       format: 'number',
-      accentColor: 'chart-1',
+      accentColor: 'open',
       tourTarget: 'dashboard-kpi-open',
     },
     {
@@ -289,7 +294,7 @@ export function KPICards({ data, isLoading, periodLabel = 'Últimos 30 dias', sc
       icon: XCircle,
       tooltip: `Percentual de leads perdidos dentro do total do período - ${periodLabel}`,
       format: 'number',
-      accentColor: 'destructive',
+      accentColor: 'lost',
       onClick: onLostClick,
       interactive: Boolean(onLostClick),
       tourTarget: 'dashboard-kpi-lost',
@@ -303,7 +308,7 @@ export function KPICards({ data, isLoading, periodLabel = 'Últimos 30 dias', sc
       icon: Trophy,
       tooltip: `Ganhos fechados no período, independente da data de entrada do lead - ${periodLabel}`,
       format: 'number',
-      accentColor: 'success',
+      accentColor: 'won',
       iconColor: 'rgb(16, 185, 129)',
       iconBgColor: 'rgba(16, 185, 129, 0.1)',
       onClick: onWonClick,
@@ -318,7 +323,7 @@ export function KPICards({ data, isLoading, periodLabel = 'Últimos 30 dias', sc
       icon: CalendarCheck,
       tooltip: `Visitas agendadas em relação ao total de leads - ${periodLabel}`,
       format: 'number',
-      accentColor: 'chart-1',
+      accentColor: 'visits',
       tourTarget: 'dashboard-kpi-visits',
     },
   ];
@@ -330,7 +335,7 @@ export function KPICards({ data, isLoading, periodLabel = 'Últimos 30 dias', sc
       icon: DollarSign,
       tooltip: `Valor total em vendas (VGV) - ${periodLabel}`,
       format: 'currency',
-      accentColor: 'chart-5',
+      accentColor: 'vgv',
       tourTarget: 'dashboard-kpi-vgv',
       className: 'col-span-2',
       compact: true,
@@ -341,7 +346,7 @@ export function KPICards({ data, isLoading, periodLabel = 'Últimos 30 dias', sc
       icon: Clock,
       tooltip: 'Tempo médio até a primeira ligação ou mensagem',
       format: 'time',
-      accentColor: 'chart-4',
+      accentColor: 'response',
       tourTarget: 'dashboard-kpi-first-contact',
       compact: true,
     },
@@ -351,7 +356,7 @@ export function KPICards({ data, isLoading, periodLabel = 'Últimos 30 dias', sc
       icon: Building2,
       tooltip: 'Total de imóveis cadastrados',
       format: 'number',
-      accentColor: 'chart-1',
+      accentColor: 'properties',
       tourTarget: 'dashboard-kpi-properties',
       compact: true,
     },
@@ -361,7 +366,7 @@ export function KPICards({ data, isLoading, periodLabel = 'Últimos 30 dias', sc
       icon: Eye,
       tooltip: `Visitas ao site no período - ${periodLabel}`,
       format: 'number',
-      accentColor: 'chart-2',
+      accentColor: 'site',
       tourTarget: 'dashboard-kpi-site-visits',
       compact: true,
     },

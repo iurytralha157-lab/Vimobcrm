@@ -69,7 +69,9 @@ export interface SiteAnalyticsSummary {
   searchPct: number;
   socialPct: number;
   campaignPct: number;
+  referralPct: number;
   conversions: number;
+  prevSessions: number;
   prevViews: number;
   prevPages: number;
   prevUniquePages: number;
@@ -77,6 +79,7 @@ export interface SiteAnalyticsSummary {
   prevDesktopPct: number;
   prevMobilePct: number;
   prevConversions: number;
+	prevConversionRate: number;
 }
 
 export interface SiteAnalyticsDetailed {
@@ -87,6 +90,11 @@ export interface SiteAnalyticsDetailed {
   totalSessions: number;
   totalConversions: number;
   siteLeads: number;
+  campaigns: { source: string; campaign: string; sessions: number; conversions: number }[];
+  searchTerms: { term: string; searches: number }[];
+	pagesPerSession: number;
+	bounceRate: number;
+	liveVisitors: number;
 }
 
 function rangeQuery(dateFrom?: Date, dateTo?: Date) {
@@ -108,6 +116,7 @@ export function useLeadAnalytics(dateFrom?: Date, dateTo?: Date) {
       return analyticsAPI.leadAnalytics<LeadAnalyticsData>(rangeQuery(dateFrom, dateTo));
     },
     enabled: !!organization?.id,
+    refetchInterval: 30_000,
   });
 }
 
@@ -120,6 +129,7 @@ export function useSiteAnalytics(dateFrom?: Date, dateTo?: Date) {
       return analyticsAPI.siteSummary<SiteAnalyticsSummary>(rangeQuery(dateFrom, dateTo));
     },
     enabled: !!organization?.id,
+    refetchInterval: 30_000,
   });
 }
 
@@ -132,5 +142,6 @@ export function useSiteAnalyticsDetailed(dateFrom?: Date, dateTo?: Date) {
       return analyticsAPI.siteDetailed<SiteAnalyticsDetailed>(rangeQuery(dateFrom, dateTo));
     },
     enabled: !!organization?.id,
+    refetchInterval: 30_000,
   });
 }

@@ -154,7 +154,7 @@ export function useRecordingUrl() {
     mutationFn: async (callId: string) => {
       void callId;
       // Placeholder - would fetch from edge function
-      throw new Error('Recording feature not available');
+      throw new Error('O recurso de gravação não está disponível.');
     },
   });
 }
@@ -171,7 +171,7 @@ export function useCreateCall() {
       organization_id?: string;
     }) => {
       void data;
-      throw new Error('Telephony feature not available');
+      throw new Error('O recurso de telefonia não está disponível.');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['telephony-calls'] });
@@ -187,7 +187,7 @@ export function useUpdateCall() {
       void id;
       void data;
       // Table doesn't exist - throw error
-      throw new Error('Telephony feature not available');
+      throw new Error('O recurso de telefonia não está disponível.');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['telephony-calls'] });

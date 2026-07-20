@@ -7,6 +7,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Plus, X, Check, Loader2, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { searchTextEquals, searchTextIncludes } from '@/lib/search-text';
 
 // Predefined colors for quick tag creation
 const TAG_COLORS = [
@@ -62,12 +63,12 @@ export function TagSelector({
 
   // Filter tags based on search
   const filteredTags = allTags.filter(tag =>
-    tag.name.toLowerCase().includes(searchTerm.toLowerCase())
+    searchTextIncludes(tag.name, searchTerm)
   );
 
   // Check if search term matches exactly an existing tag
   const exactMatch = allTags.some(
-    tag => tag.name.toLowerCase() === searchTerm.toLowerCase()
+    tag => searchTextEquals(tag.name, searchTerm)
   );
 
   // Get selected tags for display
@@ -396,11 +397,11 @@ export function TagSelectorPopoverContent({
   const [isCreating, setIsCreating] = useState(false);
 
   const filteredTags = availableTags.filter(tag =>
-    tag.name.toLowerCase().includes(searchTerm.toLowerCase())
+    searchTextIncludes(tag.name, searchTerm)
   );
 
   const exactMatch = availableTags.some(
-    tag => tag.name.toLowerCase() === searchTerm.toLowerCase()
+    tag => searchTextEquals(tag.name, searchTerm)
   );
 
   const handleCreateTag = async () => {

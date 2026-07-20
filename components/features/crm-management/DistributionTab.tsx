@@ -284,7 +284,7 @@ export function DistributionTab() {
               {visibleRoundRobins.length} {visibleRoundRobins.length === 1 ? 'fila' : 'filas'} · {activeQueues} {activeQueues === 1 ? 'ativa' : 'ativas'} · {totalLeadsDistributed} leads distribuídos
             </p>
           </div>
-          <Button data-tour="distribution-new-queue" onClick={() => openEditor()} className="gap-2">
+          <Button data-tour="distribution-new-queue" onClick={() => openEditor()} className="h-9 gap-2 rounded-[8px] px-3 shadow-none">
             <Plus className="h-4 w-4" />
             Nova Fila
           </Button>

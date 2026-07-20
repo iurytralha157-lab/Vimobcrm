@@ -34,6 +34,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) (
 			'webhook_url', w.webhook_url,
 			'target_pipeline_id', w.target_pipeline_id::text,
 			'target_team_id', w.target_team_id::text,
+			'target_team_id', w.target_team_id::text,
 			'target_stage_id', w.target_stage_id::text,
 			'target_tag_ids', w.target_tag_ids,
 			'target_property_id', w.target_property_id::text,
@@ -341,6 +342,7 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 				utm_term,
 				utm_content,
 				metadata,
+				team_id,
 				stage_entered_at,
 				board_order_at,
 				last_entry_at
@@ -369,12 +371,13 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 				$19,
 				$20,
 				$21::jsonb,
+				$22::uuid,
 				case when $3::uuid is null then null else now() end,
 				case when $3::uuid is null then null else now() end,
 				now()
 			)
 			returning id::text
-		`, webhook.OrganizationID, nullableString(pipelineID), nullableString(stageID), nullableString(propertyID), *name, nullableString(email), nullableString(phone), nullableString(sourceDetail), webhook.ID, nullableString(message), nullableString(propertyCode), nullableString(campaignID), nullableString(adsetID), nullableString(adID), nullableString(formID), nullableString(utmSource), nullableString(utmMedium), nullableString(utmCampaign), nullableString(utmTerm), nullableString(utmContent), string(metadataJSON)).Scan(&leadID)
+		`, webhook.OrganizationID, nullableString(pipelineID), nullableString(stageID), nullableString(propertyID), *name, nullableString(email), nullableString(phone), nullableString(sourceDetail), webhook.ID, nullableString(message), nullableString(propertyCode), nullableString(campaignID), nullableString(adsetID), nullableString(adID), nullableString(formID), nullableString(utmSource), nullableString(utmMedium), nullableString(utmCampaign), nullableString(utmTerm), nullableString(utmContent), string(metadataJSON), nullableString(webhook.TargetTeamID)).Scan(&leadID)
 	}
 	if err != nil {
 		return IncomingLeadResult{}, err

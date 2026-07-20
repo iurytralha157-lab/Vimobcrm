@@ -23,14 +23,15 @@ interface PushNotificationReceived {
   data?: Record<string, unknown>;
 }
 
+type CapacitorPluginListenerHandle = { remove: () => void | Promise<void> };
+
 interface CapacitorPushNotifications {
   requestPermissions(): Promise<{ receive: 'granted' | 'denied' | 'prompt' }>;
   register(): Promise<void>;
-  addListener(event: 'registration', callback: (token: PushNotificationToken) => void): Promise<{ remove: () => void }>;
-  addListener(event: 'registrationError', callback: (error: unknown) => void): Promise<{ remove: () => void }>;
-  addListener(event: 'pushNotificationReceived', callback: (notification: PushNotificationReceived) => void): Promise<{ remove: () => void }>;
-  addListener(event: 'pushNotificationActionPerformed', callback: (action: PushNotificationActionPerformed) => void): Promise<{ remove: () => void }>;
-  removeAllListeners(): Promise<void>;
+  addListener(event: 'registration', callback: (token: PushNotificationToken) => void): Promise<CapacitorPluginListenerHandle>;
+  addListener(event: 'registrationError', callback: (error: unknown) => void): Promise<CapacitorPluginListenerHandle>;
+  addListener(event: 'pushNotificationReceived', callback: (notification: PushNotificationReceived) => void): Promise<CapacitorPluginListenerHandle>;
+  addListener(event: 'pushNotificationActionPerformed', callback: (action: PushNotificationActionPerformed) => void): Promise<CapacitorPluginListenerHandle>;
 }
 
 type CapacitorBridge = {
@@ -78,6 +79,7 @@ export function usePushNotifications() {
   const router = useRouter();
   const initialized = useRef(false);
   const currentToken = useRef<string | null>(null);
+  const listenerHandles = useRef<CapacitorPluginListenerHandle[]>([]);
   const profileId = profile?.id;
   const profileOrganizationId = profile?.organization_id;
 
@@ -123,6 +125,11 @@ export function usePushNotifications() {
     }
   }, [router]);
 
+  const removeOwnListeners = useCallback(async () => {
+    const handles = listenerHandles.current.splice(0);
+    await Promise.allSettled(handles.map((handle) => Promise.resolve(handle.remove())));
+  }, []);
+
   // Initialize push notifications
   const initializePush = useCallback(async () => {
     if (initialized.current) return;
@@ -135,10 +142,10 @@ export function usePushNotifications() {
     }
 
     console.log('[Push] Initializing push notifications...');
-    initialized.current = true;
 
     try {
-      // Request permission
+      // Request permission before wiring listeners. The token is emitted by
+      // register(), so listeners only need to exist before that call.
       const permResult = await PushNotifications.requestPermissions();
       console.log('[Push] Permission result:', permResult.receive);
 
@@ -147,39 +154,40 @@ export function usePushNotifications() {
         return;
       }
 
-      // Register with FCM/APNs
-      await PushNotifications.register();
-
-      // Listen for registration success
-      await PushNotifications.addListener('registration', (token) => {
+      // Register listeners before calling register(); Capacitor can emit the
+      // registration token immediately, and adding the listener afterwards may
+      // drop the only chance to persist this device.
+      listenerHandles.current.push(await PushNotifications.addListener('registration', (token) => {
         console.log('[Push] Registered with token:', token.value.substring(0, 20) + '...');
         saveToken(token.value);
-      });
+      }));
 
-      // Listen for registration errors
-      await PushNotifications.addListener('registrationError', (error) => {
+      listenerHandles.current.push(await PushNotifications.addListener('registrationError', (error) => {
         console.error('[Push] Registration error:', error);
-      });
+      }));
 
-      // Listen for push received (foreground)
-      await PushNotifications.addListener('pushNotificationReceived', (notification) => {
+      listenerHandles.current.push(await PushNotifications.addListener('pushNotificationReceived', (notification) => {
         console.log('[Push] Notification received in foreground:', notification.title);
-        // Foreground notifications are handled by the in-app notification system
-        // We don't need to do anything special here
-      });
+        // Foreground notifications are handled by the in-app notification system.
+      }));
 
-      // Listen for notification action (user tapped notification)
-      await PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
+      listenerHandles.current.push(await PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
         console.log('[Push] Notification action:', action.actionId);
         handleNotificationAction(action.notification.data || {});
-      });
+      }));
+
+      initialized.current = true;
+
+      // Register with FCM/APNs
+      await PushNotifications.register();
 
       console.log('[Push] Push notifications initialized successfully');
     } catch (error) {
       console.error('[Push] Initialization error:', error);
       initialized.current = false;
+      void removeOwnListeners();
     }
-  }, [profileId, saveToken, handleNotificationAction]);
+  }, [profileId, saveToken, handleNotificationAction, removeOwnListeners]);
 
   // Deactivate token on logout
   const deactivateToken = useCallback(async () => {
@@ -211,12 +219,9 @@ export function usePushNotifications() {
     initializePush();
 
     return () => {
-      // Cleanup listeners on unmount
-      getPushNotificationsPlugin().then((PushNotifications) => {
-        PushNotifications?.removeAllListeners();
-      });
+      void removeOwnListeners();
     };
-  }, [initializePush]);
+  }, [initializePush, removeOwnListeners]);
 
   return {
     isNative: isCapacitorNative(),

@@ -13,6 +13,7 @@ import {
   type AutomationMediaType,
 } from '@/lib/api/automations';
 import { VimobAPIError } from '@/lib/api/vimob-client';
+import { searchTextIncludes } from '@/lib/search-text';
 import { useAutomationMedia } from '@/hooks/use-automations';
 
 interface AutomationMediaGalleryProps {
@@ -125,7 +126,7 @@ export function AutomationMediaGallery({
   };
 
   const filteredFiles = files.filter((file: AutomationMediaFile) => {
-    return !search || file.name.toLowerCase().includes(search.toLowerCase());
+    return !search || searchTextIncludes(file.name, search);
   });
 
   const typeLabels: Record<AutomationMediaType, string> = {

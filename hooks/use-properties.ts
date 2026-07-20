@@ -97,21 +97,22 @@ const getErrorMessage = (error: unknown) => {
 export function useProperties(
   search?: string,
   filters: Pick<PropertyFilters, 'scope'> = {},
-  options: { enabled?: boolean } = {},
+  options: { enabled?: boolean; limit?: number } = {},
 ) {
   const { user } = useAuth()
   const organizationId = useOrganizationId()
   const normalizedSearch = sanitizeSearchTerm(search)
   const normalizedFilters = normalizeFilters(filters)
+  const limit = options.limit ?? 1000
 
   return useQuery({
-    queryKey: ['properties', organizationId, normalizedSearch, normalizedFilters],
+    queryKey: ['properties', organizationId, normalizedSearch, normalizedFilters, limit],
     queryFn: async () => {
       if (!organizationId) return [] as Property[]
 
       const { data, error } = await propertiesAPI.getProperties(organizationId, {
         search: normalizedSearch,
-        limit: 1000,
+        limit,
         ...normalizedFilters,
       })
 

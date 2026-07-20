@@ -35,6 +35,7 @@ import { QuickActions } from '@/components/features/help/QuickActions';
 import { MyRequestsList } from '@/components/features/help/MyRequestsList';
 import { FeatureRequestDialog } from '@/components/features/help/FeatureRequestDialog';
 import { FEATURES } from '@/config/constants';
+import { searchTextIncludes } from '@/lib/search-text';
 
 const helpSections = [
   {
@@ -347,8 +348,8 @@ export default function Help() {
     ...section,
     items: section.items.filter(
       item =>
-        item.question.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.answer.toLowerCase().includes(searchTerm.toLowerCase())
+        searchTextIncludes(item.question, searchTerm) ||
+        searchTextIncludes(item.answer, searchTerm)
     ),
   })).filter(section => section.items.length > 0);
 

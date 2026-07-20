@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/authorization"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -1272,13 +1274,18 @@ func (repo Repository) ListLeadAttachments(ctx context.Context, tenantContext te
 		if err != nil {
 			return nil, err
 		}
-		repo.signLeadAttachmentURL(ctx, &attachment)
+		repo.signLeadAttachmentURL(ctx, tenantContext.OrganizationID, &attachment)
 		attachments = append(attachments, attachment)
 	}
 	return attachments, rows.Err()
 }
 
 func (repo Repository) CreateLeadAttachment(ctx context.Context, tenantContext tenant.Context, input leadAttachmentCreateInput) (LeadAttachment, error) {
+	storagePath := storagePathFromPublicURL(input.FileURL, repo.storage.projectURL)
+	if storagePath != "" && !leadAttachmentStoragePathBelongsToOrganization(storagePath, tenantContext.OrganizationID) {
+		return LeadAttachment{}, fmt.Errorf("%w: attachment storage path does not belong to the organization", ErrInvalidInput)
+	}
+
 	if err := repo.ensureLeadEditable(ctx, tenantContext, input.LeadID); err != nil {
 		return LeadAttachment{}, err
 	}
@@ -1306,7 +1313,7 @@ func (repo Repository) CreateLeadAttachment(ctx context.Context, tenantContext t
 			limit 1
 		`, existingArgs...))
 		if err == nil {
-			repo.signLeadAttachmentURL(ctx, &existing)
+			repo.signLeadAttachmentURL(ctx, tenantContext.OrganizationID, &existing)
 			return existing, nil
 		}
 		if err != pgx.ErrNoRows {
@@ -1357,7 +1364,7 @@ func (repo Repository) CreateLeadAttachment(ctx context.Context, tenantContext t
 		add("storage_bucket", "whatsapp-media", "")
 	}
 	if columns.StoragePath {
-		add("storage_path", storagePathFromPublicURL(input.FileURL, input.FileName), "")
+		add("storage_path", storagePath, "")
 	}
 	if columns.Metadata {
 		metadata := map[string]any{
@@ -1415,7 +1422,7 @@ func (repo Repository) CreateLeadAttachment(ctx context.Context, tenantContext t
 		return LeadAttachment{}, err
 	}
 
-	repo.signLeadAttachmentURL(ctx, &attachment)
+	repo.signLeadAttachmentURL(ctx, tenantContext.OrganizationID, &attachment)
 	return attachment, nil
 }
 
@@ -2046,7 +2053,25 @@ func buildWhatsAppNotificationTemplate(eventKey string, title string, content st
 	stage := firstNotificationText(stringFromMap(variables, "stage_name"), stringFromMap(variables, "stageName"), stringFromMap(variables, "stage"))
 	actor := firstNotificationText(stringFromMap(variables, "actor_name"), stringFromMap(variables, "actorName"))
 	value := firstNotificationText(stringFromMap(variables, "valor_interesse"), stringFromMap(variables, "interest_value"), stringFromMap(variables, "value"))
-	date := firstNotificationText(stringFromMap(variables, "created_time"), stringFromMap(variables, "created_at"), stringFromMap(variables, "date"), stringFromMap(variables, "start_time"))
+	date := firstNotificationText(stringFromMap(variables, "created_time"), stringFromMap(variables, "created_at"), stringFromMap(variables, "date"), stringFromMap(variables, "schedule_time"), stringFromMap(variables, "schedule_start_time"), stringFromMap(variables, "start_time"))
+	if date != "" {
+		date = formatNotificationTemplateDate(date)
+	}
+	scheduleDate := firstNotificationText(
+		stringFromMap(variables, "schedule_time"),
+		stringFromMap(variables, "schedule_start_time"),
+		stringFromMap(variables, "start_time"),
+		date,
+	)
+	if scheduleDate != "" {
+		scheduleDate = formatNotificationTemplateDate(scheduleDate)
+	}
+	scheduleType := firstNotificationText(
+		stringFromMap(variables, "schedule_event_type_label"),
+		scheduleReminderEventTypeLabel(stringFromMap(variables, "schedule_event_type"), stringFromMap(variables, "event_type")),
+	)
+	scheduleLeadName := scheduleReminderLeadName(variables)
+	propertyName := scheduleReminderPropertyName(variables)
 
 	lines := []string{}
 	appendField := func(icon string, label string, value string) {
@@ -2129,7 +2154,10 @@ func buildWhatsAppNotificationTemplate(eventKey string, title string, content st
 	case "schedule_reminder":
 		lines = append(lines, "⏰ *LEMBRETE DE AGENDA*")
 		appendField("📌", "Atividade", firstNotificationText(stringFromMap(variables, "schedule_title"), stringFromMap(variables, "title"), title))
-		appendField("📅", "Horário", date)
+		appendField("\U0001f9ed", "Tipo", scheduleType)
+		appendField("📅", "Horário", scheduleDate)
+		appendField("\U0001f464", "Lead", scheduleLeadName)
+		appendField("\U0001f3e0", "Im\u00f3vel", propertyName)
 		appendAction("acesse a agenda")
 	case "test_push":
 		lines = append(lines, "🧪 *TESTE DE NOTIFICAÇÃO*")
@@ -2230,18 +2258,41 @@ func notificationTemplateValues(variables map[string]any) map[string]string {
 		values[key] = strings.TrimSpace(fmt.Sprint(value))
 	}
 
-	rawDate := firstNotificationText(
+	rawCreatedDate := firstNotificationText(
 		values["lead_created_at"],
 		values["created_time"],
 		values["created_at"],
 		values["date"],
 	)
-	if rawDate != "" {
-		formattedDate := formatNotificationTemplateDate(rawDate)
+	if rawCreatedDate != "" {
+		formattedDate := formatNotificationTemplateDate(rawCreatedDate)
 		values["lead_created_at"] = formattedDate
 		values["created_time"] = formattedDate
 		values["created_at"] = formattedDate
 		values["date"] = formattedDate
+	}
+
+	rawScheduleDate := firstNotificationText(
+		values["schedule_time"],
+		values["schedule_start_time"],
+		values["start_time"],
+		values["scheduled_at"],
+	)
+	if rawScheduleDate != "" {
+		formattedDate := formatNotificationTemplateDate(rawScheduleDate)
+		values["schedule_time"] = formattedDate
+		values["schedule_start_time"] = formattedDate
+		values["start_time"] = formattedDate
+		values["scheduled_at"] = formattedDate
+		if values["date"] == "" {
+			values["date"] = formattedDate
+		}
+	}
+	if values["schedule_event_type_label"] == "" {
+		values["schedule_event_type_label"] = scheduleReminderEventTypeLabel(values["schedule_event_type"], values["event_type"])
+	}
+	if values["property_name"] == "" {
+		values["property_name"] = scheduleReminderPropertyText(values["property_title"], values["property_code"], values["property_id"])
 	}
 
 	return values
@@ -2275,6 +2326,66 @@ func formatNotificationTemplateDate(value string) string {
 	}
 
 	return value
+}
+
+func scheduleReminderEventTypeLabel(values ...string) string {
+	eventType := strings.ToLower(firstNotificationText(values...))
+	switch eventType {
+	case "call":
+		return "Liga\u00e7\u00e3o"
+	case "email":
+		return "E-mail"
+	case "meeting":
+		return "Reuni\u00e3o"
+	case "task":
+		return "Tarefa"
+	case "message":
+		return "Mensagem"
+	case "visit":
+		return "Visita ao im\u00f3vel"
+	default:
+		return firstNotificationText(values...)
+	}
+}
+
+func scheduleReminderPropertyName(variables map[string]any) string {
+	return scheduleReminderPropertyText(
+		stringFromMap(variables, "property_title"),
+		stringFromMap(variables, "property_code"),
+		stringFromMap(variables, "property_id"),
+	)
+}
+
+func scheduleReminderLeadName(variables map[string]any) string {
+	leadName := firstNotificationText(
+		stringFromMap(variables, "lead_name"),
+		stringFromMap(variables, "leadName"),
+	)
+	if leadName != "" {
+		return leadName
+	}
+	if stringFromMap(variables, "lead_id") != "" {
+		return "Lead vinculado"
+	}
+	return ""
+}
+
+func scheduleReminderPropertyText(title string, code string, propertyID string) string {
+	title = strings.TrimSpace(title)
+	code = strings.TrimSpace(code)
+	if title != "" && code != "" {
+		return title + " (" + code + ")"
+	}
+	if title != "" {
+		return title
+	}
+	if code != "" {
+		return code
+	}
+	if strings.TrimSpace(propertyID) != "" {
+		return "Im\u00f3vel vinculado"
+	}
+	return ""
 }
 
 func (repo Repository) getNotificationWhatsAppConfig(ctx context.Context) (notificationWhatsAppConfig, error) {
@@ -2596,9 +2707,9 @@ func buildContactWhere(tenantContext tenant.Context, filter ContactListFilter) (
 	}
 
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, searchtext.Pattern(filter.Search))
 		index := len(args)
-		where = append(where, fmt.Sprintf("(l.name ilike $%d or l.phone ilike $%d or l.email ilike $%d)", index, index, index))
+		where = append(where, searchtext.AnySQL([]string{"l.name", "l.phone", "l.email"}, fmt.Sprintf("$%d", index)))
 	}
 	if strings.TrimSpace(filter.TeamID) != "" {
 		teamID, ok := normalizeUUID(filter.TeamID)
@@ -3401,22 +3512,26 @@ func (repo Repository) recordTaskGamification(organizationID string, userID stri
 	}()
 }
 
-func storagePathFromPublicURL(fileURL string, _ string) string {
-	if path := storagePathFromPublicStorageURL(fileURL); path != "" {
-		return path
-	}
-
-	return ""
+func storagePathFromPublicURL(fileURL string, projectURL string) string {
+	return storagePathFromPublicStorageURL(fileURL, projectURL)
 }
 
-func storagePathFromPublicStorageURL(fileURL string) string {
+func storagePathFromPublicStorageURL(fileURL string, projectURL string) string {
 	rawURL := strings.TrimSpace(fileURL)
-	if rawURL == "" {
+	rawProjectURL := strings.TrimSpace(projectURL)
+	if rawURL == "" || rawProjectURL == "" {
 		return ""
 	}
 
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
+		return ""
+	}
+	project, err := url.Parse(rawProjectURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || project.Scheme == "" || project.Host == "" {
+		return ""
+	}
+	if !strings.EqualFold(parsed.Scheme, project.Scheme) || !strings.EqualFold(parsed.Host, project.Host) {
 		return ""
 	}
 
@@ -3443,12 +3558,28 @@ func storagePathFromPublicStorageURL(fileURL string) string {
 	return ""
 }
 
-func (repo Repository) signLeadAttachmentURL(ctx context.Context, attachment *LeadAttachment) {
-	if attachment == nil {
+func leadAttachmentStoragePathBelongsToOrganization(objectPath string, organizationID string) bool {
+	objectPath = strings.TrimSpace(objectPath)
+	organizationID = strings.TrimSpace(organizationID)
+	if objectPath == "" || organizationID == "" || strings.Contains(objectPath, `\`) || strings.Contains(objectPath, "%") {
+		return false
+	}
+
+	cleaned := strings.TrimPrefix(path.Clean("/"+objectPath), "/")
+	if cleaned != objectPath {
+		return false
+	}
+
+	return strings.HasPrefix(cleaned, "orgs/"+organizationID+"/") ||
+		strings.HasPrefix(cleaned, organizationID+"/")
+}
+
+func (repo Repository) signLeadAttachmentURL(ctx context.Context, organizationID string, attachment *LeadAttachment) {
+	if attachment == nil || strings.TrimSpace(organizationID) == "" {
 		return
 	}
 
-	fileURLPath := storagePathFromPublicStorageURL(attachment.FileURL)
+	fileURLPath := storagePathFromPublicStorageURL(attachment.FileURL, repo.storage.projectURL)
 	path := fileURLPath
 	if path == "" {
 		storedPath := strings.TrimSpace(attachment.StoragePath)
@@ -3459,10 +3590,16 @@ func (repo Repository) signLeadAttachmentURL(ctx context.Context, attachment *Le
 	if path == "" {
 		return
 	}
+	if !leadAttachmentStoragePathBelongsToOrganization(path, organizationID) {
+		return
+	}
 
 	bucket := strings.TrimSpace(attachment.StorageBucket)
 	if bucket == "" {
 		bucket = leadAttachmentBucket
+	}
+	if bucket != leadAttachmentBucket {
+		return
 	}
 
 	signedURL, err := repo.storage.signedURL(ctx, bucket, path, leadAttachmentSignedURLTTLSeconds)

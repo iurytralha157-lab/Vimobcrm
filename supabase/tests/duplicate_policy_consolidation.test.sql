@@ -34,8 +34,9 @@ select ok(
 );
 
 select ok(
-  has_table_privilege('anon', 'public.system_settings', 'SELECT'),
-  'anonymous system settings reads keep their table privilege'
+  not has_table_privilege('anon', 'public.system_settings', 'SELECT')
+    and not has_table_privilege('authenticated', 'public.system_settings', 'SELECT'),
+  'system settings are hidden from Data API client roles'
 );
 
 select is(
@@ -51,47 +52,31 @@ select is(
 );
 
 select ok(
-  exists (
+  not exists (
     select 1
     from pg_policies
     where schemaname = 'public'
       and tablename = 'users'
-      and cmd = 'UPDATE'
-      and ('authenticated' = any(roles) or 'public' = any(roles))
-      and qual ~ 'auth\.uid'
-      and with_check ~ 'auth\.uid'
+      and cmd in ('INSERT', 'UPDATE', 'DELETE')
   ),
-  'authenticated users retain the checked own-profile update policy'
+  'user mutations are backend-owned'
 );
 
 select ok(
-  case
-    when exists (
-      select 1
-      from pg_policies
-      where schemaname = 'public'
-        and tablename = 'users'
-        and policyname = 'users_update_safe'
-    ) then exists (
-      select 1
-      from pg_policies
-      where schemaname = 'public'
-        and tablename = 'users'
-        and policyname = 'users_update_safe'
-        and cmd = 'UPDATE'
-        and 'public' = any(roles)
-        and qual ~ 'auth\.uid'
-        and qual ~ 'is_super_admin'
-    )
-    else true
-  end,
-  'legacy production safe update policy is preserved when installed'
+  not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'users'
+      and policyname in ('users_update_safe', 'users_update_own')
+  ),
+  'legacy direct user update policies are absent'
 );
 
 select ok(
-  has_table_privilege('authenticated', 'public.users', 'UPDATE')
-    or has_any_column_privilege('authenticated', 'public.users', 'UPDATE'),
-  'authenticated users retain a users update privilege'
+  not has_table_privilege('authenticated', 'public.users', 'UPDATE')
+    and not has_any_column_privilege('authenticated', 'public.users', 'UPDATE'),
+  'authenticated users have no direct update privilege'
 );
 
 select ok(

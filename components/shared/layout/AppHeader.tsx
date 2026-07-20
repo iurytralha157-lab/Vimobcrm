@@ -109,7 +109,7 @@ export const AppHeader = React.memo(function AppHeader({
   return (
     <header className="sticky top-0 z-40 h-16 flex items-center px-4 md:px-6 bg-background/80 backdrop-blur-md border-b border-border/10">
       {/* Page title - aligned with content */}
-      {title && <h1 className="text-base sm:text-xl font-bold text-foreground ml-2 lg:ml-0 tracking-tight truncate max-w-[140px] xs:max-w-[180px] sm:max-w-none">{title}</h1>}
+      {title && <h1 className="app-page-title ml-2 max-w-[140px] truncate xs:max-w-[180px] sm:max-w-none lg:ml-0">{title}</h1>}
 
       {/* Right side actions - Capsule style redesign */}
       <div className="flex items-center gap-3 ml-auto">

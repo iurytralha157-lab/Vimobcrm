@@ -34,7 +34,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, status int, code string,
 	WriteJSON(w, status, ErrorEnvelope{
 		Error: APIError{
 			Code:      code,
-			Message:   message,
+			Message:   userFacingErrorMessage(code, message, status),
 			RequestID: RequestIDFromContext(r.Context()),
 		},
 	})

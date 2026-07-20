@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -214,13 +215,12 @@ func (repo Repository) ListConversations(ctx context.Context, tenantContext tena
 		where = append(where, "wc.archived_at is null")
 	}
 	if search != "" {
-		args = append(args, "%"+search+"%")
+		args = append(args, searchtext.Pattern(search))
 		textArg := len(args)
-		searchClauses := []string{
-			fmt.Sprintf("coalesce(wc.contact_name, '') ilike $%d", textArg),
-			fmt.Sprintf("coalesce(l.name, '') ilike $%d", textArg),
-			fmt.Sprintf("coalesce(wc.last_message, '') ilike $%d", textArg),
-		}
+		searchClauses := []string{searchtext.AnySQL(
+			[]string{"wc.contact_name", "l.name", "wc.last_message"},
+			fmt.Sprintf("$%d", textArg),
+		)}
 		if digits := onlyDigits(search); digits != "" {
 			args = append(args, "%"+digits+"%")
 			phoneArg := len(args)

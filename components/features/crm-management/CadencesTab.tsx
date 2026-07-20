@@ -73,7 +73,7 @@ export function CadencesTab() {
             .filter(s => s.pipeline_id === selectedPipelineId)
             .map(s => s.stage_key)
         );
-        return templates.filter(t => stageKeysInPipeline.has(t.stage_key));
+        return templates.filter(t => t.stage_key !== null && stageKeysInPipeline.has(t.stage_key));
       })();
 
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);

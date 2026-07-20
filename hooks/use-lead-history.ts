@@ -1033,10 +1033,23 @@ function auditEventType(action: string, keys: string[]) {
   return 'lead_updated';
 }
 
-function auditContent(action: string, keys: string[]) {
+function auditDisplayValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return '';
+  if (typeof value === 'boolean') return value ? 'Sim' : 'NÃ£o';
+  return String(value);
+}
+
+function auditContent(action: string, keys: string[], oldData: HistoryMetadata, newData: HistoryMetadata) {
   if (action === 'delete') return 'Lead removido do CRM';
   if (keys.length === 0) return undefined;
-  return `Campos alterados: ${keys.map(auditFieldLabel).join(', ')}`;
+  return keys.map((key) => {
+    const label = auditFieldLabel(key);
+    const oldValue = auditDisplayValue(oldData[key]);
+    const newValue = auditDisplayValue(newData[key]);
+    if (!oldValue && newValue) return `${label} adicionado: ${newValue}`;
+    if (oldValue && !newValue) return `${label} removido (era: ${oldValue})`;
+    return `${label}: ${oldValue} â†’ ${newValue}`;
+  }).join('\n');
 }
 
 export function useLeadHistory(leadId: string | null) {
@@ -1617,7 +1630,7 @@ export function useLeadHistory(leadId: string | null) {
             id: `audit-${audit.id}`,
             type: eventType,
             label: buildLabel(eventType, metadata),
-            content: auditContent(audit.action, keys),
+            content: auditContent(audit.action, keys, oldData, newData),
             timestamp: audit.created_at,
             actor: actor ? { id: actor.id, name: actor.name, avatar_url: actor.avatar_url || null } : null,
             source: 'activity' as const,

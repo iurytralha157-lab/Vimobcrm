@@ -243,6 +243,9 @@ function getEventDetail(event: UnifiedHistoryEvent) {
   if (event.type === 'meta_form_answer' || event.type === 'webhook_form_answer') {
     return metadataText(metadata.answer) || event.content || null;
   }
+  if (event.type === 'lead_updated') {
+    return event.content?.trim() || null;
+  }
 
   const toStatus = String(metadata.to_status || '').toLowerCase();
   const isStageChangeEvent = event.type === 'stage_changed' || event.type === 'stage_change';
@@ -340,6 +343,10 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
   const content = event.content?.trim();
   const metadata = event.metadata || {};
   const searchable = `${label} ${content || ''}`;
+
+  if (event.type === 'lead_updated') {
+    return 'Dados do lead atualizados';
+  }
 
   if (event.type === 'meta_form_answer') {
     const question = metadataText(metadata.question) || label.replace(/^Meta:\s*/i, '');

@@ -162,7 +162,7 @@ func (repo Repository) processDueRedistributions(ctx context.Context, tx pgx.Tx)
 			continue
 		}
 
-		selection, reason, err := repo.selectRoundRobinMemberForRedistribution(ctx, tx, job.OrganizationID, job.RoundRobinID, current.AssignedUserID)
+		selection, reason, err := repo.selectRoundRobinMemberForRedistribution(ctx, tx, job.OrganizationID, job.RoundRobinID, current.AssignedUserID, current.TeamID)
 		if err != nil {
 			return err
 		}
@@ -175,6 +175,19 @@ func (repo Repository) processDueRedistributions(ctx context.Context, tx pgx.Tx)
 
 		previousUserID := current.AssignedUserID
 		systemTenant := tenant.Context{OrganizationID: job.OrganizationID}
+		if err := repo.validateRoundRobinAssigneeTeam(ctx, tx, job.OrganizationID, current.TeamID, &selection.UserID); err != nil {
+			return err
+		}
+		reason, err = repo.redistributionStopReason(ctx, tx, job, current)
+		if err != nil {
+			return err
+		}
+		if reason != "" {
+			if err := repo.stopRedistributionJob(ctx, tx, job.ID, reason); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := repo.transferLeadAssignee(ctx, tx, systemTenant, current, &selection.UserID, "auto_redistribution"); err != nil {
 			return err
 		}
@@ -333,55 +346,7 @@ func (repo Repository) redistributionStopReason(ctx context.Context, tx pgx.Tx, 
 		return "deal_closed", nil
 	}
 
-	var hasHumanAction bool
-	err := tx.QueryRow(ctx, `
-		select case when coalesce(l.attention_eligible, false) then
-			exists (
-				select 1
-				from public.lead_action_facts f
-				where f.organization_id = l.organization_id
-				  and f.lead_id = l.id
-				  and f.occurred_at >= $3::timestamptz
-				  and f.is_automated = false
-				  and (
-				    f.is_inbound = true
-				    or (
-				      f.qualifies_first_outreach = true
-				      and f.actor_user_id = $4::uuid
-				    )
-				  )
-			)
-		else
-			-- Compatibility for jobs enrolled before the canonical facts engine.
-			-- Legacy leads are intentionally outside the new cadence rules.
-			exists (
-				select 1
-				from public.leads legacy
-				where legacy.id = l.id
-				  and legacy.first_response_at is not null
-				  and legacy.first_response_at >= $3::timestamptz
-				  and coalesce(legacy.first_response_is_automation, false) = false
-			) or exists (
-				select 1
-				from public.activities a
-				where a.organization_id = l.organization_id
-				  and a.lead_id = l.id
-				  and a.created_at >= $3::timestamptz
-				  and a.user_id = $4::uuid
-				  and a.type in ('call', 'message', 'email', 'email_sent')
-			) or exists (
-				select 1
-				from public.lead_timeline_events lte
-				where lte.organization_id = l.organization_id
-				  and lte.lead_id = l.id
-				  and lte.created_at >= $3::timestamptz
-				  and coalesce(lte.actor_user_id, lte.user_id) = $4::uuid
-				  and lte.event_type in ('whatsapp_message_sent', 'first_response')
-			)
-		end
-		from public.leads l
-		where l.organization_id = $1::uuid and l.id = $2::uuid
-	`, job.OrganizationID, job.LeadID, job.EnrolledAt, job.CurrentAssignedUserID).Scan(&hasHumanAction)
+	hasHumanAction, err := repo.redistributionHasHumanActivity(ctx, tx, job)
 	if err != nil {
 		return "", err
 	}
@@ -392,7 +357,141 @@ func (repo Repository) redistributionStopReason(ctx context.Context, tx pgx.Tx, 
 	return "", nil
 }
 
-func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Context, tx pgx.Tx, organizationID string, roundRobinID string, excludedUserID string) (roundRobinSelection, string, error) {
+func (repo Repository) redistributionHasHumanActivity(ctx context.Context, queryer leadTeamQueryer, job redistributionJob) (bool, error) {
+	var hasHumanAction bool
+	err := queryer.QueryRow(ctx, `
+		with target_lead as (
+			select
+				l.id,
+				l.organization_id,
+				l.first_response_at,
+				l.first_response_is_automation,
+				l.last_contact_at
+			from public.leads l
+			where l.organization_id = $1::uuid and l.id = $2::uuid
+			limit 1
+		)
+		select exists (
+			select 1
+			from public.lead_action_facts f
+			join target_lead l
+			  on l.organization_id = f.organization_id
+			 and l.id = f.lead_id
+			where f.occurred_at >= $3::timestamptz
+			  and f.is_automated = false
+			  and (
+			    f.is_inbound = true
+			    or f.actor_user_id is not null
+			    or f.qualifies_first_outreach = true
+			    or f.qualifies_stage_inactivity = true
+			    or f.is_effective_contact = true
+			  )
+		) or exists (
+			select 1
+			from target_lead l
+			where (
+				l.first_response_at is not null
+				and l.first_response_at >= $3::timestamptz
+				and coalesce(l.first_response_is_automation, false) = false
+			) or (
+				l.last_contact_at is not null
+				and l.last_contact_at >= $3::timestamptz
+				and coalesce(l.first_response_is_automation, false) = false
+			)
+		) or exists (
+			select 1
+			from public.activities a
+			join target_lead l
+			  on l.organization_id = a.organization_id
+			 and l.id = a.lead_id
+			where a.created_at >= $3::timestamptz
+			  and a.user_id is not null
+			  and not (
+			    lower(coalesce(a.metadata->>'is_automation', a.metadata->>'is_automated', a.metadata->>'automated', 'false')) in ('true', '1', 'yes')
+			    or lower(btrim(coalesce(a.metadata->>'origin', ''))) in ('ai', 'openai', 'automation', 'bot', 'ai_autoreply', 'ai_followup')
+			    or lower(btrim(coalesce(a.metadata->>'origin', ''))) ~ '^(ai|automation)[_.]'
+			    or lower(coalesce(a.metadata->>'sender_type', '')) in ('ai', 'automation', 'bot')
+			  )
+		) or exists (
+			select 1
+			from public.lead_timeline_events lte
+			join target_lead l
+			  on l.organization_id = lte.organization_id
+			 and l.id = lte.lead_id
+			where lte.created_at >= $3::timestamptz
+			  and coalesce(lte.actor_user_id, lte.user_id) is not null
+			  and not (
+			    lower(coalesce(lte.metadata->>'is_automation', lte.metadata->>'is_automated', lte.metadata->>'automated', 'false')) in ('true', '1', 'yes')
+			    or lower(btrim(coalesce(lte.metadata->>'origin', ''))) in ('ai', 'openai', 'automation', 'bot', 'ai_autoreply', 'ai_followup')
+			    or lower(btrim(coalesce(lte.metadata->>'origin', ''))) ~ '^(ai|automation)[_.]'
+			    or lower(coalesce(lte.metadata->>'sender_type', '')) in ('ai', 'automation', 'bot')
+			  )
+		) or exists (
+			select 1
+			from public.whatsapp_messages wm
+			join target_lead l
+			  on l.organization_id = wm.organization_id
+			 and l.id = wm.lead_id
+			where coalesce(wm.sent_at, wm.received_at, wm.created_at) >= $3::timestamptz
+			  and (
+			    (
+			      coalesce(wm.from_me, false) = false
+			      and lower(coalesce(wm.direction, 'inbound')) <> 'outbound'
+			    )
+			    or (
+			      (coalesce(wm.from_me, false) = true or lower(coalesce(wm.direction, '')) = 'outbound')
+			      and wm.sender_user_id is not null
+			      and not (
+			        lower(coalesce(wm.metadata->>'is_automation', wm.metadata->>'is_automated', wm.metadata->>'automated', 'false')) in ('true', '1', 'yes')
+			        or lower(btrim(coalesce(wm.metadata->>'origin', ''))) in ('ai', 'openai', 'automation', 'bot', 'ai_autoreply', 'ai_followup')
+			        or lower(btrim(coalesce(wm.metadata->>'origin', ''))) ~ '^(ai|automation)[_.]'
+			        or lower(coalesce(wm.metadata->>'sender_type', '')) in ('ai', 'automation', 'bot')
+			        or lower(coalesce(wm.client_message_id, '')) like 'ai-%'
+			      )
+			    )
+			  )
+		) or exists (
+			select 1
+			from public.lead_tasks lt
+			join target_lead l
+			  on l.organization_id = lt.organization_id
+			 and l.id = lt.lead_id
+			where (
+				lt.created_by is not null
+				and lt.created_at >= $3::timestamptz
+			) or (
+				lt.done_by is not null
+				and coalesce(lt.completed_at, lt.done_at) >= $3::timestamptz
+			)
+		) or exists (
+			select 1
+			from public.schedule_events se
+			join target_lead l
+			  on l.organization_id = se.organization_id
+			 and l.id = se.lead_id
+			where se.status not in ('cancelled', 'canceled')
+			  and (
+			    se.created_at >= $3::timestamptz
+			    or se.completed_at >= $3::timestamptz
+			  )
+		) or exists (
+			select 1
+			from public.audit_logs al
+			join target_lead l
+			  on l.organization_id = al.organization_id
+			 and l.id::text = al.entity_id
+			where al.entity_type = 'lead'
+			  and al.user_id is not null
+			  and al.created_at >= $3::timestamptz
+		)
+	`, job.OrganizationID, job.LeadID, job.EnrolledAt).Scan(&hasHumanAction)
+	if err != nil {
+		return false, err
+	}
+	return hasHumanAction, nil
+}
+
+func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Context, tx pgx.Tx, organizationID string, roundRobinID string, excludedUserID string, requiredTeamID string) (roundRobinSelection, string, error) {
 	var selection roundRobinSelection
 	selection.RoundRobinID = roundRobinID
 
@@ -486,6 +585,17 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 		) user_logs on true
 		where (nullif($3, '')::uuid is null or candidates.user_id <> nullif($3, '')::uuid)
 		  and (
+		    nullif($4, '')::uuid is null
+		    or exists (
+		      select 1
+		      from public.team_members required_member
+		      where required_member.organization_id = candidates.organization_id
+		        and required_member.team_id = nullif($4, '')::uuid
+		        and required_member.user_id = candidates.user_id
+		        and coalesce(required_member.is_active, true) = true
+		    )
+		  )
+		  and (
 		    candidates.team_member_id is null
 		    or not exists (
 		      select 1
@@ -515,7 +625,7 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 		  )
 		order by candidates.entry_total asc, candidates.position asc, candidates.created_at asc, coalesce(user_logs.total, 0) asc, candidates.team_member_created_at asc nulls last, candidates.user_id asc
 		limit 1
-	`, organizationID, roundRobinID, excludedUserID).Scan(&selection.MemberID, &selection.UserID)
+	`, organizationID, roundRobinID, excludedUserID, requiredTeamID).Scan(&selection.MemberID, &selection.UserID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return roundRobinSelection{}, "no_next_member", nil
 	}

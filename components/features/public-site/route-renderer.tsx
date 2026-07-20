@@ -32,6 +32,7 @@ import {
   getPropertyLocation,
   getPropertyPrice,
   getPropertyTitle,
+  getSiteDescription,
   getSiteTitle,
 } from "./public-site-utils";
 
@@ -77,7 +78,7 @@ export async function renderPublicSiteRoute({
   if (route.kind === "home") {
     const data = await getPublicHomeData(site.organization_id);
     return (
-      <PublicSiteShell basePath={basePath} menuItems={menuItems} pageTitle={getSiteTitle(site)} site={site}>
+      <PublicSiteShell basePath={basePath} isHome menuItems={menuItems} pageTitle={getSiteTitle(site)} site={site}>
         <PublicHomeScreen basePath={basePath} data={data} searchFilters={searchFilters} site={site} />
       </PublicSiteShell>
     );
@@ -172,70 +173,114 @@ export async function generatePublicSiteMetadata({
 
   const site = resolved.site;
   const siteTitle = getSiteTitle(site);
-  let title = site.seo_title || siteTitle;
+  const location = [site.city, site.state].filter(Boolean).join(", ");
+  const requestOrigin = await getRequestOrigin();
+  const metadataOrigin = getSiteMetadataOrigin(site, requestOrigin);
+  const canonicalBasePath = metadataOrigin === requestOrigin ? basePath : "";
+  let title = site.seo_title || (location ? `${siteTitle} | Imóveis em ${location}` : siteTitle);
   let shareTitle = title;
-  let description = site.seo_description || site.site_description || undefined;
+  let description = cleanMetadataText(site.seo_description || getSiteDescription(site)).slice(0, 160);
   let image = site.hero_image_url || site.logo_url || site.favicon_url || undefined;
   let imageAlt = siteTitle;
   let canonicalPath = buildRouteCanonicalPath(route);
+  let shouldIndex = true;
 
   if (route.kind === "properties") {
-    title = `Imóveis - ${siteTitle}`;
+    title = `Imóveis em ${location || "destaque"} | ${siteTitle}`;
     shareTitle = title;
-    canonicalPath = buildSiteHref(basePath, "/imoveis");
+    description = cleanMetadataText(
+      location
+        ? `Encontre imóveis para comprar e alugar em ${location} com a ${siteTitle}. Consulte casas, apartamentos e outras oportunidades.`
+        : `Encontre imóveis para comprar e alugar com a ${siteTitle}. Consulte casas, apartamentos e outras oportunidades.`,
+    ).slice(0, 160);
+    canonicalPath = buildSiteHref(canonicalBasePath, "/imoveis");
   } else if (route.kind === "about") {
-    title = `Sobre - ${siteTitle}`;
+    title = `Sobre | ${siteTitle}`;
     shareTitle = title;
-    canonicalPath = buildSiteHref(basePath, "/sobre");
+    description = cleanMetadataText(`Conheça a ${siteTitle}${location ? `, imobiliária em ${location}` : ""}, sua história e seu atendimento.`).slice(0, 160);
+    canonicalPath = buildSiteHref(canonicalBasePath, "/sobre");
   } else if (route.kind === "contact") {
-    title = `Contato - ${siteTitle}`;
+    title = `Contato | ${siteTitle}`;
     shareTitle = title;
-    canonicalPath = buildSiteHref(basePath, "/contato");
+    description = cleanMetadataText(`Fale com a ${siteTitle}${location ? ` em ${location}` : ""}. Encontre telefone, endereço, e-mail e canais de atendimento.`).slice(0, 160);
+    canonicalPath = buildSiteHref(canonicalBasePath, "/contato");
   } else if (route.kind === "privacy") {
-    title = `Política de privacidade - ${siteTitle}`;
+    title = `Política de privacidade | ${siteTitle}`;
     shareTitle = title;
     description = `Política de privacidade da ${siteTitle}.`;
-    canonicalPath = buildSiteHref(basePath, "/politica-de-privacidade");
+    canonicalPath = buildSiteHref(canonicalBasePath, "/politica-de-privacidade");
   } else if (route.kind === "favorites") {
-    title = `Favoritos - ${siteTitle}`;
+    title = `Favoritos | ${siteTitle}`;
     shareTitle = title;
-    canonicalPath = buildSiteHref(basePath, "/favoritos");
+    shouldIndex = false;
+    canonicalPath = buildSiteHref(canonicalBasePath, "/favoritos");
   } else if (route.kind === "not-found") {
-    title = `404 - ${siteTitle}`;
+    title = `Página não encontrada | ${siteTitle}`;
     shareTitle = title;
     description = "Não encontramos essa página.";
-    canonicalPath = buildSiteHref(basePath, "/");
+    shouldIndex = false;
+    canonicalPath = buildSiteHref(canonicalBasePath, "/");
   } else if (route.kind === "property") {
     const property = await getPublicProperty(site.organization_id, route.propertyCode);
     if (property) {
       const propertyTitle = getPropertyTitle(property);
-      title = `${propertyTitle} - ${siteTitle}`;
+      title = `${propertyTitle} | ${siteTitle}`;
       shareTitle = propertyTitle;
       description = buildPropertyShareDescription(property) || description;
       image = property.imagem_principal || property.fotos?.[0] || image;
       imageAlt = propertyTitle;
-      canonicalPath = buildSiteHref(basePath, `/imoveis/${getPropertyCode(property)}`);
+      canonicalPath = buildSiteHref(canonicalBasePath, `/imoveis/${getPropertyCode(property)}`);
     }
+  } else {
+    canonicalPath = buildSiteHref(canonicalBasePath, "/");
   }
 
-  const metadataOrigin = await getRequestOrigin();
   const canonicalURL = absolutizeURL(canonicalPath, metadataOrigin);
   const absoluteImage = image ? absolutizeURL(image, metadataOrigin) : undefined;
+  const favicon = site.favicon_url || site.logo_url;
+  const absoluteFavicon = site.favicon_url && site.custom_domain && site.domain_verified !== false
+    ? absolutizeURL("/site-favicon", metadataOrigin)
+    : favicon
+      ? absolutizeURL(favicon, metadataOrigin)
+      : undefined;
+  const keywords = buildSiteKeywords(site, location);
 
   return {
     metadataBase: new URL(metadataOrigin),
-    title,
+    title: { absolute: title },
+    applicationName: siteTitle,
     description,
+    keywords,
+    creator: siteTitle,
+    publisher: siteTitle,
     alternates: {
       canonical: canonicalURL,
     },
-    icons: site.favicon_url || site.logo_url ? { icon: absolutizeURL(site.favicon_url || site.logo_url || "", metadataOrigin) } : undefined,
+    icons: absoluteFavicon
+      ? {
+          icon: [{ url: absoluteFavicon }],
+          shortcut: [absoluteFavicon],
+          apple: [{ url: absoluteFavicon }],
+        }
+      : undefined,
+    robots: {
+      index: shouldIndex,
+      follow: shouldIndex,
+      googleBot: {
+        index: shouldIndex,
+        follow: shouldIndex,
+        "max-image-preview": "large",
+        "max-snippet": -1,
+        "max-video-preview": -1,
+      },
+    },
     openGraph: {
       title: shareTitle,
       description,
       url: canonicalURL,
       images: absoluteImage ? [{ url: absoluteImage, width: 1200, height: 630, alt: imageAlt }] : undefined,
       siteName: siteTitle,
+      locale: "pt_BR",
       type: "website",
     },
     twitter: {
@@ -245,6 +290,22 @@ export async function generatePublicSiteMetadata({
       images: absoluteImage ? [{ url: absoluteImage, alt: imageAlt }] : undefined,
     },
   };
+}
+
+function buildSiteKeywords(site: PublicSiteConfig, location: string) {
+  const configured = (site.seo_keywords || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const generated = [
+    getSiteTitle(site),
+    "imóveis",
+    "imobiliária",
+    location ? `imóveis em ${location}` : "",
+    site.city ? `imobiliária em ${site.city}` : "",
+  ].filter(Boolean);
+
+  return Array.from(new Set([...configured, ...generated]));
 }
 
 export function parsePublicSitePath(path?: string[]): PublicSiteRoute {
@@ -364,6 +425,20 @@ async function getRequestOrigin() {
   const host = headerStore.get("x-forwarded-host") || headerStore.get("host");
   if (host) return `${proto}://${host}`.replace(/\/+$/, "");
   return (process.env.NEXT_PUBLIC_SITE_URL || "https://app.vimobcrm.com.br").replace(/\/+$/, "");
+}
+
+function getSiteMetadataOrigin(site: PublicSiteConfig, requestOrigin: string) {
+  if (!site.custom_domain || site.domain_verified === false) return requestOrigin;
+
+  const domain = site.custom_domain.trim();
+  if (!domain) return requestOrigin;
+
+  try {
+    const url = new URL(/^https?:\/\//i.test(domain) ? domain : `https://${domain}`);
+    return url.origin;
+  } catch {
+    return requestOrigin;
+  }
 }
 
 function absolutizeURL(value: string, origin: string) {

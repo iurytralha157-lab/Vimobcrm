@@ -15,6 +15,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { DatePreset } from "@/hooks/use-dashboard-filters";
 import { DateFilterPopover } from "@/components/ui/date-filter-popover";
+import { normalizeSearchText, searchTextIncludes } from "@/lib/search-text";
 
 interface SharedFiltersProps {
   datePreset: DatePreset;
@@ -247,13 +248,11 @@ export function SharedFilters({
   );
 
   const matchingUsers = useMemo(() => {
-    const normalizedSearch = userSearch.trim().toLowerCase();
+    const normalizedSearch = normalizeSearchText(userSearch);
     if (!normalizedSearch) return availableUsers;
 
     return availableUsers.filter((availableUser) => {
-      const name = availableUser.name?.toLowerCase() || "";
-      const email = availableUser.email?.toLowerCase() || "";
-      return name.includes(normalizedSearch) || email.includes(normalizedSearch);
+      return searchTextIncludes(availableUser.name, normalizedSearch) || searchTextIncludes(availableUser.email, normalizedSearch);
     });
   }, [availableUsers, userSearch]);
 

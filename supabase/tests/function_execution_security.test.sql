@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(5);
+select plan(6);
 
 select is(
   (
@@ -46,7 +46,6 @@ select is(
         'user_has_organization',
         'user_has_permission',
         'vimob_can_access_whatsapp_session',
-        'vimob_can_view_whatsapp_lead',
         'vimob_user_has_active_org_membership',
         'vimob_users_share_active_org',
         'whatsapp_message_conversation_session_matches'
@@ -137,7 +136,6 @@ select is(
         'user_has_organization',
         'user_has_permission',
         'vimob_can_access_whatsapp_session',
-        'vimob_can_view_whatsapp_lead',
         'vimob_user_has_active_org_membership',
         'vimob_users_share_active_org',
         'whatsapp_message_conversation_session_matches'
@@ -146,6 +144,25 @@ select is(
   ),
   0::bigint,
   'authenticated RLS helpers remain executable'
+);
+
+select ok(
+  not has_function_privilege(
+    'authenticated',
+    'public.vimob_can_view_whatsapp_lead(uuid,uuid)',
+    'execute'
+  )
+  and not has_function_privilege(
+    'anon',
+    'public.vimob_can_view_whatsapp_lead(uuid,uuid)',
+    'execute'
+  )
+  and has_function_privilege(
+    'service_role',
+    'public.vimob_can_view_whatsapp_lead(uuid,uuid)',
+    'execute'
+  ),
+  'legacy WhatsApp lead helper is backend-only'
 );
 
 select * from finish();

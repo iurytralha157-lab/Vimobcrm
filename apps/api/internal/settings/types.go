@@ -178,6 +178,13 @@ type PushTokenRequest struct {
 	P256DH    *string `json:"p256dh"`
 	Auth      *string `json:"auth"`
 	UserAgent *string `json:"userAgent"`
+	SyncOnly  *bool   `json:"syncOnly"`
+}
+
+type PushTokenResult struct {
+	OK                  bool `json:"ok"`
+	Active              bool `json:"active"`
+	RequiresResubscribe bool `json:"requiresResubscribe"`
 }
 
 type DeactivatePushTokenRequest struct {

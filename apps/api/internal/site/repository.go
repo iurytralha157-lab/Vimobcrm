@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/mail"
 	"net/url"
 	"path/filepath"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -672,12 +674,22 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 	}
 	name := strings.TrimSpace(request.Name)
 	phone := strings.TrimSpace(request.Phone)
+	submissionID := strings.TrimSpace(request.SubmissionID)
 	message := ""
 	if request.Message != nil {
 		message = strings.TrimSpace(*request.Message)
 	}
-	if name == "" || phone == "" || message == "" {
+	if request.Website != nil && strings.TrimSpace(*request.Website) != "" {
+		return map[string]any{"success": true, "filtered": true}, nil
+	}
+	if len([]rune(name)) < 2 || len([]rune(name)) > 120 || len(phoneDigits(phone)) < 8 || len(phone) > 30 ||
+		message == "" || len([]rune(message)) > 1000 || submissionID == "" || len(submissionID) > 120 {
 		return nil, ErrInvalidInput
+	}
+	if request.Email != nil && strings.TrimSpace(*request.Email) != "" {
+		if _, err := mail.ParseAddress(strings.TrimSpace(*request.Email)); err != nil {
+			return nil, ErrInvalidInput
+		}
 	}
 	if !request.PrivacyAccepted {
 		return nil, ErrInvalidInput
@@ -698,11 +710,65 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Lead intake runs from an AFTER INSERT trigger. The API uses a direct
+	// Lead intake is explicit in this API path because older schemas do not
+	// always have an insert trigger for public site leads. The API uses a direct
 	// Postgres connection, so there is no PostgREST JWT claim unless we set the
 	// trusted server role for this transaction explicitly.
 	if _, err := tx.Exec(ctx, `select set_config('request.jwt.claim.role', 'service_role', true)`); err != nil {
 		return nil, err
+	}
+
+	var submissionRowID string
+	err = tx.QueryRow(ctx, `
+		insert into public.site_lead_submissions (organization_id, submission_id, session_id)
+		values ($1::uuid, $2, $3)
+		on conflict (organization_id, submission_id) do nothing
+		returning id::text
+	`, organizationID, submissionID, optionalText(request.SessionID)).Scan(&submissionRowID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var existingLeadID pgtype.Text
+		if err := tx.QueryRow(ctx, `
+			select lead_id::text from public.site_lead_submissions
+			where organization_id = $1::uuid and submission_id = $2
+		`, organizationID, submissionID).Scan(&existingLeadID); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return map[string]any{"success": true, "lead_id": existingLeadID.String, "idempotent": true}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if request.SessionID != nil && strings.TrimSpace(*request.SessionID) != "" {
+		var recent int
+		if err := tx.QueryRow(ctx, `
+			select count(*) from public.site_lead_submissions
+			where organization_id = $1::uuid and session_id = $2
+			  and created_at >= now() - interval '1 minute'
+		`, organizationID, strings.TrimSpace(*request.SessionID)).Scan(&recent); err != nil {
+			return nil, err
+		}
+		if recent > 5 {
+			return nil, ErrPublicRateLimited
+		}
+	}
+
+	if propertyID != nil {
+		var valid bool
+		if err := tx.QueryRow(ctx, `
+			select exists(select 1 from public.properties
+			  where id = $1::uuid and organization_id = $2::uuid
+			    and coalesce(published_on_site, false) = true
+			    and coalesce(status, 'active') not in ('sold', 'rented', 'inactive'))
+		`, propertyID, organizationID).Scan(&valid); err != nil {
+			return nil, err
+		}
+		if !valid {
+			return nil, ErrInvalidInput
+		}
 	}
 
 	destination, err := repo.resolvePublicLeadDestination(ctx, tx, organizationID)
@@ -712,102 +778,114 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 
 	var leadID string
 	var reentry bool
+	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended($1 || ':' || normalize_phone($2), 0))`, organizationID, phone); err != nil {
+		return nil, err
+	}
 	err = tx.QueryRow(ctx, `
-		insert into public.leads (
-			organization_id,
-			pipeline_id,
-			stage_id,
-			property_id,
-			interest_property_id,
-			name,
-			email,
-			phone,
-			property_code,
-			message,
-			initial_message,
-			source,
-			source_detail,
-			visitor_session_id,
-			status,
-			deal_status,
-			first_touch_at,
-			stage_entered_at,
-			board_order_at,
-			metadata
-		)
-		values (
-			$1::uuid,
-			$2::uuid,
-			$3::uuid,
-			$4::uuid,
-			$4::uuid,
-			$5,
-			$6,
-			$7,
-			$8,
-			$9,
-			$9,
-			'site',
-			'public_site',
-			$10,
-			'new',
-			'open',
-			now(),
-			case when $3::uuid is null then null else now() end,
-			case when $3::uuid is null then null else now() end,
-			jsonb_build_object(
-				'property_code', $8,
-				'best_time', $11,
-				'privacy_accepted', $12,
-				'privacy_url', $13
-			)
-		)
-		on conflict (organization_id, normalize_phone(phone))
-		where phone is not null
-		  and btrim(phone) <> ''
-		  and normalize_phone(phone) is not null
-		  and normalize_phone(phone) <> ''
-		do update set
-			pipeline_id = coalesce(excluded.pipeline_id, leads.pipeline_id),
-			stage_entered_at = case
-				when excluded.stage_id is null or leads.stage_id is not distinct from excluded.stage_id then leads.stage_entered_at
-				else now()
-			end,
-			board_order_at = now(),
-			stage_id = coalesce(excluded.stage_id, leads.stage_id),
-			property_id = coalesce(excluded.property_id, leads.property_id),
-			interest_property_id = coalesce(excluded.interest_property_id, leads.interest_property_id),
-			name = excluded.name,
-			email = coalesce(nullif(excluded.email, ''), leads.email),
-			phone = excluded.phone,
-			property_code = coalesce(nullif(excluded.property_code, ''), leads.property_code),
-			message = excluded.message,
-			initial_message = excluded.initial_message,
-			source = excluded.source,
-			source_detail = excluded.source_detail,
-			visitor_session_id = coalesce(nullif(excluded.visitor_session_id, ''), leads.visitor_session_id),
-			status = 'new',
-			deal_status = 'open',
-			won_at = null,
-			lost_at = null,
-			lost_reason = null,
-			last_entry_at = now(),
-			reentry_count = coalesce(leads.reentry_count, 0) + 1,
-			updated_at = now(),
-			metadata = coalesce(leads.metadata, '{}'::jsonb)
-				|| excluded.metadata
-				|| jsonb_build_object('reentry', true)
-		returning id::text, (xmax <> 0)
-	`, organizationID, optionalText(destination.PipelineID), optionalText(destination.StageID), propertyID, name, optionalText(request.Email), phone, optionalText(request.PropertyCode), message, optionalText(request.SessionID), optionalText(request.BestTime), request.PrivacyAccepted, optionalText(request.PrivacyURL)).Scan(&leadID, &reentry)
+		select id::text from public.leads
+		where organization_id=$1::uuid and normalize_phone(phone)=normalize_phone($2)
+		order by created_at asc, id asc limit 1 for update
+	`, organizationID, phone).Scan(&leadID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = tx.QueryRow(ctx, `
+			insert into public.leads (
+				organization_id, pipeline_id, stage_id, property_id, interest_property_id,
+				name, email, phone, property_code, message, initial_message, source, source_detail,
+				visitor_session_id, utm_source, utm_medium, utm_campaign, status, deal_status,
+				first_touch_at, stage_entered_at, board_order_at, metadata
+			) values (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid, $4::uuid,
+				$5, $6, $7, $8, $9, $9, 'site', 'public_site',
+				$10, $14, $15, $16, 'new', 'open', now(),
+				case when $3::uuid is null then null else now() end,
+				case when $3::uuid is null then null else now() end,
+				jsonb_build_object(
+					'property_code', $8, 'best_time', $11, 'privacy_accepted', $12::boolean,
+					'privacy_url', $13, 'landing_page', $17, 'referrer', $18,
+					'utm_term', $19, 'utm_content', $20, 'gclid', $21, 'fbclid', $22,
+					'submission_id', $23
+				)
+			) returning id::text
+		`, organizationID, optionalText(destination.PipelineID), optionalText(destination.StageID), propertyID, name, optionalText(request.Email), phone, optionalText(request.PropertyCode), message, optionalText(request.SessionID), optionalText(request.BestTime), request.PrivacyAccepted, optionalText(request.PrivacyURL), optionalText(request.UTMSource), optionalText(request.UTMMedium), optionalText(request.UTMCampaign), optionalText(request.LandingPage), optionalText(request.Referrer), optionalText(request.UTMTerm), optionalText(request.UTMContent), optionalText(request.GCLID), optionalText(request.FBCLID), submissionID).Scan(&leadID)
+		reentry = false
+	} else if err == nil {
+		reentry = true
+		_, err = tx.Exec(ctx, `
+			update public.leads set
+				board_order_at=now(), property_id=coalesce($3::uuid, property_id),
+				interest_property_id=coalesce($3::uuid, interest_property_id),
+				email=coalesce(nullif($4,''), email), phone=$5,
+				property_code=coalesce(nullif($6,''), property_code), message=$7, initial_message=$7,
+				visitor_session_id=coalesce(nullif($8,''), visitor_session_id),
+				utm_source=coalesce(utm_source, $9), utm_medium=coalesce(utm_medium, $10),
+				utm_campaign=coalesce(utm_campaign, $11), last_entry_at=now(),
+				reentry_count=coalesce(reentry_count,0)+1, updated_at=now(),
+				metadata=coalesce(metadata,'{}'::jsonb) || jsonb_build_object(
+					'property_code',$6,'best_time',$12,'privacy_accepted',$13::boolean,
+					'privacy_url',$14,'landing_page',$15,'referrer',$16,'utm_term',$17,
+					'utm_content',$18,'gclid',$19,'fbclid',$20,'submission_id',$21,
+					'latest_utm_source',$9,'latest_utm_medium',$10,'latest_utm_campaign',$11,'reentry',true)
+			where id=$2::uuid and organization_id=$1::uuid
+		`, organizationID, leadID, propertyID, optionalText(request.Email), phone, optionalText(request.PropertyCode), message, optionalText(request.SessionID), optionalText(request.UTMSource), optionalText(request.UTMMedium), optionalText(request.UTMCampaign), optionalText(request.BestTime), request.PrivacyAccepted, optionalText(request.PrivacyURL), optionalText(request.LandingPage), optionalText(request.Referrer), optionalText(request.UTMTerm), optionalText(request.UTMContent), optionalText(request.GCLID), optionalText(request.FBCLID), submissionID)
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	// Public site submissions should be visible in the board even when no queue
-	// assigns them immediately, and intake is explicit because older schemas do
-	// not always have an insert trigger for this path.
-	var distributionResult []byte
-	if err := tx.QueryRow(ctx, `select public.handle_lead_intake($1::uuid)`, leadID).Scan(&distributionResult); err != nil {
+	if reentry {
+		if _, err := tx.Exec(ctx, `
+			insert into public.lead_entry_events (
+				organization_id, lead_id, source, entry_type, property_id, utm_source, utm_medium, utm_campaign, metadata
+			) values ($1::uuid, $2::uuid, 'site', 'reentry', $3::uuid, $4, $5, $6,
+				jsonb_build_object('session_id', $7, 'landing_page', $8, 'referrer', $9))
+		`, organizationID, leadID, propertyID, optionalText(request.UTMSource), optionalText(request.UTMMedium), optionalText(request.UTMCampaign), optionalText(request.SessionID), optionalText(request.LandingPage), optionalText(request.Referrer)); err != nil {
+			return nil, err
+		}
+
+	}
+
+	var assigned bool
+	if err := tx.QueryRow(ctx, `select assigned_user_id is not null from public.leads where id = $1::uuid`, leadID).Scan(&assigned); err != nil {
+		return nil, err
+	}
+	if !assigned {
+		var distributionResult []byte
+		if err := tx.QueryRow(ctx, `select public.handle_lead_intake($1::uuid)`, leadID).Scan(&distributionResult); err != nil {
+			return nil, err
+		}
+	}
+
+	var teamID pgtype.Text
+	err = tx.QueryRow(ctx, `
+		select rrm.team_id::text
+		from public.round_robin_logs rrl
+		join public.round_robin_members rrm
+		  on rrm.id = rrl.member_id
+		 and rrm.round_robin_id = rrl.round_robin_id
+		 and rrm.organization_id = rrl.organization_id
+		where rrl.lead_id = $1::uuid and rrm.team_id is not null
+		order by rrl.created_at desc limit 1
+	`, leadID).Scan(&teamID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	if teamID.Valid {
+		if _, err := tx.Exec(ctx, `update public.leads set team_id = $2::uuid where id = $1::uuid and team_id is null`, leadID, teamID.String); err != nil {
+			return nil, err
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `update public.site_lead_submissions set lead_id = $1::uuid where id = $2::uuid`, leadID, submissionRowID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into public.site_analytics_events (
+			organization_id, session_id, event_type, page_path, page_title, referrer,
+			property_id, lead_id, utm_source, utm_medium, utm_campaign, metadata
+		) values ($1::uuid, $2, 'form_submit', coalesce(nullif($3, ''), '/contato'), 'Conversao do formulario', $4,
+			$5::uuid, $6::uuid, $7, $8, $9,
+			jsonb_build_object('reentry', $10::boolean, 'utm_term', $11, 'utm_content', $12, 'gclid', $13, 'fbclid', $14))
+	`, organizationID, optionalText(request.SessionID), optionalText(request.LandingPage), optionalText(request.Referrer), propertyID, leadID, optionalText(request.UTMSource), optionalText(request.UTMMedium), optionalText(request.UTMCampaign), reentry, optionalText(request.UTMTerm), optionalText(request.UTMContent), optionalText(request.GCLID), optionalText(request.FBCLID)); err != nil {
 		return nil, err
 	}
 
@@ -820,6 +898,16 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 		"lead_id": leadID,
 		"reentry": reentry,
 	}, nil
+}
+
+func phoneDigits(value string) string {
+	var out strings.Builder
+	for _, char := range value {
+		if char >= '0' && char <= '9' {
+			out.WriteRune(char)
+		}
+	}
+	return out.String()
 }
 
 func (repo Repository) resolvePublicLeadDestination(ctx context.Context, q siteQueryer, organizationID string) (publicLeadDestination, error) {
@@ -869,11 +957,55 @@ func (repo Repository) CreatePublicTrackingEvent(ctx context.Context, request Pu
 	}
 	eventType := strings.TrimSpace(request.EventType)
 	pagePath := strings.TrimSpace(request.PagePath)
-	if eventType == "" {
+	sessionID := strings.TrimSpace(optionalStringValue(request.SessionID))
+	if !isAllowedPublicTrackingEvent(eventType) || sessionID == "" || len(sessionID) > 160 {
 		return ErrInvalidInput
 	}
 	if pagePath == "" {
 		pagePath = "/"
+	}
+	if len(pagePath) > 2000 || len([]rune(strings.TrimSpace(optionalStringValue(request.PageTitle)))) > 300 || len([]rune(strings.TrimSpace(optionalStringValue(request.Referrer)))) > 2000 {
+		return ErrInvalidInput
+	}
+	if request.LeadID != nil && strings.TrimSpace(*request.LeadID) != "" {
+		return ErrInvalidInput
+	}
+	metadataRaw := jsonb(request.Metadata)
+	if len(metadataRaw) > 16*1024 {
+		return ErrInvalidInput
+	}
+
+	var propertyID any
+	if request.PropertyID != nil && strings.TrimSpace(*request.PropertyID) != "" {
+		normalizedPropertyID, ok := normalizeUUID(*request.PropertyID)
+		if !ok {
+			return ErrInvalidInput
+		}
+		var valid bool
+		if err := repo.db.Pool().QueryRow(ctx, `
+			select exists(select 1 from public.properties
+			  where id = $1::uuid and organization_id = $2::uuid
+			    and coalesce(published_on_site, false) = true
+			    and coalesce(status, 'active') not in ('sold', 'rented', 'inactive'))
+		`, normalizedPropertyID, organizationID).Scan(&valid); err != nil {
+			return err
+		}
+		if !valid {
+			return ErrInvalidInput
+		}
+		propertyID = normalizedPropertyID
+	}
+
+	var recent int
+	if err := repo.db.Pool().QueryRow(ctx, `
+		select count(*) from public.site_analytics_events
+		where organization_id = $1::uuid and session_id = $2
+		  and created_at >= now() - interval '1 minute'
+	`, organizationID, sessionID).Scan(&recent); err != nil {
+		return err
+	}
+	if recent >= 120 {
+		return ErrPublicRateLimited
 	}
 
 	_, err := repo.db.Pool().Exec(ctx, `
@@ -890,11 +1022,50 @@ func (repo Repository) CreatePublicTrackingEvent(ctx context.Context, request Pu
 			screen_height,
 			utm_source,
 			utm_medium,
-			utm_campaign
+			utm_campaign,
+			property_id,
+			lead_id,
+			duration_seconds,
+			metadata
 		)
-		values ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-	`, organizationID, eventType, pagePath, optionalText(request.PageTitle), optionalText(request.Referrer), optionalText(request.SessionID), optionalText(request.DeviceType), optionalText(request.Browser), request.ScreenWidth, request.ScreenHeight, optionalText(request.UTMSource), optionalText(request.UTMMedium), optionalText(request.UTMCampaign))
+		values ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::uuid, $15::uuid, $16, $17::jsonb)
+	`, organizationID, eventType, pagePath, optionalText(request.PageTitle), optionalText(request.Referrer), sessionID, optionalText(request.DeviceType), optionalText(request.Browser), request.ScreenWidth, request.ScreenHeight, optionalText(request.UTMSource), optionalText(request.UTMMedium), optionalText(request.UTMCampaign), propertyID, nil, metadataDuration(request.Metadata), metadataRaw)
 	return err
+}
+
+func isAllowedPublicTrackingEvent(eventType string) bool {
+	switch eventType {
+	case "pageview", "page_view", "session_start", "page_duration", "property_search", "property_view", "favorite", "whatsapp_click", "cta_click":
+		return true
+	default:
+		return false
+	}
+}
+
+func metadataDuration(metadata map[string]any) any {
+	value, ok := metadata["duration_seconds"]
+	if !ok {
+		return nil
+	}
+	switch typed := value.(type) {
+	case float64:
+		if typed >= 0 && typed <= 86400 {
+			return int(typed)
+		}
+	case int:
+		if typed >= 0 && typed <= 86400 {
+			return typed
+		}
+	}
+	return nil
+}
+
+func jsonb(value any) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return `{}`
+	}
+	return string(raw)
 }
 
 func (repo Repository) getMenuItem(ctx context.Context, tenantContext tenant.Context, id string) (SiteMenuItem, error) {
@@ -1272,17 +1443,15 @@ func publicPropertyWhereClauses(values url.Values, mode string, args *[]any) []s
 	}
 
 	if search := strings.TrimSpace(values.Get("search")); search != "" {
-		*args = append(*args, "%"+search+"%")
+		*args = append(*args, searchtext.Pattern(search))
 		placeholder := len(*args)
-		where = append(where, fmt.Sprintf(`(
-			p.title ilike $%[1]d
-			or p.code ilike $%[1]d
-			or p.bairro ilike $%[1]d
-			or p.cidade ilike $%[1]d
-		)`, placeholder))
+		where = append(where, searchtext.AnySQL(
+			[]string{"p.title", "p.code", "p.bairro", "p.cidade"},
+			fmt.Sprintf("$%d", placeholder),
+		))
 	}
 	if tipo := strings.TrimSpace(values.Get("tipo")); tipo != "" {
-		add(tipo, "lower(trim(coalesce(p.tipo, ''))) = lower(trim($%d::text))")
+		add(searchtext.Normalize(tipo), searchtext.SQL("trim(p.tipo)")+" = $%d::text")
 	}
 	if finalidade := strings.TrimSpace(values.Get("finalidade")); finalidade != "" {
 		aliases := publicDealTypeAliases(finalidade)
@@ -1291,10 +1460,10 @@ func publicPropertyWhereClauses(values url.Values, mode string, args *[]any) []s
 		}
 	}
 	if cidade := strings.TrimSpace(values.Get("cidade")); cidade != "" {
-		add(cidade, "lower(trim(coalesce(p.cidade, ''))) = lower(trim($%d::text))")
+		add(searchtext.Normalize(cidade), searchtext.SQL("trim(p.cidade)")+" = $%d::text")
 	}
 	if bairro := strings.TrimSpace(values.Get("bairro")); bairro != "" {
-		add(bairro, "lower(trim(coalesce(p.bairro, ''))) = lower(trim($%d::text))")
+		add(searchtext.Normalize(bairro), searchtext.SQL("trim(p.bairro)")+" = $%d::text")
 	}
 	if ids := parsePublicUUIDList(values.Get("ids"), 60); len(ids) > 0 {
 		add(ids, "p.id::text = any($%d::text[])")

@@ -147,6 +147,10 @@ export type WebPushSubscribeResult =
       message: string;
     };
 
+type SaveSubscriptionOptions = {
+  syncOnly?: boolean;
+};
+
 export function useWebPush() {
   const { user, profile } = useAuth();
   const [state, setState] = useState<WebPushState>({
@@ -196,7 +200,7 @@ export function useWebPush() {
   }, []);
 
   // Salva subscription no Supabase
-  const saveSubscription = useCallback(async (subscription: PushSubscription) => {
+  const saveSubscription = useCallback(async (subscription: PushSubscription, options: SaveSubscriptionOptions = {}) => {
     if (!user?.id || !profile?.organization_id) return;
 
     try {
@@ -207,13 +211,18 @@ export function useWebPush() {
       if (!subscriptionJson.endpoint) {
         throw new Error('Subscription sem endpoint');
       }
-      await settingsAPI.savePushToken({
+      if (!subscriptionJson.keys?.p256dh || !subscriptionJson.keys?.auth) {
+        throw new Error('Subscription sem chaves de criptografia');
+      }
+      const response = await settingsAPI.savePushToken({
         endpoint: subscriptionJson.endpoint,
-        p256dh: subscriptionJson.keys?.p256dh ?? null,
-        auth: subscriptionJson.keys?.auth ?? null,
+        p256dh: subscriptionJson.keys.p256dh,
+        auth: subscriptionJson.keys.auth,
         userAgent: navigator.userAgent,
+        syncOnly: options.syncOnly,
       }, profile.organization_id);
       console.log('[WebPush] Subscription salva');
+      return response;
     } catch (error) {
       console.error('[WebPush] Erro ao salvar subscription:', error);
       throw error;
@@ -325,6 +334,7 @@ export function useWebPush() {
         const errorMessage = error instanceof Error ? error.message : 'Erro ao salvar subscription';
         console.error('[WebPush] Erro ao salvar subscription no servidor:', error);
         await subscription.unsubscribe().catch(() => undefined);
+        clearRotatedWebPushState();
         setState(prev => ({
           ...prev,
           isSubscribed: false,
@@ -426,7 +436,15 @@ export function useWebPush() {
         }
       } else if (subscription && profile?.organization_id) {
         try {
-          await saveSubscription(subscription);
+          const syncResult = await saveSubscription(subscription, { syncOnly: true });
+          if (syncResult?.requiresResubscribe) {
+            console.log('[WebPush] Servidor rejeitou subscription antiga; reinscrevendo dispositivo.');
+            clearRotatedWebPushState();
+            await subscription.unsubscribe().catch(() => undefined);
+            const registration = await getReadyServiceWorkerRegistration();
+            subscription = await createOrReusePushSubscription(registration);
+            await saveSubscription(subscription);
+          }
         } catch (error) {
           syncError = error instanceof Error
             ? error.message

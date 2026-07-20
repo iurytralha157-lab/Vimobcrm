@@ -66,11 +66,10 @@ func TestWebhookConfigurationDueOnlyForURLOrVersionChanges(t *testing.T) {
 	}
 }
 
-func TestWebhookConfigurationAllowedRequiresExplicitRollout(t *testing.T) {
+func TestWebhookConfigurationAllowedIsIndependentFromNativeProcessorRollout(t *testing.T) {
 	const (
-		canarySession = "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"
-		otherSession  = "c15fe784-741b-4764-a60c-c60ffc50d606"
-		webhookURL    = "https://example.com/webhook"
+		sessionID  = "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"
+		webhookURL = "https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go"
 	)
 
 	settings := map[string]any{
@@ -78,17 +77,11 @@ func TestWebhookConfigurationAllowedRequiresExplicitRollout(t *testing.T) {
 		"webhook_subscription_version": "legacy",
 	}
 
-	if webhookConfigurationAllowed(nil, canarySession, settings, webhookURL, "disconnected") {
-		t.Fatal("expected an empty rollout allowlist to block automatic webhook configuration")
+	if !webhookConfigurationAllowed(nil, sessionID, settings, webhookURL, "connected") {
+		t.Fatal("expected a due tokenless backend URL to be configured without a native processor rollout")
 	}
-	if webhookConfigurationAllowed([]string{otherSession}, canarySession, settings, webhookURL, "disconnected") {
-		t.Fatal("expected a non-canary session to remain outside webhook rollout")
-	}
-	if !webhookConfigurationAllowed([]string{canarySession}, canarySession, settings, webhookURL, "connected") {
-		t.Fatal("expected the canary session to receive a due webhook configuration")
-	}
-	if !webhookConfigurationAllowed([]string{"*"}, otherSession, settings, webhookURL, "connected") {
-		t.Fatal("expected explicit wildcard rollout to allow every session")
+	if !webhookConfigurationAllowed([]string{"c15fe784-741b-4764-a60c-c60ffc50d606"}, sessionID, settings, webhookURL, "connected") {
+		t.Fatal("expected a native processor allowlist not to control callback URL security")
 	}
 }
 
@@ -111,7 +104,7 @@ func TestWebhookConfigurationAllowedDoesNotReconnectConfiguredConnectedSession(t
 	}
 }
 
-func TestEvolutionSupervisorConnectPlanPreservesNonCanaryReconnectWithoutWebhookChanges(t *testing.T) {
+func TestEvolutionSupervisorConnectPlanMigratesEveryDisconnectedSessionToBackend(t *testing.T) {
 	const (
 		canarySession = "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"
 		otherSession  = "c15fe784-741b-4764-a60c-c60ffc50d606"
@@ -121,102 +114,61 @@ func TestEvolutionSupervisorConnectPlanPreservesNonCanaryReconnectWithoutWebhook
 		[]string{canarySession},
 		otherSession,
 		map[string]any{"webhook_subscription_version": "legacy"},
-		"https://project.supabase.co/functions/v1/evolution-go-webhook",
+		"https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go",
 		"disconnected",
 	)
 	if !shouldConnect {
 		t.Fatal("expected disconnected non-canary supervision to keep reconnecting")
 	}
-	if appliesWebhook {
-		t.Fatal("expected disconnected non-canary reconnect not to apply webhook configuration")
+	if !appliesWebhook {
+		t.Fatal("expected disconnected session reconnect to apply the tokenless backend webhook")
 	}
-	if len(body) != 0 {
-		t.Fatalf("expected webhook-free reconnect body, got %#v", body)
+	if body["webhookUrl"] != "https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go" {
+		t.Fatalf("unexpected webhook reconnect body %#v", body)
 	}
 }
 
-func TestEvolutionSupervisorConnectPlanDoesNothingForConnectedNonCanary(t *testing.T) {
+func TestEvolutionSupervisorConnectPlanMigratesConnectedSessionWithLegacyURL(t *testing.T) {
 	body, shouldConnect, appliesWebhook := evolutionSupervisorConnectPlan(
 		nil,
 		"c15fe784-741b-4764-a60c-c60ffc50d606",
-		map[string]any{"webhook_subscription_version": "legacy"},
-		"https://project.supabase.co/functions/v1/evolution-go-webhook",
+		map[string]any{
+			"webhook_url":                  "https://project.supabase.co/functions/v1/evolution-go-webhook?webhook_token=legacy",
+			"webhook_subscription_version": whatsappWebhookSubscriptionVersion,
+		},
+		"https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go",
 		"connected",
 	)
-	if shouldConnect || appliesWebhook || body != nil {
-		t.Fatalf("expected no connected non-canary mutation, got body=%#v shouldConnect=%v appliesWebhook=%v", body, shouldConnect, appliesWebhook)
-	}
-}
-
-func TestEvolutionSupervisorConnectPlanRollsManagedCanaryBackToLegacyWebhook(t *testing.T) {
-	const (
-		sessionID  = "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"
-		backendURL = "https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go"
-		legacyURL  = "https://project.supabase.co/functions/v1/evolution-go-webhook"
-	)
-
-	settings := map[string]any{
-		"webhook_url":                        backendURL,
-		"webhook_subscription_version":       whatsappWebhookSubscriptionVersion,
-		whatsappWebhookRolloutManagedSetting: true,
-	}
-	body, shouldConnect, appliesWebhook := evolutionSupervisorConnectPlan(nil, sessionID, settings, legacyURL, "connected")
 	if !shouldConnect || !appliesWebhook {
-		t.Fatalf("expected managed canary rollback, got shouldConnect=%v appliesWebhook=%v", shouldConnect, appliesWebhook)
+		t.Fatalf("expected legacy callback migration, got body=%#v shouldConnect=%v appliesWebhook=%v", body, shouldConnect, appliesWebhook)
 	}
-	if body["webhookUrl"] != legacyURL {
-		t.Fatalf("expected legacy webhook %q, got %#v", legacyURL, body["webhookUrl"])
+	if body["webhookUrl"] != "https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go" {
+		t.Fatalf("unexpected migrated webhook body %#v", body)
 	}
 }
 
-func TestEvolutionSupervisorConnectPlanReappliesLegacyBeforeClearingStaleManagedMarker(t *testing.T) {
-	const (
-		sessionID = "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"
-		legacyURL = "https://project.supabase.co/functions/v1/evolution-go-webhook"
-	)
-
+func TestEvolutionSupervisorConnectPlanDoesNothingForConfiguredConnectedSession(t *testing.T) {
+	const backendURL = "https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go"
 	settings := map[string]any{
-		"webhook_url":                        legacyURL,
-		"webhook_subscription_version":       whatsappWebhookSubscriptionVersion,
-		whatsappWebhookRolloutManagedSetting: true,
+		"webhook_url":                  backendURL,
+		"webhook_subscription_version": whatsappWebhookSubscriptionVersion,
 	}
-	body, shouldConnect, appliesWebhook := evolutionSupervisorConnectPlan(nil, sessionID, settings, legacyURL, "connected")
-	if !shouldConnect || !appliesWebhook || body["webhookUrl"] != legacyURL {
-		t.Fatalf("expected provider-confirmed rollback for stale marker, got body=%#v shouldConnect=%v appliesWebhook=%v", body, shouldConnect, appliesWebhook)
-	}
-}
-
-func TestEvolutionSupervisorConnectPlanEmptyRolloutNeverTouchesCommonSession(t *testing.T) {
-	const legacyURL = "https://project.supabase.co/functions/v1/evolution-go-webhook"
-
-	for _, settings := range []map[string]any{
-		{},
-		{whatsappWebhookRolloutManagedSetting: false},
-		{whatsappWebhookRolloutManagedSetting: "true"},
-	} {
-		body, shouldConnect, appliesWebhook := evolutionSupervisorConnectPlan(
-			nil,
-			"c15fe784-741b-4764-a60c-c60ffc50d606",
-			settings,
-			legacyURL,
-			"connected",
-		)
-		if shouldConnect || appliesWebhook || body != nil {
-			t.Fatalf("expected common session to remain untouched for settings %#v", settings)
-		}
+	body, shouldConnect, appliesWebhook := evolutionSupervisorConnectPlan(nil, "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9", settings, backendURL, "connected")
+	if shouldConnect || appliesWebhook || body != nil {
+		t.Fatalf("expected configured connected session not to reconnect, got body=%#v shouldConnect=%v appliesWebhook=%v", body, shouldConnect, appliesWebhook)
 	}
 }
 
-func TestSetWebhookRolloutManagedPersistsAndClearsMarker(t *testing.T) {
-	settings := map[string]any{}
-	setWebhookRolloutManaged(settings, true)
-	if !webhookRolloutManaged(settings) {
-		t.Fatal("expected backend-managed marker")
-	}
-
-	setWebhookRolloutManaged(settings, false)
-	if _, exists := settings[whatsappWebhookRolloutManagedSetting]; exists {
-		t.Fatalf("expected rollback marker to be removed, got %#v", settings)
+func TestEvolutionSupervisorConnectPlanFailsClosedWithoutBackendURL(t *testing.T) {
+	body, shouldConnect, appliesWebhook := evolutionSupervisorConnectPlan(
+		nil,
+		"c15fe784-741b-4764-a60c-c60ffc50d606",
+		map[string]any{},
+		"",
+		"disconnected",
+	)
+	if shouldConnect || appliesWebhook || body != nil {
+		t.Fatalf("expected missing backend URL to fail closed, got body=%#v shouldConnect=%v appliesWebhook=%v", body, shouldConnect, appliesWebhook)
 	}
 }
 

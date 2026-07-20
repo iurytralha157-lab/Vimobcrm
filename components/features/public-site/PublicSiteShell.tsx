@@ -9,10 +9,13 @@ import { buildSiteHref, defaultMenuItems, getSiteDescription, getSiteTitle, getT
 import { PublicSiteTracker } from "./PublicSiteTracker";
 import { PublicContactLeadDialog } from "./PublicContactLeadDialog";
 import { PublicCookieConsent } from "./PublicCookieConsent";
+import { PublicTrackingScripts } from "./PublicTrackingScripts";
+import { PublicSiteStructuredData } from "./PublicSiteStructuredData";
 
 export function PublicSiteShell({
   basePath,
   children,
+  isHome = false,
   menuItems,
   pageTitle,
   propertyCode,
@@ -22,6 +25,7 @@ export function PublicSiteShell({
 }: Readonly<{
   basePath: string;
   children: ReactNode;
+  isHome?: boolean;
   menuItems: SiteMenuItem[];
   pageTitle: string;
   propertyCode?: string;
@@ -46,6 +50,15 @@ export function PublicSiteShell({
 
   return (
     <div className="min-h-screen bg-[var(--site-bg)] text-[var(--site-fg)]" style={style}>
+      <PublicSiteStructuredData basePath={basePath} isHome={isHome} site={site} />
+      <PublicTrackingScripts
+        bodyScripts={site.body_scripts}
+        googleAdsId={site.google_ads_id}
+        googleAnalyticsId={site.google_analytics_id}
+        gtmId={site.gtm_id}
+        headScripts={site.head_scripts}
+        metaPixelId={site.meta_pixel_id}
+      />
       <PublicSiteTracker organizationId={site.organization_id} pageTitle={pageTitle} propertyId={propertyId} />
 
       <header className="fixed inset-x-0 top-3 z-50 px-3 text-white sm:top-4 sm:px-4">

@@ -2,8 +2,20 @@ package roundrobin
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 )
+
+func TestConditionConflictErrorUsesFriendlyPortugueseMessage(t *testing.T) {
+	err := ConditionConflictError{QueueName: "EQUIPE LINCE"}
+	if !errors.Is(err, ErrConditionConflict) {
+		t.Fatal("expected condition conflict error to preserve its error category")
+	}
+	want := `Esta condição de entrada já está sendo usada na fila "EQUIPE LINCE". Altere a regra ou edite a fila existente.`
+	if err.Error() != want {
+		t.Fatalf("unexpected message: %q", err.Error())
+	}
+}
 
 func TestCreateRequestValidateNormalizesConditionContracts(t *testing.T) {
 	request := CreateRequest{

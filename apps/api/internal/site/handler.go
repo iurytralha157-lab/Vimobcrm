@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
@@ -318,12 +320,24 @@ func (handler Handler) SubmitPublicContact(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	leadID, _ := result["lead_id"].(string)
-	handler.publishSiteEvent("lead.created", request.OrganizationID, map[string]any{
-		"leadId":    leadID,
-		"source":    "site",
-		"sessionId": optionalStringValue(request.SessionID),
-	})
-	httpserver.WriteJSON(w, http.StatusCreated, result)
+	idempotent, _ := result["idempotent"].(bool)
+	filtered, _ := result["filtered"].(bool)
+	if leadID != "" && !idempotent && !filtered {
+		eventType := "lead.created"
+		if reentry, _ := result["reentry"].(bool); reentry {
+			eventType = "lead.reentered"
+		}
+		handler.publishSiteEvent(eventType, request.OrganizationID, map[string]any{
+			"leadId":    leadID,
+			"source":    "site",
+			"sessionId": optionalStringValue(request.SessionID),
+		})
+	}
+	status := http.StatusCreated
+	if idempotent || filtered {
+		status = http.StatusOK
+	}
+	httpserver.WriteJSON(w, status, result)
 }
 
 func (handler Handler) TrackPublicEvent(w http.ResponseWriter, r *http.Request) {
@@ -331,6 +345,7 @@ func (handler Handler) TrackPublicEvent(w http.ResponseWriter, r *http.Request) 
 	if !decodeJSON(w, r, &request) {
 		return
 	}
+	enrichTrackingLocation(&request, r.Header)
 	if err := handler.repo.CreatePublicTrackingEvent(r.Context(), request); err != nil {
 		writeSiteError(w, r, err)
 		return
@@ -342,6 +357,61 @@ func (handler Handler) TrackPublicEvent(w http.ResponseWriter, r *http.Request) 
 		"sessionId":  optionalStringValue(request.SessionID),
 	})
 	httpserver.WriteJSON(w, http.StatusCreated, map[string]bool{"ok": true})
+}
+
+func enrichTrackingLocation(request *PublicTrackingRequest, header http.Header) {
+	latitude, latOK := trackingCoordinate(header, "X-Vercel-IP-Latitude", "CF-IPLatitude")
+	longitude, lngOK := trackingCoordinate(header, "X-Vercel-IP-Longitude", "CF-IPLongitude")
+	if !latOK || !lngOK || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 {
+		return
+	}
+	if request.Metadata == nil {
+		request.Metadata = map[string]any{}
+	}
+	request.Metadata["lat"] = latitude
+	request.Metadata["lng"] = longitude
+	if city := trackingHeaderValue(header, "X-Vercel-IP-City", "CF-IPCity"); city != "" {
+		if decoded, err := url.QueryUnescape(city); err == nil {
+			city = decoded
+		}
+		request.Metadata["city"] = cleanTrackingLocationText(city)
+	}
+	if region := trackingHeaderValue(header, "X-Vercel-IP-Country-Region", "CF-Region"); region != "" {
+		request.Metadata["region"] = cleanTrackingLocationText(region)
+	}
+	if country := trackingHeaderValue(header, "X-Vercel-IP-Country", "CF-IPCountry"); country != "" {
+		request.Metadata["country"] = cleanTrackingLocationText(country)
+	}
+}
+
+func trackingCoordinate(header http.Header, names ...string) (float64, bool) {
+	value := trackingHeaderValue(header, names...)
+	if value == "" {
+		return 0, false
+	}
+	coordinate, err := strconv.ParseFloat(value, 64)
+	return coordinate, err == nil
+}
+
+func trackingHeaderValue(header http.Header, names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(header.Get(name)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func cleanTrackingLocationText(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) > 120 {
+		return string(runes[:120])
+	}
+	return value
 }
 
 func (handler Handler) publishSiteEvent(eventType string, organizationID string, data map[string]any) {
@@ -482,6 +552,8 @@ func writeSiteError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "site_storage_not_configured", "Site storage is not configured.")
 	case errors.Is(err, ErrStorageOperation):
 		httpserver.WriteError(w, r, http.StatusBadGateway, "site_storage_failed", "Site storage operation failed.")
+	case errors.Is(err, ErrPublicRateLimited):
+		httpserver.WriteError(w, r, http.StatusTooManyRequests, "site_contact_rate_limited", "Muitas tentativas. Aguarde um minuto e tente novamente.")
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	default:

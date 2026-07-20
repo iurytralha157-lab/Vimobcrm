@@ -317,7 +317,7 @@ export function usePublicHomeData(organizationId: string | null) {
   });
 }
 
-export async function submitContactForm(data: {
+export async function submitContactForm<T = unknown>(data: {
   organization_id: string;
   name: string;
   email?: string;
@@ -329,8 +329,19 @@ export async function submitContactForm(data: {
   property_id?: string;
   property_code?: string;
   session_id?: string | null;
+  submission_id: string;
+  website?: string;
+  landing_page?: string;
+  referrer?: string | null;
+  utm_source?: string | null;
+  utm_medium?: string | null;
+  utm_campaign?: string | null;
+  utm_term?: string | null;
+  utm_content?: string | null;
+  gclid?: string | null;
+  fbclid?: string | null;
 }) {
-  return publicSiteAPI.submitContact({
+  return publicSiteAPI.submitContact<T>({
     ...data,
     session_id: data.session_id ?? getVisitorSessionId(),
   });

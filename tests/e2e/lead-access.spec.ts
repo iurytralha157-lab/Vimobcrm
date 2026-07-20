@@ -7,6 +7,19 @@ type LeadListPayload = {
   data: Array<{ id: string; name: string }>;
 };
 
+type LeadHistoryPayload = {
+  data: {
+    auditLogs: Array<{
+      old_data?: Record<string, unknown> | null;
+      new_data?: Record<string, unknown> | null;
+    }>;
+  };
+};
+
+type LeadPayload = {
+  data: { email?: string | null };
+};
+
 async function visibleLeadIDs(page: Page) {
   const response = await authenticatedAPIRequest(page, 'GET', '/v1/leads?limit=200');
   const body = await response.text();
@@ -36,6 +49,30 @@ test.describe('visibilidade e operacao de leads por perfil', () => {
     expect(visible).toEqual(expect.arrayContaining(Object.values(E2E_LEADS)));
     await expectLeadStatus(page, E2E_LEADS.outside, 200);
     await expectLeadUpdateStatus(page, E2E_LEADS.team, 200);
+
+    const beforeResponse = await authenticatedAPIRequest(page, 'GET', `/v1/leads/${E2E_LEADS.team}`);
+    const beforeBody = await beforeResponse.text();
+    expect(beforeResponse.ok(), beforeBody).toBeTruthy();
+    const previousEmail = (JSON.parse(beforeBody) as LeadPayload).data.email || null;
+    const uniqueEmail = `historico-${Date.now()}@vimob.test`;
+    const updateResponse = await authenticatedAPIRequest(page, 'PATCH', `/v1/leads/${E2E_LEADS.team}`, {
+      name: 'Lead da Equipe E2E',
+      email: uniqueEmail,
+      phone: null,
+      cargo: null,
+      empresa: null,
+      isOwnResource: false,
+    });
+    expect(updateResponse.status(), await updateResponse.text()).toBe(200);
+
+    const historyResponse = await authenticatedAPIRequest(page, 'GET', `/v1/leads/${E2E_LEADS.team}/history-raw`);
+    const historyBody = await historyResponse.text();
+    expect(historyResponse.ok(), historyBody).toBeTruthy();
+    const history = JSON.parse(historyBody) as LeadHistoryPayload;
+    const emailAudit = history.data.auditLogs.find((audit) => audit.new_data?.email === uniqueEmail);
+    expect(emailAudit).toBeTruthy();
+    expect(Object.keys(emailAudit?.new_data || {})).toEqual(['email']);
+    expect(emailAudit?.old_data).toEqual({ email: previousEmail });
   });
 
   test('lider lista, abre e edita leads explicitamente vinculados a sua equipe', async ({ page }) => {

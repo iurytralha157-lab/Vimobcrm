@@ -1,13 +1,10 @@
 import { supabase } from '@/integrations/supabase/client'
 import { ROUTES, getPublicAppUrl } from '@/config/constants'
-import type { TablesUpdate } from '@/integrations/supabase/types'
 import { meAPI } from './me'
 import { settingsAPI } from './settings'
+import type { UpdateOrganizationInput, UpdateProfileInput } from './settings'
 import { usersAPI } from './users'
 import { entityIdSchema, loginSchema, parseDomainInput, resetPasswordSchema, signUpSchema } from '@/lib/validation'
-
-type UserProfileUpdate = TablesUpdate<'users'>
-type OrganizationUpdate = TablesUpdate<'organizations'>
 
 // Auth API functions
 export const authAPI = {
@@ -63,7 +60,7 @@ export const userAPI = {
     return { data: response.context, error: null }
   },
 
-  async updateProfile(userId: string, data: UserProfileUpdate) {
+  async updateProfile(userId: string, data: UpdateProfileInput) {
     parseDomainInput(entityIdSchema, userId, 'auth.profile.update.user-id')
     await settingsAPI.updateProfile(data)
     return { data: null, error: null }
@@ -84,7 +81,7 @@ export const organizationAPI = {
     return { data: data.org, error: null }
   },
 
-  async updateOrganization(orgId: string, data: OrganizationUpdate) {
+  async updateOrganization(orgId: string, data: UpdateOrganizationInput) {
     parseDomainInput(entityIdSchema, orgId, 'auth.organization.update.id')
     await settingsAPI.updateOrganization(data, orgId)
     return { data: null, error: null }

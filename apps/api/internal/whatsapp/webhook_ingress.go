@@ -27,7 +27,8 @@ type evolutionWebhookEnvelope struct {
 	InstanceName        string
 	EventType           string
 	InstanceToken       string
-	LegacyWebhookTokens []string
+	WebhookHeaderTokens []string
+	EventKey            string
 	Payload             []byte
 }
 
@@ -51,6 +52,9 @@ type evolutionWebhookSession struct {
 }
 
 func (repo Repository) AuthorizeEvolutionWebhookRoute(ctx context.Context, query url.Values, headers http.Header) error {
+	if hasEvolutionWebhookQueryCredential(query) {
+		return errWebhookUnauthorized
+	}
 	sessionID := strings.TrimSpace(query.Get("session_id"))
 	if _, ok := normalizeUUID(sessionID); !ok {
 		return errWebhookUnauthorized
@@ -61,11 +65,14 @@ func (repo Repository) AuthorizeEvolutionWebhookRoute(ctx context.Context, query
 	}
 	return authorizeEvolutionWebhookRouteSession(session, evolutionWebhookEnvelope{
 		RouteInstanceID:     strings.TrimSpace(query.Get("instance_id")),
-		LegacyWebhookTokens: suppliedEvolutionWebhookTokens(query, headers),
+		WebhookHeaderTokens: suppliedEvolutionWebhookHeaderTokens(headers),
 	})
 }
 
 func parseEvolutionWebhookEnvelope(query url.Values, headers http.Header, body []byte) (evolutionWebhookEnvelope, error) {
+	if hasEvolutionWebhookQueryCredential(query) {
+		return evolutionWebhookEnvelope{}, fmt.Errorf("%w: webhook credentials are not allowed in the URL", ErrInvalidInput)
+	}
 	payload := map[string]any{}
 	if len(body) == 0 || json.Unmarshal(body, &payload) != nil {
 		return evolutionWebhookEnvelope{}, fmt.Errorf("%w: webhook payload must be a JSON object", ErrInvalidInput)
@@ -113,7 +120,7 @@ func parseEvolutionWebhookEnvelope(query url.Values, headers http.Header, body [
 			data["instance_token"],
 			data["InstanceToken"],
 		))),
-		LegacyWebhookTokens: suppliedEvolutionWebhookTokens(query, headers),
+		WebhookHeaderTokens: suppliedEvolutionWebhookHeaderTokens(headers),
 		Payload:             append([]byte(nil), body...),
 	}
 
@@ -126,6 +133,14 @@ func parseEvolutionWebhookEnvelope(query url.Values, headers http.Header, body [
 	if envelope.EventType == "" {
 		envelope.EventType = "unknown"
 	}
+	// Preserve the provider payload hash used by the existing deduplication
+	// contract while keeping the persisted payload free of credentials.
+	envelope.EventKey = evolutionWebhookEventKey(envelope.SessionID, body)
+	sanitizedPayload, err := sanitizeEvolutionWebhookPayload(payload)
+	if err != nil {
+		return evolutionWebhookEnvelope{}, fmt.Errorf("%w: webhook payload could not be sanitized", ErrInvalidInput)
+	}
+	envelope.Payload = sanitizedPayload
 	return envelope, nil
 }
 
@@ -141,7 +156,10 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 		return evolutionWebhookReceipt{}, err
 	}
 
-	eventKey := evolutionWebhookEventKey(session.ID, envelope.Payload)
+	eventKey := strings.TrimSpace(envelope.EventKey)
+	if eventKey == "" {
+		eventKey = evolutionWebhookEventKey(session.ID, envelope.Payload)
+	}
 	var receipt evolutionWebhookReceipt
 	err = repo.db.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_webhook_inbox (
@@ -237,11 +255,60 @@ func secureWebhookTokenEqual(expected string, actual string) bool {
 	return subtle.ConstantTimeCompare(expectedHash[:], actualHash[:]) == 1
 }
 
-func suppliedEvolutionWebhookTokens(query url.Values, headers http.Header) []string {
-	tokens := make([]string, 0, 3)
+func hasEvolutionWebhookQueryCredential(query url.Values) bool {
+	for name := range query {
+		if isEvolutionWebhookCredentialName(name) {
+			return true
+		}
+	}
+	return false
+}
+
+func removeEvolutionWebhookQueryCredentials(query url.Values) {
+	for name := range query {
+		if isEvolutionWebhookCredentialName(name) {
+			query.Del(name)
+		}
+	}
+}
+
+func isEvolutionWebhookCredentialName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "webhook_token", "apikey", "token":
+		return true
+	default:
+		return false
+	}
+}
+
+func sanitizeEvolutionWebhookPayload(payload map[string]any) ([]byte, error) {
+	removeEvolutionWebhookPayloadCredentials(payload)
+	return json.Marshal(payload)
+}
+
+func removeEvolutionWebhookPayloadCredentials(value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			normalized := strings.NewReplacer("_", "", "-", "").Replace(strings.ToLower(strings.TrimSpace(key)))
+			switch normalized {
+			case "instancetoken", "webhooktoken", "apikey", "accesstoken", "authorization", "signature":
+				delete(typed, key)
+				continue
+			}
+			removeEvolutionWebhookPayloadCredentials(nested)
+		}
+	case []any:
+		for _, nested := range typed {
+			removeEvolutionWebhookPayloadCredentials(nested)
+		}
+	}
+}
+
+func suppliedEvolutionWebhookHeaderTokens(headers http.Header) []string {
+	tokens := make([]string, 0, 2)
 	tokens = append(tokens, headers.Values("x-webhook-token")...)
 	tokens = append(tokens, headers.Values("x-evolution-webhook-token")...)
-	tokens = append(tokens, query["webhook_token"]...)
 	return tokens
 }
 
@@ -267,7 +334,7 @@ func authorizeEvolutionWebhookRouteSession(session evolutionWebhookSession, enve
 	if !session.Active || strings.EqualFold(session.Status, "deleted") {
 		return errWebhookUnauthorized
 	}
-	if !optionalEvolutionWebhookTokensMatch(session.WebhookToken, envelope.LegacyWebhookTokens) {
+	if !optionalEvolutionWebhookTokensMatch(session.WebhookToken, envelope.WebhookHeaderTokens) {
 		return errWebhookUnauthorized
 	}
 	if strings.TrimSpace(envelope.RouteInstanceID) == "" {
@@ -283,7 +350,7 @@ func authorizeEvolutionWebhookEnvelopeSession(session evolutionWebhookSession, e
 	if !session.Active || strings.EqualFold(session.Status, "deleted") {
 		return errWebhookUnauthorized
 	}
-	if !optionalEvolutionWebhookTokensMatch(session.WebhookToken, envelope.LegacyWebhookTokens) {
+	if !optionalEvolutionWebhookTokensMatch(session.WebhookToken, envelope.WebhookHeaderTokens) {
 		return errWebhookUnauthorized
 	}
 	if strings.TrimSpace(session.InstanceToken) == "" ||

@@ -61,6 +61,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 		canViewAllLeads(tenantContext),
 		tenantContext.UserID,
 		tenantContext.HasPermission(permissions.LeadViewTeam),
+		canViewProperties(tenantContext),
 	}
 	where := []string{
 		"se.organization_id = $1::uuid",
@@ -182,7 +183,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	if err := repo.validateLead(ctx, tx, tenantContext, input.LeadID); err != nil {
 		return Event{}, err
 	}
-	if err := repo.validateProperty(ctx, tx, tenantContext.OrganizationID, input.PropertyID); err != nil {
+	if err := repo.validateProperty(ctx, tx, tenantContext, input.PropertyID); err != nil {
 		return Event{}, err
 	}
 	if err := repo.validateAssignees(ctx, tx, tenantContext, input.AssigneeIDs); err != nil {
@@ -321,7 +322,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		}
 	}
 	if input.PropertyID.Set {
-		if err := repo.validateProperty(ctx, tx, tenantContext.OrganizationID, input.PropertyID.Value); err != nil {
+		if err := repo.validateProperty(ctx, tx, tenantContext, input.PropertyID.Value); err != nil {
 			return Event{}, err
 		}
 	}
@@ -923,20 +924,23 @@ func (repo Repository) validateLead(ctx context.Context, querier queryRower, ten
 	return nil
 }
 
-func (repo Repository) validateProperty(ctx context.Context, querier queryRower, organizationID string, propertyID *string) error {
+func (repo Repository) validateProperty(ctx context.Context, querier queryRower, tenantContext tenant.Context, propertyID *string) error {
 	if propertyID == nil {
 		return nil
+	}
+	if !canViewProperties(tenantContext) {
+		return tenant.ErrOrganizationAccessDenied
 	}
 
 	var exists bool
 	err := querier.QueryRow(ctx, `
 		select exists (
 			select 1
-			from public.properties
-			where organization_id = $1::uuid
-			  and id = $2::uuid
+			from public.properties p
+			where p.organization_id = $1::uuid
+			  and p.id = $2::uuid
 		)
-	`, organizationID, *propertyID).Scan(&exists)
+	`, tenantContext.OrganizationID, *propertyID).Scan(&exists)
 	if err != nil {
 		return err
 	}
@@ -961,7 +965,7 @@ func (repo Repository) ensureAssignableUser(ctx context.Context, querier queryRo
 	if err := repo.validateUser(ctx, querier, tenantContext.OrganizationID, userID); err != nil {
 		return err
 	}
-	if canManageSchedule(tenantContext) || userID == tenantContext.UserID {
+	if canAssignAnyScheduleUser(tenantContext) || userID == tenantContext.UserID {
 		return nil
 	}
 	if tenantContext.LeadsUser(userID) {
@@ -1426,7 +1430,9 @@ func scheduleEventsQuery(whereClause string) string {
 		from visible v
 		left join public.users u on u.id = v.user_id
 		left join public.leads l on l.id = v.lead_id
-		left join public.properties p on p.id = v.property_id
+		left join public.properties p
+		  on p.id = v.property_id
+		 and $7::boolean
 		left join public.users cu on cu.id = v.completed_by
 		order by v.start_time asc, v.created_at asc, v.id asc`
 }
@@ -1666,10 +1672,20 @@ func canViewAllScheduleEvents(tenantContext tenant.Context) bool {
 	return tenantContext.IsSuperAdmin || tenantContext.HasRole("owner", "admin")
 }
 
+func canAssignAnyScheduleUser(tenantContext tenant.Context) bool {
+	return tenantContext.IsSuperAdmin || tenantContext.HasRole("owner", "admin")
+}
+
 func canViewAllLeads(tenantContext tenant.Context) bool {
 	return tenantContext.IsSuperAdmin ||
 		tenantContext.HasRole("owner", "admin") ||
 		tenantContext.HasPermission(permissions.LeadViewAll)
+}
+
+func canViewProperties(tenantContext tenant.Context) bool {
+	return tenantContext.IsSuperAdmin ||
+		tenantContext.HasRole("owner", "admin") ||
+		tenantContext.HasPermission(permissions.PropertyView)
 }
 
 func nullable(value *string) any {

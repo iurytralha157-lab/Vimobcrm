@@ -147,7 +147,7 @@ export function useDeleteNeighborhood() {
 }
 
 // Condominiums hooks
-export function usePropertyCondominiums(neighborhoodId?: string) {
+export function usePropertyCondominiums(neighborhoodId?: string, options: { enabled?: boolean } = {}) {
   const organizationId = useOrganizationId()
 
   return useQuery({
@@ -158,7 +158,7 @@ export function usePropertyCondominiums(neighborhoodId?: string) {
       const { data } = await propertyLocationsAPI.getCondominiums(organizationId, neighborhoodId)
       return data
     },
-    enabled: !!organizationId,
+    enabled: !!organizationId && options.enabled !== false,
   })
 }
 

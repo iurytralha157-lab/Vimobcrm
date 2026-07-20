@@ -14,6 +14,7 @@ test('aceita uma entrada valida de lead', () => {
     name: 'Maria Silva',
     email: 'maria@example.com',
     pipelineId: ID,
+    teamId: ORG_ID,
     dealStatus: 'open',
   })
 
@@ -37,6 +38,41 @@ test('rejeita lead perdido sem motivo', () => {
   })
 
   assert.equal(result.success, false)
+})
+
+test('rejeita equipe invalida na criacao do lead', () => {
+  assert.equal(leadCreateInputSchema.safeParse({
+    name: 'Maria Silva',
+    teamId: 'equipe-invalida',
+  }).success, false)
+})
+
+test('aceita perfil, feedback e varios imoveis na criacao', () => {
+  const result = leadCreateInputSchema.safeParse({
+    name: 'Maria Silva',
+    feedback: 'Busca apartamento para morar.',
+    propertyId: ID,
+    interestPropertyIds: [ID, ORG_ID],
+    interestValue: '650000',
+    profile: {
+      personType: 'individual',
+      gender: 'female',
+      socialName: 'Maria',
+      birthDate: '1990-04-10',
+      cpf: '123.456.789-01',
+      rg: '12.345.678-9',
+    },
+  })
+
+  assert.equal(result.success, true)
+})
+
+test('rejeita perfil e lista de imoveis fora do contrato', () => {
+  assert.equal(leadCreateInputSchema.safeParse({
+    name: 'Empresa Exemplo',
+    interestPropertyIds: ['imovel-invalido'],
+    profile: { personType: 'company', gender: 'invalid' },
+  }).success, false)
 })
 
 test('rejeita movimentacao para etapa invalida', () => {

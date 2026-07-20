@@ -46,7 +46,7 @@ export function useSaveImoviewIntegration() {
 
   return useMutation<ImoviewIntegration, Error, { api_key: string }>({
     mutationFn: ({ api_key }: { api_key: string }) => {
-      if (!orgId) throw new Error('No organization');
+      if (!orgId) throw new Error('Organização não encontrada.');
       return integrationsAPI.saveImoview({ api_key }, orgId) as Promise<ImoviewIntegration>;
     },
     onSuccess: () => {
@@ -100,7 +100,7 @@ export function useDeleteImoviewIntegration() {
 
   return useMutation({
     mutationFn: () => {
-      if (!profile?.organization_id) throw new Error('No org');
+      if (!profile?.organization_id) throw new Error('Organização não encontrada.');
       return integrationsAPI.deleteImoview(profile.organization_id);
     },
     onSuccess: () => {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	"golang.org/x/sync/errgroup"
 )
@@ -607,27 +608,14 @@ func (repo Repository) countDashboardSiteVisits(ctx context.Context, tenantConte
 }
 
 func (repo Repository) countDashboardScheduledVisits(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (int64, error) {
-	var leadWhere []string
-	var args []any
-	if dashboardNeedsLeadSubquery(filter) {
-		var err error
-		leadWhere, args, err = repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{})
-		if err != nil {
-			return 0, err
-		}
-	} else {
-		args = []any{
-			tenantContext.OrganizationID,
-			canViewAllLeads(tenantContext),
-			tenantContext.UserID,
-			tenantContext.HasPermission("lead_view_team"),
-		}
+	leadWhere, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{})
+	if err != nil {
+		return 0, err
 	}
 
 	where := []string{
 		"se.organization_id = $1::uuid",
 		"se.event_type = 'visit'",
-		eventUserVisibilitySQL("$2", "$3", "$4"),
 	}
 
 	add := func(clause string, value any) {
@@ -640,39 +628,15 @@ func (repo Repository) countDashboardScheduledVisits(ctx context.Context, tenant
 	if filter.DateTo != nil {
 		add("se.start_time <= $%d", *filter.DateTo)
 	}
-	if filter.UserID != "" && filter.UserID != "all" {
-		userID, ok := normalizeUUID(filter.UserID)
-		if !ok {
-			return 0, ErrInvalidInput
-		}
-		add("se.user_id = $%d::uuid", userID)
-	}
-	if filter.TeamID != "" && filter.TeamID != "all" {
-		teamID, ok := normalizeUUID(filter.TeamID)
-		if !ok {
-			return 0, ErrInvalidInput
-		}
-		add(`exists (
-			select 1
-			from public.team_members stm
-			where stm.organization_id = $1::uuid
-			  and stm.team_id = $%d::uuid
-			  and stm.user_id = se.user_id
-			  and stm.is_active = true
-		)`, teamID)
-	}
-
-	if len(leadWhere) > 0 {
-		where = append(where, `exists (
-			select 1
-			from public.leads l
-			where l.id = se.lead_id
-			  and `+strings.Join(leadWhere, " and ")+`
-		)`)
-	}
+	where = append(where, `exists (
+		select 1
+		from public.leads l
+		where l.id = se.lead_id
+		  and `+strings.Join(leadWhere, " and ")+`
+	)`)
 
 	var count int64
-	err := repo.db.Pool().QueryRow(ctx, `
+	err = repo.db.Pool().QueryRow(ctx, `
 		select count(*)::bigint
 		from public.schedule_events se
 		where `+strings.Join(where, " and "),
@@ -992,14 +956,22 @@ func (repo Repository) buildDashboardLeadWhere(tenantContext tenant.Context, fil
 		if !ok {
 			return nil, nil, ErrInvalidInput
 		}
-		add(`exists (
-			select 1
-			from public.team_members dtm
-			where dtm.organization_id = $1::uuid
-			  and dtm.team_id = $%d::uuid
-			  and dtm.user_id = l.assigned_user_id
-			  and dtm.is_active = true
-		)`, teamID)
+		args = append(args, teamID)
+		index := len(args)
+		where = append(where, fmt.Sprintf(`(
+			nullif(to_jsonb(l)->>'team_id', '') = $%d::text
+			or (
+				nullif(to_jsonb(l)->>'team_id', '') is null
+				and exists (
+					select 1
+					from public.team_members dtm
+					where dtm.organization_id = l.organization_id
+					  and dtm.team_id = $%d::uuid
+					  and dtm.user_id = l.assigned_user_id
+					  and dtm.is_active = true
+				)
+			)
+		)`, index, index))
 	}
 	if filter.Source != "" && filter.Source != "all" {
 		add("l.source = $%d", filter.Source)
@@ -1031,10 +1003,10 @@ func (repo Repository) buildDashboardLeadWhere(tenantContext tenant.Context, fil
 		)`, tagID)
 	}
 	if strings.TrimSpace(filter.SearchQuery) != "" {
-		value := "%" + strings.TrimSpace(filter.SearchQuery) + "%"
+		value := searchtext.Pattern(filter.SearchQuery)
 		args = append(args, value)
 		index := len(args)
-		where = append(where, fmt.Sprintf("(l.name ilike $%d or l.email ilike $%d or l.phone ilike $%d)", index, index, index))
+		where = append(where, searchtext.AnySQL([]string{"l.name", "l.email", "l.phone"}, fmt.Sprintf("$%d", index)))
 	}
 
 	addMetaCondition := func(leadColumns []string, idColumn string, nameColumn string, value string) {
@@ -1121,42 +1093,6 @@ func propertyUserVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder s
 			)
 		)
 	)`
-}
-
-func eventUserVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, canViewTeamPlaceholder string) string {
-	return `(
-		` + canViewAllPlaceholder + `::boolean
-		or se.user_id = ` + userIDPlaceholder + `::uuid
-		or (
-			` + canViewTeamPlaceholder + `::boolean
-			and se.user_id is not null
-			and exists (
-				select 1
-				from public.team_members leader
-				join public.team_members member
-				  on member.organization_id = leader.organization_id
-				 and member.team_id = leader.team_id
-				 and member.is_active = true
-				where leader.organization_id = se.organization_id
-				  and leader.user_id = ` + userIDPlaceholder + `::uuid
-				  and leader.is_active = true
-				  and leader.is_leader = true
-				  and member.user_id = se.user_id
-			)
-		)
-	)`
-}
-
-func dashboardNeedsLeadSubquery(filter DashboardFilter) bool {
-	return (filter.UserID != "" && filter.UserID != "all") ||
-		(filter.TeamID != "" && filter.TeamID != "all") ||
-		(filter.Source != "" && filter.Source != "all") ||
-		(filter.CampaignID != "" && filter.CampaignID != "all") ||
-		(filter.AdSetID != "" && filter.AdSetID != "all") ||
-		(filter.AdID != "" && filter.AdID != "all") ||
-		(filter.TagID != "" && filter.TagID != "all") ||
-		(filter.DealStatus != "" && filter.DealStatus != "all") ||
-		strings.TrimSpace(filter.SearchQuery) != ""
 }
 
 func dashboardDateRange(filter DashboardFilter) (time.Time, time.Time) {

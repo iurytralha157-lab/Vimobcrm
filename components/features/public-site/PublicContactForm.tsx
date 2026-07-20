@@ -8,6 +8,7 @@ import { z } from "zod";
 import { publicSiteContactSchema } from "@/lib/validation";
 import { submitContactForm } from "@/hooks/use-public-site";
 import { cn } from "@/lib/utils";
+import { createPublicSubmissionId, getPublicSiteAttribution } from "@/lib/public-site-attribution";
 
 type FormState = {
   name: string;
@@ -48,6 +49,8 @@ export function PublicContactForm({
 }>) {
   const [formData, setFormData] = useState(() => buildInitialState(defaultMessage));
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submissionId, setSubmissionId] = useState(() => createPublicSubmissionId());
+  const [website, setWebsite] = useState("");
   const fieldClass = "w-full rounded-[10px] border-0 px-3 text-sm font-normal outline-none transition placeholder:text-current placeholder:opacity-55 focus:brightness-95";
   const fieldStyle = {
     backgroundColor: "color-mix(in srgb, var(--site-fg) 8%, var(--site-card))",
@@ -57,6 +60,7 @@ export function PublicContactForm({
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    const attribution = getPublicSiteAttribution();
     const payload = {
       organization_id: organizationId,
       name: formData.name,
@@ -68,6 +72,9 @@ export function PublicContactForm({
       privacy_url: privacyHref,
       property_id: propertyId,
       property_code: propertyCode,
+      submission_id: submissionId,
+      website,
+      ...attribution,
     };
 
     const parsed = publicSiteContactSchema.safeParse(payload);
@@ -78,9 +85,11 @@ export function PublicContactForm({
 
     setIsSubmitting(true);
     try {
-      await submitContactForm(parsed.data);
+      const result = await submitContactForm<{ lead_id?: string; reentry?: boolean }>(parsed.data);
+      void result;
       toast.success("Interesse enviado. Em breve entraremos em contato.");
       setFormData(buildInitialState(defaultMessage));
+      setSubmissionId(createPublicSubmissionId());
     } catch (error) {
       const message = error instanceof z.ZodError
         ? error.issues[0]?.message
@@ -93,6 +102,10 @@ export function PublicContactForm({
 
   return (
     <form onSubmit={handleSubmit} className={cn("space-y-4", className)}>
+      <label className="absolute -left-[10000px] h-px w-px overflow-hidden" aria-hidden="true">
+        Website
+        <input tabIndex={-1} autoComplete="off" value={website} onChange={(event) => setWebsite(event.target.value)} />
+      </label>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block">
           <span className="sr-only">Nome</span>

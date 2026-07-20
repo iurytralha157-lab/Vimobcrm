@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { CopyLeadPhoneButton } from "@/components/features/leads/CopyLeadPhoneButton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -98,9 +99,10 @@ export function LeadSidePanel({
             <div className="min-w-0">
               <h3 className="font-semibold text-base truncate">{lead.name}</h3>
               {lead.phone && (
-                <p className="text-sm text-muted-foreground">
-                  {formatPhoneForDisplay(lead.phone)}
-                </p>
+                <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+                  <p className="truncate text-sm text-muted-foreground">{formatPhoneForDisplay(lead.phone)}</p>
+                  <CopyLeadPhoneButton phone={lead.phone} className="h-6 w-6 bg-transparent hover:bg-[var(--app-surface-soft)] md:hidden" />
+                </div>
               )}
             </div>
           </div>

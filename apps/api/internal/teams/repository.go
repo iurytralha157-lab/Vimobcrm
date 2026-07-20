@@ -30,6 +30,15 @@ type queryRowExecutor interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
+func setAuditActor(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context) error {
+	userID := strings.TrimSpace(tenantContext.UserID)
+	if userID == "" {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `select set_config('app.current_user_id', $1, true)`, userID)
+	return err
+}
+
 func NewRepository(db *dbpkg.Postgres, storageConfig StorageConfig) Repository {
 	return Repository{
 		db:      db,
@@ -125,6 +134,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		return Team{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return Team{}, err
+	}
 
 	var teamID string
 	err = tx.QueryRow(ctx, `
@@ -167,6 +179,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return Team{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return Team{}, err
+	}
 
 	var roundRobinMemberIDs []string
 	args := []any{tenantContext.OrganizationID, teamID}
@@ -227,7 +242,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return Team{}, err
 	}
 	if roundRobinMemberIDs != nil {
-		repo.syncRoundRobinWithTeamBestEffort(ctx, tenantContext.OrganizationID, teamID, roundRobinMemberIDs)
+		repo.syncRoundRobinWithTeamBestEffort(ctx, tenantContext, teamID, roundRobinMemberIDs)
 	}
 	return repo.Get(ctx, tenantContext, teamID)
 }
@@ -236,20 +251,24 @@ func (repo Repository) UpdateStatus(ctx context.Context, tenantContext tenant.Co
 	return repo.Update(ctx, tenantContext, teamID, UpdateTeamRequest{IsActive: &isActive})
 }
 
-func (repo Repository) syncRoundRobinWithTeamBestEffort(ctx context.Context, organizationID string, teamID string, memberIDs []string) {
+func (repo Repository) syncRoundRobinWithTeamBestEffort(ctx context.Context, tenantContext tenant.Context, teamID string, memberIDs []string) {
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
-		slog.Warn("team round robin sync skipped", "organization_id", organizationID, "team_id", teamID, "error", err)
+		slog.Warn("team round robin sync skipped", "organization_id", tenantContext.OrganizationID, "team_id", teamID, "error", err)
 		return
 	}
 	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		slog.Warn("team round robin sync audit context skipped", "organization_id", tenantContext.OrganizationID, "team_id", teamID, "error", err)
+		return
+	}
 
-	if err := syncRoundRobinWithTeam(ctx, tx, organizationID, teamID, memberIDs); err != nil {
-		slog.Warn("team round robin sync failed", "organization_id", organizationID, "team_id", teamID, "error", err)
+	if err := syncRoundRobinWithTeam(ctx, tx, tenantContext.OrganizationID, teamID, memberIDs); err != nil {
+		slog.Warn("team round robin sync failed", "organization_id", tenantContext.OrganizationID, "team_id", teamID, "error", err)
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
-		slog.Warn("team round robin sync commit failed", "organization_id", organizationID, "team_id", teamID, "error", err)
+		slog.Warn("team round robin sync commit failed", "organization_id", tenantContext.OrganizationID, "team_id", teamID, "error", err)
 	}
 }
 
@@ -261,7 +280,17 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 	if !ok {
 		return ErrInvalidInput
 	}
-	tag, err := repo.db.Pool().Exec(ctx, `
+
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return err
+	}
+
+	tag, err := tx.Exec(ctx, `
 		delete from public.teams
 		where organization_id = $1::uuid
 		  and id = $2::uuid
@@ -272,7 +301,7 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 	if tag.RowsAffected() == 0 {
 		return ErrTeamNotFound
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, teamID string) (Team, error) {
@@ -418,11 +447,23 @@ func (repo Repository) AssignPipelineToTeam(ctx context.Context, tenantContext t
 		return TeamPipelineRelation{}, err
 	}
 
-	if _, err := repo.db.Pool().Exec(ctx, `
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return TeamPipelineRelation{}, err
+	}
+	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return TeamPipelineRelation{}, err
+	}
+
+	if _, err := tx.Exec(ctx, `
 		insert into public.team_pipelines (organization_id, team_id, pipeline_id)
 		values ($1::uuid, $2::uuid, $3::uuid)
 		on conflict (team_id, pipeline_id) do nothing
 	`, tenantContext.OrganizationID, teamID, pipelineID); err != nil {
+		return TeamPipelineRelation{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return TeamPipelineRelation{}, err
 	}
 
@@ -438,13 +479,25 @@ func (repo Repository) RemovePipelineFromTeam(ctx context.Context, tenantContext
 		return err
 	}
 
-	_, err = repo.db.Pool().Exec(ctx, `
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, `
 		delete from public.team_pipelines
 		where organization_id = $1::uuid
 		  and team_id = $2::uuid
 		  and pipeline_id = $3::uuid
 	`, tenantContext.OrganizationID, teamID, pipelineID)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (repo Repository) SetTeamLeader(ctx context.Context, tenantContext tenant.Context, request SetTeamLeaderRequest) error {
@@ -460,7 +513,16 @@ func (repo Repository) SetTeamLeader(ctx context.Context, tenantContext tenant.C
 		return ErrInvalidInput
 	}
 
-	tag, err := repo.db.Pool().Exec(ctx, `
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return err
+	}
+
+	tag, err := tx.Exec(ctx, `
 		update public.team_members tm
 		set
 			is_leader = $4,
@@ -481,7 +543,7 @@ func (repo Repository) SetTeamLeader(ctx context.Context, tenantContext tenant.C
 	if tag.RowsAffected() == 0 {
 		return ErrTeamMemberNotFound
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (repo Repository) ListAvailability(ctx context.Context, tenantContext tenant.Context, teamMemberIDs []string) ([]MemberAvailability, error) {
@@ -556,7 +618,23 @@ func (repo Repository) UpsertAvailability(ctx context.Context, tenantContext ten
 	if err := repo.ensureCanManageAvailability(ctx, repo.db.Pool(), tenantContext, input.TeamMemberID); err != nil {
 		return MemberAvailability{}, err
 	}
-	return repo.upsertAvailability(ctx, repo.db.Pool(), tenantContext.OrganizationID, input)
+
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return MemberAvailability{}, err
+	}
+	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return MemberAvailability{}, err
+	}
+	item, err := repo.upsertAvailability(ctx, tx, tenantContext.OrganizationID, input)
+	if err != nil {
+		return MemberAvailability{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return MemberAvailability{}, err
+	}
+	return item, nil
 }
 
 func (repo Repository) ReplaceAvailability(ctx context.Context, tenantContext tenant.Context, teamMemberID string, requests []AvailabilityRequest) ([]MemberAvailability, error) {
@@ -570,6 +648,9 @@ func (repo Repository) ReplaceAvailability(ctx context.Context, tenantContext te
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return nil, err
+	}
 
 	if err := ensureTeamMemberBelongsToOrganization(ctx, tx, tenantContext.OrganizationID, teamMemberID); err != nil {
 		return nil, err

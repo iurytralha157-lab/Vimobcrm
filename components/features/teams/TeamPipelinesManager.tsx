@@ -97,12 +97,12 @@ export function TeamPipelinesManager() {
   return (
     <div className="space-y-6">
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Teams Panel */}
-        <Card className="rounded-lg border-0 bg-[var(--app-surface)] shadow-none">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5" />
+        <Card className="rounded-[8px] border-0 bg-[var(--app-surface)] shadow-none">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <Users className="h-4 w-4 text-[#FF4529]" />
               Equipes
             </CardTitle>
             <CardDescription>
@@ -128,7 +128,7 @@ export function TeamPipelinesManager() {
                       setDialogOpen(true);
                     }}
                     className={cn(
-                      "p-4 rounded-lg cursor-pointer bg-[var(--app-surface-soft)] transition-colors hover:bg-[var(--app-surface-hover)]",
+                      "cursor-pointer rounded-[7px] bg-[var(--app-surface-soft)] p-4 transition-colors hover:bg-[var(--app-surface-hover)]",
                       isSelected && "bg-primary/10"
                     )}
                   >
@@ -199,10 +199,10 @@ export function TeamPipelinesManager() {
         </Card>
 
         {/* Pipelines Overview */}
-        <Card className="rounded-lg border-0 bg-[var(--app-surface)] shadow-none">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <GitBranch className="h-5 w-5" />
+        <Card className="rounded-[8px] border-0 bg-[var(--app-surface)] shadow-none">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <GitBranch className="h-4 w-4 text-[#FF4529]" />
               Pipelines
             </CardTitle>
             <CardDescription>
@@ -223,7 +223,7 @@ export function TeamPipelinesManager() {
                   <div
                     key={pipeline.id}
                     className={cn(
-                      "p-4 rounded-lg bg-[var(--app-surface-soft)]"
+                      "rounded-[7px] bg-[var(--app-surface-soft)] p-4"
                     )}
                   >
                     <div className="flex items-start justify-between">
@@ -269,7 +269,7 @@ export function TeamPipelinesManager() {
 
       {/* Pipeline Assignment Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="w-[90%] sm:max-w-md sm:w-full rounded-lg border-0 shadow-none max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[90vh] w-[calc(100vw-24px)] overflow-y-auto rounded-[8px] border-0 shadow-none sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Users className="h-5 w-5" />

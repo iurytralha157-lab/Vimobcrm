@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { LostReasonDialog } from "@/components/features/leads/LostReasonDialog";
 import { PropertyPickerDialog } from "@/components/features/properties/PropertyPickerDialog";
 import { EventForm } from "@/components/features/schedule/EventForm";
+import { CopyLeadPhoneButton } from "@/components/features/leads/CopyLeadPhoneButton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -46,6 +47,7 @@ import {
 } from "lucide-react";
 import { formatPhoneForDisplay } from "@/lib/phone-utils";
 import { cn } from "@/lib/utils";
+import { commandSearchFilter } from "@/lib/search-text";
 import { format, type Locale } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useConversationLeadDetail } from "@/hooks/use-conversation-lead-detail";
@@ -663,7 +665,12 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
 
           <div className="min-w-0 flex-1 overflow-hidden">
             <h2 className="truncate text-base font-semibold leading-tight">{lead.name || "Lead"}</h2>
-            {lead.phone && <p className="mt-1 text-xs text-[var(--app-text-tertiary)]">{formatPhoneForDisplay(lead.phone)}</p>}
+            {lead.phone && (
+              <div className="mt-1 flex min-w-0 items-center gap-1.5">
+                <p className="truncate text-xs text-[var(--app-text-tertiary)]">{formatPhoneForDisplay(lead.phone)}</p>
+                <CopyLeadPhoneButton phone={lead.phone} className="h-6 w-6 bg-transparent hover:bg-[var(--app-surface-soft)] md:hidden" />
+              </div>
+            )}
 
             <div className="mt-2 flex flex-wrap gap-1.5">
               {leadTags.slice(0, 4).map((leadTag) => (
@@ -737,7 +744,7 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-[300px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1 shadow-2xl" align="start" collisionPadding={12}>
-              <Command className="max-h-[min(72vh,430px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
+              <Command filter={commandSearchFilter} className="max-h-[min(72vh,430px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
                 <CommandInput placeholder="Buscar responsável..." className="h-10 border-none focus:ring-0" />
                 <CommandList className="max-h-[min(58vh,340px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin">
                   <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">Nenhum encontrado.</CommandEmpty>

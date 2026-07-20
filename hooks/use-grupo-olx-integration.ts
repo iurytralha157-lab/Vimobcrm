@@ -143,6 +143,23 @@ export function useRegenerateGrupoOLXFeedToken() {
   })
 }
 
+export function useRegenerateGrupoOLXWebhookToken() {
+  const organizationId = useOrganizationId()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => {
+      if (!organizationId) throw new Error('Organizacao nao encontrada')
+      return integrationsAPI.regenerateGrupoOLXWebhookToken(organizationId) as Promise<GrupoOLXIntegration>
+    },
+    onSuccess: () => {
+      invalidateGrupoOLX(queryClient)
+      toast.success('URLs dos webhooks regeneradas.')
+    },
+    onError: (error) => toast.error(`Erro ao regenerar URLs dos webhooks: ${getErrorMessage(error)}`),
+  })
+}
+
 export function useSaveGrupoOLXPublications() {
   const organizationId = useOrganizationId()
   const queryClient = useQueryClient()

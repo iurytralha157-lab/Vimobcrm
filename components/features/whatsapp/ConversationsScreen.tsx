@@ -21,6 +21,7 @@ import { CreateLeadDialog } from "@/components/features/leads/CreateLeadDialog";
 import { ConversationHeader } from "@/components/features/whatsapp/ConversationHeader";
 import { ConversationLeadPanel, ConversationUnregisteredPanel } from "@/components/features/whatsapp/ConversationLeadPanel";
 import { cn } from "@/lib/utils";
+import { normalizeSearchText } from "@/lib/search-text";
 import { format, isToday, isYesterday } from "date-fns";
 import { useWhatsAppConversations, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppRealtimeConversations, useArchiveConversation, useDeleteConversation, type WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
 import { useWhatsAppMessagesPaginated } from "@/hooks/use-whatsapp-messages-paginated";
@@ -79,11 +80,11 @@ const hasConversationLead = (conversation: ScreenConversation) =>
 const getSearchDigits = (value: string) => value.replace(/\D/g, "");
 
 const matchesConversationSearch = (conversation: ScreenConversation, rawSearch: string) => {
-  const search = rawSearch.trim().toLowerCase();
+  const search = normalizeSearchText(rawSearch);
   if (!search) return true;
 
   const searchDigits = getSearchDigits(search);
-  const searchableText = [
+  const searchableText = normalizeSearchText([
     conversation.contact_name,
     conversation.contact_phone,
     conversation.lead?.name,
@@ -91,8 +92,7 @@ const matchesConversationSearch = (conversation: ScreenConversation, rawSearch: 
     conversation.remote_jid,
   ]
     .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
+    .join(" "));
 
   if (searchableText.includes(search)) return true;
   if (!searchDigits) return false;

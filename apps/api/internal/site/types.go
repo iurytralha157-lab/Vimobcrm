@@ -12,6 +12,7 @@ var (
 	ErrSearchFilterNotFound = errors.New("site search filter not found")
 	ErrStorageNotConfigured = errors.New("site storage is not configured")
 	ErrStorageOperation     = errors.New("site storage operation failed")
+	ErrPublicRateLimited    = errors.New("public site submission rate limited")
 )
 
 type Envelope[T any] struct {
@@ -146,6 +147,17 @@ type PublicContactRequest struct {
 	PropertyID      *string `json:"property_id"`
 	PropertyCode    *string `json:"property_code"`
 	SessionID       *string `json:"session_id"`
+	SubmissionID    string  `json:"submission_id"`
+	Website         *string `json:"website"`
+	LandingPage     *string `json:"landing_page"`
+	Referrer        *string `json:"referrer"`
+	UTMSource       *string `json:"utm_source"`
+	UTMMedium       *string `json:"utm_medium"`
+	UTMCampaign     *string `json:"utm_campaign"`
+	UTMTerm         *string `json:"utm_term"`
+	UTMContent      *string `json:"utm_content"`
+	GCLID           *string `json:"gclid"`
+	FBCLID          *string `json:"fbclid"`
 }
 
 type PublicTrackingRequest struct {
@@ -156,6 +168,7 @@ type PublicTrackingRequest struct {
 	Referrer       *string        `json:"referrer"`
 	SessionID      *string        `json:"session_id"`
 	PropertyID     *string        `json:"property_id"`
+	LeadID         *string        `json:"lead_id"`
 	DeviceType     *string        `json:"device_type"`
 	Browser        *string        `json:"browser"`
 	ScreenWidth    *int           `json:"screen_width"`

@@ -56,8 +56,8 @@ insert into auth.users (
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
   confirmation_token, email_change, email_change_token_new, recovery_token
 ) values
-  ('00000000-0000-0000-0000-000000000000', 'cb000000-0000-4000-8000-000000000001', 'authenticated', 'authenticated', 'canonical-a@example.test', crypt('test-password', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}', '{}', now(), now(), '', '', '', ''),
-  ('00000000-0000-0000-0000-000000000000', 'cb000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated', 'canonical-b@example.test', crypt('test-password', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}', '{}', now(), now(), '', '', '', '');
+  ('00000000-0000-0000-0000-000000000000', 'cb000000-0000-4000-8000-000000000001', 'authenticated', 'authenticated', 'canonical-a@example.test', crypt('test-password', gen_salt('bf', 4)), now(), '{"provider":"email","providers":["email"]}', '{}', now(), now(), '', '', '', ''),
+  ('00000000-0000-0000-0000-000000000000', 'cb000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated', 'canonical-b@example.test', crypt('test-password', gen_salt('bf', 4)), now(), '{"provider":"email","providers":["email"]}', '{}', now(), now(), '', '', '', '');
 
 insert into public.organizations (id, name, slug, is_active)
 values
@@ -67,12 +67,21 @@ values
 insert into public.users (id, organization_id, name, email, role, is_active)
 values
   ('cb000000-0000-4000-8000-000000000001', 'ca000000-0000-4000-8000-000000000001', 'Canonical Owner A', 'canonical-a@example.test', 'admin', true),
-  ('cb000000-0000-4000-8000-000000000002', 'ca000000-0000-4000-8000-000000000002', 'Canonical Owner B', 'canonical-b@example.test', 'admin', true);
+  ('cb000000-0000-4000-8000-000000000002', 'ca000000-0000-4000-8000-000000000002', 'Canonical Owner B', 'canonical-b@example.test', 'admin', true)
+on conflict (id) do update
+set organization_id = excluded.organization_id,
+    name = excluded.name,
+    email = excluded.email,
+    role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.organization_members (organization_id, user_id, role, is_active)
 values
   ('ca000000-0000-4000-8000-000000000001', 'cb000000-0000-4000-8000-000000000001', 'admin', true),
-  ('ca000000-0000-4000-8000-000000000002', 'cb000000-0000-4000-8000-000000000002', 'admin', true);
+  ('ca000000-0000-4000-8000-000000000002', 'cb000000-0000-4000-8000-000000000002', 'admin', true)
+on conflict (user_id, organization_id) do update
+set role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.organization_modules (organization_id, module_name, is_enabled)
 values

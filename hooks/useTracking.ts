@@ -1,24 +1,6 @@
 import { useCallback } from 'react';
 import { publicSiteAPI } from '@/lib/api/public-site';
-import { createClientId } from '@/lib/client-id';
-
-function getSessionId(): string {
-  let id = localStorage.getItem('vimob_session_id');
-  if (!id) {
-    id = createClientId('session');
-    localStorage.setItem('vimob_session_id', id);
-  }
-  return id;
-}
-
-function getUTMs() {
-  const p = new URLSearchParams(window.location.search);
-  return {
-    utm_source: p.get('utm_source') || null,
-    utm_medium: p.get('utm_medium') || null,
-    utm_campaign: p.get('utm_campaign') || null,
-  };
-}
+import { getPublicSiteAttribution } from '@/lib/public-site-attribution';
 
 function getOS(): string {
   const ua = navigator.userAgent;
@@ -28,29 +10,6 @@ function getOS(): string {
   if (/Mac OS X/.test(ua)) return 'macOS';
   if (/Linux/.test(ua)) return 'Linux';
   return 'other';
-}
-
-let cachedGeo: { city?: string; region?: string; lat?: number; lng?: number } | null = null;
-
-async function getGeoInfo(): Promise<{ city?: string; region?: string; lat?: number; lng?: number }> {
-  if (cachedGeo) return cachedGeo;
-  try {
-    const res = await fetch('https://ipapi.co/json/', { signal: AbortSignal.timeout(3000) });
-    if (res.ok) {
-      const data = await res.json();
-      cachedGeo = {
-        city: data.city || undefined,
-        region: data.region || undefined,
-        lat: data.latitude || undefined,
-        lng: data.longitude || undefined,
-      };
-      return cachedGeo;
-    }
-  } catch {
-    // Silently fail - geo is optional
-  }
-  cachedGeo = {};
-  return cachedGeo;
 }
 
 function getDeviceInfo() {
@@ -80,21 +39,20 @@ export interface TrackEventParams {
   pagePath?: string;
   pageTitle?: string;
   propertyId?: string;
+  leadId?: string;
   metadata?: Record<string, unknown>;
 }
 
 export async function trackEvent(params: TrackEventParams) {
-  const sessionId = getSessionId();
+  const attribution = getPublicSiteAttribution();
+  const sessionId = attribution.session_id;
   const os = getOS();
-  const geo = await getGeoInfo();
 
   const enrichedMetadata = {
     ...(params.metadata || {}),
     os,
-    ...(geo.city ? { city: geo.city } : {}),
-    ...(geo.region ? { region: geo.region } : {}),
-    ...(geo.lat ? { lat: geo.lat } : {}),
-    ...(geo.lng ? { lng: geo.lng } : {}),
+	locale: navigator.language,
+	timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   };
 
   const payload = {
@@ -105,18 +63,20 @@ export async function trackEvent(params: TrackEventParams) {
     referrer: document.referrer || null,
     organization_id: params.organizationId,
     property_id: params.propertyId || null,
+    lead_id: params.leadId || null,
     metadata: enrichedMetadata,
-    ...getUTMs(),
+    utm_source: attribution.utm_source,
+    utm_medium: attribution.utm_medium,
+    utm_campaign: attribution.utm_campaign,
     ...getDeviceInfo(),
   };
 
-  console.log('[Tracking] Sending event:', params.eventType, 'org:', params.organizationId, 'path:', payload.page_path);
-
   try {
     await publicSiteAPI.track(payload);
-    console.log('[Tracking] Event recorded successfully:', params.eventType);
-  } catch (e) {
-    console.error('[Tracking] Failed:', e);
+    return true;
+  } catch {
+    // Analytics must never interrupt the public site experience.
+    return false;
   }
 }
 

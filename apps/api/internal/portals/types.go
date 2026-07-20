@@ -1,6 +1,11 @@
 package portals
 
-import "errors"
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"strings"
+)
 
 const (
 	PortalGrupoOLX = "grupo_olx"
@@ -21,12 +26,38 @@ type Envelope[T any] struct {
 
 type GrupoOLXSettingsRequest struct {
 	IsActive              *bool          `json:"isActive"`
-	LeadWebhookSecret     *string        `json:"leadWebhookSecret"`
-	DefaultPipelineID     *string        `json:"defaultPipelineId"`
-	DefaultStageID        *string        `json:"defaultStageId"`
-	DefaultAssignedUserID *string        `json:"defaultAssignedUserId"`
-	DefaultRoundRobinID   *string        `json:"defaultRoundRobinId"`
+	LeadWebhookSecret     OptionalString `json:"leadWebhookSecret"`
+	DefaultPipelineID     OptionalString `json:"defaultPipelineId"`
+	DefaultStageID        OptionalString `json:"defaultStageId"`
+	DefaultAssignedUserID OptionalString `json:"defaultAssignedUserId"`
+	DefaultRoundRobinID   OptionalString `json:"defaultRoundRobinId"`
 	Settings              map[string]any `json:"settings"`
+}
+
+// OptionalString distinguishes an omitted field from an explicit null or empty
+// value, allowing settings to be cleared without overwriting untouched fields.
+type OptionalString struct {
+	Set   bool
+	Value *string
+}
+
+func (value *OptionalString) UnmarshalJSON(data []byte) error {
+	value.Set = true
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		value.Value = nil
+		return nil
+	}
+	var text string
+	if err := json.Unmarshal(data, &text); err != nil {
+		return err
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		value.Value = nil
+		return nil
+	}
+	value.Value = &text
+	return nil
 }
 
 type PortalPublicationRequest struct {

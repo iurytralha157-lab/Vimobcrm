@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useMemo, type ElementType } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import NextImage from 'next/image';
-import { useRouter, usePathname, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { useTheme } from 'next-themes';
+import { isBillingBlockedStatus } from '@/lib/billing-access';
 import {
   Sheet,
   SheetContent,
@@ -17,46 +19,27 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
+import { useLocationHash } from '@/hooks/use-location-hash';
 import { canUseFinancialModule } from '@/lib/financial-access';
 import { canManageOrganization } from '@/lib/access/organization';
 import {
   filterNavigationItems,
-  type NavigationAccessItem,
+  getNavigationLocationKey,
+  isNavigationPathActive,
 } from '@/lib/access/navigation';
+import { ChevronDown, ChevronRight, Menu } from 'lucide-react';
 import {
-  Menu,
-  LayoutDashboard,
-  Kanban,
-  Users,
-  Calendar,
-  Building2,
-  DollarSign,
-  CreditCard,
-  BarChart3,
-  ChevronDown,
-  ChevronRight,
-  Shuffle,
-  MessageSquare,
-  TrendingUp,
-  Receipt,
-  FileText,
-  Zap,
-  Globe,
-  Trophy,
-  Activity,
-  History,
-  Tags,
-  MapPin,
-  Settings,
-  Megaphone,
-  Plug,
-  Bot,
-  BellRing,
-} from 'lucide-react';
+  APP_BOTTOM_NAVIGATION_ITEMS,
+  APP_NAVIGATION_ITEMS,
+  BILLING_NAVIGATION_ITEM,
+  type AppNavigationItem,
+} from '@/config/navigation';
+import { getNavigationIcon } from './navigation-icons';
 
 const DEFAULT_BRAND_LOGO_DARK = "/images/logo-white.png";
 const DEFAULT_BRAND_LOGO_LIGHT = "/images/logo-black.png";
 const MOBILE_LOGO_WIDTH = 120;
+const MOBILE_LOGO_HEIGHT = 40;
 const SIDEBAR_BACKGROUND = "var(--app-sidebar)";
 const SIDEBAR_ICON_STROKE = 1.32;
 const SIDEBAR_CHEVRON_STROKE = 1.4;
@@ -64,113 +47,6 @@ const SIDEBAR_NAV_RESET =
   "border-0 shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0";
 const SIDEBAR_NAV_TEXT = "font-sans text-sm font-extralight leading-none tracking-wide";
 const SIDEBAR_NAV_CHILD_TEXT = "font-sans text-xs font-extralight leading-none tracking-wide";
-
-interface NavItem extends NavigationAccessItem {
-  icon: ElementType;
-  labelKey: string;
-  children?: NavItem[];
-}
-
-const allNavItems: NavItem[] = [
-  {
-    icon: LayoutDashboard,
-    labelKey: 'dashboard',
-    path: '/dashboard',
-    anyPermissions: ['dashboard_view', 'dashboard_site_view', 'dashboard_campaigns_view'],
-    children: [
-      { icon: LayoutDashboard, labelKey: 'dashboardGeneral', path: '/dashboard', permission: 'dashboard_view' },
-      { icon: Globe, labelKey: 'dashboardSite', path: '/dashboard/site', permission: 'dashboard_site_view', module: 'site' },
-      { icon: Megaphone, labelKey: 'dashboardCampaigns', path: '/dashboard/campaigns', permission: 'dashboard_campaigns_view' },
-    ],
-  },
-  { icon: Kanban, labelKey: 'pipelines', path: '/crm/pipelines', module: 'crm' },
-  { icon: BellRing, labelKey: 'attentionCenter', path: '/attention', module: 'crm', feature: 'ENABLE_ATTENTION_CENTER' },
-  { icon: MessageSquare, labelKey: 'conversations', path: '/crm/conversas', module: 'whatsapp' },
-  { icon: Users, labelKey: 'contacts', path: '/crm/contacts', module: 'crm' },
-  {
-    icon: Shuffle,
-    labelKey: 'crmManagement',
-    path: '/crm/management',
-    module: 'crm',
-    anyPermissions: ['team_manage', 'distribution_manage', 'pipeline_manage', 'tag_manage'],
-    children: [
-      { icon: Users, labelKey: 'managementTeams', path: '/crm/management?tab=teams', anyPermissions: ['team_manage'] },
-      { icon: Shuffle, labelKey: 'managementDistribution', path: '/crm/management?tab=distribution', permission: 'distribution_manage' },
-      { icon: Kanban, labelKey: 'managementPipelines', path: '/crm/management?tab=pipelines', permission: 'pipeline_manage' },
-      { icon: Tags, labelKey: 'managementTags', path: '/crm/management?tab=tags', permission: 'tag_manage' },
-    ],
-  },
-  {
-    icon: Building2,
-    labelKey: 'properties',
-    path: '/properties',
-    module: 'properties',
-    children: [
-      { icon: Building2, labelKey: 'propertiesAll', path: '/properties' },
-      { icon: Building2, labelKey: 'propertiesCondos', path: '/properties/condominiums' },
-      { icon: MapPin, labelKey: 'propertiesLocations', path: '/properties/locations' },
-      { icon: Users, labelKey: 'propertiesOwners', path: '/properties/owners' },
-    ],
-  },
-  { icon: Calendar, labelKey: 'schedule', path: '/agenda', module: 'agenda' },
-  {
-    icon: Zap,
-    labelKey: 'automations',
-    path: '/automations',
-    module: 'automations',
-    permission: 'automations_view',
-    children: [
-      { icon: Zap, labelKey: 'automationList', path: '/automations?tab=automations', permission: 'automations_view' },
-      { icon: FileText, labelKey: 'automationTemplates', path: '/automations?tab=templates', permission: 'automations_manage' },
-      { icon: Activity, labelKey: 'automationHistory', path: '/automations?tab=history', permission: 'automations_view' },
-    ],
-  },
-  {
-    icon: DollarSign,
-    labelKey: 'financial',
-    path: '/financeiro',
-    module: 'financial',
-    permission: 'financial_view',
-    children: [
-      { icon: TrendingUp, labelKey: 'financialDashboard', path: '/financeiro' },
-      { icon: Receipt, labelKey: 'entries', path: '/financeiro/contas' },
-      { icon: FileText, labelKey: 'contracts', path: '/financeiro/contratos' },
-      { icon: DollarSign, labelKey: 'commissions', path: '/financeiro/comissoes' },
-      { icon: BarChart3, labelKey: 'reports', path: '/financeiro/relatorios' },
-      { icon: BarChart3, labelKey: 'dre', path: '/financeiro/dre' },
-    ],
-  },
-  {
-    icon: Trophy,
-    labelKey: 'arena',
-    path: '/gamificacao',
-    module: 'gamification',
-    children: [
-      { icon: Trophy, labelKey: 'arenaOverview', path: '/gamificacao' },
-      { icon: BarChart3, labelKey: 'dashboard', path: '/gamificacao#dashboard' },
-      { icon: Zap, labelKey: 'arenaRanking', path: '/gamificacao#rankings' },
-      { icon: History, labelKey: 'history', path: '/gamificacao#history' },
-      { icon: Settings, labelKey: 'arenaSettings', path: '/gamificacao#config', permission: 'gamification_manage' },
-    ],
-  },
-];
-
-const bottomItems: NavItem[] = [
-  {
-    icon: Settings,
-    labelKey: 'settings',
-    path: '/settings',
-    children: [
-      { icon: Settings, labelKey: 'settingsAccount', path: '/settings?tab=account' },
-      { icon: Users, labelKey: 'settingsUsers', path: '/settings?tab=team', anyPermissions: ['users_manage', 'permissions_manage'] },
-      { icon: CreditCard, labelKey: 'settingsBilling', path: '/settings?tab=subscription', permission: 'settings_billing' },
-      { icon: Plug, labelKey: 'settingsIntegrations', path: '/settings?tab=integrations', anyPermissions: ['settings_integrations', 'whatsapp_manage', 'settings_ai'] },
-      { icon: Bot, labelKey: 'settingsAI', path: '/settings?tab=ai', permission: 'settings_ai', module: 'ai_agent' },
-      { icon: Building2, labelKey: 'settingsProperties', path: '/settings?tab=properties', permission: 'property_manage' },
-      { icon: Globe, labelKey: 'site', path: '/settings/site', permission: 'settings_site', module: 'site' },
-    ],
-  },
-];
 
 interface MobileSidebarProps {
   externalOpen?: boolean;
@@ -184,18 +60,24 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
   const isControlled = externalOpen !== undefined;
   const open = isControlled ? externalOpen : internalOpen;
   const setOpen = isControlled ? (v: boolean) => onExternalOpenChange?.(v) : setInternalOpen;
-  const [openMenus, setOpenMenus] = useState<string[]>([]);
-  const router = useRouter();
+  const [menuOpenOverrides, setMenuOpenOverrides] = useState<Record<string, boolean>>({});
   const pathname = usePathname() || '';
   const searchParams = useSearchParams();
+  const currentHash = useLocationHash();
+  const locationKey = getNavigationLocationKey(pathname, searchParams, currentHash);
+  const previousLocationKeyRef = useRef(locationKey);
   const { profile, isSuperAdmin, organization, tenantContext, userOrganizations } = useAuth();
   const { t } = useLanguage();
   const { hasModule } = useOrganizationModules();
   const { hasPermission } = useUserPermissions();
   const activeOrganizationId = organization?.id || profile?.organization_id;
   const activeOrganizationMembership = userOrganizations.find(org => org.organization_id === activeOrganizationId);
-  const activeMemberRole = activeOrganizationMembership?.member_role;
+  const fallbackMemberRole = tenantContext && tenantContext.organizationId === activeOrganizationId
+    ? tenantContext.memberRole
+    : undefined;
+  const activeMemberRole = activeOrganizationMembership?.member_role || fallbackMemberRole;
   const isTeamLeader = Boolean(tenantContext?.isTeamLeader);
+  const isBillingBlocked = !isSuperAdmin && isBillingBlockedStatus(organization?.subscription_status);
   const canAccessFinancialModule = canUseFinancialModule({
     id: activeOrganizationId,
     name: organization?.name || activeOrganizationMembership?.organization_name,
@@ -206,7 +88,9 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
   });
 
   const navItems = useMemo(() => {
-    return filterNavigationItems(allNavItems, {
+    if (isBillingBlocked) return [BILLING_NAVIGATION_ITEM];
+
+    return filterNavigationItems(APP_NAVIGATION_ITEMS, {
       canAccessAdminItems,
       canAccessFinancialModule,
       hasModule,
@@ -214,10 +98,12 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
       isSuperAdmin,
       isTeamLeader,
     });
-  }, [canAccessFinancialModule, hasModule, hasPermission, canAccessAdminItems, isTeamLeader, isSuperAdmin]);
+  }, [canAccessFinancialModule, hasModule, hasPermission, canAccessAdminItems, isBillingBlocked, isTeamLeader, isSuperAdmin]);
 
   const computedBottomItems = useMemo(() => {
-    return filterNavigationItems(bottomItems, {
+    if (isBillingBlocked) return [];
+
+    return filterNavigationItems(APP_BOTTOM_NAVIGATION_ITEMS, {
       canAccessAdminItems,
       canAccessFinancialModule,
       hasModule,
@@ -225,68 +111,59 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
       isSuperAdmin,
       isTeamLeader,
     });
-  }, [canAccessAdminItems, canAccessFinancialModule, hasModule, hasPermission, isSuperAdmin, isTeamLeader]);
+  }, [canAccessAdminItems, canAccessFinancialModule, hasModule, hasPermission, isBillingBlocked, isSuperAdmin, isTeamLeader]);
 
   const getLabel = (labelKey: string): string => {
     return (t.nav as Record<string, string>)[labelKey] || labelKey;
   };
 
-  const toggleMenu = (path: string) => {
-    setOpenMenus(prev =>
-      prev.includes(path)
-        ? prev.filter(p => p !== path)
-        : [...prev, path]
-    );
-  };
+  useEffect(() => {
+    if (previousLocationKeyRef.current === locationKey) return;
+    previousLocationKeyRef.current = locationKey;
 
-  const isMenuOpen = (path: string) => openMenus.includes(path);
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      setMenuOpenOverrides({});
+      if (isControlled) {
+        onExternalOpenChange?.(false);
+      } else {
+        setInternalOpen(false);
+      }
+    });
 
-  const parseNavPath = (path: string) => {
-    const [withoutHash, hash] = path.split('#');
-    const [basePath, queryString] = withoutHash.split('?');
-    const params = new URLSearchParams(queryString || '');
-    return {
-      basePath,
-      hash,
-      tab: params.get('tab')
+    return () => {
+      active = false;
     };
+  }, [isControlled, locationKey, onExternalOpenChange]);
+
+  const toggleMenu = (path: string, defaultOpen: boolean) => {
+    setMenuOpenOverrides((previous) => ({
+      ...previous,
+      [path]: !(previous[path] ?? defaultOpen),
+    }));
   };
 
-  const isPathActive = (path: string, options?: { parent?: boolean }) => {
-    const { basePath, hash, tab } = parseNavPath(path);
+  const isMenuOpen = (path: string, defaultOpen: boolean) =>
+    menuOpenOverrides[path] ?? defaultOpen;
 
-    if (pathname !== basePath && !pathname.startsWith(`${basePath}/`)) return false;
-    if (tab) {
-      const currentTab = searchParams.get('tab');
-      return currentTab === tab
-        || (!currentTab && basePath === '/crm/management' && tab === 'teams')
-        || (!currentTab && basePath === '/automations' && tab === 'automations')
-        || (!currentTab && basePath === '/settings' && tab === 'account');
-    }
-    if (hash) return false;
-    if (options?.parent) return true;
-    if (searchParams.get('tab') && pathname === basePath) return false;
-    return pathname === basePath;
-  };
+  const isPathActive = (path: string, options?: { parent?: boolean }) =>
+    isNavigationPathActive(path, pathname, searchParams, { ...options, currentHash });
 
-  const isActiveParent = (item: NavItem) => {
+  const isActiveParent = (item: AppNavigationItem) => {
     if (item.children) {
       return isPathActive(item.path, { parent: true }) || item.children.some(child => isPathActive(child.path));
     }
     return isPathActive(item.path, { parent: true });
   };
 
-  const handleNavigation = (path: string) => {
-    router.push(path);
-    setOpen(false);
-  };
   const brandLogoUrl = resolvedTheme === 'dark' ? DEFAULT_BRAND_LOGO_DARK : DEFAULT_BRAND_LOGO_LIGHT;
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       {!isControlled && (
         <SheetTrigger asChild>
-          <Button variant="ghost" size="icon" className="lg:hidden text-[var(--app-text-tertiary)] hover:text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)] rounded-[6px]">
+          <Button variant="ghost" size="icon" className="lg:hidden text-[var(--app-text-tertiary)] hover:text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)] rounded-[6px]" aria-label="Abrir menu principal">
             <Menu className="h-5 w-5" strokeWidth={SIDEBAR_CHEVRON_STROKE} />
           </Button>
         </SheetTrigger>
@@ -301,12 +178,13 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
 
         {/* Logo header */}
         <div className="p-4 pr-12">
-          <div className="relative h-7 w-[108px]">
+          <div className="flex h-7 w-[108px] items-center">
             <NextImage
               src={brandLogoUrl}
               alt="Logo"
-              fill
-              sizes={`${MOBILE_LOGO_WIDTH}px`}
+              width={MOBILE_LOGO_WIDTH}
+              height={MOBILE_LOGO_HEIGHT}
+              style={{ width: 'auto', height: 'auto', maxWidth: 108, maxHeight: 28 }}
               className="object-contain object-left"
               priority
               unoptimized
@@ -318,14 +196,18 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
         <nav className="flex-1 py-4 px-3 overflow-y-auto scrollbar-thin">
           <ul className="space-y-1">
             {navItems.map((item) => {
-              const isOpen = isMenuOpen(item.path) || isActiveParent(item);
-              const Icon = item.icon;
+              const isActive = isActiveParent(item);
+              const isOpen = isMenuOpen(item.path, isActive);
+              const Icon = getNavigationIcon(item.icon);
 
               if (item.children) {
                 return (
                   <li key={item.path}>
                     <button
-                      onClick={() => toggleMenu(item.path)}
+                      type="button"
+                      onClick={() => toggleMenu(item.path, isActive)}
+                      aria-expanded={isOpen}
+                      aria-current={isActiveParent(item) ? 'page' : undefined}
                       className={cn(
                         "w-full flex items-center justify-between px-3 py-3 rounded-[6px] transition-colors",
                         SIDEBAR_NAV_TEXT,
@@ -348,11 +230,13 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                     {isOpen && (
                       <ul className="ml-4 mt-1 space-y-1 pl-3">
                         {item.children.map((child) => {
-                          const ChildIcon = child.icon;
+                          const ChildIcon = getNavigationIcon(child.icon);
                           return (
                             <li key={child.path}>
-                              <button
-                                onClick={() => handleNavigation(child.path)}
+                              <Link
+                                href={child.path}
+                                onClick={() => setOpen(false)}
+                                aria-current={isPathActive(child.path) ? 'page' : undefined}
                                 className={cn(
                                   "w-full flex items-center gap-3 px-3 py-2.5 rounded-[6px] transition-colors",
                                   SIDEBAR_NAV_CHILD_TEXT,
@@ -364,7 +248,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                               >
                                 <ChildIcon className="h-4 w-4" strokeWidth={SIDEBAR_ICON_STROKE} />
                                 <span>{getLabel(child.labelKey)}</span>
-                              </button>
+                              </Link>
                             </li>
                           )
                         })}
@@ -376,8 +260,10 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
 
               return (
                 <li key={item.path}>
-                  <button
-                    onClick={() => handleNavigation(item.path)}
+                  <Link
+                    href={item.path}
+                    onClick={() => setOpen(false)}
+                    aria-current={isActiveParent(item) ? 'page' : undefined}
                     className={cn(
                       "w-full flex items-center gap-3 px-3 py-3 rounded-[6px] transition-colors",
                       SIDEBAR_NAV_TEXT,
@@ -389,7 +275,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                   >
                     <Icon className="h-5 w-5" strokeWidth={SIDEBAR_ICON_STROKE} />
                     <span>{getLabel(item.labelKey)}</span>
-                  </button>
+                  </Link>
                 </li>
               );
             })}
@@ -400,14 +286,18 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
         <div className="py-3 px-3">
           <ul className="space-y-1">
             {computedBottomItems.map(item => {
-              const Icon = item.icon;
-              const isOpen = isMenuOpen(item.path) || isActiveParent(item);
+              const Icon = getNavigationIcon(item.icon);
+              const isActive = isActiveParent(item);
+              const isOpen = isMenuOpen(item.path, isActive);
 
               if (item.children) {
                 return (
                   <li key={item.path}>
                     <button
-                      onClick={() => toggleMenu(item.path)}
+                      type="button"
+                      onClick={() => toggleMenu(item.path, isActive)}
+                      aria-expanded={isOpen}
+                      aria-current={isActiveParent(item) ? 'page' : undefined}
                       className={cn(
                         "w-full flex items-center justify-between px-3 py-3 rounded-[6px] transition-colors",
                         SIDEBAR_NAV_TEXT,
@@ -430,12 +320,14 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                     {isOpen && (
                       <ul className="ml-4 mt-1 space-y-1 pl-3">
                         {item.children.map((child) => {
-                          const ChildIcon = child.icon;
+                          const ChildIcon = getNavigationIcon(child.icon);
 
                           return (
                             <li key={child.path}>
-                              <button
-                                onClick={() => handleNavigation(child.path)}
+                              <Link
+                                href={child.path}
+                                onClick={() => setOpen(false)}
+                                aria-current={isPathActive(child.path) ? 'page' : undefined}
                                 className={cn(
                                   "w-full flex items-center gap-3 px-3 py-2.5 rounded-[6px] transition-colors",
                                   SIDEBAR_NAV_CHILD_TEXT,
@@ -447,7 +339,7 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
                               >
                                 <ChildIcon className="h-4 w-4" strokeWidth={SIDEBAR_ICON_STROKE} />
                                 <span>{getLabel(child.labelKey)}</span>
-                              </button>
+                              </Link>
                             </li>
                           );
                         })}
@@ -459,20 +351,22 @@ export function MobileSidebar({ externalOpen, onExternalOpenChange }: MobileSide
 
               return (
                 <li key={item.path}>
-                  <button
-                    onClick={() => handleNavigation(item.path)}
+                  <Link
+                    href={item.path}
+                    onClick={() => setOpen(false)}
+                    aria-current={isActiveParent(item) ? 'page' : undefined}
                     className={cn(
                       "w-full flex items-center gap-3 px-3 py-3 rounded-[6px] transition-colors",
                       SIDEBAR_NAV_TEXT,
                       SIDEBAR_NAV_RESET,
-                      pathname === item.path
+                      isActiveParent(item)
                         ? "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal"
                         : "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
                     )}
                   >
                     <Icon className="h-5 w-5" strokeWidth={SIDEBAR_ICON_STROKE} />
                     <span>{getLabel(item.labelKey)}</span>
-                  </button>
+                  </Link>
                 </li>
               );
             })}

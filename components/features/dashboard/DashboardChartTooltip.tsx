@@ -37,11 +37,11 @@ export function DashboardChartTooltip({
 
   return (
     <div className={cn(
-      "min-w-[140px] rounded-xl border-0 bg-[var(--app-surface-solid)] p-3 text-[#232323] shadow-[0_8px_20px_rgba(0,0,0,0.18)] animate-in fade-in zoom-in duration-200",
+      "min-w-[140px] rounded-xl border-0 bg-[var(--app-surface-solid)] p-3 text-[var(--app-text-primary)] shadow-[0_8px_20px_rgba(0,0,0,0.18)] animate-in fade-in zoom-in duration-200",
       className
     )}>
       {displayTitle && (
-        <p className="mb-2 text-[10px] font-light uppercase tracking-wider text-[#272727]">
+        <p className="mb-2 text-[10px] font-light uppercase tracking-wider text-[var(--app-text-secondary)]">
           {displayTitle}
         </p>
       )}
@@ -56,11 +56,11 @@ export function DashboardChartTooltip({
                   className="w-2 h-2 rounded-full"
                   style={{ backgroundColor: entry.color || entry.fill }}
                 />
-                <span className="py-0 pb-0 pt-[2px] text-[11px] font-light text-[#272727]/70">
+                <span className="py-0 pb-0 pt-[2px] text-[11px] font-light text-[var(--app-text-tertiary)]">
                   {nameFormatter ? nameFormatter(entryName, entry) : entryName}
                 </span>
               </div>
-              <span className="pt-[2px] text-[11px] font-medium tabular-nums text-[#232323]">
+              <span className="pt-[2px] text-[11px] font-medium tabular-nums text-[var(--app-text-primary)]">
                 {valueFormatter ? valueFormatter(entry.value, entry) : entry.value}
               </span>
             </div>
@@ -69,8 +69,8 @@ export function DashboardChartTooltip({
 
         {showTotal && payload.length > 1 && (
           <div className="mt-1.5 flex items-center justify-between gap-4 pt-1.5">
-            <span className="text-[11px] font-light uppercase tracking-wider text-[#272727]/70">Total</span>
-            <span className="text-[11px] font-medium tabular-nums text-[#232323]">
+            <span className="text-[11px] font-light uppercase tracking-wider text-[var(--app-text-tertiary)]">Total</span>
+            <span className="text-[11px] font-medium tabular-nums text-[var(--app-text-primary)]">
               {payload.reduce((acc, entry) => acc + (Number(entry.value) || 0), 0)}
             </span>
           </div>

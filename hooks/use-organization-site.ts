@@ -28,7 +28,7 @@ export function useCreateOrganizationSite() {
 
   return useMutation({
     mutationFn: async (data: Partial<OrganizationSite>) => {
-      if (!organization?.id) throw new Error('No organization')
+      if (!organization?.id) throw new Error('Organização não encontrada.')
       return siteAPI.createSite(data, organization.id)
     },
     onSuccess: async () => {
@@ -50,7 +50,7 @@ export function useUpdateOrganizationSite() {
 
   return useMutation({
     mutationFn: async (data: Partial<OrganizationSite>) => {
-      if (!organization?.id) throw new Error('No organization')
+      if (!organization?.id) throw new Error('Organização não encontrada.')
       return siteAPI.updateSite(data, organization.id)
     },
     onSuccess: () => {
@@ -70,7 +70,7 @@ export function useUploadSiteAsset() {
 
   return useMutation({
     mutationFn: async ({ file, type }: { file: File; type: SiteAssetType }) => {
-      if (!organization?.id) throw new Error('No organization')
+      if (!organization?.id) throw new Error('Organização não encontrada.')
 
       const maxSize = type === 'favicon' ? 1 : 10
       if (file.size > maxSize * 1024 * 1024) {

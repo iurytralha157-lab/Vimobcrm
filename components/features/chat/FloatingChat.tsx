@@ -36,6 +36,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { whatsappAPI } from "@/lib/api/whatsapp";
 import { getWhatsAppMessageInputState } from "@/lib/whatsapp-message-input";
 import { groupLatestWhatsAppReactions } from "@/lib/whatsapp-reactions";
+import { normalizeSearchText } from "@/lib/search-text";
 import { useHasPermission } from "@/hooks/use-organization-roles";
 
 const MAX_IMAGE_DIMENSION = 1600;
@@ -596,8 +597,8 @@ export function FloatingChat() {
   const filteredConversations = useMemo(() => {
     return conversations?.filter(conv => {
     if (!searchTerm) return true;
-    const search = searchTerm.toLowerCase();
-    return conv.contact_name?.toLowerCase().includes(search) || conv.contact_phone?.includes(search);
+    const search = normalizeSearchText(searchTerm);
+    return normalizeSearchText(conv.contact_name).includes(search) || conv.contact_phone?.includes(search);
   });
   }, [conversations, searchTerm]);
 

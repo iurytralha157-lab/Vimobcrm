@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
@@ -105,6 +106,14 @@ export function TeamTab() {
     (!requiresPropertyTransfer || !!transferPropertiesToUserId);
   const pendingInvitations = invitations.filter((invitation) => !invitation.used_at);
 
+  useEffect(() => {
+    if (!canManageUsers) return;
+
+    const handleMobileCreate = () => setUserDialogOpen(true);
+    window.addEventListener('vimob:mobile-create-user', handleMobileCreate);
+    return () => window.removeEventListener('vimob:mobile-create-user', handleMobileCreate);
+  }, [canManageUsers]);
+
   // Helper para obter a função customizada de um usuário
   const handleToggleUserActive = async (userId: string, currentValue: boolean) => {
     await updateUser.mutateAsync({ id: userId, is_active: !currentValue });
@@ -195,7 +204,10 @@ export function TeamTab() {
                 </SheetTrigger>
                 <SheetContent data-tour="team-invite-dialog" side="right" className="w-[90%] sm:w-[650px] sm:max-w-[650px] p-6 flex flex-col overflow-y-auto">
                   <SheetHeader>
-                  <SheetTitle>Convidar usuário</SheetTitle>
+                    <SheetTitle>Convidar usuário</SheetTitle>
+                    <SheetDescription className="sr-only">
+                      Envie um convite para adicionar um usuário à organização.
+                    </SheetDescription>
                   </SheetHeader>
                   <div className="space-y-4 mt-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

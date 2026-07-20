@@ -13,8 +13,9 @@ import (
 )
 
 type Handler struct {
-	repo      Repository
-	publisher realtime.Publisher
+	repo             Repository
+	publisher        realtime.Publisher
+	moveStageLimiter *moveStageRateLimiter
 }
 
 func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
@@ -22,7 +23,7 @@ func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
 	if len(publishers) > 0 && publishers[0] != nil {
 		publisher = publishers[0]
 	}
-	return Handler{repo: repo, publisher: publisher}
+	return Handler{repo: repo, publisher: publisher, moveStageLimiter: newMoveStageRateLimiter()}
 }
 
 func (handler Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -177,6 +178,11 @@ func (handler Handler) MoveStage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defer r.Body.Close()
+
+	if !handler.allowMoveStageRequest(tenantContext) {
+		httpserver.WriteError(w, r, http.StatusTooManyRequests, "lead_move_rate_limited", "Muitas movimentacoes em sequencia. Aguarde um instante e tente novamente.")
+		return
+	}
 
 	var request MoveStageRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
@@ -373,6 +379,8 @@ func writeLeadError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusConflict, "tag_already_exists", "Tag is already attached to this lead.")
 	case errors.Is(err, ErrLeadAlreadyExists):
 		httpserver.WriteError(w, r, http.StatusConflict, "lead_already_exists", "Atencao: lead nao criado, pois ja esta cadastrado e atribuido a outro responsavel. Entre em contato com o administrador.")
+	case errors.Is(err, ErrLeadPhoneConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_phone_conflict", "Este telefone ja esta cadastrado em outro lead.")
 	case errors.Is(err, ErrLeadPropertyUnavailable):
 		httpserver.WriteError(w, r, http.StatusConflict, "lead_property_unavailable", leadErrorMessage(err, ErrLeadPropertyUnavailable))
 	case errors.Is(err, ErrInvalidReference):

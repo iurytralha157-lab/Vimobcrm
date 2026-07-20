@@ -552,7 +552,7 @@ export default function Contacts() {
 
   return (
     <AppLayout title="Contatos">
-      <div className="space-y-6 animate-in relative">
+      <div className="relative min-w-0 space-y-6 animate-in">
         {isMobile ? (
           <div className="app-toolbar flex flex-col gap-2 p-2">
             <div className="flex min-w-0 items-center gap-2">
@@ -763,7 +763,7 @@ export default function Contacts() {
           </div>
         )}
 
-        <Card data-tour="contacts-list" className="app-card contacts-table-card relative overflow-hidden">
+        <Card data-tour="contacts-list" className="app-card contacts-table-card relative min-w-0 overflow-hidden">
           {isContactsTransitioning && (
             <div className="absolute inset-0 z-30 flex items-center justify-center bg-[var(--app-bg)]/70 backdrop-blur-[2px]">
               <div className="flex items-center gap-2 rounded-[8px] bg-[var(--app-surface-solid)] px-4 py-3 text-xs font-extralight tracking-wide text-[var(--app-text-primary)] shadow-[0_18px_40px_rgb(0_0_0_/_0.18)]">
@@ -828,7 +828,7 @@ export default function Contacts() {
               )}
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="min-w-0">
               {showContactsErrorState ? (
                 <ContactsErrorState
                   message={contactsErrorMessage}
@@ -847,11 +847,11 @@ export default function Contacts() {
                   onClearFilters={handleClearFilters}
                 />
               ) : (
-                <Table className="contacts-table">
+                <Table className="contacts-table min-w-[760px] table-fixed">
                   <TableHeader>
                     <TableRow className="border-b border-[var(--app-border-strong)] bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-soft)]">
                       {canDeleteLeads && (
-                        <TableHead className="w-10">
+                        <TableHead className="w-12">
                           <Checkbox
                             data-tour="contacts-select-all"
                             checked={selectedIds.size === contacts.length && contacts.length > 0}
@@ -865,16 +865,21 @@ export default function Contacts() {
                         </div>
                       </TableHead>
                       <TableHead>Contato</TableHead>
-                      <TableHead>{lostLeadsView ? "Motivo da perda" : "Status"}</TableHead>
-                      <TableHead>Pipeline / Estágio</TableHead>
+                      <TableHead className="w-24 xl:w-28">
+                        {lostLeadsView ? "Motivo da perda" : "Status"}
+                      </TableHead>
+                      <TableHead className="w-36 xl:w-44">Pipeline / Estágio</TableHead>
                       <TableHead className="w-14 text-center">Resp.</TableHead>
-                      <TableHead className="hidden 2xl:table-cell">Tags</TableHead>
-                      <TableHead className="cursor-pointer hover:bg-[var(--app-surface-hover)]" onClick={() => handleSort("created_at")}>
+                      <TableHead className="hidden 2xl:table-cell 2xl:w-40">Tags</TableHead>
+                      <TableHead
+                        className="w-24 cursor-pointer hover:bg-[var(--app-surface-hover)] xl:w-40"
+                        onClick={() => handleSort("created_at")}
+                      >
                         <div className="flex items-center">
                           Criado em <SortIcon column="created_at" sortBy={sortBy} sortDir={sortDir} />
                         </div>
                       </TableHead>
-                      <TableHead className="w-10"></TableHead>
+                      <TableHead className="contacts-actions-cell w-12" aria-label="Ações"></TableHead>
                     </TableRow>
                   </TableHeader>
 
@@ -897,6 +902,7 @@ export default function Contacts() {
                             isWon &&
                               "bg-[var(--lead-status-won-card)] hover:bg-[var(--lead-status-won-card-hover)]",
                           )}
+                          data-deal-status={status}
                           onClick={() => openLeadDetails(contact.id)}
                         >
                           {canDeleteLeads && (
@@ -909,20 +915,25 @@ export default function Contacts() {
                           )}
 
                           <TableCell>
-                            <div className="flex items-center gap-3">
-                              <Avatar className="h-9 w-9">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <Avatar className="h-9 w-9 shrink-0">
                                 <AvatarImage src={contact.whatsapp_avatar_url || undefined} alt={contact.name} />
                                 <AvatarFallback className="bg-primary text-primary-foreground text-xs">
                                   {getInitials(contact.name)}
                                 </AvatarFallback>
                               </Avatar>
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <p className="font-medium text-foreground">{contact.name}</p>
+                              <div className="min-w-0">
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <p className="truncate font-medium text-foreground" title={contact.name}>
+                                    {contact.name}
+                                  </p>
                                   <ReentryBadge count={contact.reentry_count} lastEntryAt={contact.last_entry_at} />
                                 </div>
                                 {contact.source && (
-                                  <p className="text-xs text-muted-foreground">
+                                  <p
+                                    className="truncate text-xs text-muted-foreground"
+                                    title={sourceLabels[contact.source] || contact.source}
+                                  >
                                     {sourceLabels[contact.source] || contact.source}
                                   </p>
                                 )}
@@ -931,17 +942,21 @@ export default function Contacts() {
                           </TableCell>
 
                           <TableCell>
-                            <div className="space-y-1">
+                            <div className="min-w-0 space-y-1">
                               {contact.phone && (
-                                <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                                  <Phone className="h-3 w-3" />
-                                  {contact.phone}
+                                <div className="flex min-w-0 items-center gap-1 text-sm text-muted-foreground">
+                                  <Phone className="h-3 w-3 shrink-0" />
+                                  <span className="truncate" title={contact.phone}>
+                                    {contact.phone}
+                                  </span>
                                 </div>
                               )}
                               {contact.email && (
-                                <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                                  <Mail className="h-3 w-3" />
-                                  {contact.email}
+                                <div className="flex min-w-0 items-center gap-1 text-sm text-muted-foreground">
+                                  <Mail className="h-3 w-3 shrink-0" />
+                                  <span className="truncate" title={contact.email}>
+                                    {contact.email}
+                                  </span>
                                 </div>
                               )}
                             </div>
@@ -1023,11 +1038,19 @@ export default function Contacts() {
 
                           <TableCell onClick={() => openLeadDetails(contact.id)}>
                             <p className="whitespace-nowrap text-sm text-[var(--app-text-primary)]">
-                              {format(new Date(contact.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+                              <span className="xl:hidden">
+                                {format(new Date(contact.created_at), "dd/MM/yy", { locale: ptBR })}
+                              </span>
+                              <span className="hidden xl:inline">
+                                {format(new Date(contact.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+                              </span>
                             </p>
                           </TableCell>
 
-                          <TableCell onClick={(e) => e.stopPropagation()}>
+                          <TableCell
+                            className="contacts-actions-cell w-12 px-2"
+                            onClick={(e) => e.stopPropagation()}
+                          >
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button variant="ghost" size="icon" className="h-8 w-8">

@@ -17,6 +17,8 @@ import { SetupGuideDialog, SetupGuideTour } from '@/components/features/setup-gu
 import { usePushNotifications } from '@/hooks/use-push-notifications';
 import { usePhoneReminder } from '@/hooks/use-phone-reminder';
 import { useWhatsAppSound } from '@/hooks/use-whatsapp-sound';
+import { useAuditFeed } from '@/hooks/use-audit-feed';
+import { useUserActivitySession } from '@/hooks/use-user-activity-session';
 import { useSystemSettings } from '@/hooks/use-system-settings';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
@@ -67,6 +69,8 @@ function AppLayoutContent({ children, title, disableMainScroll = false, borderle
   // Daily reminder for users without phone number
   usePhoneReminder();
   useWhatsAppSound();
+  useUserActivitySession({ currentPageTitle: title });
+  useAuditFeed();
 
   return (
     <div className={cn("app-shell h-screen flex flex-col w-full overflow-hidden pt-[env(safe-area-inset-top)]", borderless && "app-layout-borderless")}>
@@ -132,7 +136,6 @@ export function AppLayout({ children, title, disableMainScroll = false, borderle
   } = useAuth();
   const { isLoading: modulesLoading } = useOrganizationModules();
   const { isLoading: permissionsLoading } = useUserPermissions();
-  const { isLoading: systemSettingsLoading } = useSystemSettings();
   const [initialShellReady, setInitialShellReady] = useState(hasCompletedInitialAppShellBoot);
   const router = useRouter();
   const pathname = usePathname();
@@ -148,8 +151,7 @@ export function AppLayout({ children, title, disableMainScroll = false, borderle
     allowRender &&
     hasSidebarTenantContext &&
     !modulesLoading &&
-    !permissionsLoading &&
-    !systemSettingsLoading;
+    !permissionsLoading;
 
   useEffect(() => {
     if (allowRender || loading || !authInitialized || !organizationsLoaded || isInitializingOrg) return;

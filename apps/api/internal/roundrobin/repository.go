@@ -29,6 +29,15 @@ type queryer interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }
 
+func setAuditActor(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context) error {
+	userID := strings.TrimSpace(tenantContext.UserID)
+	if userID == "" {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `select set_config('app.current_user_id', $1, true)`, userID)
+	return err
+}
+
 type roundRobinState struct {
 	ID         string
 	PipelineID *string
@@ -224,6 +233,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		return RoundRobin{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return RoundRobin{}, err
+	}
 
 	if err := repo.validateDestination(ctx, tx, tenantContext.OrganizationID, input.TargetPipelineID, input.TargetStageID); err != nil {
 		return RoundRobin{}, err
@@ -294,6 +306,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return RoundRobin{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return RoundRobin{}, err
+	}
 
 	if err := repo.ensureRoundRobinMutable(ctx, tx, tenantContext, roundRobinID); err != nil {
 		return RoundRobin{}, err
@@ -437,6 +452,9 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return err
+	}
 
 	if _, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return err
@@ -490,10 +508,19 @@ func (repo Repository) CreateRule(ctx context.Context, tenantContext tenant.Cont
 		return Rule{}, tenant.ErrOrganizationAccessDenied
 	}
 
-	if err := repo.ensureRoundRobinMutable(ctx, repo.db.Pool(), tenantContext, input.RoundRobinID); err != nil {
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
 		return Rule{}, err
 	}
-	if err := repo.checkConditionConflicts(ctx, repo.db.Pool(), tenantContext.OrganizationID, &input.RoundRobinID, []ruleInput{{
+	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return Rule{}, err
+	}
+
+	if err := repo.ensureRoundRobinMutable(ctx, tx, tenantContext, input.RoundRobinID); err != nil {
+		return Rule{}, err
+	}
+	if err := repo.checkConditionConflicts(ctx, tx, tenantContext.OrganizationID, &input.RoundRobinID, []ruleInput{{
 		MatchType:  input.MatchType,
 		MatchValue: input.MatchValue,
 		Match:      input.Match,
@@ -504,7 +531,7 @@ func (repo Repository) CreateRule(ctx context.Context, tenantContext tenant.Cont
 	}
 
 	var ruleID string
-	err := repo.db.Pool().QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		insert into public.round_robin_rules (
 			organization_id,
 			round_robin_id,
@@ -533,7 +560,10 @@ func (repo Repository) CreateRule(ctx context.Context, tenantContext tenant.Cont
 		return Rule{}, err
 	}
 
-	if err := repo.syncMetaFormConfigLinks(ctx, repo.db.Pool(), tenantContext.OrganizationID, input.RoundRobinID); err != nil {
+	if err := repo.syncMetaFormConfigLinks(ctx, tx, tenantContext.OrganizationID, input.RoundRobinID); err != nil {
+		return Rule{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return Rule{}, err
 	}
 
@@ -552,9 +582,6 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 
 	current, err := repo.getRule(ctx, tenantContext.OrganizationID, ruleID)
 	if err != nil {
-		return Rule{}, err
-	}
-	if err := repo.ensureRoundRobinMutable(ctx, repo.db.Pool(), tenantContext, current.RoundRobinID); err != nil {
 		return Rule{}, err
 	}
 
@@ -580,7 +607,19 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 		match = buildRuleMatch(matchType, splitValues(matchValue))
 	}
 
-	if err := repo.checkConditionConflicts(ctx, repo.db.Pool(), tenantContext.OrganizationID, &current.RoundRobinID, []ruleInput{{
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return Rule{}, err
+	}
+	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return Rule{}, err
+	}
+
+	if err := repo.ensureRoundRobinMutable(ctx, tx, tenantContext, current.RoundRobinID); err != nil {
+		return Rule{}, err
+	}
+	if err := repo.checkConditionConflicts(ctx, tx, tenantContext.OrganizationID, &current.RoundRobinID, []ruleInput{{
 		MatchType:  matchType,
 		MatchValue: matchValue,
 		Match:      match,
@@ -614,7 +653,7 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 		setClauses = append(setClauses, fmt.Sprintf("is_active = coalesce($%d::boolean, false)", len(args)))
 	}
 
-	commandTag, err := repo.db.Pool().Exec(ctx, `
+	commandTag, err := tx.Exec(ctx, `
 		update public.round_robin_rules
 		set `+strings.Join(setClauses, ", ")+`
 		where organization_id = $1::uuid
@@ -627,7 +666,10 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 		return Rule{}, ErrRuleNotFound
 	}
 
-	if err := repo.syncMetaFormConfigLinks(ctx, repo.db.Pool(), tenantContext.OrganizationID, current.RoundRobinID); err != nil {
+	if err := repo.syncMetaFormConfigLinks(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID); err != nil {
+		return Rule{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return Rule{}, err
 	}
 
@@ -648,11 +690,21 @@ func (repo Repository) DeleteRule(ctx context.Context, tenantContext tenant.Cont
 	if err != nil {
 		return err
 	}
-	if err := repo.ensureRoundRobinMutable(ctx, repo.db.Pool(), tenantContext, current.RoundRobinID); err != nil {
+
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return err
 	}
 
-	commandTag, err := repo.db.Pool().Exec(ctx, `
+	if err := repo.ensureRoundRobinMutable(ctx, tx, tenantContext, current.RoundRobinID); err != nil {
+		return err
+	}
+
+	commandTag, err := tx.Exec(ctx, `
 		delete from public.round_robin_rules
 		where organization_id = $1::uuid
 		  and id = $2::uuid
@@ -663,10 +715,10 @@ func (repo Repository) DeleteRule(ctx context.Context, tenantContext tenant.Cont
 	if commandTag.RowsAffected() == 0 {
 		return ErrRuleNotFound
 	}
-	if err := repo.syncMetaFormConfigLinks(ctx, repo.db.Pool(), tenantContext.OrganizationID, current.RoundRobinID); err != nil {
+	if err := repo.syncMetaFormConfigLinks(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID); err != nil {
 		return err
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (repo Repository) AddMember(ctx context.Context, tenantContext tenant.Context, roundRobinID string, input memberMutationInput) ([]Member, error) {
@@ -684,6 +736,9 @@ func (repo Repository) AddMember(ctx context.Context, tenantContext tenant.Conte
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return nil, err
+	}
 
 	if err := repo.ensureRoundRobinMutable(ctx, tx, tenantContext, roundRobinID); err != nil {
 		return nil, err
@@ -729,7 +784,16 @@ func (repo Repository) UpdateMember(ctx context.Context, tenantContext tenant.Co
 	if !ok {
 		return Member{}, ErrMemberNotFound
 	}
-	if err := repo.ensureRoundRobinMemberMutable(ctx, repo.db.Pool(), tenantContext, memberID); err != nil {
+
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return Member{}, err
+	}
+	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return Member{}, err
+	}
+	if err := repo.ensureRoundRobinMemberMutable(ctx, tx, tenantContext, memberID); err != nil {
 		return Member{}, err
 	}
 
@@ -748,7 +812,7 @@ func (repo Repository) UpdateMember(ctx context.Context, tenantContext tenant.Co
 		setClauses = append(setClauses, fmt.Sprintf("is_active = coalesce($%d::boolean, false)", len(args)))
 	}
 
-	commandTag, err := repo.db.Pool().Exec(ctx, `
+	commandTag, err := tx.Exec(ctx, `
 		update public.round_robin_members
 		set `+strings.Join(setClauses, ", ")+`
 		where organization_id = $1::uuid
@@ -759,6 +823,9 @@ func (repo Repository) UpdateMember(ctx context.Context, tenantContext tenant.Co
 	}
 	if commandTag.RowsAffected() == 0 {
 		return Member{}, ErrMemberNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Member{}, err
 	}
 
 	return repo.getMember(ctx, tenantContext.OrganizationID, memberID)
@@ -773,11 +840,20 @@ func (repo Repository) DeleteMember(ctx context.Context, tenantContext tenant.Co
 	if !ok {
 		return ErrMemberNotFound
 	}
-	if err := repo.ensureRoundRobinMemberMutable(ctx, repo.db.Pool(), tenantContext, memberID); err != nil {
+
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
+		return err
+	}
+	if err := repo.ensureRoundRobinMemberMutable(ctx, tx, tenantContext, memberID); err != nil {
 		return err
 	}
 
-	commandTag, err := repo.db.Pool().Exec(ctx, `
+	commandTag, err := tx.Exec(ctx, `
 		delete from public.round_robin_members
 		where organization_id = $1::uuid
 		  and id = $2::uuid
@@ -788,7 +864,7 @@ func (repo Repository) DeleteMember(ctx context.Context, tenantContext tenant.Co
 	if commandTag.RowsAffected() == 0 {
 		return ErrMemberNotFound
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (repo Repository) listRules(ctx context.Context, organizationID string, roundRobinID *string) ([]Rule, error) {
@@ -1312,7 +1388,7 @@ func (repo Repository) checkConditionConflicts(ctx context.Context, q queryer, o
 		matchValue, _ := payload["match_value"].(string)
 		for _, value := range splitValues(matchValue) {
 			if _, exists := wanted[matchType+"::"+value]; exists {
-				return fmt.Errorf("%w: value already used in queue %q", ErrConditionConflict, queueName)
+				return ConditionConflictError{QueueName: queueName}
 			}
 		}
 	}

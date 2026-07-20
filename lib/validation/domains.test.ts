@@ -46,6 +46,8 @@ import {
   reportErrorEventInputSchema,
   searchFilterColumnsSchema,
   siteReorderInputSchema,
+  userActivityPresenceSessionInputSchema,
+  userActivitySessionMutationInputSchema,
   webhookCreateInputSchema,
 } from './auxiliary'
 
@@ -502,6 +504,22 @@ test('webhook de saida exige URL valida', () => {
 test('telemetria limita status HTTP e exige mensagem', () => {
   assert.equal(reportErrorEventInputSchema.safeParse({ message: 'Falha', httpStatus: 99 }).success, false)
   assert.equal(reportErrorEventInputSchema.safeParse({ message: 'Falha', httpStatus: 500 }).success, true)
+})
+
+test('presenca separa dados da sessao das opcoes do realtime', () => {
+  const input = {
+    organizationId: ID,
+    userId: ID,
+    sessionId: 'session_12345678',
+    status: 'online' as const,
+    heartbeatMs: 60_000,
+    getPayload: () => ({ status: 'online' as const }),
+    onError: () => undefined,
+  }
+
+  assert.equal(userActivitySessionMutationInputSchema.safeParse(input).success, false)
+  const parsed = userActivityPresenceSessionInputSchema.parse(input)
+  assert.deepEqual(Object.keys(parsed).sort(), ['organizationId', 'sessionId', 'status', 'userId'])
 })
 
 test('filtros de busca aceitam apenas nomes de coluna seguros', () => {

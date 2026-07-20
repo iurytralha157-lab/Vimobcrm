@@ -56,7 +56,7 @@ func (repo Repository) PublicSystemSettings(ctx context.Context) (map[string]any
 			'updated_at', updated_at::text
 		)
 		from public.system_settings
-		order by updated_at desc nulls last, created_at desc nulls last
+		where key = 'global'
 		limit 1
 	`).Scan(&raw)
 	if errors.Is(err, pgx.ErrNoRows) || isUndefinedTableError(err) {
@@ -466,19 +466,33 @@ func (repo Repository) UpdateSetupGuideProgress(ctx context.Context, tenantConte
 	return SetupGuideProgress{CompletedSteps: completed, Skipped: skipped}, nil
 }
 
-func (repo Repository) SavePushToken(ctx context.Context, tenantContext tenant.Context, request PushTokenRequest) error {
+func (repo Repository) SavePushToken(ctx context.Context, tenantContext tenant.Context, request PushTokenRequest) (PushTokenResult, error) {
 	if tenantContext.UserID == "" || tenantContext.OrganizationID == "" {
-		return ErrInvalidInput
+		return PushTokenResult{}, ErrInvalidInput
 	}
 	endpoint := strings.TrimSpace(request.Endpoint)
 	if endpoint == "" {
-		return ErrInvalidInput
+		return PushTokenResult{}, ErrInvalidInput
 	}
 	token := legacyPushTokenValue(endpoint)
 	platform := legacyPushPlatform(endpoint)
 	deviceInfo, err := legacyPushDeviceInfo(endpoint, request)
 	if err != nil {
-		return err
+		return PushTokenResult{}, err
+	}
+	if request.SyncOnly != nil && *request.SyncOnly {
+		dead, err := repo.hasInactivePushToken(ctx, tenantContext.OrganizationID, tenantContext.UserID, endpoint)
+		if isUndefinedTableError(err) {
+			return PushTokenResult{OK: true, Active: false}, nil
+		}
+		if isUndefinedColumnError(err) {
+			dead = false
+		} else if err != nil {
+			return PushTokenResult{}, err
+		}
+		if dead {
+			return PushTokenResult{OK: true, Active: false, RequiresResubscribe: true}, nil
+		}
 	}
 
 	result, err := repo.db.Pool().Exec(ctx, `
@@ -496,16 +510,16 @@ func (repo Repository) SavePushToken(ctx context.Context, tenantContext tenant.C
 	  and endpoint = $3
 	`, tenantContext.OrganizationID, tenantContext.UserID, endpoint, token, platform, string(deviceInfo), cleanStringPointer(request.P256DH), cleanStringPointer(request.Auth), cleanStringPointer(request.UserAgent))
 	if isUndefinedTableError(err) {
-		return nil
+		return PushTokenResult{OK: true, Active: false}, nil
 	}
 	if isUndefinedColumnError(err) {
 		return repo.saveLegacyPushToken(ctx, tenantContext, endpoint, request)
 	}
 	if err != nil {
-		return err
+		return PushTokenResult{}, err
 	}
 	if result.RowsAffected() > 0 {
-		return nil
+		return PushTokenResult{OK: true, Active: true}, nil
 	}
 
 	_, err = repo.db.Pool().Exec(ctx, `
@@ -542,7 +556,25 @@ func (repo Repository) SavePushToken(ctx context.Context, tenantContext tenant.C
 	if isUndefinedColumnError(err) {
 		return repo.saveLegacyPushToken(ctx, tenantContext, endpoint, request)
 	}
-	return err
+	if err != nil {
+		return PushTokenResult{}, err
+	}
+	return PushTokenResult{OK: true, Active: true}, nil
+}
+
+func (repo Repository) hasInactivePushToken(ctx context.Context, organizationID string, userID string, endpoint string) (bool, error) {
+	var exists bool
+	err := repo.db.Pool().QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.push_tokens
+			where organization_id = $1::uuid
+			  and user_id = $2::uuid
+			  and endpoint = $3
+			  and coalesce(is_active, false) = false
+		)
+	`, organizationID, userID, endpoint).Scan(&exists)
+	return exists, err
 }
 
 func (repo Repository) DeactivatePushToken(ctx context.Context, tenantContext tenant.Context, request DeactivatePushTokenRequest) error {
@@ -577,12 +609,12 @@ func (repo Repository) DeactivatePushToken(ctx context.Context, tenantContext te
 	return err
 }
 
-func (repo Repository) saveLegacyPushToken(ctx context.Context, tenantContext tenant.Context, endpoint string, request PushTokenRequest) error {
+func (repo Repository) saveLegacyPushToken(ctx context.Context, tenantContext tenant.Context, endpoint string, request PushTokenRequest) (PushTokenResult, error) {
 	token := legacyPushTokenValue(endpoint)
 	platform := legacyPushPlatform(endpoint)
 	deviceInfo, err := legacyPushDeviceInfo(endpoint, request)
 	if err != nil {
-		return err
+		return PushTokenResult{}, err
 	}
 
 	result, err := repo.db.Pool().Exec(ctx, `
@@ -596,13 +628,13 @@ func (repo Repository) saveLegacyPushToken(ctx context.Context, tenantContext te
 		  and token = $3
 	`, tenantContext.OrganizationID, tenantContext.UserID, token, platform, string(deviceInfo))
 	if isUndefinedTableError(err) {
-		return nil
+		return PushTokenResult{OK: true, Active: false}, nil
 	}
 	if err != nil {
-		return err
+		return PushTokenResult{}, err
 	}
 	if result.RowsAffected() > 0 {
-		return nil
+		return PushTokenResult{OK: true, Active: true}, nil
 	}
 
 	_, err = repo.db.Pool().Exec(ctx, `
@@ -628,7 +660,10 @@ func (repo Repository) saveLegacyPushToken(ctx context.Context, tenantContext te
 			  and token = $3
 		`, tenantContext.OrganizationID, tenantContext.UserID, token, platform, string(deviceInfo))
 	}
-	return err
+	if err != nil {
+		return PushTokenResult{}, err
+	}
+	return PushTokenResult{OK: true, Active: true}, nil
 }
 
 func (repo Repository) deactivateLegacyPushToken(ctx context.Context, userID string, endpoint *string) error {
@@ -1011,31 +1046,44 @@ func cleanStringPointer(value *string) *string {
 
 func sanitizePublicSystemSettingsValue(value map[string]any) map[string]any {
 	allowed := map[string]bool{
-		"logo_url_light":             true,
-		"logo_url_dark":              true,
-		"favicon_url_light":          true,
-		"favicon_url_dark":           true,
-		"pwa_icon_url":               true,
-		"login_bg_url":               true,
-		"default_whatsapp":           true,
-		"contact_whatsapp":           true,
-		"logo_width":                 true,
-		"logo_height":                true,
-		"maintenance_mode":           true,
-		"maintenance_message":        true,
-		"feature_flags":              true,
-		"notification_instance_name": true,
-		"logo_principal":             true,
-		"logo_secundaria":            true,
-		"favicon":                    true,
-		"imagens_padrao":             true,
-		"comunicados":                true,
-		"maintenance":                true,
-		"force_update":               true,
+		"logo_url_light":      true,
+		"logo_url_dark":       true,
+		"favicon_url_light":   true,
+		"favicon_url_dark":    true,
+		"pwa_icon_url":        true,
+		"login_bg_url":        true,
+		"default_whatsapp":    true,
+		"contact_whatsapp":    true,
+		"logo_width":          true,
+		"logo_height":         true,
+		"maintenance_mode":    true,
+		"maintenance_message": true,
+		"feature_flags":       true,
+		"logo_principal":      true,
+		"logo_secundaria":     true,
+		"favicon":             true,
+		"imagens_padrao":      true,
+		"comunicados":         true,
+		"force_update":        true,
 	}
 
 	sanitized := map[string]any{}
 	for key, item := range value {
+		if key == "maintenance" {
+			maintenance, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			publicMaintenance := map[string]any{}
+			if enabled, exists := maintenance["enabled"]; exists {
+				publicMaintenance["enabled"] = enabled
+			}
+			if message, exists := maintenance["message"]; exists {
+				publicMaintenance["message"] = message
+			}
+			sanitized[key] = publicMaintenance
+			continue
+		}
 		if allowed[key] {
 			sanitized[key] = item
 		}

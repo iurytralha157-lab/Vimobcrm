@@ -81,7 +81,7 @@ export function useDRE({ startDate, endDate, regime, compareWithPrevious = false
   return useQuery({
     queryKey: ['dre', organizationId, startDate.toISOString(), endDate.toISOString(), regime, compareWithPrevious],
     queryFn: async (): Promise<DREData> => {
-      if (!organizationId) throw new Error('No organization');
+      if (!organizationId) throw new Error('Organização não encontrada.');
 
       const monthsDiff = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 30));
       const prevStart = subMonths(startDate, monthsDiff || 1);

@@ -22,7 +22,7 @@ insert into auth.users (
 ) values (
   '00000000-0000-0000-0000-000000000000', 'b1000000-0000-4000-8000-000000000001',
   'authenticated', 'authenticated', 'automation-owner@example.test',
-  crypt('test-password', gen_salt('bf')), now(),
+  crypt('test-password', gen_salt('bf', 4)), now(),
   '{"provider":"email","providers":["email"]}', '{}', now(), now(), '', '', '', ''
 );
 
@@ -30,10 +30,19 @@ insert into public.organizations (id, name, slug, is_active)
 values ('b2000000-0000-4000-8000-000000000001', 'Automation Runtime Test', 'automation-runtime-test', true);
 
 insert into public.users (id, organization_id, name, email, role, is_active)
-values ('b1000000-0000-4000-8000-000000000001', 'b2000000-0000-4000-8000-000000000001', 'Automation Owner', 'automation-owner@example.test', 'admin', true);
+values ('b1000000-0000-4000-8000-000000000001', 'b2000000-0000-4000-8000-000000000001', 'Automation Owner', 'automation-owner@example.test', 'admin', true)
+on conflict (id) do update
+set organization_id = excluded.organization_id,
+    name = excluded.name,
+    email = excluded.email,
+    role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.organization_members (organization_id, user_id, role, is_active)
-values ('b2000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000001', 'admin', true);
+values ('b2000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000001', 'admin', true)
+on conflict (user_id, organization_id) do update
+set role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.organization_modules (organization_id, module_name, is_enabled)
 values ('b2000000-0000-4000-8000-000000000001', 'automations', true);

@@ -111,10 +111,13 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			AppURL:       cfg.Email.AppURL,
 		},
 		Push: leads.PushConfig{
-			VAPIDPublicKey:  cfg.Push.VAPIDPublicKey,
-			VAPIDPrivateKey: cfg.Push.VAPIDPrivateKey,
-			VAPIDSubject:    cfg.Push.VAPIDSubject,
-			FCMServerKey:    cfg.Push.FCMServerKey,
+			VAPIDPublicKey:        cfg.Push.VAPIDPublicKey,
+			VAPIDPrivateKey:       cfg.Push.VAPIDPrivateKey,
+			VAPIDSubject:          cfg.Push.VAPIDSubject,
+			FCMServerKey:          cfg.Push.FCMServerKey,
+			FCMProjectID:          cfg.Push.FCMProjectID,
+			FCMServiceAccountJSON: cfg.Push.FCMServiceAccountJSON,
+			FCMServiceAccountFile: cfg.Push.FCMServiceAccountFile,
 		},
 	})
 	leadsRepository.StartRedistributionWorker(ctx, logger)
@@ -334,10 +337,12 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("PATCH /v1/admin/organizations/{id}", withAuthTenant(http.HandlerFunc(adminHandler.UpdateOrganization)))
 	mux.Handle("DELETE /v1/admin/organizations/{id}", withAuthTenant(http.HandlerFunc(adminHandler.DeleteOrganization)))
 	mux.Handle("GET /v1/admin/organizations/{id}/modules", withAuthTenant(http.HandlerFunc(adminHandler.ListOrganizationModules)))
+	mux.Handle("GET /v1/admin/organizations/{id}/payments", withAuthTenant(http.HandlerFunc(adminHandler.ListOrganizationPayments)))
 	mux.Handle("POST /v1/admin/organizations/{id}/access", withAuthTenant(http.HandlerFunc(adminHandler.UpdateOrganizationAccess)))
 	mux.Handle("GET /v1/admin/users", withAuthTenant(http.HandlerFunc(adminHandler.ListUsers)))
 	mux.Handle("PATCH /v1/admin/users/{id}", withAuthTenant(http.HandlerFunc(adminHandler.UpdateUser)))
 	mux.Handle("DELETE /v1/admin/users/{id}", withAuthTenant(http.HandlerFunc(adminHandler.DeleteUser)))
+	mux.Handle("POST /v1/admin/users/{id}/reset-password", withAuthTenant(http.HandlerFunc(adminHandler.ResetUserPassword)))
 	mux.Handle("GET /v1/announcements/active", withAuthTenant(http.HandlerFunc(adminHandler.ListActiveAnnouncements)))
 	mux.Handle("GET /v1/feature-requests/mine", withAuthTenant(http.HandlerFunc(adminHandler.ListMyFeatureRequests)))
 	mux.Handle("POST /v1/feature-requests", withOrganization(http.HandlerFunc(adminHandler.CreateFeatureRequest)))
@@ -367,7 +372,6 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("POST /v1/admin/tables/{table}", withAuthTenant(http.HandlerFunc(adminHandler.CreateTableRow)))
 	mux.Handle("PATCH /v1/admin/tables/{table}/{id}", withAuthTenant(http.HandlerFunc(adminHandler.UpdateTableRow)))
 	mux.Handle("DELETE /v1/admin/tables/{table}/{id}", withAuthTenant(http.HandlerFunc(adminHandler.DeleteTableRow)))
-	mux.Handle("GET /v1/admin/database-stats", withAuthTenant(http.HandlerFunc(adminHandler.DatabaseStats)))
 	mux.Handle("GET /v1/admin/orphan-members", withAuthTenant(http.HandlerFunc(adminHandler.OrphanMemberStats)))
 	mux.Handle("POST /v1/admin/orphan-members/cleanup", withAuthTenant(http.HandlerFunc(adminHandler.CleanupOrphanMembers)))
 	mux.Handle("GET /v1/dashboard/stats", withPermission(permissions.DashboardView, http.HandlerFunc(leadsHandler.ShowDashboardStats)))
@@ -473,6 +477,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("PUT /v1/integrations/portals/grupo-olx", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.SaveGrupoOLX)))
 	mux.Handle("POST /v1/integrations/portals/grupo-olx/activate", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.ActivateGrupoOLX)))
 	mux.Handle("POST /v1/integrations/portals/grupo-olx/regenerate-feed-token", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.RegenerateGrupoOLXFeedToken)))
+	mux.Handle("POST /v1/integrations/portals/grupo-olx/regenerate-webhook-token", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.RegenerateGrupoOLXWebhookToken)))
 	mux.Handle("GET /v1/integrations/portals/grupo-olx/publications", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.ListGrupoOLXPublications)))
 	mux.Handle("PUT /v1/integrations/portals/grupo-olx/publications", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.UpsertGrupoOLXPublications)))
 	mux.Handle("PATCH /v1/settings/profile", withAuthTenant(http.HandlerFunc(settingsHandler.UpdateProfile)))

@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/popover';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useState } from 'react';
+import { commandSearchFilter } from '@/lib/search-text';
 
 interface User {
   id: string;
@@ -63,7 +64,7 @@ export function UserFilter({ users, selectedUserId, onUserSelect, showAllOption 
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[200px] p-0 bg-[#171717] border border-white/[0.055] shadow-xl z-50">
-        <Command>
+        <Command filter={commandSearchFilter}>
           <CommandInput placeholder="Buscar usuário..." />
           <CommandList>
             <CommandEmpty>Nenhum usuário encontrado.</CommandEmpty>

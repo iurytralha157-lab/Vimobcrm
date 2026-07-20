@@ -23,6 +23,7 @@ import { useAllTeamPipelines } from '@/hooks/use-team-pipelines';
 import { useTeams } from '@/hooks/use-teams';
 import { useUpdateLead } from '@/hooks/use-leads';
 import type { Lead } from '@/hooks/use-leads';
+import { searchTextIncludes } from '@/lib/search-text';
 import type { TablesUpdate } from '@/integrations/supabase/types';
 import { leadsAPI } from '@/lib/api/leads';
 import { toast } from 'sonner';
@@ -84,8 +85,8 @@ export function SdrDistributionButton({ lead, refetchStages }: SdrDistributionBu
   ).values()).filter((u): u is NonNullable<typeof u> => !!u);
 
   const filteredUsers = availableUsers.filter(u =>
-    u.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    u.email?.toLowerCase().includes(searchQuery.toLowerCase())
+    searchTextIncludes(u.name, searchQuery) ||
+    searchTextIncludes(u.email, searchQuery)
   );
 
   const handlePipelineSelect = (id: string) => {

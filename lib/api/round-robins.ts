@@ -143,7 +143,8 @@ export type LegacyRoundRobin = RoundRobinRow & {
 
 export type LegacyRoundRobinRule = RoundRobinRuleRow
 
-export type LegacyRoundRobinMember = RoundRobinMemberRow & {
+export type LegacyRoundRobinMember = Omit<RoundRobinMemberRow, 'organization_id'> & {
+  organization_id?: string
   user?: UserSummary | null
   is_active?: boolean | null
 }
@@ -196,7 +197,7 @@ export const roundRobinsAPI = {
     })
     validateDomainResponse(apiRoundRobinRuleListResponseSchema, response, 'round-robin.rules.list')
 
-    return response.data.map(toLegacyRule)
+    return response.data.map((rule) => toLegacyRule(rule, organizationId))
   },
 
   async createRule(input: { round_robin_id: string; match_type: string; match_value: string; match?: Json | Record<string, unknown> | null }, organizationId?: string) {
@@ -212,7 +213,7 @@ export const roundRobinsAPI = {
     })
     validateDomainResponse(apiRoundRobinRuleResponseSchema, response, 'round-robin.rules.create')
 
-    return toLegacyRule(response.data)
+    return toLegacyRule(response.data, organizationId)
   },
 
   async updateRule(id: string, input: { match_type?: string; match_value?: string; match?: Json | Record<string, unknown> | null; priority?: number; is_active?: boolean }, organizationId?: string) {
@@ -230,7 +231,7 @@ export const roundRobinsAPI = {
     })
     validateDomainResponse(apiRoundRobinRuleResponseSchema, response, 'round-robin.rules.update')
 
-    return toLegacyRule(response.data)
+    return toLegacyRule(response.data, organizationId)
   },
 
   async deleteRule(id: string, organizationId?: string) {
@@ -253,7 +254,7 @@ export const roundRobinsAPI = {
     })
     validateDomainResponse(apiRoundRobinMemberListResponseSchema, response, 'round-robin.members.add')
 
-    return response.data.map(toLegacyMember)
+    return response.data.map((member) => toLegacyMember(member, organizationId))
   },
 
   async updateMember(id: string, input: { weight?: number; position?: number; is_active?: boolean }, organizationId?: string) {
@@ -269,7 +270,7 @@ export const roundRobinsAPI = {
     })
     validateDomainResponse(apiRoundRobinMemberResponseSchema, response, 'round-robin.members.update')
 
-    return toLegacyMember(response.data)
+    return toLegacyMember(response.data, organizationId)
   },
 
   async deleteMember(id: string, organizationId?: string) {
@@ -323,17 +324,20 @@ function toLegacyRoundRobin(item: APIRoundRobin): LegacyRoundRobin {
     ai_agent_id: null,
     created_at: item.createdAt,
     created_by: item.createdBy || null,
+    current_position: null,
     id: item.id,
     is_active: item.isActive,
     last_assigned_index: item.lastAssignedIndex,
     leads_distributed: item.leadsDistributed,
     name: item.name,
     organization_id: item.organizationId,
+    pipeline_id: null,
     reentry_behavior: item.reentryBehavior || 'redistribute',
     settings: toJsonObject(item.settings),
     strategy: item.strategy || 'simple',
     target_pipeline_id: item.targetPipelineId || null,
     target_stage_id: item.targetStageId || null,
+    updated_at: item.updatedAt,
     created_by_user: item.createdByUser
       ? {
           id: item.createdByUser.id,
@@ -349,30 +353,38 @@ function toLegacyRoundRobin(item: APIRoundRobin): LegacyRoundRobin {
           color: item.targetStage.color || null,
         }
       : null,
-    rules: item.rules.map(toLegacyRule),
-    members: item.members.map(toLegacyMember),
+    rules: item.rules.map((rule) => toLegacyRule(rule, item.organizationId)),
+    members: item.members.map((member) => toLegacyMember(member, item.organizationId)),
   }
 }
 
-function toLegacyRule(rule: APIRoundRobinRule): LegacyRoundRobinRule {
+function toLegacyRule(rule: APIRoundRobinRule, organizationId?: string): LegacyRoundRobinRule {
   return {
+    conditions: null,
+    created_at: rule.createdAt,
     id: rule.id,
     is_active: rule.isActive,
     match: toJsonObject(rule.match),
     match_type: rule.matchType,
     match_value: rule.matchValue,
+    name: null,
+    organization_id: organizationId ?? null,
     priority: rule.priority,
     round_robin_id: rule.roundRobinId,
+    updated_at: rule.updatedAt,
   }
 }
 
-function toLegacyMember(member: APIRoundRobinMember): LegacyRoundRobinMember {
+function toLegacyMember(member: APIRoundRobinMember, organizationId?: string): LegacyRoundRobinMember {
   return {
+    created_at: null,
     id: member.id,
     leads_count: member.leadsCount,
+    organization_id: organizationId,
     position: member.position,
     round_robin_id: member.roundRobinId,
     team_id: member.teamId || null,
+    updated_at: null,
     user_id: member.userId || null,
     weight: member.weight,
     is_active: member.isActive,

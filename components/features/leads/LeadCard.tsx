@@ -1,4 +1,4 @@
-import { useState, memo, type CSSProperties } from 'react';
+import { useCallback, useState, memo, type CSSProperties } from 'react';
 import { useTheme } from 'next-themes';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -85,7 +85,7 @@ type LeadCardLead = {
 
 interface LeadCardProps {
   lead: LeadCardLead;
-  onClick: () => void;
+  onClick: (lead: LeadCardLead) => void;
   index: number;
   onAssignNow: (leadId: string) => void;
   isDragDisabled: boolean;
@@ -226,6 +226,10 @@ export const LeadCard = memo(function LeadCard({
   );
 
   // Verificar se o lead foi criado há menos de 10 segundos (aguardando atribuição via round-robin)
+  const handleCardClick = useCallback(() => {
+    onClick(lead);
+  }, [lead, onClick]);
+
   const isRecentlyCreated = lead.created_at &&
     !lead.assigned_user_id &&
     (Date.now() - new Date(lead.created_at).getTime()) < 10000;
@@ -235,10 +239,22 @@ export const LeadCard = memo(function LeadCard({
     <Draggable draggableId={lead.id} index={index} isDragDisabled={isDragDisabled}>
       {(provided, snapshot) => {
         const { style, ...draggableProps } = provided.draggableProps;
-        const cardStyle = { ...(style as CSSProperties), ...leadToneVars };
+        const providedStyle = style as CSSProperties | undefined;
+        const isDragging = Boolean(snapshot.isDragging);
+        const isDropAnimating = Boolean(snapshot.isDropAnimating);
+        const cardStyle = {
+          ...providedStyle,
+          ...leadToneVars,
+          transition: isDropAnimating
+            ? 'transform 90ms cubic-bezier(0.2, 0, 0, 1)'
+            : isDragging
+              ? 'none'
+              : providedStyle?.transition,
+          willChange: isDragging || isDropAnimating ? 'transform' : undefined,
+        };
 
         return (
-        <div data-tour={tourTarget} ref={provided.innerRef} {...draggableProps} {...provided.dragHandleProps} style={cardStyle} className={cn("bg-[var(--app-lead-card)] rounded-lg p-3 transition-all duration-200 group hover:bg-[var(--app-lead-card-hover)] hover:-translate-y-0.5 relative", isDragDisabled ? "cursor-default" : "cursor-pointer", snapshot.isDragging && "rotate-1 scale-[1.02] ring-1 ring-primary/45", isLost && "bg-destructive/5 hover:bg-destructive/10", isWon && "bg-emerald-500/5")} onClick={onClick}>
+        <div data-tour={tourTarget} ref={provided.innerRef} {...draggableProps} {...provided.dragHandleProps} style={cardStyle} className={cn("bg-[var(--app-lead-card)] rounded-lg p-3 group hover:bg-[var(--app-lead-card-hover)] hover:-translate-y-0.5 relative", isDragging || isDropAnimating ? "transition-none" : "transition-[background-color,box-shadow,transform] duration-150", isDragDisabled ? "cursor-default" : "cursor-pointer", isDragging && "rotate-1 scale-[1.02] ring-1 ring-primary/45", isLost && "bg-destructive/5 hover:bg-destructive/10", isWon && "bg-emerald-500/5")} onClick={handleCardClick}>
           {/* Deal Status Badge + Tags */}
           {hasLeadLabels && (
             <div className="mb-2 flex flex-wrap items-center gap-1">
@@ -488,7 +504,7 @@ export const LeadCard = memo(function LeadCard({
               </Tooltip>
             </div>
           </TooltipProvider>
-        </div>
+    </div>
         );
       }}
     </Draggable>

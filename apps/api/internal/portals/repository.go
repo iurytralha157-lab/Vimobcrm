@@ -3,11 +3,14 @@ package portals
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/mail"
+	"net/url"
 	"strings"
 	"time"
 
@@ -28,23 +31,145 @@ func (repo Repository) GetGrupoOLX(ctx context.Context, tenantContext tenant.Con
 	return repo.getIntegrationJSON(ctx, tenantContext.OrganizationID)
 }
 
+func (repo Repository) validateIntegrationReferences(ctx context.Context, organizationID string, request GrupoOLXSettingsRequest) error {
+	pipelineID := optionalUUIDText(request.DefaultPipelineID)
+	stageID := optionalUUIDText(request.DefaultStageID)
+	assignedUserID := optionalUUIDText(request.DefaultAssignedUserID)
+	roundRobinID := optionalUUIDText(request.DefaultRoundRobinID)
+
+	var valid bool
+	err := repo.db.Pool().QueryRow(ctx, `
+		select
+			($2 = '' or exists (
+				select 1 from public.pipelines p
+				where p.organization_id = $1::uuid and p.id = nullif($2, '')::uuid and coalesce(p.is_active, true)
+			))
+			and ($3 = '' or exists (
+				select 1 from public.stages s
+				join public.pipelines p on p.id = s.pipeline_id and p.organization_id = s.organization_id
+				where s.organization_id = $1::uuid
+				  and s.id = nullif($3, '')::uuid
+				  and coalesce(s.is_active, true)
+				  and ($2 = '' or s.pipeline_id = nullif($2, '')::uuid)
+			))
+			and ($4 = '' or exists (
+				select 1 from public.organization_members om
+				join public.users u on u.id = om.user_id
+				where om.organization_id = $1::uuid
+				  and om.user_id = nullif($4, '')::uuid
+				  and coalesce(om.is_active, true)
+				  and coalesce(u.is_active, true)
+			))
+			and ($5 = '' or exists (
+				select 1 from public.round_robins rr
+				where rr.organization_id = $1::uuid and rr.id = nullif($5, '')::uuid and coalesce(rr.is_active, true)
+			))
+	`, organizationID, pipelineID, stageID, assignedUserID, roundRobinID).Scan(&valid)
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
+func (repo Repository) hydrateExistingReferences(ctx context.Context, organizationID string, request *GrupoOLXSettingsRequest) error {
+	var pipelineID, stageID, assignedUserID, roundRobinID string
+	err := repo.db.Pool().QueryRow(ctx, `
+		select coalesce(default_pipeline_id::text, ''), coalesce(default_stage_id::text, ''),
+		       coalesce(default_assigned_user_id::text, ''), coalesce(default_round_robin_id::text, '')
+		from public.portal_integrations
+		where organization_id = $1::uuid and portal = 'grupo_olx'
+	`, organizationID).Scan(&pipelineID, &stageID, &assignedUserID, &roundRobinID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	setExistingOptionalString(&request.DefaultPipelineID, pipelineID)
+	setExistingOptionalString(&request.DefaultStageID, stageID)
+	setExistingOptionalString(&request.DefaultAssignedUserID, assignedUserID)
+	setExistingOptionalString(&request.DefaultRoundRobinID, roundRobinID)
+	return nil
+}
+
+func setExistingOptionalString(field *OptionalString, value string) {
+	if field.Set || strings.TrimSpace(value) == "" {
+		return
+	}
+	cleaned := strings.TrimSpace(value)
+	field.Value = &cleaned
+}
+
+func (repo Repository) validateActivationSettings(ctx context.Context, organizationID string, request GrupoOLXSettingsRequest) error {
+	settings := map[string]any{}
+	secretConfigured := false
+	var raw []byte
+	err := repo.db.Pool().QueryRow(ctx, `
+		select settings, lead_webhook_secret_ref is not null
+		from public.portal_integrations
+		where organization_id = $1::uuid and portal = 'grupo_olx'
+	`, organizationID).Scan(&raw, &secretConfigured)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if err == nil {
+		_ = json.Unmarshal(raw, &settings)
+	}
+	if request.Settings != nil {
+		settings = request.Settings
+	}
+	if request.LeadWebhookSecret.Set {
+		secretConfigured = request.LeadWebhookSecret.Value != nil
+	}
+	name := strings.TrimSpace(textFromSettings(settings, "contact_name"))
+	email := strings.TrimSpace(textFromSettings(settings, "contact_email"))
+	if name == "" || email == "" || !secretConfigured {
+		return ErrInvalidInput
+	}
+	address, err := mail.ParseAddress(email)
+	if err != nil || !strings.EqualFold(address.Address, email) {
+		return ErrInvalidInput
+	}
+	if detailURL := strings.TrimSpace(textFromSettings(settings, "detail_base_url")); detailURL != "" {
+		parsed, err := url.ParseRequestURI(detailURL)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+			return ErrInvalidInput
+		}
+	}
+	return nil
+}
+
 func (repo Repository) SaveGrupoOLX(ctx context.Context, tenantContext tenant.Context, request GrupoOLXSettingsRequest) (map[string]any, error) {
 	isActive := false
+	status := "draft"
 	if request.IsActive != nil {
 		isActive = *request.IsActive
-	}
-	status := "paused"
-	if isActive {
-		status = "pending_setup"
+		status = "paused"
+		if isActive {
+			status = "pending_setup"
+		}
 	}
 	settingsJSON, _ := json.Marshal(nonNilMap(request.Settings))
-	secretRef := (*string)(nil)
-	if request.LeadWebhookSecret != nil {
-		secret := strings.TrimSpace(*request.LeadWebhookSecret)
-		if secret != "" {
-			value := "plain:" + secret
-			secretRef = &value
+	if err := repo.hydrateExistingReferences(ctx, tenantContext.OrganizationID, &request); err != nil {
+		return nil, err
+	}
+	if err := repo.validateIntegrationReferences(ctx, tenantContext.OrganizationID, request); err != nil {
+		return nil, err
+	}
+	if request.LeadWebhookSecret.Value != nil && len(*request.LeadWebhookSecret.Value) < 16 {
+		return nil, ErrInvalidInput
+	}
+	if isActive {
+		if err := repo.validateActivationSettings(ctx, tenantContext.OrganizationID, request); err != nil {
+			return nil, err
 		}
+	}
+	var secretRef any
+	if request.LeadWebhookSecret.Value != nil {
+		secretRef = webhookSecretDigest(*request.LeadWebhookSecret.Value)
 	}
 
 	var raw []byte
@@ -80,17 +205,18 @@ func (repo Repository) SaveGrupoOLX(ctx context.Context, tenantContext tenant.Co
 		on conflict (organization_id, portal)
 		do update set
 			status = case
+				when not $16 then portal_integrations.status
 				when excluded.is_active = false then 'paused'
 				when portal_integrations.status = 'connected' then 'connected'
 				else excluded.status
 			end,
-			is_active = excluded.is_active,
-			lead_webhook_secret_ref = coalesce(excluded.lead_webhook_secret_ref, portal_integrations.lead_webhook_secret_ref),
-			default_pipeline_id = coalesce(excluded.default_pipeline_id, portal_integrations.default_pipeline_id),
-			default_stage_id = coalesce(excluded.default_stage_id, portal_integrations.default_stage_id),
-			default_assigned_user_id = coalesce(excluded.default_assigned_user_id, portal_integrations.default_assigned_user_id),
-			default_round_robin_id = coalesce(excluded.default_round_robin_id, portal_integrations.default_round_robin_id),
-			settings = excluded.settings,
+			is_active = case when $16 then excluded.is_active else portal_integrations.is_active end,
+			lead_webhook_secret_ref = case when $11 then excluded.lead_webhook_secret_ref else portal_integrations.lead_webhook_secret_ref end,
+			default_pipeline_id = case when $12 then excluded.default_pipeline_id else portal_integrations.default_pipeline_id end,
+			default_stage_id = case when $13 then excluded.default_stage_id else portal_integrations.default_stage_id end,
+			default_assigned_user_id = case when $14 then excluded.default_assigned_user_id else portal_integrations.default_assigned_user_id end,
+			default_round_robin_id = case when $15 then excluded.default_round_robin_id else portal_integrations.default_round_robin_id end,
+			settings = case when $17 then excluded.settings else portal_integrations.settings end,
 			last_error = null,
 			updated_at = now()
 		returning jsonb_build_object(
@@ -115,7 +241,13 @@ func (repo Repository) SaveGrupoOLX(ctx context.Context, tenantContext tenant.Co
 			'created_at', portal_integrations.created_at,
 			'updated_at', portal_integrations.updated_at
 		)
-	`, tenantContext.OrganizationID, status, isActive, secretRef, cleanUUID(request.DefaultPipelineID), cleanUUID(request.DefaultStageID), cleanUUID(request.DefaultAssignedUserID), cleanUUID(request.DefaultRoundRobinID), string(settingsJSON), tenantContext.UserID).Scan(&raw)
+	`, tenantContext.OrganizationID, status, isActive, secretRef,
+		optionalUUIDValue(request.DefaultPipelineID), optionalUUIDValue(request.DefaultStageID),
+		optionalUUIDValue(request.DefaultAssignedUserID), optionalUUIDValue(request.DefaultRoundRobinID),
+		string(settingsJSON), tenantContext.UserID, request.LeadWebhookSecret.Set,
+		request.DefaultPipelineID.Set, request.DefaultStageID.Set,
+		request.DefaultAssignedUserID.Set, request.DefaultRoundRobinID.Set,
+		request.IsActive != nil, request.Settings != nil).Scan(&raw)
 	if err != nil {
 		return nil, err
 	}
@@ -123,6 +255,9 @@ func (repo Repository) SaveGrupoOLX(ctx context.Context, tenantContext tenant.Co
 }
 
 func (repo Repository) ActivateGrupoOLX(ctx context.Context, tenantContext tenant.Context) (map[string]any, error) {
+	if err := repo.validateActivationSettings(ctx, tenantContext.OrganizationID, GrupoOLXSettingsRequest{}); err != nil {
+		return nil, err
+	}
 	var raw []byte
 	err := repo.db.Pool().QueryRow(ctx, `
 		insert into public.portal_integrations (
@@ -209,6 +344,23 @@ func (repo Repository) RegenerateFeedToken(ctx context.Context, tenantContext te
 	return decodeJSONObject(raw)
 }
 
+func (repo Repository) RegenerateWebhookToken(ctx context.Context, tenantContext tenant.Context) (map[string]any, error) {
+	command, err := repo.db.Pool().Exec(ctx, `
+		update public.portal_integrations
+		set webhook_token = replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', ''),
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and portal = 'grupo_olx'
+	`, tenantContext.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	if command.RowsAffected() == 0 {
+		return nil, ErrNotFound
+	}
+	return repo.getIntegrationJSON(ctx, tenantContext.OrganizationID)
+}
+
 func (repo Repository) ListPublications(ctx context.Context, tenantContext tenant.Context) ([]map[string]any, error) {
 	rows, err := repo.db.Pool().Query(ctx, `
 		select jsonb_build_object(
@@ -254,6 +406,10 @@ func (repo Repository) ListPublications(ctx context.Context, tenantContext tenan
 }
 
 func (repo Repository) UpsertPublications(ctx context.Context, tenantContext tenant.Context, request UpsertPublicationsRequest) ([]map[string]any, error) {
+	if len(request.Publications) == 0 {
+		return repo.ListPublications(ctx, tenantContext)
+	}
+
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -267,8 +423,20 @@ func (repo Repository) UpsertPublications(ctx context.Context, tenantContext ten
 
 	for _, item := range request.Publications {
 		propertyID := strings.TrimSpace(item.PropertyID)
-		if propertyID == "" {
+		if propertyID == "" || !validPublicationType(item.PublicationType) {
 			return nil, ErrInvalidInput
+		}
+		var propertyCode string
+		if err := tx.QueryRow(ctx, `
+			select coalesce(code, '')
+			from public.properties
+			where id = $1::uuid
+			  and organization_id = $2::uuid
+		`, propertyID, tenantContext.OrganizationID).Scan(&propertyCode); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, ErrInvalidInput
+			}
+			return nil, err
 		}
 		isEnabled := true
 		if item.IsEnabled != nil {
@@ -277,19 +445,7 @@ func (repo Repository) UpsertPublications(ctx context.Context, tenantContext ten
 		publicationType := normalizePublicationType(item.PublicationType)
 		clientListingID := strings.TrimSpace(item.ClientListingID)
 		if clientListingID == "" {
-			var code string
-			if err := tx.QueryRow(ctx, `
-				select code
-				from public.properties
-				where id = $1::uuid
-				  and organization_id = $2::uuid
-			`, propertyID, tenantContext.OrganizationID).Scan(&code); err != nil {
-				if errors.Is(err, pgx.ErrNoRows) {
-					return nil, ErrInvalidInput
-				}
-				return nil, err
-			}
-			clientListingID = normalizeClientListingID(code, propertyID)
+			clientListingID = normalizeClientListingID(propertyCode, propertyID)
 		}
 		clientListingID = normalizeClientListingID(clientListingID, propertyID)
 
@@ -330,24 +486,51 @@ func (repo Repository) BuildGrupoOLXFeed(ctx context.Context, token string) ([]b
 	if err != nil {
 		return nil, err
 	}
-	items, err := repo.feedListings(ctx, integration.ID)
+	selection, err := repo.feedListings(ctx, integration)
 	if err != nil {
 		return nil, err
 	}
-	xmlBytes, err := buildVRSyncFeed(integration, items)
+	xmlBytes, err := buildVRSyncFeed(integration, selection.Listings)
 	if err != nil {
 		return nil, err
 	}
-	_, _ = repo.db.Pool().Exec(ctx, `
+	if len(xmlBytes) > 30*1024*1024 {
+		return nil, fmt.Errorf("grupo olx feed exceeds 30MB")
+	}
+
+	validIDs := make([]string, 0, len(selection.Listings))
+	for _, listing := range selection.Listings {
+		validIDs = append(validIDs, listing.PublicationID)
+	}
+	invalidJSON, err := json.Marshal(selection.Invalid)
+	if err != nil {
+		return nil, err
+	}
+	syncStatus := fmt.Sprintf("feed_served:valid=%d:invalid=%d", len(validIDs), len(selection.Invalid))
+	integrationStatus := "connected"
+	lastError := ""
+	if len(validIDs) == 0 && len(selection.Invalid) > 0 {
+		integrationStatus = "error"
+		lastError = "Todos os imoveis habilitados possuem erros de validacao."
+	}
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
 		update public.portal_integrations
 		set last_feed_accessed_at = now(),
-		    last_sync_status = 'feed_served',
-		    status = case when status in ('draft', 'pending_setup') then 'connected' else status end,
+		    last_sync_status = $2,
+		    status = $3,
+		    last_error = nullif($4, ''),
 		    updated_at = now()
 		where id = $1::uuid
-	`, integration.ID)
-	if len(items) > 0 {
-		_, _ = repo.db.Pool().Exec(ctx, `
+	`, integration.ID, syncStatus, integrationStatus, lastError); err != nil {
+		return nil, err
+	}
+	if len(validIDs) > 0 {
+		if _, err := tx.Exec(ctx, `
 			update public.portal_listing_publications
 			set status = 'exported',
 			    last_exported_at = now(),
@@ -356,10 +539,229 @@ func (repo Repository) BuildGrupoOLXFeed(ctx context.Context, token string) ([]b
 			    last_error = null,
 			    updated_at = now()
 			where integration_id = $1::uuid
-			  and is_enabled = true
-		`, integration.ID)
+			  and id = any($2::uuid[])
+		`, integration.ID, validIDs); err != nil {
+			return nil, err
+		}
+	}
+	if len(selection.Invalid) > 0 {
+		if _, err := tx.Exec(ctx, `
+			update public.portal_listing_publications publication
+			set status = 'invalid',
+			    validation_errors = invalid.errors,
+			    last_error = invalid.errors->>0,
+			    updated_at = now()
+			from jsonb_each($2::jsonb) as invalid(publication_id, errors)
+			where publication.integration_id = $1::uuid
+			  and publication.id = invalid.publication_id::uuid
+		`, integration.ID, string(invalidJSON)); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
 	}
 	return xmlBytes, nil
+}
+
+type portalDestination struct {
+	PipelineID         string
+	StageID            string
+	AssignedUserID     string
+	TeamID             string
+	RoundRobinID       string
+	RoundRobinMemberID string
+}
+
+func (repo Repository) resolvePortalDestination(ctx context.Context, tx pgx.Tx, integration publicIntegration) (portalDestination, error) {
+	destination := portalDestination{
+		PipelineID:     integration.DefaultPipelineID,
+		StageID:        integration.DefaultStageID,
+		AssignedUserID: integration.DefaultAssignedUserID,
+	}
+
+	if integration.DefaultRoundRobinID != "" {
+		var queuePipelineID, queueStageID string
+		err := tx.QueryRow(ctx, `
+			select coalesce(target_pipeline_id::text, ''), coalesce(target_stage_id::text, '')
+			from public.round_robins
+			where organization_id = $1::uuid
+			  and id = $2::uuid
+			  and coalesce(is_active, true)
+			for update
+		`, integration.OrganizationID, integration.DefaultRoundRobinID).Scan(&queuePipelineID, &queueStageID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return portalDestination{}, ErrInvalidInput
+		}
+		if err != nil {
+			return portalDestination{}, err
+		}
+		memberID, userID, teamID, err := selectPortalRoundRobinMember(ctx, tx, integration.OrganizationID, integration.DefaultRoundRobinID)
+		if err != nil {
+			return portalDestination{}, err
+		}
+		if userID == "" {
+			return portalDestination{}, errors.New("grupo olx round robin has no available member")
+		}
+		destination.RoundRobinID = integration.DefaultRoundRobinID
+		destination.RoundRobinMemberID = memberID
+		destination.AssignedUserID = userID
+		destination.TeamID = teamID
+		if destination.PipelineID == "" {
+			destination.PipelineID = queuePipelineID
+		}
+		if destination.StageID == "" {
+			destination.StageID = queueStageID
+		}
+	}
+
+	if destination.StageID != "" {
+		var pipelineID string
+		err := tx.QueryRow(ctx, `
+			select pipeline_id::text
+			from public.stages
+			where organization_id = $1::uuid and id = $2::uuid and coalesce(is_active, true)
+		`, integration.OrganizationID, destination.StageID).Scan(&pipelineID)
+		if err != nil {
+			return portalDestination{}, err
+		}
+		destination.PipelineID = pipelineID
+	}
+	if destination.PipelineID == "" {
+		err := tx.QueryRow(ctx, `
+			select id::text
+			from public.pipelines
+			where organization_id = $1::uuid and coalesce(is_active, true)
+			order by is_default desc, position asc, created_at asc
+			limit 1
+		`, integration.OrganizationID).Scan(&destination.PipelineID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return portalDestination{}, err
+		}
+	}
+	if destination.PipelineID != "" && destination.StageID == "" {
+		err := tx.QueryRow(ctx, `
+			select id::text
+			from public.stages
+			where organization_id = $1::uuid and pipeline_id = $2::uuid and coalesce(is_active, true)
+			order by position asc, created_at asc
+			limit 1
+		`, integration.OrganizationID, destination.PipelineID).Scan(&destination.StageID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return portalDestination{}, err
+		}
+	}
+	return destination, nil
+}
+
+func selectPortalRoundRobinMember(ctx context.Context, tx pgx.Tx, organizationID string, roundRobinID string) (string, string, string, error) {
+	var memberID, userID, teamID string
+	err := tx.QueryRow(ctx, `
+		with entries as (
+			select rrm.id, rrm.round_robin_id, rrm.organization_id, rrm.user_id, rrm.team_id,
+			       coalesce(rrm.position, 0) as position, rrm.created_at
+			from public.round_robin_members rrm
+			where rrm.organization_id = $1::uuid
+			  and rrm.round_robin_id = $2::uuid
+			  and coalesce(rrm.is_active, true)
+		), candidates as (
+			select entries.id, entries.round_robin_id, entries.organization_id, entries.user_id,
+			       entries.team_id, entries.position, entries.created_at,
+			       tm.id as team_member_id, tm.created_at as team_member_created_at
+			from entries
+			left join public.team_members tm
+			  on tm.organization_id = entries.organization_id
+			 and tm.team_id = entries.team_id
+			 and tm.user_id = entries.user_id
+			 and coalesce(tm.is_active, true)
+			where entries.user_id is not null
+			union all
+			select entries.id, entries.round_robin_id, entries.organization_id, tm.user_id,
+			       entries.team_id, entries.position, entries.created_at,
+			       tm.id, tm.created_at
+			from entries
+			join public.teams team
+			  on team.id = entries.team_id and team.organization_id = entries.organization_id and coalesce(team.is_active, true)
+			join public.team_members tm
+			  on tm.organization_id = entries.organization_id
+			 and tm.team_id = entries.team_id
+			 and coalesce(tm.is_active, true)
+			where entries.user_id is null and entries.team_id is not null
+		)
+		select candidates.id::text, candidates.user_id::text, coalesce(candidates.team_id::text, '')
+		from candidates
+		join public.organization_members om
+		  on om.organization_id = candidates.organization_id
+		 and om.user_id = candidates.user_id
+		 and coalesce(om.is_active, true)
+		join public.users user_profile
+		  on user_profile.id = candidates.user_id and coalesce(user_profile.is_active, true)
+		left join lateral (
+			select count(*)::bigint as total
+			from public.round_robin_logs log
+			where log.organization_id = candidates.organization_id
+			  and log.round_robin_id = candidates.round_robin_id
+			  and log.assigned_user_id = candidates.user_id
+		) user_logs on true
+		where (
+			candidates.team_member_id is null
+			or not exists (
+				select 1 from public.member_availability availability
+				where availability.organization_id = candidates.organization_id
+				  and availability.team_member_id = candidates.team_member_id
+			)
+			or exists (
+				select 1 from public.member_availability availability
+				where availability.organization_id = candidates.organization_id
+				  and availability.team_member_id = candidates.team_member_id
+				  and availability.day_of_week = extract(dow from now() at time zone 'America/Sao_Paulo')::int
+				  and coalesce(availability.is_active, true)
+				  and (
+					coalesce(availability.is_all_day, false)
+					or (
+						availability.start_time is not null and availability.end_time is not null
+						and (
+							(availability.start_time <= availability.end_time
+							 and (now() at time zone 'America/Sao_Paulo')::time between availability.start_time and availability.end_time)
+							or (availability.start_time > availability.end_time
+							 and ((now() at time zone 'America/Sao_Paulo')::time >= availability.start_time
+							      or (now() at time zone 'America/Sao_Paulo')::time <= availability.end_time))
+						)
+					)
+				)
+			)
+		)
+		order by coalesce(user_logs.total, 0) asc, candidates.position asc,
+		         candidates.created_at asc, candidates.team_member_created_at asc nulls last,
+		         candidates.user_id asc
+		limit 1
+	`, organizationID, roundRobinID).Scan(&memberID, &userID, &teamID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", "", nil
+	}
+	return memberID, userID, teamID, err
+}
+
+func recordPortalRoundRobinAssignment(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, destination portalDestination, eventKey string) error {
+	metadata, _ := json.Marshal(map[string]any{
+		"member_id":      destination.RoundRobinMemberID,
+		"origin_lead_id": eventKey,
+		"source":         "grupo_olx",
+	})
+	_, err := tx.Exec(ctx, `
+		insert into public.round_robin_logs (
+			organization_id, round_robin_id, lead_id, assigned_user_id, reason, metadata
+		) values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'grupo_olx', $5::jsonb)
+	`, organizationID, destination.RoundRobinID, leadID, destination.AssignedUserID, string(metadata))
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		update public.round_robins
+		set current_position = coalesce(current_position, 0) + 1, updated_at = now()
+		where organization_id = $1::uuid and id = $2::uuid
+	`, organizationID, destination.RoundRobinID)
+	return err
 }
 
 func (repo Repository) ProcessGrupoOLXLead(ctx context.Context, token string, authorization string, payload []byte) (leadWebhookResult, error) {
@@ -398,7 +800,20 @@ func (repo Repository) ProcessGrupoOLXLead(ctx context.Context, token string, au
 	}
 
 	clientListingID := strings.TrimSpace(firstText(body, "clientListingId", "listingId", "propertyCode"))
-	propertyID, propertyCode, _ := findPublicationProperty(ctx, tx, integration.ID, clientListingID)
+	if clientListingID == "" {
+		return leadWebhookResult{}, ErrListingNotFound
+	}
+	propertyID, propertyCode, err := findPublicationProperty(ctx, tx, integration.ID, clientListingID)
+	if err != nil {
+		return leadWebhookResult{}, err
+	}
+	if propertyID == nil {
+		return leadWebhookResult{}, ErrListingNotFound
+	}
+	destination, err := repo.resolvePortalDestination(ctx, tx, integration)
+	if err != nil {
+		return leadWebhookResult{}, err
+	}
 
 	name := strings.TrimSpace(firstText(body, "name", "consumerName", "leadName"))
 	if name == "" {
@@ -433,6 +848,7 @@ func (repo Repository) ProcessGrupoOLXLead(ctx context.Context, token string, au
 			pipeline_id,
 			stage_id,
 			assigned_user_id,
+			team_id,
 			property_id,
 			interest_property_id,
 			property_code,
@@ -458,31 +874,39 @@ func (repo Repository) ProcessGrupoOLXLead(ctx context.Context, token string, au
 			nullif($3, '')::uuid,
 			nullif($4, '')::uuid,
 			nullif($5, '')::uuid,
-			nullif($5, '')::uuid,
-			nullif($6, ''),
-			$7,
-			nullif($8, ''),
+			nullif($6, '')::uuid,
+			nullif($6, '')::uuid,
+			nullif($7, ''),
+			$8,
 			nullif($9, ''),
+			nullif($10, ''),
 			'grupo_olx',
-			$10,
-			$11::uuid,
-			nullif($12, ''),
-			nullif($12, ''),
+			$11,
+			$12::uuid,
+			nullif($13, ''),
+			nullif($13, ''),
 			'new',
 			'open',
 			'grupo_olx',
 			'portal',
-			$13::jsonb,
-			nullif($14, '')::uuid,
+			$14::jsonb,
+			nullif($15, '')::uuid,
 			now()
 		)
 		returning id::text
-	`, integration.OrganizationID, integration.DefaultPipelineID, integration.DefaultStageID, integration.DefaultAssignedUserID, nullableStringValue(propertyID), nullableStringValue(propertyCode), name, email, phone, sourceDetail, eventID, message, string(metadataJSON), integration.DefaultAssignedUserID).Scan(&leadID)
+	`, integration.OrganizationID, destination.PipelineID, destination.StageID, destination.AssignedUserID,
+		destination.TeamID, nullableStringValue(propertyID), nullableStringValue(propertyCode), name, email, phone,
+		sourceDetail, eventID, message, string(metadataJSON), destination.AssignedUserID).Scan(&leadID)
 	if err != nil {
 		return leadWebhookResult{}, err
 	}
+	if destination.RoundRobinID != "" && destination.AssignedUserID != "" {
+		if err := recordPortalRoundRobinAssignment(ctx, tx, integration.OrganizationID, leadID, destination, eventKey); err != nil {
+			return leadWebhookResult{}, err
+		}
+	}
 
-	_, _ = tx.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 		insert into public.lead_meta (organization_id, lead_id, platform, form_id, payload)
 		values ($1::uuid, $2::uuid, 'grupo_olx', $3, $4::jsonb)
 		on conflict (lead_id) do update
@@ -490,7 +914,9 @@ func (repo Repository) ProcessGrupoOLXLead(ctx context.Context, token string, au
 		    form_id = excluded.form_id,
 		    payload = excluded.payload,
 		    updated_at = now()
-	`, integration.OrganizationID, leadID, eventKey, string(metadataJSON))
+	`, integration.OrganizationID, leadID, eventKey, string(metadataJSON)); err != nil {
+		return leadWebhookResult{}, err
+	}
 
 	_, err = tx.Exec(ctx, `
 		update public.portal_webhook_events
@@ -525,29 +951,57 @@ func (repo Repository) ProcessGrupoOLXLead(ctx context.Context, token string, au
 	}, nil
 }
 
-func (repo Repository) ReceiveGrupoOLXImportReport(ctx context.Context, token string, payload []byte) (map[string]any, error) {
+func (repo Repository) ReceiveGrupoOLXImportReport(ctx context.Context, token string, authorization string, payload []byte) (map[string]any, error) {
 	integration, err := repo.integrationByPublicToken(ctx, token, "webhook_token")
 	if err != nil {
 		return nil, err
+	}
+	if !validWebhookAuthorization(authorization, integration.WebhookSecret) {
+		return nil, ErrUnauthorized
 	}
 	var body map[string]any
 	if err := json.Unmarshal(payload, &body); err != nil {
 		return nil, ErrInvalidInput
 	}
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
 	reportID := firstText(body, "id", "reportId", "importId")
 	if reportID == "" {
 		reportID = payloadHash(payload)
 	}
+	details := objectValue(body["details"])
+	if len(details) == 0 {
+		details = body
+	}
+	summary := map[string]any{
+		"company":   body["company"],
+		"type":      body["type"],
+		"date":      firstValue(details, "date"),
+		"total":     firstValue(details, "total", "totalListings"),
+		"created":   firstValue(details, "created", "createdListings"),
+		"updated":   firstValue(details, "updated", "updatedListings"),
+		"deleted":   firstValue(details, "deleted"),
+		"unchanged": firstValue(details, "unchanged"),
+		"errors":    firstValue(details, "error", "errors", "errorCount"),
+		"warnings":  firstValue(details, "warning", "warnings", "warningCount"),
+		"link":      body["link"],
+	}
 	status := normalizeReportStatus(firstText(body, "status", "importStatus"))
-	summaryJSON, _ := json.Marshal(map[string]any{
-		"total":    firstText(body, "total", "totalListings"),
-		"created":  firstText(body, "created", "createdListings"),
-		"updated":  firstText(body, "updated", "updatedListings"),
-		"errors":   firstText(body, "errors", "errorCount"),
-		"warnings": firstText(body, "warnings", "warningCount"),
-	})
+	if numericValue(summary["errors"]) > 0 {
+		status = "error"
+	} else if numericValue(summary["warnings"]) > 0 {
+		status = "warning"
+	} else if status == "received" {
+		status = "success"
+	}
+	summaryJSON, _ := json.Marshal(summary)
+	errorIssues := reportListingIssues(body["errors"], "errorMessage")
+	warningIssues := reportListingIssues(body["warnings"], "message")
 	var raw []byte
-	err = repo.db.Pool().QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		insert into public.portal_import_reports (
 			integration_id,
 			organization_id,
@@ -569,15 +1023,53 @@ func (repo Repository) ReceiveGrupoOLXImportReport(ctx context.Context, token st
 	if err != nil {
 		return nil, err
 	}
-	_, _ = repo.db.Pool().Exec(ctx, `
+	if err := repo.applyReportIssues(ctx, tx, integration.ID, errorIssues, true); err != nil {
+		return nil, err
+	}
+	if err := repo.applyReportIssues(ctx, tx, integration.ID, warningIssues, false); err != nil {
+		return nil, err
+	}
+	description := strings.TrimSpace(firstText(body, "description"))
+	if description == "" && status == "error" {
+		description = "O Grupo OLX reportou erros na importacao de imoveis."
+	}
+	if _, err := tx.Exec(ctx, `
 		update public.portal_integrations
 		set last_import_report_at = now(),
 		    last_sync_status = $2,
 		    status = case when $2 = 'error' then 'error' else 'connected' end,
+		    last_error = nullif($3, ''),
 		    updated_at = now()
 		where id = $1::uuid
-	`, integration.ID, status)
+	`, integration.ID, status, description); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	return decodeJSONObject(raw)
+}
+
+func (repo Repository) applyReportIssues(ctx context.Context, tx pgx.Tx, integrationID string, issues map[string][]string, asError bool) error {
+	if len(issues) == 0 {
+		return nil
+	}
+	issuesJSON, _ := json.Marshal(issues)
+	status := "exported"
+	if asError {
+		status = "error"
+	}
+	_, err := tx.Exec(ctx, `
+		update public.portal_listing_publications publication
+		set status = case when $3 = 'error' then 'error' else publication.status end,
+		    validation_errors = publication.validation_errors || issue.messages,
+		    last_error = case when $3 = 'error' then issue.messages->>0 else publication.last_error end,
+		    updated_at = now()
+		from jsonb_each($2::jsonb) as issue(client_listing_id, messages)
+		where publication.integration_id = $1::uuid
+		  and publication.client_listing_id = issue.client_listing_id
+	`, integrationID, string(issuesJSON), status)
+	return err
 }
 
 type publicIntegration struct {
@@ -642,7 +1134,6 @@ func (repo Repository) integrationByPublicToken(ctx context.Context, token strin
 		return publicIntegration{}, ErrModuleUnavailable
 	}
 	_ = json.Unmarshal(settingsRaw, &integration.Settings)
-	integration.WebhookSecret = strings.TrimPrefix(integration.WebhookSecret, "plain:")
 	return integration, nil
 }
 
@@ -699,7 +1190,12 @@ func (repo Repository) getIntegrationJSON(ctx context.Context, organizationID st
 	return decodeJSONObject(raw)
 }
 
-func (repo Repository) feedListings(ctx context.Context, integrationID string) ([]feedListing, error) {
+type feedSelection struct {
+	Listings []feedListing
+	Invalid  map[string][]string
+}
+
+func (repo Repository) feedListings(ctx context.Context, integration publicIntegration) (feedSelection, error) {
 	rows, err := repo.db.Pool().Query(ctx, `
 		select jsonb_build_object(
 			'publication_id', plp.id::text,
@@ -714,26 +1210,29 @@ func (repo Repository) feedListings(ctx context.Context, integrationID string) (
 		  and plp.is_enabled = true
 		order by p.updated_at desc
 		limit 50000
-	`, integrationID)
+	`, integration.ID)
 	if err != nil {
-		return nil, err
+		return feedSelection{}, err
 	}
 	defer rows.Close()
-	listings := []feedListing{}
+	selection := feedSelection{Listings: []feedListing{}, Invalid: map[string][]string{}}
 	for rows.Next() {
 		var raw []byte
 		if err := rows.Scan(&raw); err != nil {
-			return nil, err
+			return feedSelection{}, err
 		}
 		var listing feedListing
 		if err := json.Unmarshal(raw, &listing); err != nil {
-			return nil, err
+			return feedSelection{}, err
 		}
-		if len(validateFeedListing(listing)) == 0 {
-			listings = append(listings, listing)
+		validationErrors := validateFeedListing(integration, listing)
+		if len(validationErrors) == 0 {
+			selection.Listings = append(selection.Listings, listing)
+		} else {
+			selection.Invalid[listing.PublicationID] = validationErrors
 		}
 	}
-	return listings, rows.Err()
+	return selection, rows.Err()
 }
 
 func ensureGrupoOLXIntegration(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context) (string, error) {
@@ -747,7 +1246,7 @@ func ensureGrupoOLXIntegration(ctx context.Context, tx pgx.Tx, tenantContext ten
 			created_by,
 			updated_at
 		)
-		values ($1::uuid, 'grupo_olx', 'pending_setup', true, $2::uuid, now())
+		values ($1::uuid, 'grupo_olx', 'draft', false, $2::uuid, now())
 		on conflict (organization_id, portal)
 		do update set updated_at = now()
 		returning id::text
@@ -812,6 +1311,7 @@ func findPublicationProperty(ctx context.Context, tx pgx.Tx, integrationID strin
 		join public.properties p on p.id = plp.property_id
 		where plp.integration_id = $1::uuid
 		  and plp.client_listing_id = $2
+		  and plp.is_enabled = true
 		limit 1
 	`, integrationID, clientListingID).Scan(&propertyID, &propertyCode)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -850,11 +1350,19 @@ func decodeJSONObject(raw []byte) (map[string]any, error) {
 	return item, nil
 }
 
-func cleanUUID(value *string) string {
-	if value == nil {
+func optionalUUIDText(value OptionalString) string {
+	if value.Value == nil {
 		return ""
 	}
-	return strings.TrimSpace(*value)
+	return strings.TrimSpace(*value.Value)
+}
+
+func optionalUUIDValue(value OptionalString) any {
+	text := optionalUUIDText(value)
+	if text == "" {
+		return nil
+	}
+	return text
 }
 
 func nonNilMap(value map[string]any) map[string]any {
@@ -899,26 +1407,54 @@ func normalizeClientListingID(value string, fallback string) string {
 func validWebhookAuthorization(header string, secret string) bool {
 	secret = strings.TrimSpace(secret)
 	if secret == "" {
-		return true
+		return false
 	}
 	header = strings.TrimSpace(header)
 	if header == "" {
 		return false
 	}
-	if strings.EqualFold(header, "Bearer "+secret) || strings.EqualFold(header, "Basic "+secret) {
-		return true
+	candidates := []string{}
+	if strings.HasPrefix(strings.ToLower(header), "bearer ") {
+		candidates = append(candidates, strings.TrimSpace(header[7:]))
 	}
 	if strings.HasPrefix(strings.ToLower(header), "basic ") {
 		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(header[6:]))
 		if err == nil {
 			parts := strings.SplitN(string(decoded), ":", 2)
-			if len(parts) == 1 {
-				return parts[0] == secret
+			candidates = append(candidates, string(decoded))
+			if len(parts) == 2 {
+				candidates = append(candidates, parts[1])
 			}
-			return parts[0] == secret || parts[1] == secret || string(decoded) == secret
+		}
+	}
+	for _, candidate := range candidates {
+		if webhookSecretMatches(secret, candidate) {
+			return true
 		}
 	}
 	return false
+}
+
+func webhookSecretDigest(secret string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(secret)))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func webhookSecretMatches(stored string, candidate string) bool {
+	stored = strings.TrimSpace(stored)
+	candidate = strings.TrimSpace(candidate)
+	if stored == "" || candidate == "" {
+		return false
+	}
+	if strings.HasPrefix(stored, "sha256:") {
+		candidate = webhookSecretDigest(candidate)
+	} else {
+		stored = strings.TrimPrefix(stored, "plain:")
+	}
+	if len(stored) != len(candidate) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(stored), []byte(candidate)) == 1
 }
 
 func payloadHash(payload []byte) string {
@@ -942,6 +1478,71 @@ func firstText(source map[string]any, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstValue(source map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if value, ok := source[key]; ok && value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func objectValue(value any) map[string]any {
+	if object, ok := value.(map[string]any); ok {
+		return object
+	}
+	return map[string]any{}
+}
+
+func numericValue(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	case json.Number:
+		parsed, _ := typed.Float64()
+		return parsed
+	case string:
+		var parsed float64
+		_, _ = fmt.Sscanf(strings.TrimSpace(typed), "%f", &parsed)
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func reportListingIssues(value any, messageKey string) map[string][]string {
+	result := map[string][]string{}
+	items, ok := value.([]any)
+	if !ok {
+		return result
+	}
+	for _, rawItem := range items {
+		item := objectValue(rawItem)
+		message := strings.TrimSpace(firstText(item, messageKey, "message", "errorMessage"))
+		if message == "" {
+			continue
+		}
+		externalIDs, ok := item["externalIds"].([]any)
+		if !ok {
+			continue
+		}
+		for _, rawID := range externalIDs {
+			listingID := strings.TrimSpace(fmt.Sprint(rawID))
+			if listingID == "" {
+				continue
+			}
+			result[listingID] = append(result[listingID], message)
+		}
+	}
+	return result
 }
 
 func normalizePhone(phone string, ddd string) string {

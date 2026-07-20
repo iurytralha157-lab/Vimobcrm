@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -97,11 +99,11 @@ func (repo Repository) ListOrganizations(ctx context.Context, tenantContext tena
 			'max_whatsapp_sessions_override', o.max_whatsapp_sessions_override
 		)
 		from public.organizations o
-		where ($1 = '' or o.name ilike '%' || $1 || '%' or o.email ilike '%' || $1 || '%' or o.cnpj ilike '%' || $1 || '%')
+		where ($1 = '' or `+searchtext.AnySQL([]string{"o.name", "o.email", "o.cnpj"}, "$1")+`)
 		  and ($2 = 'all' or o.subscription_status = $2)
 		  and ($3 = 'all' or o.segment = $3)
 		order by o.created_at desc
-	`, strings.TrimSpace(search), status, segment)
+	`, searchtext.Pattern(search), status, segment)
 }
 
 func (repo Repository) ListUsers(ctx context.Context, tenantContext tenant.Context) ([]map[string]any, error) {
@@ -369,7 +371,7 @@ func (repo Repository) ShowInvitationByToken(ctx context.Context, token string) 
 		  and i.expires_at > now()
 		limit 1
 	`, token)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	return item, err
@@ -614,13 +616,6 @@ func (repo Repository) DeleteTableRow(ctx context.Context, tenantContext tenant.
 	return nil
 }
 
-func (repo Repository) DatabaseStats(ctx context.Context, tenantContext tenant.Context) (map[string]any, error) {
-	if !tenantContext.IsSuperAdmin {
-		return nil, tenant.ErrOrganizationAccessDenied
-	}
-	return repo.queryJSONObject(ctx, `select public.get_database_stats_admin()`)
-}
-
 func (repo Repository) OrphanMemberStats(ctx context.Context, tenantContext tenant.Context) (map[string]any, error) {
 	if !tenantContext.IsSuperAdmin {
 		return nil, tenant.ErrOrganizationAccessDenied
@@ -666,6 +661,23 @@ func (repo Repository) ListOrganizationModules(ctx context.Context, tenantContex
 	`, organizationID)
 }
 
+func (repo Repository) ListOrganizationPayments(ctx context.Context, tenantContext tenant.Context, organizationID string) ([]map[string]any, error) {
+	if !tenantContext.IsSuperAdmin {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
+	organizationID, ok := normalizeUUID(organizationID)
+	if !ok {
+		return nil, ErrInvalidInput
+	}
+	return repo.queryJSONRows(ctx, `
+		select to_jsonb(p)
+		from public.asaas_payments p
+		where p.organization_id = $1::uuid
+		order by p.due_date desc nulls last, p.created_at desc
+		limit 80
+	`, organizationID)
+}
+
 func (repo Repository) DashboardOverview(ctx context.Context, tenantContext tenant.Context, period int) (map[string]any, error) {
 	if !tenantContext.IsSuperAdmin {
 		return nil, tenant.ErrOrganizationAccessDenied
@@ -673,17 +685,83 @@ func (repo Repository) DashboardOverview(ctx context.Context, tenantContext tena
 	if period < 1 {
 		period = 30
 	}
+	if period > 365 {
+		period = 365
+	}
 
 	return repo.queryJSONObject(ctx, `
+		with params as (
+			select greatest(1, least($1::int, 365)) as period_days
+		),
+		bounds as (
+			select
+				period_days,
+				(current_date - ((period_days - 1) * interval '1 day'))::date as current_start,
+				(current_date + interval '1 day')::date as current_end,
+				(current_date - ((period_days * 2 - 1) * interval '1 day'))::date as previous_start,
+				(current_date - ((period_days - 1) * interval '1 day'))::date as previous_end
+			from params
+		),
+		paid_payments as (
+			select
+				coalesce(p.payment_date, p.due_date, p.created_at::date)::date as paid_on,
+				coalesce(p.value, 0) as amount
+			from public.asaas_payments p
+			where upper(coalesce(p.status, '')) in ('CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH')
+		),
+		current_revenue as (
+			select coalesce(sum(pp.amount), 0) as amount
+			from paid_payments pp
+			cross join bounds b
+			where pp.paid_on >= b.current_start
+			  and pp.paid_on < b.current_end
+		),
+		previous_revenue as (
+			select coalesce(sum(pp.amount), 0) as amount
+			from paid_payments pp
+			cross join bounds b
+			where pp.paid_on >= b.previous_start
+			  and pp.paid_on < b.previous_end
+		),
+		current_orgs as (
+			select count(*)::numeric as amount
+			from public.organizations o
+			cross join bounds b
+			where o.created_at >= b.current_start
+			  and o.created_at < b.current_end
+		),
+		previous_orgs as (
+			select count(*)::numeric as amount
+			from public.organizations o
+			cross join bounds b
+			where o.created_at >= b.previous_start
+			  and o.created_at < b.previous_end
+		),
+		overdue_payments as (
+			select coalesce(sum(p.value), 0) as amount
+			from public.asaas_payments p
+			where upper(coalesce(p.status, '')) not in ('CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH')
+			  and (
+				upper(coalesce(p.status, '')) in ('OVERDUE', 'OVERDUE_PAYMENT')
+				or (p.due_date is not null and p.due_date < current_date)
+			  )
+		)
 		select jsonb_build_object(
-			'period_days', $1::int,
+			'period_days', (select period_days from params),
 			'financial', jsonb_build_object(
-				'mrr', coalesce((select sum(subscription_value) from public.organizations where subscription_status in ('active', 'trial')), 0),
-				'revenue_period', coalesce((select sum(subscription_value) from public.organizations where created_at >= now() - make_interval(days => $1::int)), 0),
+				'mrr', coalesce((select sum(subscription_value) from public.organizations where is_active = true and subscription_status in ('active', 'trial')), 0),
+				'revenue_period', (select amount from current_revenue),
 				'revenue_forecast', coalesce((select sum(subscription_value) from public.organizations where subscription_status in ('trial', 'pending_payment', 'active')), 0),
 				'avg_ticket', coalesce((select avg(subscription_value) from public.organizations where subscription_value is not null), 0),
-				'overdue_total', 0,
-				'revenue_growth_pct', 0
+				'overdue_total', (select amount from overdue_payments),
+				'revenue_growth_pct', (
+					select case
+						when previous_revenue.amount = 0 and current_revenue.amount > 0 then 100
+						when previous_revenue.amount = 0 then 0
+						else round(((current_revenue.amount - previous_revenue.amount) / previous_revenue.amount) * 100, 2)
+					end
+					from current_revenue, previous_revenue
+				)
 			),
 			'platform', jsonb_build_object(
 				'total_orgs', (select count(*) from public.organizations),
@@ -691,28 +769,121 @@ func (repo Repository) DashboardOverview(ctx context.Context, tenantContext tena
 				'trial_orgs', (select count(*) from public.organizations where subscription_status = 'trial'),
 				'cancelled_orgs', (select count(*) from public.organizations where subscription_status in ('cancelled', 'canceled')),
 				'active_users_today', (select count(*) from public.users where is_active = true and updated_at >= current_date),
-				'orgs_growth_pct', 0
+				'orgs_growth_pct', (
+					select case
+						when previous_orgs.amount = 0 and current_orgs.amount > 0 then 100
+						when previous_orgs.amount = 0 then 0
+						else round(((current_orgs.amount - previous_orgs.amount) / previous_orgs.amount) * 100, 2)
+					end
+					from current_orgs, previous_orgs
+				)
 			),
 			'operational', jsonb_build_object(
 				'leads_today', (select count(*) from public.leads where created_at >= current_date),
 				'automations_today', (select count(*) from public.automation_executions where started_at >= current_date),
 				'activities_today', (select count(*) from public.activities where created_at >= current_date),
-				'errors_recent', (select count(*) from public.audit_logs where created_at >= now() - interval '24 hours' and action ilike '%error%'),
-				'accesses_today', 0
+				'errors_recent', (select count(*) from public.error_events where created_at >= now() - interval '24 hours' and severity in ('error', 'critical')),
+				'accesses_today', (select count(*) from public.organizations where last_access_at >= current_date)
 			)
 		)
 	`, period)
 }
 
-func (repo Repository) DashboardTimeseries(ctx context.Context, tenantContext tenant.Context) (map[string]any, error) {
+func (repo Repository) DashboardTimeseries(ctx context.Context, tenantContext tenant.Context, period int) (map[string]any, error) {
 	if !tenantContext.IsSuperAdmin {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
+	if period < 1 {
+		period = 30
+	}
+	if period > 365 {
+		period = 365
+	}
 	return repo.queryJSONObject(ctx, `
+		with params as (
+			select greatest(1, least($1::int, 365)) as period_days
+		),
+		days as (
+			select generate_series(
+				(current_date - (((select period_days from params) - 1) * interval '1 day'))::date,
+				current_date,
+				interval '1 day'
+			)::date as day
+		),
+		revenue_by_day as (
+			select
+				coalesce(p.payment_date, p.due_date, p.created_at::date)::date as day,
+				sum(coalesce(p.value, 0)) as value
+			from public.asaas_payments p
+			where upper(coalesce(p.status, '')) in ('CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH')
+			group by 1
+		),
+		created_orgs as (
+			select o.created_at::date as day, count(*) as total
+			from public.organizations o
+			group by 1
+		),
+		trial_orgs as (
+			select o.created_at::date as day, count(*) as total
+			from public.organizations o
+			where o.subscription_status = 'trial'
+			group by 1
+		),
+		cancelled_orgs as (
+			select o.updated_at::date as day, count(*) as total
+			from public.organizations o
+			where o.subscription_status in ('cancelled', 'canceled')
+			group by 1
+		),
+		leads_by_day as (
+			select l.created_at::date as day, count(*) as total
+			from public.leads l
+			group by 1
+		),
+		accesses_by_day as (
+			select o.last_access_at::date as day, count(*) as total
+			from public.organizations o
+			where o.last_access_at is not null
+			group by 1
+		),
+		automations_by_day as (
+			select e.started_at::date as day, count(*) as total
+			from public.automation_executions e
+			group by 1
+		)
 		select jsonb_build_object(
-			'revenue', '[]'::jsonb,
-			'orgs', '[]'::jsonb,
-			'usage', '[]'::jsonb,
+			'revenue', coalesce((
+				select jsonb_agg(jsonb_build_object(
+					'date', d.day,
+					'value', coalesce(r.value, 0)
+				) order by d.day)
+				from days d
+				left join revenue_by_day r on r.day = d.day
+			), '[]'::jsonb),
+			'orgs', coalesce((
+				select jsonb_agg(jsonb_build_object(
+					'date', d.day,
+					'created', coalesce(co.total, 0),
+					'trial', coalesce(t.total, 0),
+					'cancelled', coalesce(c.total, 0)
+				) order by d.day)
+				from days d
+				left join created_orgs co on co.day = d.day
+				left join trial_orgs t on t.day = d.day
+				left join cancelled_orgs c on c.day = d.day
+			), '[]'::jsonb),
+			'usage', coalesce((
+				select jsonb_agg(jsonb_build_object(
+					'date', d.day,
+					'leads', coalesce(l.total, 0),
+					'accesses', coalesce(a.total, 0),
+					'automations', coalesce(ex.total, 0)
+				) order by d.day)
+				from days d
+				left join leads_by_day l on l.day = d.day
+				left join accesses_by_day a on a.day = d.day
+				left join automations_by_day ex on ex.day = d.day
+			), '[]'::jsonb),
 			'health', jsonb_build_object(
 				'active', (select count(*) from public.organizations where subscription_status = 'active'),
 				'trial', (select count(*) from public.organizations where subscription_status = 'trial'),
@@ -720,7 +891,7 @@ func (repo Repository) DashboardTimeseries(ctx context.Context, tenantContext te
 				'cancelled', (select count(*) from public.organizations where subscription_status in ('cancelled', 'canceled'))
 			)
 		)
-	`)
+	`, period)
 }
 
 func (repo Repository) DashboardFeed(ctx context.Context, tenantContext tenant.Context, limit int) ([]map[string]any, error) {
@@ -755,7 +926,34 @@ func (repo Repository) DashboardPending(ctx context.Context, tenantContext tenan
 	}
 	return repo.queryJSONObject(ctx, `
 		select jsonb_build_object(
-			'overdue', '[]'::jsonb,
+			'overdue', coalesce((
+				select jsonb_agg(jsonb_build_object(
+					'id', overdue_orgs.id::text,
+					'name', overdue_orgs.name,
+					'oldest_due', overdue_orgs.oldest_due,
+					'days_overdue', overdue_orgs.days_overdue,
+					'amount_due', overdue_orgs.amount_due
+				) order by overdue_orgs.days_overdue desc)
+				from (
+					select
+						o.id,
+						o.name,
+						min(p.due_date) as oldest_due,
+						(current_date - min(p.due_date))::int as days_overdue,
+						sum(coalesce(p.value, 0)) as amount_due
+					from public.asaas_payments p
+					join public.organizations o on o.id = p.organization_id
+					where upper(coalesce(p.status, '')) not in ('CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH')
+					  and p.due_date is not null
+					  and (
+						upper(coalesce(p.status, '')) in ('OVERDUE', 'OVERDUE_PAYMENT')
+						or p.due_date < current_date
+					  )
+					group by o.id, o.name
+					order by days_overdue desc, amount_due desc
+					limit 20
+				) overdue_orgs
+			), '[]'::jsonb),
 			'idle', coalesce((
 				select jsonb_agg(jsonb_build_object(
 					'id', id::text,
@@ -771,7 +969,35 @@ func (repo Repository) DashboardPending(ctx context.Context, tenantContext tenan
 					limit 20
 				) idle_orgs
 			), '[]'::jsonb),
-			'issues', '[]'::jsonb,
+			'issues', coalesce((
+				select jsonb_agg(jsonb_build_object(
+					'id', issue_rows.id::text,
+					'organization_id', issue_rows.organization_id::text,
+					'organization_name', issue_rows.organization_name,
+					'type', issue_rows.source,
+					'severity', issue_rows.severity,
+					'title', issue_rows.message,
+					'description', issue_rows.route,
+					'created_at', issue_rows.created_at
+				) order by issue_rows.created_at desc)
+				from (
+					select
+						e.id,
+						e.organization_id,
+						o.name as organization_name,
+						e.source,
+						e.severity,
+						e.message,
+						coalesce(e.route, e.path, e.component) as route,
+						e.created_at
+					from public.error_events e
+					left join public.organizations o on o.id = e.organization_id
+					where e.severity in ('error', 'critical')
+					  and e.resolved_at is null
+					order by e.created_at desc
+					limit 20
+				) issue_rows
+			), '[]'::jsonb),
 			'trials', coalesce((
 				select jsonb_agg(jsonb_build_object(
 					'id', id::text,
@@ -873,18 +1099,19 @@ func (repo Repository) UpdateOrganization(ctx context.Context, tenantContext ten
 			name = coalesce($2, name),
 			is_active = coalesce($3, is_active),
 			subscription_status = coalesce($4, subscription_status),
+			subscription_type = coalesce($17, subscription_type),
 			max_users = coalesce($5, max_users),
 			admin_notes = coalesce($6, admin_notes),
-			plan_id = $7::uuid,
+			plan_id = case when $14 then null else coalesce($7::uuid, plan_id) end,
 			subscription_value = coalesce($8, subscription_value),
 			billing_day = coalesce($9, billing_day),
-			next_billing_date = $10::date,
-			trial_ends_at = $11::date,
+			next_billing_date = case when $15 then null else coalesce($10::date, next_billing_date) end,
+			trial_ends_at = case when $16 then null else coalesce($11::date, trial_ends_at) end,
 			creci = coalesce($12, creci),
 			max_whatsapp_sessions_override = coalesce($13, max_whatsapp_sessions_override),
 			updated_at = now()
 		where id = $1::uuid
-	`, organizationID, cleanString(request.Name), request.IsActive, cleanString(request.SubscriptionStatus), request.MaxUsers, cleanString(request.AdminNotes), cleanString(request.PlanID), request.SubscriptionValue, request.BillingDay, cleanString(request.NextBillingDate), cleanString(request.TrialEndsAt), cleanString(request.Creci), request.MaxWhatsappSessionsOverride)
+	`, organizationID, cleanString(request.Name), request.IsActive, cleanString(request.SubscriptionStatus), request.MaxUsers, cleanString(request.AdminNotes), cleanString(request.PlanID), request.SubscriptionValue, request.BillingDay, cleanString(request.NextBillingDate), cleanString(request.TrialEndsAt), cleanString(request.Creci), request.MaxWhatsappSessionsOverride, request.ClearPlanID, request.ClearNextBillingDate, request.ClearTrialEndsAt, cleanString(request.SubscriptionType))
 	if err != nil {
 		return err
 	}
@@ -983,6 +1210,61 @@ func (repo Repository) DeleteUser(ctx context.Context, tenantContext tenant.Cont
 	return repo.UpdateUser(ctx, tenantContext, userID, UserUpdateRequest{IsActive: &inactive})
 }
 
+func (repo Repository) ResetUserPassword(ctx context.Context, tenantContext tenant.Context, userID string) (map[string]any, error) {
+	if !tenantContext.IsSuperAdmin {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
+	userID, ok := normalizeUUID(userID)
+	if !ok {
+		return nil, ErrInvalidInput
+	}
+
+	var name, email string
+	err := repo.db.Pool().QueryRow(ctx, `
+		select name, email
+		from public.users
+		where id = $1::uuid
+	`, userID).Scan(&name, &email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return nil, ErrInvalidInput
+	}
+
+	password, err := generateTemporaryPassword()
+	if err != nil {
+		return nil, err
+	}
+	if err := repo.updateAuthUserPassword(ctx, userID, password); err != nil {
+		return nil, err
+	}
+
+	_, err = repo.db.Pool().Exec(ctx, `
+		insert into public.password_change_events (user_id, source, metadata)
+		values (
+			$1::uuid,
+			'recovery',
+			jsonb_build_object('reset_by', $2::uuid, 'reset_source', 'superadmin')
+		)
+	`, userID, tenantContext.UserID)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"user_id":            userID,
+		"name":               name,
+		"email":              email,
+		"temporary_password": password,
+		"updated_at":         time.Now().UTC().Format(time.RFC3339),
+	}, nil
+}
+
 func (repo Repository) getOrganizationByID(ctx context.Context, organizationID string) (map[string]any, error) {
 	item, err := repo.queryJSONObject(ctx, `
 		select jsonb_build_object('id', id::text, 'name', name, 'is_active', is_active)
@@ -1065,6 +1347,47 @@ func (repo Repository) createAuthUser(ctx context.Context, email string, passwor
 		return "", ErrInvalidInput
 	}
 	return parsed.ID, nil
+}
+
+func (repo Repository) updateAuthUserPassword(ctx context.Context, userID string, password string) error {
+	if repo.projectURL == "" || repo.apiKey == "" {
+		return ErrInvalidInput
+	}
+	payload, _ := json.Marshal(map[string]any{"password": password})
+	request, err := http.NewRequestWithContext(ctx, http.MethodPatch, repo.projectURL+"/auth/v1/admin/users/"+userID, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("apikey", repo.apiKey)
+	request.Header.Set("Authorization", "Bearer "+repo.apiKey)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
+	response, err := repo.httpClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("auth admin update password failed: %s", strings.TrimSpace(string(raw)))
+	}
+	return nil
+}
+
+func generateTemporaryPassword() (string, error) {
+	const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*"
+	var builder strings.Builder
+	builder.Grow(14)
+
+	for builder.Len() < 14 {
+		index, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
+		if err != nil {
+			return "", err
+		}
+		builder.WriteByte(alphabet[index.Int64()])
+	}
+
+	return builder.String(), nil
 }
 
 func normalizeEmail(value string) (string, error) {

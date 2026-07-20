@@ -9,10 +9,10 @@ insert into auth.users (
   confirmation_token, email_change, email_change_token_new, recovery_token
 )
 values
-  ('00000000-0000-0000-0000-000000000000', 'c1000000-0000-4000-8000-000000000001', 'authenticated', 'authenticated', 'wa-assigned@example.test', crypt('test-password', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}', '{}', now(), now(), '', '', '', ''),
-  ('00000000-0000-0000-0000-000000000000', 'c1000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated', 'wa-other@example.test', crypt('test-password', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}', '{}', now(), now(), '', '', '', ''),
-  ('00000000-0000-0000-0000-000000000000', 'c1000000-0000-4000-8000-000000000003', 'authenticated', 'authenticated', 'wa-admin@example.test', crypt('test-password', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}', '{}', now(), now(), '', '', '', ''),
-  ('00000000-0000-0000-0000-000000000000', 'c1000000-0000-4000-8000-000000000004', 'authenticated', 'authenticated', 'wa-cross@example.test', crypt('test-password', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}', '{}', now(), now(), '', '', '', '');
+  ('00000000-0000-0000-0000-000000000000', 'c1000000-0000-4000-8000-000000000001', 'authenticated', 'authenticated', 'wa-assigned@example.test', crypt('test-password', gen_salt('bf', 4)), now(), '{"provider":"email","providers":["email"]}', '{}', now(), now(), '', '', '', ''),
+  ('00000000-0000-0000-0000-000000000000', 'c1000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated', 'wa-other@example.test', crypt('test-password', gen_salt('bf', 4)), now(), '{"provider":"email","providers":["email"]}', '{}', now(), now(), '', '', '', ''),
+  ('00000000-0000-0000-0000-000000000000', 'c1000000-0000-4000-8000-000000000003', 'authenticated', 'authenticated', 'wa-admin@example.test', crypt('test-password', gen_salt('bf', 4)), now(), '{"provider":"email","providers":["email"]}', '{}', now(), now(), '', '', '', ''),
+  ('00000000-0000-0000-0000-000000000000', 'c1000000-0000-4000-8000-000000000004', 'authenticated', 'authenticated', 'wa-cross@example.test', crypt('test-password', gen_salt('bf', 4)), now(), '{"provider":"email","providers":["email"]}', '{}', now(), now(), '', '', '', '');
 
 insert into public.organizations (id, name, slug, is_active)
 values
@@ -24,14 +24,23 @@ values
   ('c1000000-0000-4000-8000-000000000001', 'c2000000-0000-4000-8000-000000000001', 'Assigned Broker', 'wa-assigned@example.test', 'user', true),
   ('c1000000-0000-4000-8000-000000000002', 'c2000000-0000-4000-8000-000000000001', 'Other Broker', 'wa-other@example.test', 'user', true),
   ('c1000000-0000-4000-8000-000000000003', 'c2000000-0000-4000-8000-000000000001', 'Org Admin', 'wa-admin@example.test', 'admin', true),
-  ('c1000000-0000-4000-8000-000000000004', 'c2000000-0000-4000-8000-000000000002', 'Cross Org Broker', 'wa-cross@example.test', 'user', true);
+  ('c1000000-0000-4000-8000-000000000004', 'c2000000-0000-4000-8000-000000000002', 'Cross Org Broker', 'wa-cross@example.test', 'user', true)
+on conflict (id) do update
+set organization_id = excluded.organization_id,
+    name = excluded.name,
+    email = excluded.email,
+    role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.organization_members (organization_id, user_id, role, is_active)
 values
   ('c2000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-000000000001', 'user', true),
   ('c2000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-000000000002', 'user', true),
   ('c2000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-000000000003', 'admin', true),
-  ('c2000000-0000-4000-8000-000000000002', 'c1000000-0000-4000-8000-000000000004', 'user', true);
+  ('c2000000-0000-4000-8000-000000000002', 'c1000000-0000-4000-8000-000000000004', 'user', true)
+on conflict (user_id, organization_id) do update
+set role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.leads (id, organization_id, assigned_user_id, name, source)
 values
@@ -60,8 +69,8 @@ insert into public.whatsapp_messages (
   message_type, content, remote_jid, status
 )
 values
-  ('c6000000-0000-4000-8000-000000000001', 'c2000000-0000-4000-8000-000000000001', 'c5000000-0000-4000-8000-000000000001', 'c4000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001', null, null, 'canonical-client-a', true, 'outbound', 'text', 'Mensagem A', '5511999990001@s.whatsapp.net', 'pending'),
-  ('c6000000-0000-4000-8000-000000000002', 'c2000000-0000-4000-8000-000000000001', 'c5000000-0000-4000-8000-000000000001', 'c4000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001', null, null, 'canonical-client-a-2', true, 'outbound', 'text', 'Mensagem A2', '5511999990001@s.whatsapp.net', 'pending'),
+  ('c6000000-0000-4000-8000-000000000001', 'c2000000-0000-4000-8000-000000000001', 'c5000000-0000-4000-8000-000000000001', 'c4000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001', null, 'canonical-client-a', 'canonical-client-a', true, 'outbound', 'text', 'Mensagem A', '5511999990001@s.whatsapp.net', 'pending'),
+  ('c6000000-0000-4000-8000-000000000002', 'c2000000-0000-4000-8000-000000000001', 'c5000000-0000-4000-8000-000000000001', 'c4000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001', null, 'canonical-client-a-2', 'canonical-client-a-2', true, 'outbound', 'text', 'Mensagem A2', '5511999990001@s.whatsapp.net', 'pending'),
   ('c6000000-0000-4000-8000-000000000003', 'c2000000-0000-4000-8000-000000000001', 'c5000000-0000-4000-8000-000000000002', 'c4000000-0000-4000-8000-000000000001', null, 'provider-quarantine', 'provider-quarantine', null, false, 'inbound', 'text', 'Mensagem em quarentena', '5511999990099@s.whatsapp.net', 'received'),
   ('c6000000-0000-4000-8000-000000000004', 'c2000000-0000-4000-8000-000000000002', 'c5000000-0000-4000-8000-000000000003', 'c4000000-0000-4000-8000-000000000002', 'c3000000-0000-4000-8000-000000000002', 'provider-b', 'provider-b', null, false, 'inbound', 'text', 'Mensagem B', '5511999990002@s.whatsapp.net', 'received');
 
@@ -386,20 +395,26 @@ select set_config('request.jwt.claim.role', 'authenticated', true);
 select set_config('request.jwt.claim.sub', 'c1000000-0000-4000-8000-000000000001', true);
 
 select ok(private.can_receive_whatsapp_broadcast('whatsapp:c2000000-0000-4000-8000-000000000001:inbox'), 'assigned broker can subscribe to its organization inbox topic');
+set local role service_role;
 select ok(public.vimob_can_view_whatsapp_lead('c2000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001'), 'assigned broker is authorized for its lead');
+set local role authenticated;
 select ok(public.can_view_whatsapp_conversation('c5000000-0000-4000-8000-000000000001'), 'assigned broker is authorized for its linked lead conversation');
 select ok(not public.can_view_whatsapp_conversation('c5000000-0000-4000-8000-000000000002'), 'session owner cannot authorize unlinked quarantine');
 select throws_ok($$select count(*) from public.whatsapp_messages$$, '42501', null, 'assigned broker cannot bypass the Go API for raw messages');
 
 select set_config('request.jwt.claim.sub', 'c1000000-0000-4000-8000-000000000002', true);
 select ok(private.can_receive_whatsapp_broadcast('whatsapp:c2000000-0000-4000-8000-000000000001:inbox'), 'unassigned same-organization broker can receive the content-free inbox wake-up signal');
+set local role service_role;
 select ok(not public.vimob_can_view_whatsapp_lead('c2000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001'), 'unassigned broker is denied the lead');
+set local role authenticated;
 select ok(not public.can_view_whatsapp_conversation('c5000000-0000-4000-8000-000000000001'), 'unassigned broker is denied the conversation helper');
 select throws_ok($$select count(*) from public.whatsapp_messages$$, '42501', null, 'unassigned broker cannot query raw message history');
 
 select set_config('request.jwt.claim.sub', 'c1000000-0000-4000-8000-000000000003', true);
 select ok(private.can_receive_whatsapp_broadcast('whatsapp:c2000000-0000-4000-8000-000000000001:inbox'), 'same-organization admin can subscribe to the organization inbox topic');
+set local role service_role;
 select ok(public.vimob_can_view_whatsapp_lead('c2000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001'), 'same-organization admin can access the lead');
+set local role authenticated;
 select ok(public.can_view_whatsapp_conversation('c5000000-0000-4000-8000-000000000001'), 'same-organization admin is authorized for the linked conversation');
 select ok(not public.can_view_whatsapp_conversation('c5000000-0000-4000-8000-000000000002'), 'same-organization admin still cannot authorize quarantine');
 select throws_ok($$select count(*) from public.whatsapp_conversations$$, '42501', null, 'same-organization admin cannot query raw conversations outside the Go API');
@@ -407,7 +422,9 @@ select throws_ok($$select count(*) from public.whatsapp_conversations$$, '42501'
 select set_config('request.jwt.claim.sub', 'c1000000-0000-4000-8000-000000000004', true);
 select ok(not private.can_receive_whatsapp_broadcast('whatsapp:c2000000-0000-4000-8000-000000000001:inbox'), 'cross-organization user cannot subscribe to Org A inbox topic');
 select ok(private.can_receive_whatsapp_broadcast('whatsapp:c2000000-0000-4000-8000-000000000002:inbox'), 'cross-organization user can subscribe only to its own organization inbox topic');
+set local role service_role;
 select ok(not public.vimob_can_view_whatsapp_lead('c2000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001'), 'cross-organization user is denied Org A lead');
+set local role authenticated;
 select ok(public.can_view_whatsapp_conversation('c5000000-0000-4000-8000-000000000003'), 'cross-organization user is authorized only for its own linked conversation');
 select ok(not public.can_view_whatsapp_conversation('c5000000-0000-4000-8000-000000000001'), 'cross-organization user cannot authorize an Org A conversation by id');
 select throws_ok($$select count(*) from public.whatsapp_messages$$, '42501', null, 'cross-organization user cannot query raw message history');

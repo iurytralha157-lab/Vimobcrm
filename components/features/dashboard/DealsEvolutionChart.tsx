@@ -28,7 +28,7 @@ interface DealsEvolutionChartProps {
 
 const SKELETON_BAR_HEIGHTS = [96, 128, 72, 112, 88, 136, 104];
 const chartTickStyle = {
-  fill: '#272727',
+  fill: 'var(--app-text-tertiary)',
   fontSize: 10,
   fontWeight: 300,
 };
@@ -124,7 +124,7 @@ export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProp
     return (
       <Card className="app-card overflow-hidden h-full flex flex-col">
         <CardHeader className="pb-2">
-          <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[#272727]">
+          <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[var(--app-text-primary)]">
             <TrendingUp className="h-4 w-4 text-primary" />
             Evolução de Negócios
           </CardTitle>
@@ -140,7 +140,7 @@ export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProp
     return (
       <Card className="app-card overflow-hidden h-full flex flex-col">
         <CardHeader className="pb-2">
-          <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[#272727]">
+          <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[var(--app-text-primary)]">
             <TrendingUp className="h-4 w-4 text-primary" />
             Evolução de Negócios
           </CardTitle>
@@ -167,7 +167,7 @@ export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProp
   return (
     <Card className="app-card overflow-hidden h-full flex flex-col">
       <CardHeader className="pb-2">
-        <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[#272727]">
+        <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[var(--app-text-primary)]">
           <TrendingUp className="h-4 w-4 text-primary" />
           Evolução de Negócios
         </CardTitle>

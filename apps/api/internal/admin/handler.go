@@ -405,19 +405,6 @@ func (handler Handler) DeleteTableRow(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-func (handler Handler) DatabaseStats(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := adminContext(w, r)
-	if !ok {
-		return
-	}
-	item, err := handler.repo.DatabaseStats(r.Context(), tenantContext)
-	if err != nil {
-		writeAdminError(w, r, err)
-		return
-	}
-	httpserver.WriteJSON(w, http.StatusOK, Envelope[map[string]any]{Data: item})
-}
-
 func (handler Handler) OrphanMemberStats(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := adminContext(w, r)
 	if !ok {
@@ -457,6 +444,19 @@ func (handler Handler) ListOrganizationModules(w http.ResponseWriter, r *http.Re
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]map[string]any]{Data: items})
 }
 
+func (handler Handler) ListOrganizationPayments(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := adminContext(w, r)
+	if !ok {
+		return
+	}
+	items, err := handler.repo.ListOrganizationPayments(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writeAdminError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]map[string]any]{Data: items})
+}
+
 func (handler Handler) DashboardOverview(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := adminContext(w, r)
 	if !ok {
@@ -476,7 +476,8 @@ func (handler Handler) DashboardTimeseries(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	item, err := handler.repo.DashboardTimeseries(r.Context(), tenantContext)
+	period := parsePositiveInt(r.URL.Query().Get("period"), 30)
+	item, err := handler.repo.DashboardTimeseries(r.Context(), tenantContext, period)
 	if err != nil {
 		writeAdminError(w, r, err)
 		return
@@ -619,6 +620,19 @@ func (handler Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (handler Handler) ResetUserPassword(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := adminContext(w, r)
+	if !ok {
+		return
+	}
+	item, err := handler.repo.ResetUserPassword(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writeAdminError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[map[string]any]{Data: item})
 }
 
 func adminContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {

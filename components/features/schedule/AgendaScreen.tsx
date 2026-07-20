@@ -31,6 +31,8 @@ import {
   MessageSquare,
   SlidersHorizontal,
   Trash2,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { Button } from "@/components/ui/button";
@@ -47,6 +49,8 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useUserPermissions } from "@/hooks/use-user-permissions";
+import { VimobLoader } from "@/components/shared/loading/VimobLoader";
 
 // --- helpers ----------------------------------------------------------------
 
@@ -73,6 +77,8 @@ export default function Agenda() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const isMobile = useIsMobile();
+  const { hasPermission } = useUserPermissions();
+  const canManageSchedule = hasPermission("schedule_manage");
   const searchParamsString = searchParams.toString();
   const focusedEventId = searchParams.get("event") || searchParams.get("task");
 
@@ -126,7 +132,7 @@ export default function Agenda() {
     }
   }, [pivotDate, effectiveViewMode]);
 
-  const { data: events = [] } = useScheduleEvents({
+  const { data: events = [], isLoading: eventsLoading, isError: eventsFailed, refetch: refetchEvents } = useScheduleEvents({
     userId: selectedUserId || undefined,
     startDate: dateRange.startDate,
     endDate: dateRange.endDate,
@@ -383,7 +389,7 @@ export default function Agenda() {
                 </PopoverContent>
               </Popover>
 
-              {!isMobile && (
+              {!isMobile && canManageSchedule && (
                 <Button
                   data-tour="agenda-new"
                   onClick={openCreateSheet}
@@ -397,7 +403,19 @@ export default function Agenda() {
 
           {/* Calendário / lista */}
           <div data-tour="agenda-calendar" style={{ flex: 1, overflow: "hidden" }}>
-            {effectiveViewMode !== "list" ? (
+            {eventsLoading ? (
+              <div className="flex h-full items-center justify-center">
+                <VimobLoader showLabel label="Carregando agenda..." />
+              </div>
+            ) : eventsFailed ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+                <AlertCircle className="h-6 w-6 text-destructive" />
+                <p className="text-sm text-[var(--app-text-secondary)]">Não foi possível carregar a agenda.</p>
+                <Button variant="outline" size="sm" className="gap-2 rounded-[6px]" onClick={() => void refetchEvents()}>
+                  <RefreshCw className="h-3.5 w-3.5" /> Tentar novamente
+                </Button>
+              </div>
+            ) : effectiveViewMode !== "list" ? (
               <CalendarView
                 events={events}
                 selectedDate={selectedDate}
@@ -407,21 +425,22 @@ export default function Agenda() {
                 viewMode={effectiveViewMode}
                 onEditEvent={openEventSheet}
                 onEventUpdate={(id, updates) =>
-                  updateEventMutation.mutate({
-                    id,
-                    ...updates,
-                    visibility: updates.visibility ?? undefined,
-                  })
+                  canManageSchedule && updateEventMutation.mutate({
+                      id,
+                      ...updates,
+                      visibility: updates.visibility ?? undefined,
+                    })
                 }
                 showThirtyMinLines={showThirtyMinLines}
-                onQuickCreate={(date) => {
-                  setSelectedDate(date);
-                  openCreateSheet();
-                }}
+                canManageEvents={canManageSchedule}
+                onQuickCreate={canManageSchedule ? (date) => {
+                    setSelectedDate(date);
+                    openCreateSheet();
+                  } : undefined}
               />
             ) : (
               <div style={{ height: "100%", padding: 24, overflowY: "auto" }}>
-                <EventsList events={upcomingEvents} onEditEvent={openEventSheet} showUser={true} />
+                <EventsList events={upcomingEvents} onEditEvent={openEventSheet} showUser={true} canManage={canManageSchedule} />
               </div>
             )}
           </div>
@@ -479,7 +498,7 @@ function SideLabel({ children }: { children: React.ReactNode }) {
         alignItems: "center",
         gap: 6,
         fontSize: 10,
-        fontWeight: 700,
+        fontWeight: 300,
         color: "var(--color-text-tertiary)",
         textTransform: "uppercase",
         letterSpacing: "0.06em",

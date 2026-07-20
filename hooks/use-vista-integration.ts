@@ -51,7 +51,7 @@ export function useSaveVistaIntegration() {
 
   return useMutation({
     mutationFn: ({ api_url, api_key }: { api_url: string; api_key: string }) => {
-      if (!orgId) throw new Error('No organization');
+      if (!orgId) throw new Error('Organização não encontrada.');
       return integrationsAPI.saveVista({ api_url, api_key }, orgId) as Promise<VistaIntegration>;
     },
     onSuccess: () => {
@@ -103,7 +103,7 @@ export function useDeleteVistaIntegration() {
 
   return useMutation({
     mutationFn: () => {
-      if (!profile?.organization_id) throw new Error('No org');
+      if (!profile?.organization_id) throw new Error('Organização não encontrada.');
       return integrationsAPI.deleteVista(profile.organization_id);
     },
     onSuccess: () => {

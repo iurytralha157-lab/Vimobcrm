@@ -24,6 +24,7 @@ var (
 	ErrInvalidReference        = errors.New("invalid lead reference")
 	ErrLeadPropertyUnavailable = errors.New("lead property unavailable")
 	ErrLeadAlreadyExists       = errors.New("lead already exists")
+	ErrLeadPhoneConflict       = errors.New("lead phone already exists")
 	ErrLeadNotFound            = errors.New("lead not found")
 	ErrNoLeadChanges           = errors.New("no lead changes provided")
 	ErrTagAlreadyExists        = errors.New("tag already exists on lead")
@@ -47,6 +48,7 @@ type Lead struct {
 	PipelineID           string       `json:"pipelineId,omitempty"`
 	StageID              string       `json:"stageId,omitempty"`
 	AssignedUserID       string       `json:"assignedUserId,omitempty"`
+	TeamID               string       `json:"teamId,omitempty"`
 	InterestValue        string       `json:"interestValue,omitempty"`
 	CommissionPercentage string       `json:"commissionPercentage,omitempty"`
 	Feedback             string       `json:"feedback,omitempty"`
@@ -105,65 +107,86 @@ type ListFilter struct {
 }
 
 type CreateRequest struct {
-	Name             string   `json:"name"`
-	Email            string   `json:"email,omitempty"`
-	Phone            string   `json:"phone,omitempty"`
-	Source           string   `json:"source,omitempty"`
-	Message          string   `json:"message,omitempty"`
-	PropertyCode     string   `json:"propertyCode,omitempty"`
-	PropertyID       string   `json:"propertyId,omitempty"`
-	PipelineID       string   `json:"pipelineId,omitempty"`
-	StageID          string   `json:"stageId,omitempty"`
-	AssignedUserID   string   `json:"assignedUserId,omitempty"`
-	InterestValue    *string  `json:"interestValue,omitempty"`
-	DealStatus       string   `json:"dealStatus,omitempty"`
-	LostReason       string   `json:"lostReason,omitempty"`
-	IsOwnResource    *bool    `json:"isOwnResource,omitempty"`
-	ConversationID   string   `json:"conversationId,omitempty"`
-	TagIDs           []string `json:"tagIds,omitempty"`
-	Cargo            string   `json:"cargo,omitempty"`
-	Empresa          string   `json:"empresa,omitempty"`
-	Profissao        string   `json:"profissao,omitempty"`
-	Endereco         string   `json:"endereco,omitempty"`
-	Bairro           string   `json:"bairro,omitempty"`
-	Numero           string   `json:"numero,omitempty"`
-	CEP              string   `json:"cep,omitempty"`
-	Cidade           string   `json:"cidade,omitempty"`
-	UF               string   `json:"uf,omitempty"`
-	RendaFamiliar    string   `json:"rendaFamiliar,omitempty"`
-	FaixaValorImovel string   `json:"faixaValorImovel,omitempty"`
-	ImportMode       bool     `json:"importMode,omitempty"`
+	Name                string              `json:"name"`
+	Email               string              `json:"email,omitempty"`
+	Phone               string              `json:"phone,omitempty"`
+	Source              string              `json:"source,omitempty"`
+	Message             string              `json:"message,omitempty"`
+	Feedback            string              `json:"feedback,omitempty"`
+	PropertyCode        string              `json:"propertyCode,omitempty"`
+	PropertyID          string              `json:"propertyId,omitempty"`
+	InterestPropertyIDs []string            `json:"interestPropertyIds,omitempty"`
+	PipelineID          string              `json:"pipelineId,omitempty"`
+	StageID             string              `json:"stageId,omitempty"`
+	AssignedUserID      string              `json:"assignedUserId,omitempty"`
+	TeamID              string              `json:"teamId,omitempty"`
+	InterestValue       *string             `json:"interestValue,omitempty"`
+	DealStatus          string              `json:"dealStatus,omitempty"`
+	LostReason          string              `json:"lostReason,omitempty"`
+	IsOwnResource       *bool               `json:"isOwnResource,omitempty"`
+	ConversationID      string              `json:"conversationId,omitempty"`
+	TagIDs              []string            `json:"tagIds,omitempty"`
+	Cargo               string              `json:"cargo,omitempty"`
+	Empresa             string              `json:"empresa,omitempty"`
+	Profissao           string              `json:"profissao,omitempty"`
+	Endereco            string              `json:"endereco,omitempty"`
+	Bairro              string              `json:"bairro,omitempty"`
+	Numero              string              `json:"numero,omitempty"`
+	CEP                 string              `json:"cep,omitempty"`
+	Cidade              string              `json:"cidade,omitempty"`
+	UF                  string              `json:"uf,omitempty"`
+	RendaFamiliar       string              `json:"rendaFamiliar,omitempty"`
+	FaixaValorImovel    string              `json:"faixaValorImovel,omitempty"`
+	Profile             *LeadProfileRequest `json:"profile,omitempty"`
+	ImportMode          bool                `json:"importMode,omitempty"`
+}
+
+type LeadProfileRequest struct {
+	PersonType        string `json:"personType,omitempty"`
+	Gender            string `json:"gender,omitempty"`
+	SocialName        string `json:"socialName,omitempty"`
+	BirthDate         string `json:"birthDate,omitempty"`
+	CPF               string `json:"cpf,omitempty"`
+	RG                string `json:"rg,omitempty"`
+	CNPJ              string `json:"cnpj,omitempty"`
+	CorporateName     string `json:"corporateName,omitempty"`
+	TradeName         string `json:"tradeName,omitempty"`
+	StateRegistration string `json:"stateRegistration,omitempty"`
 }
 
 type createInput struct {
-	Name             string
-	Email            *string
-	Phone            *string
-	Source           string
-	Message          *string
-	PropertyCode     *string
-	PropertyID       *string
-	PipelineID       *string
-	StageID          *string
-	AssignedUserID   *string
-	InterestValue    *string
-	DealStatus       string
-	LostReason       *string
-	IsOwnResource    *bool
-	ConversationID   *string
-	TagIDs           []string
-	Cargo            *string
-	Empresa          *string
-	Profissao        *string
-	Endereco         *string
-	Bairro           *string
-	Numero           *string
-	CEP              *string
-	Cidade           *string
-	UF               *string
-	RendaFamiliar    *string
-	FaixaValorImovel *string
-	ImportMode       bool
+	Name                string
+	Email               *string
+	Phone               *string
+	Source              string
+	Message             *string
+	Feedback            *string
+	PropertyCode        *string
+	PropertyID          *string
+	InterestPropertyIDs []string
+	PipelineID          *string
+	StageID             *string
+	AssignedUserID      *string
+	TeamID              *string
+	InterestValue       *string
+	DealStatus          string
+	LostReason          *string
+	IsOwnResource       *bool
+	ConversationID      *string
+	TagIDs              []string
+	Cargo               *string
+	Empresa             *string
+	Profissao           *string
+	Endereco            *string
+	Bairro              *string
+	Numero              *string
+	CEP                 *string
+	Cidade              *string
+	UF                  *string
+	RendaFamiliar       *string
+	FaixaValorImovel    *string
+	Metadata            LeadMetadata
+	ImportMode          bool
 }
 
 type patchString struct {
@@ -354,6 +377,7 @@ func (request CreateRequest) Validate() (createInput, error) {
 		Phone:            optionalString(request.Phone, 40),
 		Source:           trimMax(request.Source, 80),
 		Message:          optionalString(request.Message, 2_000),
+		Feedback:         optionalString(request.Feedback, 2_000),
 		PropertyCode:     optionalString(request.PropertyCode, 80),
 		DealStatus:       trimMax(request.DealStatus, 20),
 		LostReason:       optionalString(request.LostReason, 300),
@@ -404,6 +428,30 @@ func (request CreateRequest) Validate() (createInput, error) {
 		input.PropertyID = &value
 	}
 
+	if len(request.InterestPropertyIDs) > 20 {
+		return createInput{}, fmt.Errorf("%w: interestPropertyIds can contain at most 20 items", ErrInvalidInput)
+	}
+	seenPropertyIDs := map[string]struct{}{}
+	if input.PropertyID != nil {
+		seenPropertyIDs[*input.PropertyID] = struct{}{}
+		input.InterestPropertyIDs = append(input.InterestPropertyIDs, *input.PropertyID)
+	}
+	for _, propertyID := range request.InterestPropertyIDs {
+		value, ok := normalizeUUID(propertyID)
+		if !ok {
+			return createInput{}, fmt.Errorf("%w: interestPropertyIds contains an invalid uuid", ErrInvalidInput)
+		}
+		if _, exists := seenPropertyIDs[value]; exists {
+			continue
+		}
+		seenPropertyIDs[value] = struct{}{}
+		input.InterestPropertyIDs = append(input.InterestPropertyIDs, value)
+	}
+	if input.PropertyID == nil && len(input.InterestPropertyIDs) > 0 {
+		value := input.InterestPropertyIDs[0]
+		input.PropertyID = &value
+	}
+
 	if request.PipelineID != "" {
 		value, ok := normalizeUUID(request.PipelineID)
 		if !ok {
@@ -426,6 +474,14 @@ func (request CreateRequest) Validate() (createInput, error) {
 			return createInput{}, fmt.Errorf("%w: assignedUserId is invalid", ErrInvalidInput)
 		}
 		input.AssignedUserID = &value
+	}
+
+	if request.TeamID != "" {
+		value, ok := normalizeUUID(request.TeamID)
+		if !ok {
+			return createInput{}, fmt.Errorf("%w: teamId is invalid", ErrInvalidInput)
+		}
+		input.TeamID = &value
 	}
 
 	if request.ConversationID != "" {
@@ -461,6 +517,12 @@ func (request CreateRequest) Validate() (createInput, error) {
 			input.InterestValue = &value
 		}
 	}
+
+	metadata, err := validateLeadProfile(request.Profile, input.InterestPropertyIDs)
+	if err != nil {
+		return createInput{}, err
+	}
+	input.Metadata = metadata
 
 	return input, nil
 }
@@ -741,6 +803,76 @@ func (input updateInput) auditData() map[string]any {
 	addBool("is_own_resource", input.IsOwnResource)
 
 	return out
+}
+
+func validateLeadProfile(request *LeadProfileRequest, interestPropertyIDs []string) (LeadMetadata, error) {
+	metadata := LeadMetadata{}
+	if len(interestPropertyIDs) > 0 {
+		metadata["interestPropertyIds"] = interestPropertyIDs
+	}
+	if request == nil {
+		return metadata, nil
+	}
+
+	personType := trimMax(request.PersonType, 20)
+	if personType == "" {
+		personType = "individual"
+	}
+	if !validEnum(personType, "individual", "company") {
+		return nil, fmt.Errorf("%w: profile.personType is invalid", ErrInvalidInput)
+	}
+
+	gender := trimMax(request.Gender, 20)
+	if gender != "" && !validEnum(gender, "male", "female", "other") {
+		return nil, fmt.Errorf("%w: profile.gender is invalid", ErrInvalidInput)
+	}
+
+	birthDate := strings.TrimSpace(request.BirthDate)
+	if birthDate != "" {
+		parsed, err := time.Parse("2006-01-02", birthDate)
+		if err != nil || parsed.Before(time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC)) || parsed.After(time.Now().UTC()) {
+			return nil, fmt.Errorf("%w: profile.birthDate is invalid", ErrInvalidInput)
+		}
+	}
+
+	cpf := digitsOnly(request.CPF)
+	if cpf != "" && len(cpf) != 11 {
+		return nil, fmt.Errorf("%w: profile.cpf is invalid", ErrInvalidInput)
+	}
+	cnpj := digitsOnly(request.CNPJ)
+	if cnpj != "" && len(cnpj) != 14 {
+		return nil, fmt.Errorf("%w: profile.cnpj is invalid", ErrInvalidInput)
+	}
+
+	profile := LeadMetadata{"personType": personType}
+	add := func(key string, value string, maxLength int) {
+		value = trimMax(value, maxLength)
+		if value != "" {
+			profile[key] = value
+		}
+	}
+	add("gender", gender, 20)
+	add("socialName", request.SocialName, 180)
+	add("birthDate", birthDate, 10)
+	add("cpf", cpf, 11)
+	add("rg", request.RG, 30)
+	add("cnpj", cnpj, 14)
+	add("corporateName", request.CorporateName, 180)
+	add("tradeName", request.TradeName, 180)
+	add("stateRegistration", request.StateRegistration, 40)
+	metadata["profile"] = profile
+
+	return metadata, nil
+}
+
+func digitsOnly(value string) string {
+	var builder strings.Builder
+	for _, character := range value {
+		if character >= '0' && character <= '9' {
+			builder.WriteRune(character)
+		}
+	}
+	return builder.String()
 }
 
 func optionalString(value string, maxLength int) *string {

@@ -28,7 +28,7 @@ const SKELETON_BAR_HEIGHTS = [42, 68, 54, 82, 61, 74, 48];
 const chartTickStyle = {
   fill: 'var(--app-text-tertiary)',
   fontSize: 10,
-  fontWeight: 500,
+  fontWeight: 300,
 };
 
 function ChartSkeleton() {

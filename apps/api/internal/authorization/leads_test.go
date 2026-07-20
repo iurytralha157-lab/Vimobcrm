@@ -53,6 +53,7 @@ func TestLeadAuthorizationMatrix(t *testing.T) {
 		view, operate, remove bool
 	}{
 		{"standard operates own lead", tenant.Context{UserID: "user-1", Permissions: []string{permissions.LeadViewOwn, permissions.LeadOperate}}, LeadResource{AssignedUserID: "user-1"}, true, true, false},
+		{"standard operates own lead owned by another team", tenant.Context{UserID: "user-1", Permissions: []string{permissions.LeadViewOwn, permissions.LeadOperate}}, LeadResource{AssignedUserID: "user-1", TeamID: "team-2"}, true, true, false},
 		{"standard cannot see another user lead", tenant.Context{UserID: "user-1", Permissions: []string{permissions.LeadViewOwn, permissions.LeadOperate}}, LeadResource{AssignedUserID: "user-2"}, false, false, false},
 		{"leader operates explicit led team lead", tenant.Context{UserID: "leader", LedTeamIDs: []string{"team-1"}, Permissions: []string{permissions.LeadViewTeam, permissions.LeadOperate}}, LeadResource{AssignedUserID: "user-2", TeamID: "team-1"}, true, true, false},
 		{"leader cannot see explicit foreign team lead", tenant.Context{UserID: "leader", LedTeamIDs: []string{"team-1"}, LedUserIDs: []string{"user-2"}, Permissions: []string{permissions.LeadViewTeam, permissions.LeadOperate}}, LeadResource{AssignedUserID: "user-2", TeamID: "team-2"}, false, false, false},

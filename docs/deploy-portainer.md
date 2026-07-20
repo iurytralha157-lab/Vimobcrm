@@ -85,6 +85,10 @@ WEB_PUSH_VAPID_PUBLIC_KEY=chave-publica-vapid
 WEB_PUSH_VAPID_PRIVATE_KEY=chave-privada-vapid
 WEB_PUSH_VAPID_SUBJECT=mailto:contato@vimobcrm.com.br
 
+FCM_PROJECT_ID=id-do-projeto-firebase
+FCM_SERVICE_ACCOUNT_JSON=json-da-service-account-compactado-ou-base64
+FCM_SERVICE_ACCOUNT_FILE=
+
 ASAAS_API_KEY=
 ASAAS_BASE_URL=https://api.asaas.com/v3
 
@@ -107,41 +111,36 @@ META_GRAPH_VERSION=v25.0
 META_GRAPH_BASE_URL=https://graph.facebook.com
 ```
 
-`EVOLUTION_GO_API_URL` e `EVOLUTION_GO_API_KEY` fazem a API Go criar instancias, consultar QR Code, status e enviar mensagens diretamente no Evo Go. `EVOLUTION_GO_WEBHOOK_URL` e a rota legada da Edge Function, usada por todas as sessoes fora do rollout. `EVOLUTION_GO_BACKEND_WEBHOOK_URL` deve apontar para `/v1/whatsapp/webhook/evolution-go` da API Go e so e usada por sessoes allowlisted. Mantenha `WHATSAPP_WEBHOOK_PROCESSOR_MODE=native_fallback` durante o canario; use `native` somente depois de eliminar todos os eventos ainda dependentes da Edge Function.
+`FCM_SERVICE_ACCOUNT_JSON` habilita notificacoes push nativas pelo Firebase Cloud Messaging HTTP v1. Use o JSON da service account como segredo compactado em uma linha ou base64. `FCM_PROJECT_ID` pode ficar vazio se o JSON tiver `project_id`. `FCM_SERVICE_ACCOUNT_FILE` e alternativa para ambientes que montam o arquivo como secret.
+
+`EVOLUTION_GO_API_URL` e `EVOLUTION_GO_API_KEY` fazem a API Go criar instancias, consultar QR Code, status e enviar mensagens diretamente no Evo Go. `EVOLUTION_GO_BACKEND_WEBHOOK_URL` e obrigatoria quando a Evolution esta habilitada e deve apontar para `/v1/whatsapp/webhook/evolution-go` da API Go. Ela e o callback de **todas** as sessoes e pode conter somente `session_id` e `instance_id`; nunca inclua `token`, `apikey` ou `webhook_token`. `EVOLUTION_GO_WEBHOOK_URL` e apenas o receptor interno da Edge Function: quando o processador esta em `edge`/fallback, a API o chama com `x-webhook-token` no header.
 
 Para picos de uso, mantenha o backend com pool pequeno contra o Supabase (`DATABASE_MAX_CONNS=8`, `DATABASE_MIN_CONNS=0`) e controle a pressao dos workers de WhatsApp pelas variaveis `WHATSAPP_*_WORKER_INTERVAL` e `WHATSAPP_*_WORKER_BATCH`. Aumente throughput primeiro pelo batch; reduza intervalo apenas se o banco estiver com folga.
 
-`WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS` e o gate unico da criacao, recriacao, supervisor e processador. Vazio e o padrao seguro: sessoes novas/recriadas continuam na Edge, o supervisor nao altera URL nem assinaturas e todo evento que eventualmente chegar ao backend ainda e encaminhado para a Edge; a consulta e a atualizacao de status continuam funcionando. Para o primeiro canario, use somente `13eea7e8-a74f-4bfb-bb36-024e3d26ccc9`: apenas essa sessao recebe a URL do backend e pode executar `native_fallback`. Uma lista de UUIDs separados por virgula libera apenas aquelas sessoes; `*` libera todas explicitamente e so deve ser usado depois da validacao completa dos canarios. Um UUID invalido, `*` misturado com UUIDs ou rollout sem `EVOLUTION_GO_BACKEND_WEBHOOK_URL` impede a API de iniciar.
+`WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS` controla somente o processador nativo e as configuracoes avancadas do canario. Ele nao controla mais a URL do callback: criacao, recriacao e supervisor sempre usam o ingresso seguro da API. Com a lista vazia e modo `edge`, a Evolution chama a API, a API grava a fila duravel e o worker encaminha o evento para a Edge usando header. Uma lista de UUIDs libera `native_fallback`/`native` apenas para aquelas sessoes; `*` libera o processador nativo para todas.
 
 ## Canary e rollback do WhatsApp
 
 Nunca use `latest` no canario. Antes do deploy, registre os dois tags atualmente executados e fixe `VIMOB_API_IMAGE` e `VIMOB_WEB_IMAGE` no mesmo tag imutavel `${github.sha}` publicado pelo workflow. Guarde os tags anteriores como par de rollback; nao misture uma API nova com um web antigo sem uma validacao especifica dessa combinacao.
 
-Para iniciar o canario, mantenha `WHATSAPP_WEBHOOK_PROCESSOR_MODE=native_fallback` e coloque somente o UUID aprovado em `WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS`. Quando o supervisor configurar a URL do backend, ele grava `advanced_settings.webhook_rollout_managed=true` apenas nessa sessao.
+Para iniciar o canario do processador, mantenha `WHATSAPP_WEBHOOK_PROCESSOR_MODE=native_fallback` e coloque somente o UUID aprovado em `WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS`. O callback permanece na API tanto durante o canario quanto durante o rollback.
 
-O rollback deve ocorrer nesta ordem:
+O rollback do processador deve ocorrer nesta ordem:
 
-1. Mude `WHATSAPP_WEBHOOK_PROCESSOR_MODE` para `edge`, mantendo o UUID do canario na allowlist e sem trocar as imagens. Eventos que ainda chegarem ao backend passam pela fila duravel antes de voltar ao receptor legado.
+1. Mude `WHATSAPP_WEBHOOK_PROCESSOR_MODE` para `edge`, mantendo a imagem que conhece a fila duravel. Eventos continuam chegando ao backend e passam a ser encaminhados para a Edge via header.
 2. Aguarde as filas de inbox e outbox abaixo chegarem a zero. Nao remova a imagem que conhece essas filas enquanto existir trabalho pendente.
-3. Esvazie `WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS` e aguarde o supervisor devolver toda sessao marcada para `EVOLUTION_GO_WEBHOOK_URL`. Sessoes comuns, sem a marca, nunca recebem alteracao de webhook por esse procedimento.
-4. Confirme que a primeira consulta abaixo nao retorna nenhuma sessao e que as duas filas continuam vazias. O supervisor remove a marca somente depois que a Evolution Go aceita a configuracao legada.
-5. Somente entao restaure `VIMOB_API_IMAGE` e `VIMOB_WEB_IMAGE` para o par de digests anterior.
+3. Esvazie `WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS`; isso desativa o processador nativo, mas nao devolve credenciais para a URL.
+4. Confirme que a primeira consulta abaixo nao retorna nenhuma URL com segredo e que as duas filas continuam vazias.
+5. Restaure somente uma imagem que mantenha o callback tokenless da API e rejeite autenticacao por query. Imagens anteriores a esse contrato nao sao rollback seguro.
 6. Valide `/readyz`, envio, recebimento e historico antes de encerrar o rollback.
 
 Durante o canario, mantenha a acao de falha do update do Swarm em `pause`; nao habilite rollback automatico da imagem da API. A stack fixa atualizacao `start-first`, uma replica por vez e monitor de oito minutos, suficiente para o healthcheck atravessar o retry inicial do banco. O `pause` e intencional: a ordem acima e obrigatoria porque a imagem anterior nao deve receber uma instancia que ainda aponta para o webhook novo.
 
 ```sql
-select
-  id,
-  instance_name,
-  coalesce(advanced_settings->>'webhook_rollout_managed', 'false') = 'true' as rollout_managed,
-  case
-    when coalesce(advanced_settings->>'webhook_url', '') like 'https://api.vimobcrm.com.br/%' then 'backend'
-    when coalesce(advanced_settings->>'webhook_url', '') like '%supabase.co/functions/%' then 'edge'
-    else 'other_or_empty'
-  end as webhook_target
+select id, instance_name, status
 from public.whatsapp_sessions
-where coalesce(advanced_settings->>'webhook_rollout_managed', 'false') = 'true';
+where provider = 'evolution_go'
+  and coalesce(advanced_settings->>'webhook_url', '') ~* '([?&])(webhook_token|apikey|token)=';
 
 select 'inbox' as queue, status, count(*)
 from public.whatsapp_webhook_inbox
@@ -154,7 +153,20 @@ where status in ('pending', 'retry', 'processing')
 group by status;
 ```
 
-Se a primeira consulta continuar retornando uma sessao, ou se a segunda retornar qualquer fila pendente, nao reverta a imagem da API: confira a conectividade com a Evolution Go e os logs do supervisor/workers. Uma URL backend ainda ativa ou trabalho duravel nao drenado com a imagem antiga pode interromper o recebimento/envio. Nunca imprima a URL completa do webhook: ela pode conter credenciais em ambientes legados.
+Se a primeira consulta retornar uma sessao, o corte de seguranca ainda nao terminou: confira a conectividade com a Evolution Go e os logs do supervisor. Se a segunda retornar trabalho pendente, nao troque a imagem da API ate a drenagem. Nunca imprima a URL completa de um webhook legado.
+
+### Corte definitivo das credenciais em URL
+
+Este corte deve ser executado uma unica vez e nesta ordem. Nao aplique a migration antes da convergencia das sessoes: ela possui uma trava proposital e falhara enquanto existir callback ativo fora do backend tokenless.
+
+1. Suba a nova imagem da API no Portainer com `EVOLUTION_GO_BACKEND_WEBHOOK_URL=https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go`. Ainda nao publique a versao endurecida da Edge Function e nao aplique a migration.
+2. Confirme `/readyz` e acompanhe o supervisor ate a consulta de URLs com segredo retornar zero. O ingresso da API autentica o token da instancia em memoria, remove campos de credencial do payload antes de gravar a inbox e encaminha para a Edge com `x-webhook-token`.
+3. Confirme que inbox e outbox nao possuem itens parados e valide recebimento em pelo menos uma sessao conectada e uma desconectada/reconectada.
+4. Aplique `supabase/migrations/20260719015030_complete_whatsapp_webhook_token_cutover.sql`. Ela rotaciona os tokens de webhook, remove campos de autenticacao dos payloads historicos da inbox, remove o marcador legado e instala constraints que impedem novas credenciais tanto nas URLs armazenadas quanto no payload duravel.
+5. Publique `supabase/functions/evolution-go-webhook`. A funcao endurecida rejeita `token`, `apikey` e `webhook_token` na query em qualquer metodo; o worker interno continua autenticando pelo header.
+6. Repita as consultas de URL e filas, verifique os logs sem imprimir query strings e execute o teste funcional de envio, recebimento, historico, QR Code e reconexao.
+
+Se qualquer passo falhar, pare antes do seguinte. O rollback seguro mantem a nova API e o callback tokenless; nunca restaure uma imagem que volte a gravar segredo na URL.
 
 A imagem da API usa `/healthz` como liveness depois de um periodo inicial de cinco minutos, compativel com o retry de conexao inicial ao banco. O gate operacional do deploy continua sendo `/readyz`, que tambem confirma acesso ao Postgres. Nao considere o canario pronto apenas porque o container esta `healthy`.
 
@@ -170,7 +182,7 @@ No Portainer:
 6. Colar as variaveis acima em `Environment variables`.
 7. Deploy.
 
-Se `WEB_PUSH_VAPID_PUBLIC_KEY` ou `WEB_PUSH_VAPID_PRIVATE_KEY` estiverem ausentes, a stack/API deve falhar em vez de subir com push quebrado. Se a chave privada antiga tiver sido perdida, gere um novo par VAPID, configure a publica no build web e na stack, configure a privada na API, e gere nova imagem web. Usuarios com subscriptions antigas so serao reinscritos quando abrirem o app novamente.
+Se `WEB_PUSH_VAPID_PUBLIC_KEY` ou `WEB_PUSH_VAPID_PRIVATE_KEY` estiverem ausentes, a stack/API deve falhar em vez de subir com push quebrado. Se a chave privada antiga tiver sido perdida, gere um novo par VAPID, configure a publica no build web e na stack, configure a privada na API, e gere nova imagem web. Usuarios com subscriptions antigas so serao reinscritos quando abrirem o app novamente. Para push nativo do app, configure `FCM_SERVICE_ACCOUNT_JSON` ou `FCM_SERVICE_ACCOUNT_FILE`; `FCM_SERVER_KEY` e legado e nao deve ser usado em deploy novo.
 
 ## Dominios
 

@@ -76,15 +76,18 @@ func (handler Handler) TeamLeaderStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) LeadAnalytics(w http.ResponseWriter, r *http.Request) {
-	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": emptyLeadAnalytics()})
+	item, err := handler.repo.LeadAnalytics(r.Context(), mustTenant(w, r), r.URL.Query())
+	handler.writeObject(w, r, item, err)
 }
 
 func (handler Handler) SiteSummary(w http.ResponseWriter, r *http.Request) {
-	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": emptySiteSummary()})
+	item, err := handler.repo.SiteSummary(r.Context(), mustTenant(w, r), r.URL.Query())
+	handler.writeObject(w, r, item, err)
 }
 
 func (handler Handler) SiteDetailed(w http.ResponseWriter, r *http.Request) {
-	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": emptySiteDetailed()})
+	item, err := handler.repo.SiteDetailed(r.Context(), mustTenant(w, r), r.URL.Query())
+	handler.writeObject(w, r, item, err)
 }
 
 func (handler Handler) writeRows(w http.ResponseWriter, r *http.Request, items []map[string]any, err error) {

@@ -229,6 +229,7 @@ export async function resolvePublicSite(domain: string): Promise<PublicSiteResol
     for (const candidate of uniqueCandidates) {
       const response = await requestPublicAPI<ResolveResponse>("/v1/public/site/resolve", {
         query: { domain: candidate },
+        revalidate: 0,
         tags: [`public-site-domain:${candidate}`],
       }, publicSiteResolveServerSchema, "public-site-server.resolve");
 
@@ -365,6 +366,7 @@ async function requestPublicAPI<T>(
   path: string,
   options: {
     query?: PublicSiteQuery;
+    revalidate?: number;
     tags?: string[];
   } = {},
   schema?: ZodTypeAny,
@@ -375,7 +377,7 @@ async function requestPublicAPI<T>(
       Accept: "application/json",
     },
     next: {
-      revalidate: PUBLIC_SITE_REVALIDATE_SECONDS,
+      revalidate: options.revalidate ?? PUBLIC_SITE_REVALIDATE_SECONDS,
       tags: options.tags,
     },
   });

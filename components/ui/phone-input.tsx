@@ -10,6 +10,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { countries, formatPhoneFromParts, parsePhoneInput, type Country } from '@/lib/phone-utils';
+import { normalizeSearchText } from '@/lib/search-text';
 
 interface PhoneInputProps {
   value: string;
@@ -102,9 +103,9 @@ export function PhoneInput({
 
   const filteredCountries = useMemo(() => {
     if (!searchQuery) return countries;
-    const query = searchQuery.toLowerCase();
+    const query = normalizeSearchText(searchQuery);
     return countries.filter((country) =>
-      country.name.toLowerCase().includes(query) || country.code.includes(query)
+      normalizeSearchText(country.name).includes(query) || country.code.includes(query)
     );
   }, [searchQuery]);
 
