@@ -31,6 +31,7 @@ import { cn } from '@/lib/utils';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { useUserAccessScope } from '@/hooks/use-user-access-scope';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useAuth } from '@/contexts/AuthContext';
 
 type DistributionLead = Pick<Lead, 'id'> & Partial<Pick<Lead, 'pipeline_id' | 'assigned_user_id'>>;
@@ -54,12 +55,15 @@ export function SdrDistributionButton({ lead, refetchStages }: SdrDistributionBu
   const [searchQuery, setSearchQuery] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
 
+  const accessScope = useUserAccessScope();
+  const { hasPermission } = useUserPermissions();
+  const canUseTeamDistribution = accessScope.isAdmin || accessScope.isTeamLeader ||
+    (hasPermission('distribution_manage') && hasPermission('team_view'));
   const { data: pipelines = [], isLoading: pipelinesLoading } = usePipelines();
-  const { data: allTeamPipelines = [] } = useAllTeamPipelines();
-  const { data: teams = [] } = useTeams();
+  const { data: allTeamPipelines = [] } = useAllTeamPipelines({ enabled: canUseTeamDistribution });
+  const { data: teams = [] } = useTeams({ enabled: canUseTeamDistribution });
   const { data: stages = [] } = useStages(selectedPipelineId || undefined);
   const updateLead = useUpdateLead();
-  const accessScope = useUserAccessScope();
   const { organization } = useAuth();
 
   const allowedTeamIds = accessScope.isAdmin ? null : new Set(accessScope.ledTeamIds);
@@ -88,6 +92,8 @@ export function SdrDistributionButton({ lead, refetchStages }: SdrDistributionBu
     searchTextIncludes(u.name, searchQuery) ||
     searchTextIncludes(u.email, searchQuery)
   );
+
+  if (!canUseTeamDistribution) return null;
 
   const handlePipelineSelect = (id: string) => {
     if (!accessScope.isAdmin && !allowedPipelineIds?.has(id)) return;

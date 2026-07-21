@@ -1090,7 +1090,10 @@ export function LeadDetailDialog({
   const updateCommission = useUpdateLeadCommission();
   const dealStatusChange = useDealStatusChange();
   const { recordFirstResponse } = useRecordFirstResponseOnAction();
-  const { data: teams = [] } = useTeams({ includeInactive: true });
+  const { data: teams = [] } = useTeams({
+    includeInactive: true,
+    enabled: hasPermission('team_view'),
+  });
   const createCallMutation = useCreateCall();
   const createActivityMutation = useCreateActivity();
   const { data: attachments = [], refetch: refetchAttachments } = useLeadAttachments(leadId);

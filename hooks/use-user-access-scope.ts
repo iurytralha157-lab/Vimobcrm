@@ -21,7 +21,7 @@ export function useUserAccessScope() {
     isSuperAdmin ||
     activeMemberRole === 'admin' ||
     activeMemberRole === 'owner';
-  const shouldLoadTeams = !isAdminProfile;
+  const shouldLoadTeams = !isAdminProfile && hasPermission('team_view');
   const { data: teams = [], isLoading: teamsLoading } = useTeams({ enabled: shouldLoadTeams });
   const shouldLoadTeamPipelines =
     shouldLoadTeams &&

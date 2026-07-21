@@ -202,6 +202,7 @@ export default function Conversations() {
   const { hasPermission } = useUserPermissions();
   const canOperateWhatsApp = hasPermission("whatsapp_operate");
   const canManageWhatsApp = hasPermission("whatsapp_manage");
+  const canManageMeta = hasPermission("settings_integrations");
   const canCreateLeads = hasPermission("lead_create");
   const isMobile = useIsMobile();
   const router = useRouter();
@@ -294,11 +295,11 @@ export default function Conversations() {
   const {
     data: metaConversations,
     isLoading: loadingMetaConversations
-  } = useMetaConversations(selectedPageId);
+  } = useMetaConversations(selectedPageId, { enabled: canManageMeta });
 
   const {
     data: metaIntegrations
-  } = useMetaIntegrations();
+  } = useMetaIntegrations({ enabled: canManageMeta });
 
   const selectedLeadId = activePlatform === "whatsapp"
     ? selectedConversation?.lead_id || selectedConversation?.lead?.id || null
@@ -327,7 +328,10 @@ export default function Conversations() {
   const {
     data: metaMessages,
     isLoading: loadingMetaMessages
-  } = useMetaMessages(activePlatform !== 'whatsapp' ? selectedConversation?.id || null : null);
+  } = useMetaMessages(
+    activePlatform !== 'whatsapp' ? selectedConversation?.id || null : null,
+    { enabled: canManageMeta },
+  );
 
   const messages = activePlatform === 'whatsapp' ? whatsappMessages : metaMessages;
   const loadingMessages = activePlatform === 'whatsapp' ? loadingWhatsAppMessages : loadingMetaMessages;

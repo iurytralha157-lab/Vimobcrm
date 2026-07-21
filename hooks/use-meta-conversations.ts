@@ -36,7 +36,7 @@ export interface MetaMessage {
   created_at: string;
 }
 
-export function useMetaConversations(pageId?: string) {
+export function useMetaConversations(pageId?: string, options: { enabled?: boolean } = {}) {
   const { profile } = useAuth();
 
   return useQuery({
@@ -46,11 +46,11 @@ export function useMetaConversations(pageId?: string) {
 
       return integrationsAPI.listMetaConversations<MetaConversation>(pageId, profile.organization_id);
     },
-    enabled: !!profile?.organization_id,
+    enabled: options.enabled !== false && !!profile?.organization_id,
   });
 }
 
-export function useMetaMessages(conversationId: string | null) {
+export function useMetaMessages(conversationId: string | null, options: { enabled?: boolean } = {}) {
   const { profile } = useAuth();
 
   return useQuery({
@@ -60,7 +60,7 @@ export function useMetaMessages(conversationId: string | null) {
 
       return integrationsAPI.listMetaMessages<MetaMessage>(conversationId, profile?.organization_id);
     },
-    enabled: !!conversationId,
+    enabled: options.enabled !== false && !!conversationId,
   });
 }
 

@@ -33,6 +33,7 @@ import { useCreateLead } from '@/hooks/use-leads';
 import { useTeams } from '@/hooks/use-teams';
 import { useTags, useCreateTag } from '@/hooks/use-tags';
 import { useAuth } from '@/contexts/AuthContext';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { toast } from 'sonner';
 import ExcelJS from 'exceljs';
 import { cn } from '@/lib/utils';
@@ -82,11 +83,12 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
   const [dynamicSources, setDynamicSources] = useState<string[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { hasPermission } = useUserPermissions();
 
   const { data: pipelines = [] } = usePipelines();
   const { data: stagesData = [] } = useStages(selectedPipeline || undefined);
   const { data: users = [] } = useOrganizationUsers();
-  const { data: teams = [] } = useTeams();
+  const { data: teams = [] } = useTeams({ enabled: open && hasPermission('team_view') });
   const { data: allTags = [] } = useTags();
   const createLead = useCreateLead();
   const createTag = useCreateTag();

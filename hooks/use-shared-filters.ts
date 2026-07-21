@@ -6,6 +6,7 @@ import { contactsAPI } from '@/lib/api/contacts';
 import { getLeadMetaFilters } from '@/lib/api/pipeline-board';
 import { useTags } from '@/hooks/use-tags';
 import { useTeams } from '@/hooks/use-teams';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { DatePreset } from './use-dashboard-filters';
 
 export interface SharedFilters {
@@ -83,6 +84,7 @@ export function useSharedFilters(options?: {
   pipelineId?: string | null;
 }) {
   const { organization, profile } = useAuth();
+  const { hasPermission } = useUserPermissions();
   const organizationId = organization?.id ?? profile?.organization_id;
   const {
     datePreset,
@@ -112,13 +114,14 @@ export function useSharedFilters(options?: {
   } = useFilters();
 
   const shouldLoadDynamicOptions = options?.loadDynamicOptions ?? true;
+  const canUseTeamFilters = hasPermission('lead_view_all') || hasPermission('lead_view_team');
   const pipelineId = options?.pipelineId ?? null;
   const previousTeamIdRef = useRef(teamId);
   const previousCampaignIdRef = useRef(campaignId);
   const previousAdSetIdRef = useRef(adSetId);
   const dateFromStr = dateRange.from.toISOString();
   const dateToStr = dateRange.to.toISOString();
-  const teamsQuery = useTeams({ enabled: shouldLoadDynamicOptions });
+  const teamsQuery = useTeams({ enabled: shouldLoadDynamicOptions && canUseTeamFilters });
 
   const contactsQuery = useQuery({
     queryKey: ['shared-filter-contacts', organizationId, dateFromStr, dateToStr, teamId, userId, source, campaignId, adSetId, adId, dealStatus, searchQuery],
