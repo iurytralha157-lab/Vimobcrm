@@ -57,6 +57,16 @@ type UpdateTaskRequest struct {
 	RecommendedMessage *string `json:"recommended_message"`
 }
 
+type SwitchCadenceRequest struct {
+	CadenceTemplateID string `json:"cadence_template_id"`
+}
+
+type SwitchCadenceResult struct {
+	EnrollmentID      string `json:"enrollment_id"`
+	LeadID            string `json:"lead_id"`
+	CadenceTemplateID string `json:"cadence_template_id"`
+}
+
 type taskInput struct {
 	CadenceTemplateID  string
 	DayOffset          int

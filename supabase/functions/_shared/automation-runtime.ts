@@ -1,5 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.108.1";
+import {
+  evaluateAutomationCondition,
+  renderAutomationTemplate,
+} from "../../../lib/automations/engine.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -50,6 +54,7 @@ type AutomationEvent = {
   organization_id: string;
   event_type: string;
   lead_id: string;
+  entity_id?: string | null;
   conversation_id?: string | null;
   payload?: Record<string, any>;
   attempts: number;
@@ -302,41 +307,6 @@ function nextNode(graph: FlowGraph, source: string, branch?: string): string | n
 export function replyWinsDelayWindow(waitStartedAt: number, deadline: number, occurredAt: number): boolean {
   return Number.isFinite(waitStartedAt) && Number.isFinite(deadline) && Number.isFinite(occurredAt) &&
     occurredAt >= waitStartedAt && occurredAt <= deadline;
-}
-
-function nestedValue(source: Record<string, any>, path: string): any {
-  return path.split(".").reduce((current, key) => current?.[key], source as any);
-}
-
-function evaluateCondition(config: Record<string, any>, context: Record<string, any>): boolean {
-  if (config.condition_type === "response_sentiment") {
-    const content = String(context.execution?.trigger_data?.content || context.execution?.reply_payload?.content || "").toLowerCase();
-    const positives = String(config.positive_keywords || "sim,quero,aceito,ok").split(",").map((word) => word.trim().toLowerCase()).filter(Boolean);
-    const negatives = String(config.negative_keywords || "nao,não,sem interesse,dispenso").split(",").map((word) => word.trim().toLowerCase()).filter(Boolean);
-    const positive = positives.some((word) => content.includes(word));
-    const negative = negatives.some((word) => content.includes(word));
-    return positive && !negative;
-  }
-  const actual = nestedValue(context, String(config.variable || ""));
-  const expected = config.value;
-  switch (config.operator) {
-    case "equals": return String(actual ?? "") === String(expected ?? "");
-    case "not_equals": return String(actual ?? "") !== String(expected ?? "");
-    case "contains": return String(actual ?? "").includes(String(expected ?? ""));
-    case "not_contains": return !String(actual ?? "").includes(String(expected ?? ""));
-    case "greater_than": return Number(actual) > Number(expected);
-    case "less_than": return Number(actual) < Number(expected);
-    case "is_set": return actual !== undefined && actual !== null && actual !== "";
-    case "is_not_set": return actual === undefined || actual === null || actual === "";
-    default: throw new Error("unsupported_condition_operator");
-  }
-}
-
-function renderTemplate(template: string, context: Record<string, any>): string {
-  return template.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_match, path) => {
-    const value = nestedValue(context, path);
-    return value === undefined || value === null ? "" : String(value);
-  });
 }
 
 function parseIPv6(raw: string): number[] | null {
@@ -623,10 +593,10 @@ async function invokeEvolution(client: SupabaseClient, execution: ClaimedExecuti
   let storedContent = "";
   let preparedMedia: PreparedMedia | null = null;
   if (node.action_type === "send_whatsapp") {
-    storedContent = renderTemplate(String(config.message || ""), context);
+    storedContent = renderAutomationTemplate(String(config.message || ""), context);
   } else {
     preparedMedia = await prepareAutomationMedia(client, execution, node, sessionID);
-    storedContent = renderTemplate(String(config.caption || ""), context);
+    storedContent = renderAutomationTemplate(String(config.caption || ""), context);
   }
 
   // Every failure above is preflight-only. Reserve the idempotency ledger only
@@ -827,8 +797,14 @@ async function runExecution(client: SupabaseClient, execution: ClaimedExecution)
       if (node.type === "action") {
         output = await executeAction(client, execution, node, context);
       } else if (node.type === "condition") {
-        branch = evaluateCondition(node.config || {}, context) ? "true" : "false";
-        output = { branch };
+        const evaluation = evaluateAutomationCondition(node.config || {}, context);
+        branch = evaluation.branch;
+        output = {
+          branch,
+          ...(evaluation.classification ? { classification: evaluation.classification } : {}),
+          ...(evaluation.matchedPositive?.length ? { matched_positive: evaluation.matchedPositive } : {}),
+          ...(evaluation.matchedNegative?.length ? { matched_negative: evaluation.matchedNegative } : {}),
+        };
       } else if (node.type === "delay") {
         const value = Number(node.config?.delay_value || 0);
         const multiplier = ({ seconds: 1, minutes: 60, hours: 3600, days: 86400 } as Record<string, number>)[String(node.config?.delay_type)] || 0;
@@ -850,6 +826,9 @@ async function runExecution(client: SupabaseClient, execution: ClaimedExecution)
       }
 
       const target = nextNode(graph, node.id, branch);
+      if (node.type === "condition" && branch === "unknown" && !target) {
+        throw new Error("unclassified_reply_requires_review");
+      }
       await updateStep(client, step.id, { status: "succeeded", output: { ...output, next_node_key: target }, completed_at: new Date().toISOString() });
       if (!target) {
         const { data: completed, error: completeError } = await client.from("automation_executions").update({

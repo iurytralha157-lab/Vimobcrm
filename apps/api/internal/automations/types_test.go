@@ -118,12 +118,68 @@ func TestSaveFlowValidateRequiresTwoNamedConditionBranches(t *testing.T) {
 	}
 }
 
+func TestSaveFlowValidateRequiresSafeResponseSentimentTopology(t *testing.T) {
+	actionType := "send_whatsapp"
+	branch := func(value string) *string { return &value }
+	action := func(id, message string) FlowNode {
+		return FlowNode{
+			ID: id, Type: "action", ActionType: &actionType,
+			Config: json.RawMessage(`{"session_id":"` + testUUID + `","message":"` + message + `"}`),
+		}
+	}
+	request := SaveFlowRequest{FlowDefinition: FlowDefinition{
+		Nodes: []FlowNode{
+			{ID: "trigger", Type: "trigger", Config: json.RawMessage(`{"trigger_type":"manual"}`)},
+			action("question", "Posso ajudar?"),
+			{ID: "wait", Type: "delay", Config: json.RawMessage(`{"delay_type":"hours","delay_value":1,"stop_on_reply":true}`)},
+			{ID: "condition", Type: "condition", Config: json.RawMessage(`{"condition_type":"response_sentiment","positive_keywords":"sim,pode ser","negative_keywords":"não,não quero"}`)},
+			action("timeout", "Ainda está por aí?"),
+			action("positive", "Perfeito"),
+			action("negative", "Sem problemas"),
+			action("unknown", "Vou chamar uma pessoa"),
+		},
+		Connections: []FlowConnection{
+			{Source: "trigger", Target: "question"},
+			{Source: "question", Target: "wait"},
+			{Source: "wait", Target: "timeout", SourceHandle: branch("no_reply"), ConditionBranch: branch("no_reply")},
+			{Source: "wait", Target: "condition", SourceHandle: branch("replied"), ConditionBranch: branch("replied")},
+			{Source: "condition", Target: "positive", SourceHandle: branch("true"), ConditionBranch: branch("true")},
+			{Source: "condition", Target: "negative", SourceHandle: branch("false"), ConditionBranch: branch("false")},
+			{Source: "condition", Target: "unknown", SourceHandle: branch("unknown"), ConditionBranch: branch("unknown")},
+		},
+	}}
+
+	if _, err := request.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	request.FlowDefinition.Connections[3].Source = "question"
+	request.FlowDefinition.Connections[3].SourceHandle = nil
+	request.FlowDefinition.Connections[3].ConditionBranch = nil
+	if _, err := request.Validate(); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("Validate() error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestSaveFlowValidateRejectsActionTypeOutsideActionNode(t *testing.T) {
 	request := validSaveFlowRequest()
 	actionType := "send_whatsapp"
 	request.FlowDefinition.Nodes[0].ActionType = &actionType
 	if _, err := request.Validate(); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("Validate() error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestSaveFlowValidateRejectsUnknownTemplateVariables(t *testing.T) {
+	request := validSaveFlowRequest()
+	request.FlowDefinition.Nodes[1].Config = json.RawMessage(`{"session_id":"` + testUUID + `","message":"Olá {{lead.campo_inexistente}}"}`)
+	if _, err := request.Validate(); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("Validate() error = %v, want ErrInvalidInput", err)
+	}
+
+	request.FlowDefinition.Nodes[1].Config = json.RawMessage(`{"session_id":"` + testUUID + `","message":"Olá {{ lead.name }}"}`)
+	if _, err := request.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v, want spaced canonical variable to be accepted", err)
 	}
 }
 
@@ -332,12 +388,21 @@ func TestFlowAcceptsCanonicalMoveLeadAction(t *testing.T) {
 	}
 }
 
+func TestFlowAcceptsCanonicalAssignUserAction(t *testing.T) {
+	request := validSaveFlowRequest()
+	actionType := "assign_user"
+	request.FlowDefinition.Nodes[1].ActionType = &actionType
+	request.FlowDefinition.Nodes[1].Config = json.RawMessage(`{"user_id":"` + testUUID + `"}`)
+	if _, err := request.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v, want canonical assign_user action to be accepted", err)
+	}
+}
+
 func TestFlowRejectsActionsWithoutCanonicalLeadCommandService(t *testing.T) {
 	tests := []struct {
 		actionType string
 		config     string
 	}{
-		{actionType: "assign_user", config: `{"user_id":"` + testUUID + `"}`},
 		{actionType: "set_variable", config: `{"actionType":"property_interest","property_id":"` + testUUID + `"}`},
 		{actionType: "set_variable", config: `{"actionType":"deal_status","status":"won"}`},
 	}

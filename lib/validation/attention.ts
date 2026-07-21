@@ -9,6 +9,7 @@ export const attentionPolicyTypeSchema = z.enum([
   'first_contact',
   'stage_inactivity',
   'stage_age',
+  'cadence_task',
 ])
 
 export const attentionPolicyStatusSchema = z.enum(['shadow', 'enabled', 'paused', 'archived'])
@@ -100,6 +101,7 @@ export const apiAttentionSummarySchema = z.object({
   firstContact: nonNegativeIntegerSchema,
   stageInactivity: nonNegativeIntegerSchema,
   stageAge: nonNegativeIntegerSchema,
+  cadenceTasks: nonNegativeIntegerSchema,
 }).passthrough()
 
 export const apiAttentionSettingsSchema = z.object({

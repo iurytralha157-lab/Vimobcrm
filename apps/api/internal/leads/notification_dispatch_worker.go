@@ -339,11 +339,13 @@ func (repo Repository) dispatchPendingPushNotification(ctx context.Context, noti
 	permanentFailures := 0
 	for _, subscription := range subscriptions {
 		item := repo.notificationPush.send(ctx, subscription, payload)
+		permanent := isPermanentPushDeliveryFailure(item)
+		_ = repo.recordPushDelivery(ctx, notification, subscription, item, permanent)
 		if item.Attempted && item.OK {
 			aggregate.Sent++
 			continue
 		}
-		if isPermanentPushDeliveryFailure(item) {
+		if permanent {
 			permanentFailures++
 			_ = repo.deactivateDeadPushSubscription(ctx, notification.UserID, subscription)
 		}
@@ -360,6 +362,42 @@ func (repo Repository) dispatchPendingPushNotification(ctx context.Context, noti
 		aggregate.Permanent = permanentFailures == len(subscriptions)
 	}
 	return aggregate
+}
+
+func (repo Repository) recordPushDelivery(ctx context.Context, notification pendingNotification, subscription pushSubscription, result DispatchChannelResult, permanent bool) error {
+	if strings.TrimSpace(subscription.ID) == "" {
+		return nil
+	}
+	errorCode := strings.TrimSpace(result.Error)
+	if len(errorCode) > 240 {
+		errorCode = errorCode[:240]
+	}
+	_, err := repo.db.Pool().Exec(ctx, `
+		with token_health as (
+			update public.push_tokens
+			set last_success_at = case when $5 then now() else last_success_at end,
+			    last_failure_at = case when $5 then last_failure_at else now() end,
+			    last_failure_reason = case when $5 then null else nullif($6, '') end,
+			    failure_count = case when $5 then 0 else coalesce(failure_count, 0) + 1 end,
+			    updated_at = now()
+			where id = $3::uuid and user_id = $2::uuid
+			returning id
+		)
+		insert into public.push_delivery_events (
+			organization_id, notification_id, push_token_id, user_id,
+			platform, provider, attempted, succeeded, permanent_failure,
+			status_code, error_code
+		)
+		select $1::uuid, $4::uuid, id, $2::uuid,
+		       $7, $8, $9, $5, $10, nullif($11, 0), nullif($6, '')
+		from token_health
+	`, notification.OrganizationID, notification.UserID, subscription.ID, notification.ID,
+		result.Attempted && result.OK, errorCode, subscription.Platform, result.Provider,
+		result.Attempted, permanent, result.Status)
+	if isUndefinedTableError(err) || isUndefinedColumnError(err) {
+		return nil
+	}
+	return err
 }
 
 func isPermanentPushDeliveryFailure(result DispatchChannelResult) bool {
@@ -610,6 +648,7 @@ func notificationDispatchAttempts(metadata map[string]any, channel string) int {
 func (repo Repository) listActivePushSubscriptions(ctx context.Context, userID string) ([]pushSubscription, error) {
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
+			id::text,
 			coalesce(endpoint, ''),
 			coalesce(p256dh, ''),
 			coalesce(auth, ''),
@@ -634,7 +673,7 @@ func (repo Repository) listActivePushSubscriptions(ctx context.Context, userID s
 	for rows.Next() {
 		var item pushSubscription
 		var rawDeviceInfo string
-		if err := rows.Scan(&item.Endpoint, &item.P256DH, &item.Auth, &item.Token, &item.Platform, &rawDeviceInfo); err != nil {
+		if err := rows.Scan(&item.ID, &item.Endpoint, &item.P256DH, &item.Auth, &item.Token, &item.Platform, &rawDeviceInfo); err != nil {
 			return nil, err
 		}
 		var deviceInfo map[string]any

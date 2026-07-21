@@ -16,6 +16,9 @@ export const createCadenceTaskInputSchema = cadenceTaskBodySchema.extend({
   cadence_template_id: uuidSchema,
 })
 export const updateCadenceTaskBodySchema = cadenceTaskBodySchema
+export const switchLeadCadenceInputSchema = z.object({
+  cadence_template_id: uuidSchema,
+}).strict()
 
 export const apiCadenceTaskSchema = z.object({
   id: uuidSchema,
@@ -47,3 +50,8 @@ export const apiCadenceTemplateSchema = z.object({
 
 export const apiCadenceTemplateListResponseSchema = apiEnvelopeSchema(z.array(apiCadenceTemplateSchema))
 export const apiCadenceTaskResponseSchema = apiEnvelopeSchema(apiCadenceTaskSchema)
+export const apiSwitchLeadCadenceResponseSchema = apiEnvelopeSchema(z.object({
+  enrollment_id: uuidSchema,
+  lead_id: uuidSchema,
+  cadence_template_id: uuidSchema,
+}))

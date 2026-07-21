@@ -21,7 +21,7 @@ const baseAccess: NavigationAccess = {
   hasPermission: () => false,
 }
 
-test('remove recursos desligados da navegacao', () => {
+test('expoe o Centro de Atencao quando a feature operacional esta ativa', () => {
   const items: NavigationAccessItem[] = [
     { path: '/dashboard' },
     { path: '/attention', feature: 'ENABLE_ATTENTION_CENTER' },
@@ -29,7 +29,7 @@ test('remove recursos desligados da navegacao', () => {
 
   assert.deepEqual(
     filterNavigationItems(items, baseAccess).map((item) => item.path),
-    ['/dashboard'],
+    ['/dashboard', '/attention'],
   )
 })
 

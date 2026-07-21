@@ -69,6 +69,18 @@ export type PublicPushConfig = {
   fingerprint: string;
 };
 
+export type PushDevice = {
+  id: string;
+  platform: string;
+  label: string;
+  active: boolean;
+  lastSuccessAt?: string | null;
+  lastFailureAt?: string | null;
+  lastFailureReason?: string | null;
+  failureCount: number;
+  updatedAt: string;
+};
+
 export type UserPermissionItem = {
   key: string;
   label: string;
@@ -330,6 +342,14 @@ export const settingsAPI = {
     });
     validateDomainResponse(okResponseSchema, response, 'settings.push-token.save');
     return response;
+  },
+
+  async listPushDevices(organizationId?: string | null) {
+    const response = await vimobAPIRequest<Envelope<PushDevice[]>>('/v1/settings/push-tokens', {
+      organizationId,
+    });
+    validateDomainResponse(apiRecordListEnvelopeSchema, response, 'settings.push-token.list');
+    return response.data;
   },
 
   async deactivatePushToken(endpoint?: string | null) {

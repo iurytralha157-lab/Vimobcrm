@@ -59,6 +59,7 @@ export const en = {
     managementTags: 'Tags',
     settings: 'Settings',
     settingsAccount: 'Account',
+    settingsNotifications: 'Notifications',
     settingsUsers: 'Users',
     settingsBilling: 'Payments',
     settingsProperties: 'Properties',

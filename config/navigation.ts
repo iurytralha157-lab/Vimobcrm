@@ -126,6 +126,7 @@ export const APP_BOTTOM_NAVIGATION_ITEMS: readonly AppNavigationItem[] = [
     path: '/settings',
     children: [
       { icon: 'settings', labelKey: 'settingsAccount', path: '/settings?tab=account' },
+      { icon: 'bellRing', labelKey: 'settingsNotifications', path: '/settings?tab=notifications' },
       { icon: 'users', labelKey: 'settingsUsers', path: '/settings?tab=team', anyPermissions: ['users_manage', 'permissions_manage'] },
       { icon: 'creditCard', labelKey: 'settingsBilling', path: '/settings?tab=subscription', permission: 'settings_billing' },
       { icon: 'plug', labelKey: 'settingsIntegrations', path: '/settings?tab=integrations' },

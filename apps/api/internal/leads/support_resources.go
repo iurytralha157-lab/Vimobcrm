@@ -1440,6 +1440,11 @@ func (repo Repository) ListLeadTasks(ctx context.Context, tenantContext tenant.C
 			is_done, done_at, done_by::text, outcome, outcome_notes, created_at
 		from public.lead_tasks
 		where lead_id = $1::uuid
+		  and coalesce(status, case when coalesce(is_done, false) then 'completed' else 'pending' end) in ('pending', 'completed')
+		  and not exists (
+		    select 1 from public.cadence_enrollments ce
+		    where ce.id = lead_tasks.cadence_enrollment_id and ce.status = 'cancelled'
+		  )
 		order by day_offset asc, created_at asc
 	`, leadID)
 	if err != nil {
@@ -1526,12 +1531,19 @@ func (repo Repository) CompleteCadenceTask(ctx context.Context, tenantContext te
 		select id::text
 		from public.lead_tasks
 		where lead_id = $1::uuid
-		  and title = $2
-		  and day_offset = $3
-		  and coalesce(type, '') = $4
+		  and (
+		    cadence_template_task_id = $2::uuid
+		    or (
+		      cadence_template_task_id is null
+		      and title = $3
+		      and day_offset = $4
+		      and coalesce(type, '') = $5
+		    )
+		  )
+		  and coalesce(status, case when coalesce(is_done, false) then 'completed' else 'pending' end) <> 'cancelled'
 		order by is_done desc nulls last, created_at asc
 		limit 1
-	`, request.LeadID, request.Title, request.DayOffset, request.Type).Scan(&existingID)
+	`, request.LeadID, request.TemplateTaskID, request.Title, request.DayOffset, request.Type).Scan(&existingID)
 	if err != nil && err != pgx.ErrNoRows {
 		return LeadTask{}, err
 	}
@@ -1551,11 +1563,14 @@ func (repo Repository) CompleteCadenceTask(ctx context.Context, tenantContext te
 		`, existingID, tenantContext.UserID, request.Outcome, request.OutcomeNotes))
 	} else {
 		task, err = scanLeadTask(repo.db.Pool().QueryRow(ctx, `
-			insert into public.lead_tasks (lead_id, day_offset, type, title, description, is_done, done_at, done_by, outcome, outcome_notes)
-			values ($1::uuid, $2, $3, $4, $5, true, now(), $6::uuid, $7, $8)
+			insert into public.lead_tasks (
+				lead_id, cadence_template_task_id, day_offset, type, title, description,
+				is_done, done_at, done_by, outcome, outcome_notes
+			)
+			values ($1::uuid, $2::uuid, $3, $4, $5, $6, true, now(), $7::uuid, $8, $9)
 			returning id::text, lead_id::text, day_offset, type, title, description, due_date,
 				is_done, done_at, done_by::text, outcome, outcome_notes, created_at
-		`, request.LeadID, request.DayOffset, request.Type, request.Title, request.Description, tenantContext.UserID, request.Outcome, request.OutcomeNotes))
+		`, request.LeadID, request.TemplateTaskID, request.DayOffset, request.Type, request.Title, request.Description, tenantContext.UserID, request.Outcome, request.OutcomeNotes))
 	}
 	if err != nil {
 		return LeadTask{}, err

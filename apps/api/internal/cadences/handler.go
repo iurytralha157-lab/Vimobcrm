@@ -76,6 +76,23 @@ func (handler Handler) DeleteTask(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (handler Handler) SwitchLeadCadence(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	var request SwitchCadenceRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	result, err := handler.repo.SwitchLeadCadence(r.Context(), tenantContext, r.PathValue("id"), request)
+	if err != nil {
+		writeCadenceError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[SwitchCadenceResult]{Data: result})
+}
+
 func organizationContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {
 	tenantContext, ok := tenant.FromContext(r.Context())
 	if !ok || tenantContext.OrganizationID == "" {

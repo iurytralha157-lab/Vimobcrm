@@ -10,6 +10,7 @@ const getTriggerIcon = (triggerType?: string) => {
     case 'manual': return Hand;
     case 'message_received': return MessageSquareText;
     case 'inactivity': return Clock;
+    case 'scheduled': return Clock;
     default: return Play;
   }
 };
@@ -22,6 +23,7 @@ const getTriggerLabel = (triggerType?: string) => {
     case 'manual': return 'Disparo manual';
     case 'message_received': return 'Mensagem recebida';
     case 'inactivity': return 'Inatividade';
+    case 'scheduled': return 'Agendamento';
     default: return 'Clique para configurar';
   }
 };

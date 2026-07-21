@@ -83,6 +83,7 @@ const POLICY_TYPE_LABELS: Record<AttentionPolicyType, string> = {
   first_contact: 'Primeiro contato',
   stage_inactivity: 'Inatividade na etapa',
   stage_age: 'Tempo na etapa',
+  cadence_task: 'Tarefa de cadencia',
 }
 
 const POLICY_MODE_LABELS: Record<AttentionPolicyStatus, string> = {
@@ -243,9 +244,9 @@ function SummaryCards({ summary, loading }: { summary?: AttentionSummary; loadin
       color: 'text-red-500',
     },
     {
-      label: 'Sem responsavel',
-      value: summary?.unassigned || 0,
-      caption: 'aguardando atribuicao',
+      label: 'Cadencias vencidas',
+      value: summary?.cadenceTasks || 0,
+      caption: 'tarefas que precisam de acao',
       icon: UserRound,
       color: 'text-blue-500',
     },

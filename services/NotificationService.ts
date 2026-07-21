@@ -1,4 +1,4 @@
-import { notificationsAPI } from '@/lib/api/notifications';
+import { notificationsAPI, type DispatchNotificationResult } from '@/lib/api/notifications';
 
 export type NotificationChannel = 'whatsapp' | 'system' | 'email' | 'push';
 
@@ -33,6 +33,7 @@ export interface SendNotificationParams {
   leadId?: string;
   dedupeKey?: string;
   isTest?: boolean;
+  channels?: NotificationChannel[];
 }
 
 function describeNotificationError(error: unknown): string {
@@ -58,8 +59,9 @@ class NotificationService {
     variables,
     leadId,
     dedupeKey,
-    isTest
-  }: SendNotificationParams) {
+    isTest,
+    channels,
+  }: SendNotificationParams): Promise<DispatchNotificationResult> {
     const finalEventKey = eventKey || templateSlug;
     if (!finalEventKey) {
       return { success: false, error: 'eventKey or templateSlug is required' };
@@ -77,6 +79,7 @@ class NotificationService {
         leadId,
         dedupeKey,
         isTest,
+        channels,
       });
 
       if (data.error) {

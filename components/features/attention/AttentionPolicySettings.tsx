@@ -71,6 +71,7 @@ const POLICY_TYPE_LABELS: Record<AttentionPolicyType, string> = {
   first_contact: 'Primeiro contato',
   stage_inactivity: 'Inatividade na etapa',
   stage_age: 'Tempo maximo na etapa',
+  cadence_task: 'Tarefa de cadencia',
 }
 
 const POLICY_TYPE_DESCRIPTIONS: Record<AttentionPolicyType, string> = {
@@ -78,6 +79,7 @@ const POLICY_TYPE_DESCRIPTIONS: Record<AttentionPolicyType, string> = {
   first_contact: 'Mede o primeiro contato humano em cada ciclo de atribuicao.',
   stage_inactivity: 'Reinicia o relogio somente quando ocorre uma acao valida.',
   stage_age: 'Limita o tempo total do lead na etapa, mesmo quando ha atividades.',
+  cadence_task: 'Lembra o corretor quando uma tarefa materializada da cadencia vence.',
 }
 
 const POLICY_STATUS_LABELS: Record<AttentionPolicyStatus, string> = {

@@ -3,6 +3,23 @@ import {
   normalizeDurableWhatsAppReservation,
   replyWinsDelayWindow,
 } from "./automation-runtime.ts";
+import { evaluateAutomationCondition } from "../../../lib/automations/engine.ts";
+
+Deno.test("runtime and preview share the reply classifier contract", () => {
+  for (const [content, branch] of [
+    ["pode ser", "true"],
+    ["não quero", "false"],
+    ["pode parar", "false"],
+    ["não tem problema, pode ser", "true"],
+    ["talvez", "unknown"],
+  ] as const) {
+    const result = evaluateAutomationCondition(
+      { condition_type: "response_sentiment" },
+      { execution: { reply_payload: { content } } },
+    );
+    if (result.branch !== branch) throw new Error(`${content}: expected ${branch}, got ${result.branch}`);
+  }
+});
 
 Deno.test("reply inside the closed wait window wins the timeout race", () => {
   if (!replyWinsDelayWindow(1_000, 2_000, 2_000)) throw new Error("reply at deadline must win");

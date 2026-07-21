@@ -101,7 +101,8 @@ func (repo Repository) Summary(ctx context.Context, tenantContext tenant.Context
 			count(*) filter (where p.policy_type = 'unassigned')::int,
 			count(*) filter (where p.policy_type = 'first_contact')::int,
 			count(*) filter (where p.policy_type = 'stage_inactivity')::int,
-			count(*) filter (where p.policy_type = 'stage_age')::int
+			count(*) filter (where p.policy_type = 'stage_age')::int,
+			count(*) filter (where p.policy_type = 'cadence_task')::int
 		from public.lead_attention_instances i
 		join public.lead_attention_policies p
 		  on p.organization_id = i.organization_id and p.id = i.policy_id
@@ -115,6 +116,7 @@ func (repo Repository) Summary(ctx context.Context, tenantContext tenant.Context
 		&summary.Total, &summary.Monitoring, &summary.Warning, &summary.Breached,
 		&summary.Escalated, &summary.Acknowledged, &summary.DueToday, &summary.Overdue,
 		&summary.Unassigned, &summary.FirstContact, &summary.StageInactivity, &summary.StageAge,
+		&summary.CadenceTasks,
 	)
 	return summary, err
 }

@@ -1,9 +1,11 @@
 import {
   apiCadenceTaskResponseSchema,
   apiCadenceTemplateListResponseSchema,
+  apiSwitchLeadCadenceResponseSchema,
   createCadenceTaskInputSchema,
   parseDomainInput,
   updateCadenceTaskBodySchema,
+  switchLeadCadenceInputSchema,
   validateDomainResponse,
 } from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
@@ -91,5 +93,22 @@ export const cadencesAPI = {
       method: 'DELETE',
       organizationId,
     })
+  },
+
+  async switchLeadCadence(leadId: string, cadenceTemplateId: string, organizationId?: string | null) {
+    const body = parseDomainInput(switchLeadCadenceInputSchema, {
+      cadence_template_id: cadenceTemplateId,
+    }, 'cadences.lead.switch')
+    const response = await vimobAPIRequest<Envelope<{
+      enrollment_id: string
+      lead_id: string
+      cadence_template_id: string
+    }>>(`/v1/leads/${leadId}/cadence`, {
+      method: 'POST',
+      organizationId,
+      body,
+    })
+    validateDomainResponse(apiSwitchLeadCadenceResponseSchema, response, 'cadences.lead.switch')
+    return response.data
   },
 }

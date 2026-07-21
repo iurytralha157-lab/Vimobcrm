@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/authorization"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
@@ -200,6 +201,48 @@ func (repo Repository) DeleteTask(ctx context.Context, tenantContext tenant.Cont
 		return ErrCadenceNotFound
 	}
 	return nil
+}
+
+func (repo Repository) SwitchLeadCadence(ctx context.Context, tenantContext tenant.Context, leadID string, request SwitchCadenceRequest) (SwitchCadenceResult, error) {
+	leadID, ok := normalizeUUID(leadID)
+	if !ok {
+		return SwitchCadenceResult{}, ErrInvalidInput
+	}
+	templateID, ok := normalizeUUID(request.CadenceTemplateID)
+	if !ok {
+		return SwitchCadenceResult{}, ErrInvalidInput
+	}
+
+	var assignedUserID, teamID pgtype.Text
+	err := repo.db.Pool().QueryRow(ctx, `
+		select assigned_user_id::text, team_id::text
+		from public.leads
+		where organization_id = $1::uuid and id = $2::uuid
+	`, tenantContext.OrganizationID, leadID).Scan(&assignedUserID, &teamID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SwitchCadenceResult{}, ErrCadenceNotFound
+	}
+	if err != nil {
+		return SwitchCadenceResult{}, err
+	}
+	if !authorization.CanOperateLead(tenantContext, authorization.LeadResource{
+		AssignedUserID: textValue(assignedUserID),
+		TeamID:         textValue(teamID),
+	}) {
+		return SwitchCadenceResult{}, tenant.ErrOrganizationAccessDenied
+	}
+
+	var enrollmentID string
+	err = repo.db.Pool().QueryRow(ctx, `
+		select private.switch_lead_cadence($1::uuid, $2::uuid, $3::uuid, $4::uuid)::text
+	`, tenantContext.OrganizationID, leadID, templateID, tenantContext.UserID).Scan(&enrollmentID)
+	if err != nil {
+		if strings.Contains(err.Error(), "cadence_template_not_found") || strings.Contains(err.Error(), "cadence_lead_not_found") {
+			return SwitchCadenceResult{}, ErrCadenceNotFound
+		}
+		return SwitchCadenceResult{}, err
+	}
+	return SwitchCadenceResult{EnrollmentID: enrollmentID, LeadID: leadID, CadenceTemplateID: templateID}, nil
 }
 
 func (repo Repository) ensureTemplatesForStages(ctx context.Context, tenantContext tenant.Context) error {

@@ -1,5 +1,9 @@
 import { z } from 'zod'
 import { apiEnvelopeSchema, nonNegativeIntegerSchema, timestampSchema, uuidSchema } from './common'
+import {
+  AUTOMATION_CUSTOM_VARIABLES,
+  unknownAutomationTemplateVariables,
+} from '../automations'
 
 export const automationTriggerTypeSchema = z.enum([
   'message_received',
@@ -35,7 +39,14 @@ const automationNodeBaseSchema = z.object({
   position: automationNodePositionSchema,
 })
 
-const optionalConfigString = z.string().trim().max(10_000).nullish()
+const automationMessageTemplateSchema = z.string().trim().min(1).max(4_000).refine(
+  (value) => unknownAutomationTemplateVariables(value).length === 0,
+  'A mensagem contém uma variável desconhecida',
+)
+const optionalAutomationTemplateSchema = z.string().trim().max(4_000).nullish().refine(
+  (value) => !value || unknownAutomationTemplateVariables(value).length === 0,
+  'A mensagem contém uma variável desconhecida',
+)
 const httpsConfigURLSchema = z.string().trim().url().max(4_000)
   .refine((value) => new URL(value).protocol === 'https:', 'Use uma URL HTTPS pública')
 const ianaTimezoneSchema = z.string().trim().min(1).max(100).refine((value) => {
@@ -102,7 +113,7 @@ export const automationDelayNodeConfigSchema = z.object({
   delay_type: z.enum(['seconds', 'minutes', 'hours', 'days']),
   delay_value: z.number().int().min(1),
   stop_on_reply: z.boolean().optional(),
-  on_reply_message: optionalConfigString,
+  on_reply_message: optionalAutomationTemplateSchema,
   on_reply_stage_id: uuidSchema.nullish(),
   on_reply_move_to_stage_id: uuidSchema.nullish(),
   handoff_on_non_text: z.boolean().optional(),
@@ -121,9 +132,12 @@ export const automationDelayNodeConfigSchema = z.object({
 })
 
 export const automationConditionNodeConfigSchema = z.object({
-  condition_type: z.string().trim().min(1).max(80),
+  condition_type: z.enum(['custom', 'response_sentiment']),
   variable: z.string().trim().max(255).optional(),
-  operator: z.string().trim().max(80).optional(),
+  operator: z.enum([
+    'equals', 'not_equals', 'contains', 'not_contains', 'contains_any', 'not_contains_any',
+    'greater_than', 'less_than', 'is_set', 'is_not_set',
+  ]).optional(),
   value: z.unknown().optional(),
   positive_keywords: z.string().trim().max(5_000).optional(),
   negative_keywords: z.string().trim().max(5_000).optional(),
@@ -135,6 +149,9 @@ export const automationConditionNodeConfigSchema = z.object({
     if (!config.operator) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['operator'], message: 'Selecione o operador da condicao' })
     }
+    if (config.variable && !AUTOMATION_CUSTOM_VARIABLES.some((variable) => variable.value === config.variable)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['variable'], message: 'Selecione uma variavel suportada, sem usar chaves' })
+    }
   }
   if (config.condition_type === 'response_sentiment' && !config.positive_keywords && !config.negative_keywords) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['positive_keywords'], message: 'Informe ao menos uma palavra-chave' })
@@ -142,10 +159,10 @@ export const automationConditionNodeConfigSchema = z.object({
 })
 
 const automationActionConfigSchemas = {
-  send_whatsapp: z.object({ session_id: uuidSchema, message: z.string().trim().min(1).max(4_000) }).passthrough(),
-  send_image: z.object({ session_id: uuidSchema, media_bucket: z.literal('automation-media'), media_path: automationMediaPathSchema, caption: optionalConfigString }).passthrough(),
-  send_audio: z.object({ session_id: uuidSchema, media_bucket: z.literal('automation-media'), media_path: automationMediaPathSchema }).passthrough(),
-  send_video: z.object({ session_id: uuidSchema, media_bucket: z.literal('automation-media'), media_path: automationMediaPathSchema }).passthrough(),
+  send_whatsapp: z.object({ session_id: uuidSchema, message: automationMessageTemplateSchema }).passthrough(),
+  send_image: z.object({ session_id: uuidSchema, media_bucket: z.literal('automation-media'), media_path: automationMediaPathSchema, caption: optionalAutomationTemplateSchema }).passthrough(),
+  send_audio: z.object({ session_id: uuidSchema, media_bucket: z.literal('automation-media'), media_path: automationMediaPathSchema, caption: optionalAutomationTemplateSchema }).passthrough(),
+  send_video: z.object({ session_id: uuidSchema, media_bucket: z.literal('automation-media'), media_path: automationMediaPathSchema, caption: optionalAutomationTemplateSchema }).passthrough(),
   webhook: z.object({
     webhook_url: httpsConfigURLSchema,
     method: z.enum(['POST', 'PUT', 'PATCH']),
@@ -205,9 +222,8 @@ export const automationFlowNodeSchema = z.discriminatedUnion('type', [
 ]).superRefine((node, ctx) => {
   if (node.type !== 'action') return
 
-  const unsupportedCrmAction = node.action_type === 'assign_user'
-    || (node.action_type === 'set_variable'
-      && (node.config.actionType === 'property_interest' || node.config.actionType === 'deal_status'))
+  const unsupportedCrmAction = node.action_type === 'set_variable'
+    && (node.config.actionType === 'property_interest' || node.config.actionType === 'deal_status')
   if (unsupportedCrmAction) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -259,6 +275,8 @@ export const automationFlowDefinitionSchema = z.object({
 
   const outgoing = new Map<string, string[]>()
   const incoming = new Map<string, number>()
+  const incomingConnections = new Map<string, typeof flow.connections>()
+  const nodeById = new Map(flow.nodes.map((node) => [node.id, node]))
   const branchNames = new Map<string, Set<string>>()
   const connectionKeys = new Set<string>()
   flow.connections.forEach((connection, index) => {
@@ -279,6 +297,7 @@ export const automationFlowDefinitionSchema = z.object({
     connectionKeys.add(key)
     outgoing.set(connection.source, [...(outgoing.get(connection.source) ?? []), connection.target])
     incoming.set(connection.target, (incoming.get(connection.target) ?? 0) + 1)
+    incomingConnections.set(connection.target, [...(incomingConnections.get(connection.target) ?? []), connection])
     if (branch) {
       const sourceBranches = branchNames.get(connection.source) ?? new Set<string>()
       if (sourceBranches.has(branch)) {
@@ -307,7 +326,20 @@ export const automationFlowDefinitionSchema = z.object({
     } else if (node.type === 'action' && outputCount > 1) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['nodes', index], message: 'Uma acao pode ter no maximo uma saida' })
     } else if (node.type === 'condition') {
-      if (outputCount !== 2 || branches.size !== 2 || !branches.has('true') || !branches.has('false')) {
+      if (node.config.condition_type === 'response_sentiment') {
+        if (outputCount !== 3 || branches.size !== 3 || !branches.has('true') || !branches.has('false') || !branches.has('unknown')) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['nodes', index], message: 'A condicao de resposta precisa das saidas true, false e unknown' })
+        }
+        const parents = incomingConnections.get(node.id) ?? []
+        const replyParent = parents.length === 1 && parents.some((connection) => {
+          const parent = nodeById.get(connection.source)
+          const branch = connection.condition_branch || connection.source_handle
+          return parent?.type === 'delay' && parent.config.stop_on_reply === true && branch === 'replied'
+        })
+        if (!replyParent) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['nodes', index], message: 'A condicao de resposta deve vir diretamente da saida replied de uma espera configurada para resposta' })
+        }
+      } else if (outputCount !== 2 || branches.size !== 2 || !branches.has('true') || !branches.has('false')) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['nodes', index], message: 'A condicao precisa das saidas true e false' })
       }
     } else if (node.type === 'delay') {

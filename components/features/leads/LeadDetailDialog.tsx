@@ -51,7 +51,7 @@ import { commandSearchFilter } from '@/lib/search-text';
 import { format, type Locale } from 'date-fns';
 import { ptBR, enUS } from 'date-fns/locale';
 import { useLeadTasks, useCompleteCadenceTask } from '@/hooks/use-lead-tasks';
-import { useCadenceTemplates } from '@/hooks/use-cadences';
+import { useCadenceTemplates, useSwitchLeadCadence } from '@/hooks/use-cadences';
 import type { CadenceTaskTemplate } from '@/hooks/use-cadences';
 import { useCreateActivity } from '@/hooks/use-activities';
 import { useLead, useUpdateLead, useAddLeadTag, useLeadSensitiveProfile, useRemoveLeadTag } from '@/hooks/use-leads';
@@ -1052,6 +1052,7 @@ export function LeadDetailDialog({
   const {
     data: cadenceTemplates = []
   } = useCadenceTemplates();
+  const switchLeadCadence = useSwitchLeadCadence();
   const { profile, organization } = useAuth();
   const { hasPermission } = useUserPermissions();
   const canOperateLead = hasPermission('lead_operate');
@@ -1315,7 +1316,15 @@ export function LeadDetailDialog({
       const exactStage = Boolean(localLead.stage_id && template.stage_id === localLead.stage_id);
       const samePipeline = Boolean(localLead.pipeline_id && template.pipeline_id === localLead.pipeline_id);
       const sameStageKey = Boolean(currentStage?.stage_key && template.stage_key === currentStage.stage_key);
-      const score = exactStage ? 400 : samePipeline && sameStageKey ? 300 : sameStageKey ? 200 : 0;
+      const activeTaskMatches = (template.tasks || []).filter((templateTask) =>
+        safeLeadTasks.some((leadTask) =>
+          leadTask.title === templateTask.title
+          && leadTask.day_offset === templateTask.day_offset
+          && leadTask.type === templateTask.type
+        )
+      ).length;
+      const stageScore = exactStage ? 400 : samePipeline && sameStageKey ? 300 : sameStageKey ? 200 : 0;
+      const score = activeTaskMatches > 0 ? 10_000 + activeTaskMatches : stageScore;
       return { template, score, taskCount: Array.isArray(template.tasks) ? template.tasks.length : 0 };
     })
     .filter((candidate) => candidate.score > 0)
@@ -1324,6 +1333,27 @@ export function LeadDetailDialog({
   const templateTasks = Array.isArray(stageTemplate?.tasks) ? stageTemplate.tasks.filter(Boolean) : [];
   const cadenceStageLabel = formatCadenceStageLabel(stageTemplate?.name);
   const cadenceTitle = cadenceStageLabel ? `Cadencia / ${cadenceStageLabel}` : 'Cadencia';
+  const activeCadenceTemplates = safeCadenceTemplates.filter((template) => template.is_active !== false);
+  const handleCadenceSwitch = (cadenceTemplateId: string) => {
+    if (!canOperateLead || !leadId || cadenceTemplateId === stageTemplate?.id) return;
+    switchLeadCadence.mutate({ leadId, cadenceTemplateId });
+  };
+  const renderCadenceSelector = (compact = false) => activeCadenceTemplates.length > 1 ? (
+    <Select
+      value={stageTemplate?.id || ''}
+      onValueChange={handleCadenceSwitch}
+      disabled={!canOperateLead || switchLeadCadence.isPending}
+    >
+      <SelectTrigger className={compact ? 'h-7 max-w-[190px] rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-[10px]' : 'h-8 max-w-[260px]'}>
+        <SelectValue placeholder="Escolher cadencia" />
+      </SelectTrigger>
+      <SelectContent>
+        {activeCadenceTemplates.map((template) => (
+          <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  ) : null;
 
   // Map lead tasks by a key to check if completed
   const leadTasksMap = new Map(safeLeadTasks.map(t => [`${t.title || ''}-${t.day_offset || 0}-${t.type || ''}`, t]));
@@ -3213,7 +3243,10 @@ export function LeadDetailDialog({
 
                 <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-2 flex items-center justify-between">
-                    <h3 className="text-xs font-semibold">{cadenceTitle}</h3>
+                    <div className="min-w-0">
+                      <h3 className="truncate text-xs font-semibold">{cadenceTitle}</h3>
+                      {renderCadenceSelector(true)}
+                    </div>
                     {totalTasksCount > 0 && (
                       <Badge variant="outline" className="rounded-[5px] border-0 bg-[var(--app-surface-solid)] text-[10px]">
                         {completedTasksCount}/{totalTasksCount}
@@ -3608,7 +3641,10 @@ export function LeadDetailDialog({
 
                 <section data-tour="lead-detail-cadence" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-2 flex items-center justify-between">
-                    <h3 className="text-xs font-semibold">{cadenceTitle}</h3>
+                    <div className="min-w-0">
+                      <h3 className="truncate text-xs font-semibold">{cadenceTitle}</h3>
+                      {renderCadenceSelector(true)}
+                    </div>
                     {totalTasksCount > 0 && (
                       <Badge variant="outline" className="rounded-[5px] border-0 bg-[var(--app-surface-solid)] text-[10px]">
                         {completedTasksCount}/{totalTasksCount}
@@ -4006,6 +4042,7 @@ export function LeadDetailDialog({
                     <ListTodo className="h-4 w-4 text-primary" />
                   </div>
                   <h3 className="font-semibold">{cadenceTitle}</h3>
+                  {renderCadenceSelector()}
                   {totalTasksCount > 0 && (
                     <Badge variant="outline" className="font-normal ml-auto">
                       {completedTasksCount}/{totalTasksCount}

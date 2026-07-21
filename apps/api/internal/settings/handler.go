@@ -257,6 +257,20 @@ func (handler Handler) SavePushToken(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, result)
 }
 
+func (handler Handler) ListPushDevices(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.UserID == "" || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+	devices, err := handler.repo.ListPushDevices(r.Context(), tenantContext)
+	if err != nil {
+		writeSettingsError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": devices})
+}
+
 func (handler Handler) DeactivatePushToken(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := tenant.FromContext(r.Context())
 	if !ok || tenantContext.UserID == "" {

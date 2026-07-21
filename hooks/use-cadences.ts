@@ -83,3 +83,21 @@ export function useDeleteCadenceTask() {
     },
   });
 }
+
+export function useSwitchLeadCadence() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ leadId, cadenceTemplateId }: { leadId: string; cadenceTemplateId: string }) =>
+      cadencesAPI.switchLeadCadence(leadId, cadenceTemplateId),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['lead-tasks', result.lead_id] });
+      queryClient.invalidateQueries({ queryKey: ['lead-history-v2', result.lead_id] });
+      queryClient.invalidateQueries({ queryKey: ['attention'] });
+      toast.success('Cadencia alterada e tarefas recalculadas.');
+    },
+    onError: (error) => {
+      toast.error('Erro ao alterar cadencia: ' + getErrorMessage(error));
+    },
+  });
+}

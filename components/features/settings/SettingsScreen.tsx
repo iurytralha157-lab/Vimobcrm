@@ -12,6 +12,7 @@ import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { SubscriptionTab } from '@/components/features/settings/SubscriptionTab';
 import { IntegrationsTab } from '@/components/features/settings/IntegrationsTab';
 import { PropertySettingsTab } from '@/components/features/settings/PropertySettingsTab';
+import { NotificationsTab } from '@/components/features/settings/NotificationsTab';
 import { isBillingBlockedStatus } from '@/lib/billing-access';
 import { canManageOrganization as canManageOrganizationAccess } from '@/lib/access/organization';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
@@ -144,6 +145,10 @@ export default function Settings() {
         <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
           <TabsContent value="account">
             <AccountTab />
+          </TabsContent>
+
+          <TabsContent value="notifications">
+            <NotificationsTab />
           </TabsContent>
 
           {!accessReady && ['team', 'subscription', 'properties'].includes(activeTab) && (

@@ -138,6 +138,7 @@ type notificationPushClient struct {
 }
 
 type pushSubscription struct {
+	ID       string
 	Endpoint string
 	P256DH   string
 	Auth     string

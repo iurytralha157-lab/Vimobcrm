@@ -100,6 +100,22 @@ test('automacao pode nascer como rascunho ou publicar o fluxo atomicamente', () 
   assert.equal(saveAutomationFlowInputSchema.safeParse({
     flowDefinition: validAutomationFlow,
   }).success, true)
+  assert.equal(saveAutomationFlowInputSchema.safeParse({
+    flowDefinition: {
+      ...validAutomationFlow,
+      nodes: validAutomationFlow.nodes.map((node) => node.id === 'message-1'
+        ? { ...node, config: { ...node.config, message: 'Olá {{lead.campo_inexistente}}' } }
+        : node),
+    },
+  }).success, false)
+  assert.equal(saveAutomationFlowInputSchema.safeParse({
+    flowDefinition: {
+      ...validAutomationFlow,
+      nodes: validAutomationFlow.nodes.map((node) => node.id === 'message-1'
+        ? { ...node, config: { ...node.config, message: 'Olá {{lead.name}' } }
+        : node),
+    },
+  }).success, false)
 })
 
 test('automacao rejeita grafo desconectado, ciclico e acao desconhecida', () => {
@@ -158,7 +174,6 @@ test('automacao rejeita grafo desconectado, ciclico e acao desconhecida', () => 
   }).success, true)
 
   const unsupportedCrmActions = [
-    { action_type: 'assign_user' as const, config: { user_id: ID } },
     { action_type: 'set_variable' as const, config: { actionType: 'property_interest', property_id: ID } },
   ]
   for (const unsupportedAction of unsupportedCrmActions) {
@@ -171,6 +186,15 @@ test('automacao rejeita grafo desconectado, ciclico e acao desconhecida', () => 
       },
     }).success, false)
   }
+
+  assert.equal(saveAutomationFlowInputSchema.safeParse({
+    flowDefinition: {
+      ...validAutomationFlow,
+      nodes: validAutomationFlow.nodes.map((node) => node.id === 'message-1'
+        ? { ...node, action_type: 'assign_user' as const, config: { user_id: ID } }
+        : node),
+    },
+  }).success, true)
 })
 
 test('galeria de automacao pagina sem truncar silenciosamente', () => {
@@ -287,6 +311,68 @@ test('automacao limita inatividade e espera conforme a unidade', () => {
   })
   assert.equal(saveAutomationFlowInputSchema.safeParse({ flowDefinition: withDelay(30) }).success, true)
   assert.equal(saveAutomationFlowInputSchema.safeParse({ flowDefinition: withDelay(31) }).success, false)
+})
+
+test('automacao conversacional exige espera respondida e caminho seguro para resposta incerta', () => {
+  const action = (id: string, message: string) => ({
+    id,
+    type: 'action' as const,
+    action_type: 'send_whatsapp' as const,
+    position: { x: 600, y: 0 },
+    config: { session_id: ID, message },
+  })
+  const flow = {
+    nodes: [
+      validAutomationFlow.nodes[0],
+      validAutomationFlow.nodes[1],
+      {
+        id: 'wait-reply',
+        type: 'delay' as const,
+        position: { x: 300, y: 0 },
+        config: { delay_type: 'hours' as const, delay_value: 1, stop_on_reply: true },
+      },
+      {
+        id: 'classify-reply',
+        type: 'condition' as const,
+        position: { x: 450, y: 0 },
+        config: {
+          condition_type: 'response_sentiment' as const,
+          positive_keywords: 'sim, pode ser',
+          negative_keywords: 'não, não quero',
+        },
+      },
+      action('timeout', 'Ainda está por aí?'),
+      action('positive', 'Perfeito!'),
+      action('negative', 'Sem problemas.'),
+      action('uncertain', 'Vou pedir ajuda de uma pessoa.'),
+    ],
+    connections: [
+      { source: 'trigger-1', target: 'message-1' },
+      { source: 'message-1', target: 'wait-reply' },
+      { source: 'wait-reply', target: 'timeout', source_handle: 'no_reply', condition_branch: 'no_reply' },
+      { source: 'wait-reply', target: 'classify-reply', source_handle: 'replied', condition_branch: 'replied' },
+      { source: 'classify-reply', target: 'positive', source_handle: 'true', condition_branch: 'true' },
+      { source: 'classify-reply', target: 'negative', source_handle: 'false', condition_branch: 'false' },
+      { source: 'classify-reply', target: 'uncertain', source_handle: 'unknown', condition_branch: 'unknown' },
+    ],
+    settings: {},
+  }
+
+  assert.equal(saveAutomationFlowInputSchema.safeParse({ flowDefinition: flow }).success, true)
+  assert.equal(saveAutomationFlowInputSchema.safeParse({
+    flowDefinition: {
+      ...flow,
+      connections: flow.connections.filter((connection) => connection.condition_branch !== 'unknown'),
+    },
+  }).success, false)
+  assert.equal(saveAutomationFlowInputSchema.safeParse({
+    flowDefinition: {
+      ...flow,
+      connections: flow.connections.map((connection) => connection.target === 'classify-reply'
+        ? { ...connection, source: 'message-1', source_handle: null, condition_branch: null }
+        : connection),
+    },
+  }).success, false)
 })
 
 test('cadencia rejeita dia negativo', () => {

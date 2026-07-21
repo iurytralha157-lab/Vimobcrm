@@ -10,6 +10,7 @@ export const ConditionNode = memo(({ data, selected }: NodeProps) => {
 
   const operatorLabels: Record<string, string> = {
     equals: '=', not_equals: '≠', contains: 'contém', not_contains: 'não contém',
+    contains_any: 'contém qualquer', not_contains_any: 'não contém nenhum',
     greater_than: '>', less_than: '<', is_set: 'existe', is_not_set: 'não existe',
   };
 
@@ -33,7 +34,7 @@ export const ConditionNode = memo(({ data, selected }: NodeProps) => {
             {isResponseSentiment ? 'Resposta do Lead' : 'Condição'}
           </span>
           {isResponseSentiment ? (
-            <p className="text-xs text-muted-foreground mt-1">Resposta positiva?</p>
+            <p className="text-xs text-muted-foreground mt-1">Classificar resposta com segurança</p>
           ) : variable ? (
             <p className="text-xs text-muted-foreground mt-1">
               {variable} {operatorLabels[operator] || operator} {value}
@@ -44,12 +45,17 @@ export const ConditionNode = memo(({ data, selected }: NodeProps) => {
         </div>
       </div>
       <Handle type="source" position={Position.Right} id="true"
-        className="!bg-green-400 !w-3 !h-3 !border-2 !border-green-500/50" style={{ top: '35%' }} />
+        className="!bg-green-400 !w-3 !h-3 !border-2 !border-green-500/50" style={{ top: isResponseSentiment ? '25%' : '35%' }} />
       <Handle type="source" position={Position.Right} id="false"
-        className="!bg-red-400 !w-3 !h-3 !border-2 !border-red-500/50" style={{ top: '65%' }} />
-      <div className="flex flex-col absolute right-[-28px] top-1/2 -translate-y-1/2 gap-4 text-[10px]">
-        <span className="text-green-400 font-medium">Sim</span>
-        <span className="text-red-400 font-medium">Não</span>
+        className="!bg-red-400 !w-3 !h-3 !border-2 !border-red-500/50" style={{ top: isResponseSentiment ? '50%' : '65%' }} />
+      {isResponseSentiment && (
+        <Handle type="source" position={Position.Right} id="unknown"
+          className="!bg-amber-400 !w-3 !h-3 !border-2 !border-amber-500/50" style={{ top: '75%' }} />
+      )}
+      <div className={`flex flex-col absolute text-[10px] ${isResponseSentiment ? 'right-[-48px] top-[18%] gap-[13px]' : 'right-[-28px] top-1/2 -translate-y-1/2 gap-4'}`}>
+        <span className="text-green-400 font-medium">{isResponseSentiment ? 'Positiva' : 'Sim'}</span>
+        <span className="text-red-400 font-medium">{isResponseSentiment ? 'Negativa' : 'Não'}</span>
+        {isResponseSentiment && <span className="text-amber-400 font-medium">Incerta</span>}
       </div>
     </div>
   );

@@ -148,6 +148,7 @@ type Summary struct {
 	FirstContact    int `json:"firstContact"`
 	StageInactivity int `json:"stageInactivity"`
 	StageAge        int `json:"stageAge"`
+	CadenceTasks    int `json:"cadenceTasks"`
 }
 
 type ListFilter struct {
@@ -311,7 +312,7 @@ func mergePolicyInput(input policyInput, request PolicyRequest, creating bool) (
 
 func validPolicyType(value string) bool {
 	switch value {
-	case "unassigned", "first_contact", "stage_inactivity", "stage_age":
+	case "unassigned", "first_contact", "stage_inactivity", "stage_age", "cadence_task":
 		return true
 	default:
 		return false

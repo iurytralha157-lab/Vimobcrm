@@ -359,6 +359,11 @@ func (request CreateRequest) Validate() (createInput, error) {
 		Settings:        normalizeObject(request.Settings),
 		ReentryBehavior: normalizeReentryBehavior(request.ReentryBehavior),
 	}
+	settings, err := normalizeRedistributionSettings(input.Settings)
+	if err != nil {
+		return createInput{}, err
+	}
+	input.Settings = settings
 
 	if request.TargetPipelineID != "" {
 		value, ok := normalizeUUID(request.TargetPipelineID)
@@ -430,6 +435,13 @@ func (request UpdateRequest) Validate() (updateInput, error) {
 	if input.ReentryBehavior.Set && input.ReentryBehavior.Value != nil {
 		value := normalizeReentryBehavior(*input.ReentryBehavior.Value)
 		input.ReentryBehavior.Value = &value
+	}
+	if input.Settings.Set {
+		settings, err := normalizeRedistributionSettings(input.Settings.Value)
+		if err != nil {
+			return updateInput{}, err
+		}
+		input.Settings.Value = settings
 	}
 
 	if input.RulesSet {
@@ -778,6 +790,84 @@ func normalizeReentryBehavior(value string) string {
 		return "redistribute"
 	}
 	return value
+}
+
+func normalizeRedistributionSettings(value map[string]any) (map[string]any, error) {
+	settings := normalizeObject(value)
+	enabled := boolFromObject(settings, "enable_redistribution")
+	settings["enable_redistribution"] = enabled
+	if !enabled {
+		return settings, nil
+	}
+
+	timeout, ok := integerFromObject(settings, "redistribution_timeout_minutes")
+	if !ok {
+		timeout = 20
+	}
+	warning, ok := integerFromObject(settings, "redistribution_warning_minutes")
+	if !ok {
+		warning = 5
+	}
+	maxAttempts, ok := integerFromObject(settings, "redistribution_max_attempts")
+	if !ok {
+		maxAttempts = 10
+	}
+
+	if timeout < 1 || timeout > 10080 {
+		return nil, fmt.Errorf("%w: redistribution timeout must be between 1 and 10080 minutes", ErrInvalidInput)
+	}
+	if warning < 0 || warning >= timeout {
+		return nil, fmt.Errorf("%w: redistribution warning must be lower than timeout", ErrInvalidInput)
+	}
+	if maxAttempts < 0 || maxAttempts > 1000 {
+		return nil, fmt.Errorf("%w: redistribution attempts must be between 0 and 1000", ErrInvalidInput)
+	}
+
+	settings["redistribution_timeout_minutes"] = timeout
+	settings["redistribution_warning_minutes"] = warning
+	settings["redistribution_max_attempts"] = maxAttempts
+	return settings, nil
+}
+
+func boolFromObject(value map[string]any, key string) bool {
+	raw, ok := value[key]
+	if !ok {
+		return false
+	}
+	switch typed := raw.(type) {
+	case bool:
+		return typed
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "true", "1", "yes":
+			return true
+		}
+	}
+	return false
+}
+
+func integerFromObject(value map[string]any, key string) (int, bool) {
+	raw, ok := value[key]
+	if !ok {
+		return 0, false
+	}
+	switch typed := raw.(type) {
+	case int:
+		return typed, true
+	case int32:
+		return int(typed), true
+	case int64:
+		return int(typed), true
+	case float64:
+		if typed != float64(int(typed)) {
+			return 0, false
+		}
+		return int(typed), true
+	case json.Number:
+		parsed, err := typed.Int64()
+		return int(parsed), err == nil
+	}
+	return 0, false
 }
 
 func normalizeObject(value map[string]any) map[string]any {

@@ -14,7 +14,7 @@ import (
 
 const (
 	workerInterval      = 30 * time.Second
-	workerBatchLimit    = 50
+	workerBatchLimit    = 10
 	reconcileBatchLimit = 500
 	attentionWorkerLock = int64(860421707)
 )
@@ -41,6 +41,7 @@ type candidateInstance struct {
 	EngineMode        string          `json:"engineMode"`
 	Timezone          string          `json:"timezone"`
 	BusinessHours     json.RawMessage `json:"businessHours"`
+	Metadata          map[string]any  `json:"metadata"`
 }
 
 type workerInstance struct {
@@ -170,6 +171,43 @@ func (repo Repository) Process(ctx context.Context) error {
 }
 
 func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error {
+	if _, err := tx.Exec(ctx, `
+		update public.lead_attention_instances i
+		set shadow = (
+		      coalesce(os.engine_mode, 'shadow') <> 'enabled'
+		      or p.status <> 'enabled'
+		      or coalesce((i.metadata->>'historical_backfill')::boolean, false)
+		    ),
+		    metadata = coalesce(i.metadata, '{}'::jsonb) || jsonb_build_object(
+		      'engine_mode_snapshot', coalesce(os.engine_mode, 'shadow'),
+		      'policy_status_snapshot', p.status
+		    ),
+		    updated_at = now()
+		from public.lead_attention_policies p
+		left join public.organization_attention_settings os on os.organization_id = p.organization_id
+		where p.id = i.policy_id and p.organization_id = i.organization_id
+		  and i.status not in ('resolved', 'redistributed', 'cancelled')
+		  and i.shadow is distinct from (
+		    coalesce(os.engine_mode, 'shadow') <> 'enabled'
+		    or p.status <> 'enabled'
+		    or coalesce((i.metadata->>'historical_backfill')::boolean, false)
+		  )
+	`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		update public.lead_attention_instances i
+		set assigned_user_id = coalesce(lt.assigned_user_id, l.assigned_user_id),
+		    updated_at = now()
+		from public.lead_attention_policies p, public.lead_tasks lt, public.leads l
+		where p.id = i.policy_id and p.policy_type = 'cadence_task'
+		  and lt.id::text = i.metadata->>'lead_task_id'
+		  and l.id = i.lead_id and l.organization_id = i.organization_id
+		  and i.status not in ('resolved', 'redistributed', 'cancelled')
+		  and i.assigned_user_id is distinct from coalesce(lt.assigned_user_id, l.assigned_user_id)
+	`); err != nil {
+		return err
+	}
 	rows, err := tx.Query(ctx, `
 		with current_policies as (
 			select
@@ -191,7 +229,8 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 				coalesce(last_cycle.ended_at, l.attention_enrolled_at) as baseline_at,
 				null::timestamptz as last_action_at,
 				p.threshold_minutes, p.warning_minutes, p.business_hours_only,
-				p.engine_mode, p.timezone, p.business_hours
+				p.engine_mode, p.timezone, p.business_hours,
+				'{}'::jsonb as metadata
 			from current_policies p
 			join public.leads l on l.organization_id = p.organization_id
 			left join lateral (
@@ -214,7 +253,8 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 				ac.id, null::uuid, ac.assigned_user_id, l.pipeline_id, l.stage_id,
 				ac.assigned_at, null::timestamptz,
 				p.threshold_minutes, p.warning_minutes, p.business_hours_only,
-				p.engine_mode, p.timezone, p.business_hours
+				p.engine_mode, p.timezone, p.business_hours,
+				'{}'::jsonb
 			from current_policies p
 			join public.leads l on l.organization_id = p.organization_id
 			join public.lead_assignment_cycles ac
@@ -233,7 +273,8 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 				case when p.policy_type = 'stage_inactivity' then coalesce(last_action.occurred_at, sc.entered_at) else sc.entered_at end,
 				case when p.policy_type = 'stage_inactivity' then last_action.occurred_at else null end,
 				p.threshold_minutes, p.warning_minutes, p.business_hours_only,
-				p.engine_mode, p.timezone, p.business_hours
+				p.engine_mode, p.timezone, p.business_hours,
+				'{}'::jsonb
 			from current_policies p
 			join public.leads l on l.organization_id = p.organization_id
 			join public.lead_stage_cycles sc
@@ -249,6 +290,58 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 			  and l.deal_status = 'open'
 			  and (p.pipeline_id is null or p.pipeline_id = sc.pipeline_id)
 			  and (p.stage_id is null or p.stage_id = sc.stage_id)
+			union all
+			select
+				p.organization_id, l.id, p.id, p.policy_key, p.version,
+				p.policy_type, p.status,
+				'cadence_task:' || lt.id::text,
+				null::uuid, ce.stage_cycle_id,
+				coalesce(lt.assigned_user_id, l.assigned_user_id), l.pipeline_id, l.stage_id,
+				lt.due_at - make_interval(mins => p.threshold_minutes),
+				null::timestamptz,
+				p.threshold_minutes, p.warning_minutes, p.business_hours_only,
+				p.engine_mode, p.timezone, p.business_hours,
+				jsonb_build_object(
+				  'lead_task_id', lt.id,
+				  'cadence_enrollment_id', ce.id,
+				  'cadence_template_id', ce.cadence_template_id,
+				  'task_title', lt.title,
+				  'task_type', lt.type,
+				  'task_due_at', lt.due_at,
+				  'historical_backfill', coalesce((ce.metadata->>'historical_backfill')::boolean, false)
+				)
+			from current_policies p
+			join public.lead_tasks lt
+			  on lt.organization_id = p.organization_id
+			 and lt.status = 'pending' and lt.is_done = false and lt.due_at is not null
+			join public.cadence_enrollments ce
+			  on ce.id = lt.cadence_enrollment_id and ce.organization_id = lt.organization_id and ce.status = 'active'
+			join public.leads l
+			  on l.id = lt.lead_id and l.organization_id = lt.organization_id
+			where p.policy_type = 'cadence_task'
+			  and l.attention_eligible = true and l.attention_enrolled_at is not null
+			  and l.deal_status = 'open'
+			  and (p.pipeline_id is null or p.pipeline_id = l.pipeline_id)
+			  and (p.stage_id is null or p.stage_id = l.stage_id)
+		), eligible_candidates as (
+			select c.*
+			from candidates c
+			where c.baseline_at is not null
+			  and not exists (
+				select 1
+				from public.lead_attention_instances i
+				join public.lead_attention_policies old_policy on old_policy.id = i.policy_id
+				where i.lead_id = c.lead_id
+				  and i.cycle_key = c.cycle_key
+				  and old_policy.policy_key = c.policy_key
+			  )
+		), ranked_candidates as (
+			select c.*,
+			       row_number() over (
+			         partition by c.organization_id, c.policy_type
+			         order by c.baseline_at, c.lead_id
+			       ) as candidate_rank
+			from eligible_candidates c
 		)
 		select jsonb_build_object(
 			'organizationId', c.organization_id, 'leadId', c.lead_id,
@@ -260,19 +353,12 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 			'baselineAt', c.baseline_at, 'lastActionAt', c.last_action_at,
 			'thresholdMinutes', c.threshold_minutes, 'warningMinutes', c.warning_minutes,
 			'businessOnly', c.business_hours_only, 'engineMode', c.engine_mode,
-			'timezone', c.timezone, 'businessHours', c.business_hours
+			'timezone', c.timezone, 'businessHours', c.business_hours,
+			'metadata', c.metadata
 		)
-		from candidates c
-		where c.baseline_at is not null
-		  and not exists (
-			select 1
-			from public.lead_attention_instances i
-			join public.lead_attention_policies old_policy on old_policy.id = i.policy_id
-			where i.lead_id = c.lead_id
-			  and i.cycle_key = c.cycle_key
-			  and old_policy.policy_key = c.policy_key
-		  )
-		order by c.baseline_at, c.lead_id
+		from ranked_candidates c
+		where c.candidate_rank <= 50
+		order by c.candidate_rank, c.baseline_at, c.organization_id, c.lead_id
 		limit $1
 	`, reconcileBatchLimit)
 	if err != nil {
@@ -297,6 +383,7 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 	}
 	rows.Close()
 
+	var inserts pgx.Batch
 	for _, candidate := range candidates {
 		dueAt, err := AddPolicyMinutes(candidate.BaselineAt, candidate.ThresholdMinutes, candidate.BusinessOnly, candidate.Timezone, candidate.BusinessHours)
 		if err != nil {
@@ -313,14 +400,18 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 		if candidate.WarningMinutes > 0 {
 			nextAt = warningAt
 		}
-		shadow := candidate.EngineMode != "enabled" || candidate.PolicyStatus != "enabled"
+		historicalBackfill, _ := candidate.Metadata["historical_backfill"].(bool)
+		shadow := candidate.EngineMode != "enabled" || candidate.PolicyStatus != "enabled" || historicalBackfill
 		metadata := map[string]any{
 			"engine_mode_snapshot":   candidate.EngineMode,
 			"policy_status_snapshot": candidate.PolicyStatus,
 			"policy_key":             candidate.PolicyKey,
 			"threshold_minutes":      candidate.ThresholdMinutes,
 		}
-		_, err = tx.Exec(ctx, `
+		for key, value := range candidate.Metadata {
+			metadata[key] = value
+		}
+		inserts.Queue(`
 			insert into public.lead_attention_instances (
 				organization_id, lead_id, policy_id, policy_version, cycle_key,
 				assignment_cycle_id, stage_cycle_id, assigned_user_id, pipeline_id, stage_id,
@@ -338,11 +429,18 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 			candidate.BaselineAt, nullableTime(candidate.LastActionAt), warningAt, dueAt, nextAt,
 			shadow, jsonValue(metadata),
 		)
-		if err != nil {
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	results := tx.SendBatch(ctx, &inserts)
+	for range candidates {
+		if _, err := results.Exec(); err != nil {
+			_ = results.Close()
 			return err
 		}
 	}
-	return nil
+	return results.Close()
 }
 
 func (repo Repository) resolveSatisfiedInstances(ctx context.Context, tx pgx.Tx) error {
@@ -359,6 +457,11 @@ func (repo Repository) resolveSatisfiedInstances(ctx context.Context, tx pgx.Tx)
 			        select 1 from public.lead_assignment_cycles ac
 			        where ac.id = i.assignment_cycle_id and ac.first_human_outreach_at is not null
 			      ) then 'first_contact_completed'
+			      when p.policy_type = 'cadence_task' and not exists (
+			        select 1 from public.lead_tasks lt
+			        where lt.id::text = i.metadata->>'lead_task_id'
+			          and lt.status = 'pending' and lt.is_done = false
+			      ) then 'cadence_task_completed_or_cancelled'
 			      when i.assignment_cycle_id is not null and exists (
 			        select 1 from public.lead_assignment_cycles ac
 			        where ac.id = i.assignment_cycle_id and ac.ended_at is not null
@@ -385,6 +488,11 @@ func (repo Repository) resolveSatisfiedInstances(ctx context.Context, tx pgx.Tx)
 				or (p.policy_type = 'first_contact' and exists (
 				  select 1 from public.lead_assignment_cycles ac
 				  where ac.id = i.assignment_cycle_id and ac.first_human_outreach_at is not null
+				))
+				or (p.policy_type = 'cadence_task' and not exists (
+				  select 1 from public.lead_tasks lt
+				  where lt.id::text = i.metadata->>'lead_task_id'
+				    and lt.status = 'pending' and lt.is_done = false
 				))
 				or (i.assignment_cycle_id is not null and exists (
 				  select 1 from public.lead_assignment_cycles ac

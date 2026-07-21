@@ -68,6 +68,7 @@ import { FlowSimulator } from './FlowSimulator';
 import type { Json } from '@/integrations/supabase/types';
 import { saveAutomationFlowInputSchema } from '@/lib/validation';
 import { createAutomationMediaPreviewIndex, withAutomationMediaPreview } from './media-preview';
+import { resolveReplyKeywordConfig } from '@/lib/automations';
 
 const edgeTypes = {
   deletable: DeletableEdge,
@@ -89,7 +90,7 @@ const nodeTypes = {
   deal_status: DealStatusNode,
 };
 
-const UNSUPPORTED_CRM_NODE_TYPES = new Set(['assign_user', 'property_interest', 'deal_status']);
+const UNSUPPORTED_CRM_NODE_TYPES = new Set(['property_interest', 'deal_status']);
 
 function extractAutomationMediaPath(value: unknown) {
   if (typeof value !== 'string' || !value) return '';
@@ -120,8 +121,8 @@ const NODE_PALETTE: PaletteItem[] = [
   { type: 'image', label: 'Imagem', icon: Image, color: 'bg-blue-500 text-white', category: 'bubbles', defaultData: { media_path: '', media_bucket: 'automation-media', image_preview_url: '', caption: '' } },
   { type: 'video', label: 'Vídeo', icon: Video, color: 'bg-rose-500 text-white', category: 'bubbles', defaultData: { media_path: '', media_bucket: 'automation-media', video_preview_url: '' } },
   { type: 'audio', label: 'Áudio', icon: Headphones, color: 'bg-amber-500 text-white', category: 'bubbles', defaultData: { media_path: '', media_bucket: 'automation-media', audio_preview_url: '' } },
-  { type: 'condition', label: 'Condição', icon: GitBranch, color: 'bg-yellow-500 text-white', category: 'conditionals', defaultData: { variable: '', operator: 'equals', value: '' } },
-  { type: 'wait', label: 'Espera', icon: Timer, color: 'bg-purple-500 text-white', category: 'actions', defaultData: { wait_type: 'days', wait_value: 1, handoff_on_non_text: true, reply_match_mode: 'any_text', handoff_on_unmatched_reply: true, handoff_after_message_burst: 3 } },
+  { type: 'condition', label: 'Condição', icon: GitBranch, color: 'bg-yellow-500 text-white', category: 'conditionals', defaultData: { condition_type: 'custom', variable: '', operator: 'equals', value: '' } },
+  { type: 'wait', label: 'Espera', icon: Timer, color: 'bg-purple-500 text-white', category: 'actions', defaultData: { wait_type: 'days', wait_value: 1, handoff_on_non_text: true, reply_match_mode: 'any_text', handoff_on_unmatched_reply: false, handoff_after_message_burst: 3 } },
   { type: 'webhook', label: 'Webhook', icon: Webhook, color: 'bg-indigo-500 text-white', category: 'actions', defaultData: { webhook_url: '', method: 'POST' } },
   { type: 'tag', label: 'Tag', icon: Tag, color: 'bg-teal-500 text-white', category: 'actions', defaultData: { tag_id: '', tag_action: 'add' } },
   { type: 'move_stage', label: 'Mudar etapa', icon: ArrowRightLeft, color: 'bg-violet-500 text-white', category: 'actions', defaultData: { move_pipeline_id: '', move_stage_id: '' } },
@@ -324,13 +325,14 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
         } else if (node.node_type === 'action' && nodeConfig.actionType === 'deal_status') {
           flowNodes.push({ id: node.id, type: 'deal_status', position: pos, data: { deal_status: nodeConfig.deal_status || '' } });
         } else if (node.node_type === 'condition') {
+          const replyKeywords = resolveReplyKeywordConfig(nodeConfig);
           flowNodes.push({ id: node.id, type: 'condition', position: pos, data: {
             condition_type: nodeConfig.condition_type || 'custom',
             variable: nodeConfig.variable || '',
             operator: nodeConfig.operator || 'equals',
             value: nodeConfig.value || '',
-            positive_keywords: nodeConfig.positive_keywords || '',
-            negative_keywords: nodeConfig.negative_keywords || '',
+            positive_keywords: replyKeywords.positiveKeywords,
+            negative_keywords: replyKeywords.negativeKeywords,
           } });
         } else if (node.node_type === 'delay') {
           flowNodes.push({
@@ -344,9 +346,9 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
               on_reply_message: nodeConfig.on_reply_message || '',
               on_reply_stage_id: nodeConfig.on_reply_stage_id || nodeConfig.on_reply_move_to_stage_id || '',
               handoff_on_non_text: nodeConfig.handoff_on_non_text !== false,
-              reply_match_mode: nodeConfig.reply_match_mode || 'any_text',
-              expected_reply_keywords: Array.isArray(nodeConfig.expected_reply_keywords) ? nodeConfig.expected_reply_keywords : [],
-              handoff_on_unmatched_reply: nodeConfig.handoff_on_unmatched_reply !== false,
+              reply_match_mode: 'any_text',
+              expected_reply_keywords: [],
+              handoff_on_unmatched_reply: false,
               handoff_after_message_burst: Number.isInteger(nodeConfig.handoff_after_message_burst) ? nodeConfig.handoff_after_message_burst : 3,
             },
           });
@@ -501,7 +503,10 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
       ? { ...prev, data: { ...prev.data, ...data } }
       : prev
     );
-  }, [setNodes]);
+    if (data.condition_type === 'custom') {
+      setEdges((currentEdges) => currentEdges.filter((edge) => edge.source !== nodeId || edge.sourceHandle !== 'unknown'));
+    }
+  }, [setNodes, setEdges]);
 
   // Undo history
   const undoStackRef = useRef<{ nodes: Node[]; edges: Edge[] }[]>([]);
@@ -723,9 +728,9 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
               on_reply_stage_id: null,
               on_reply_move_to_stage_id: null,
               handoff_on_non_text: node.data.handoff_on_non_text !== false,
-              reply_match_mode: node.data.reply_match_mode || 'any_text',
-              expected_reply_keywords: Array.isArray(node.data.expected_reply_keywords) ? node.data.expected_reply_keywords : [],
-              handoff_on_unmatched_reply: node.data.handoff_on_unmatched_reply !== false,
+              reply_match_mode: 'any_text',
+              expected_reply_keywords: [],
+              handoff_on_unmatched_reply: false,
               handoff_after_message_burst: Number.isInteger(node.data.handoff_after_message_burst) ? node.data.handoff_after_message_burst : 3,
 
               nodeType: 'delay',
@@ -733,6 +738,7 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
             ...pos,
           });
         } else if (node.type === 'condition') {
+          const replyKeywords = resolveReplyKeywordConfig(node.data);
           dbNodes.push({
             id: node.id, node_type: 'condition', action_type: null,
             config: {
@@ -740,8 +746,8 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
               variable: node.data.variable,
               operator: node.data.operator,
               value: node.data.value,
-              positive_keywords: node.data.positive_keywords || '',
-              negative_keywords: node.data.negative_keywords || '',
+              positive_keywords: replyKeywords.positiveKeywords,
+              negative_keywords: replyKeywords.negativeKeywords,
               nodeType: 'condition',
             },
             ...pos,

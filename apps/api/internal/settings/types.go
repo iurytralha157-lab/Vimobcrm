@@ -1,6 +1,9 @@
 package settings
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 var (
 	ErrInvalidInput         = errors.New("invalid settings input")
@@ -193,6 +196,18 @@ type PushTokenResult struct {
 	OK                  bool `json:"ok"`
 	Active              bool `json:"active"`
 	RequiresResubscribe bool `json:"requiresResubscribe"`
+}
+
+type PushDevice struct {
+	ID                string     `json:"id"`
+	Platform          string     `json:"platform"`
+	Label             string     `json:"label"`
+	Active            bool       `json:"active"`
+	LastSuccessAt     *time.Time `json:"lastSuccessAt,omitempty"`
+	LastFailureAt     *time.Time `json:"lastFailureAt,omitempty"`
+	LastFailureReason *string    `json:"lastFailureReason,omitempty"`
+	FailureCount      int        `json:"failureCount"`
+	UpdatedAt         time.Time  `json:"updatedAt"`
 }
 
 type DeactivatePushTokenRequest struct {

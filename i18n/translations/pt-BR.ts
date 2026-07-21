@@ -59,6 +59,7 @@ export const ptBR = {
     managementTags: 'Tags',
     settings: 'Configurações',
     settingsAccount: 'Conta',
+    settingsNotifications: 'Notificações',
     settingsUsers: 'Usuários',
     settingsBilling: 'Pagamentos',
     settingsProperties: 'Imoveis',

@@ -178,6 +178,18 @@ begin
   end loop;
 
   nodes := nodes || jsonb_build_array(jsonb_build_object(
+    'id', 'assign_pamella',
+    'type', 'action',
+    'action_type', 'assign_user',
+    'position', jsonb_build_object('x', 1040 + ((message_count - 1) * 760), 'y', 40),
+    'config', jsonb_build_object(
+      'user_id', pamella_user_id,
+      'user_name', 'Pâmella',
+      'actionType', 'assign_user'
+    )
+  ));
+
+  nodes := nodes || jsonb_build_array(jsonb_build_object(
     'id', 'acknowledgement',
     'type', 'action',
     'action_type', 'send_whatsapp',
@@ -192,18 +204,25 @@ begin
   if message_count = 1 then
     connections := connections || jsonb_build_array(jsonb_build_object(
       'source', 'move_to_in_service',
-      'target', 'acknowledgement',
+      'target', 'assign_pamella',
       'source_handle', null,
       'condition_branch', null
     ));
   else
     connections := connections || jsonb_build_array(jsonb_build_object(
       'source', 'wait_' || message_count::text,
-      'target', 'acknowledgement',
+      'target', 'assign_pamella',
       'source_handle', 'replied',
       'condition_branch', 'replied'
     ));
   end if;
+
+  connections := connections || jsonb_build_array(jsonb_build_object(
+    'source', 'assign_pamella',
+    'target', 'acknowledgement',
+    'source_handle', null,
+    'condition_branch', null
+  ));
 
   v_graph := jsonb_build_object(
     'nodes', nodes,

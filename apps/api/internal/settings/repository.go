@@ -582,6 +582,63 @@ func (repo Repository) SavePushToken(ctx context.Context, tenantContext tenant.C
 	return PushTokenResult{OK: true, Active: true}, nil
 }
 
+func (repo Repository) ListPushDevices(ctx context.Context, tenantContext tenant.Context) ([]PushDevice, error) {
+	rows, err := repo.db.Pool().Query(ctx, `
+		select id::text,
+		       coalesce(nullif(platform, ''), 'web'),
+		       coalesce(
+		         nullif(device_info->>'deviceName', ''),
+		         nullif(device_info->>'model', ''),
+		         nullif(user_agent, ''),
+		         case when coalesce(platform, 'web') = 'web' then 'Navegador web' else 'Dispositivo movel' end
+		       ),
+		       coalesce(is_active, true),
+		       last_success_at,
+		       last_failure_at,
+		       last_failure_reason,
+		       coalesce(failure_count, 0),
+		       coalesce(updated_at, created_at, now())
+		from public.push_tokens
+		where organization_id = $1::uuid and user_id = $2::uuid
+		order by coalesce(is_active, true) desc, updated_at desc nulls last, created_at desc
+	`, tenantContext.OrganizationID, tenantContext.UserID)
+	if isUndefinedTableError(err) || isUndefinedColumnError(err) {
+		return []PushDevice{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	devices := []PushDevice{}
+	for rows.Next() {
+		var device PushDevice
+		var lastSuccessAt, lastFailureAt pgtype.Timestamptz
+		var lastFailureReason pgtype.Text
+		if err := rows.Scan(
+			&device.ID, &device.Platform, &device.Label, &device.Active,
+			&lastSuccessAt, &lastFailureAt, &lastFailureReason,
+			&device.FailureCount, &device.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if lastSuccessAt.Valid {
+			value := lastSuccessAt.Time
+			device.LastSuccessAt = &value
+		}
+		if lastFailureAt.Valid {
+			value := lastFailureAt.Time
+			device.LastFailureAt = &value
+		}
+		if lastFailureReason.Valid {
+			value := lastFailureReason.String
+			device.LastFailureReason = &value
+		}
+		devices = append(devices, device)
+	}
+	return devices, rows.Err()
+}
+
 func (repo Repository) hasInactivePushToken(ctx context.Context, userID string, endpoint string) (bool, error) {
 	var exists bool
 	err := repo.db.Pool().QueryRow(ctx, `

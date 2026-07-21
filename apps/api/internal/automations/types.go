@@ -29,6 +29,8 @@ var (
 	ErrRuntimeIssueNotRetryable = errors.New("automation runtime issue is not safely retryable")
 )
 
+var automationTemplateVariablePattern = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_.]+)\s*\}\}`)
+
 var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 type Envelope[T any] struct {
@@ -499,6 +501,7 @@ func validateFlowDefinition(flow *FlowDefinition) error {
 
 	adjacency := make(map[string][]string, len(nodes))
 	incoming := make(map[string]int, len(nodes))
+	incomingConnections := make(map[string][]FlowConnection, len(nodes))
 	branches := make(map[string]map[string]struct{}, len(nodes))
 	connections := make(map[string]struct{}, len(flow.Connections))
 	for index := range flow.Connections {
@@ -526,6 +529,7 @@ func validateFlowDefinition(flow *FlowDefinition) error {
 		connections[key] = struct{}{}
 		adjacency[connection.Source] = append(adjacency[connection.Source], connection.Target)
 		incoming[connection.Target]++
+		incomingConnections[connection.Target] = append(incomingConnections[connection.Target], *connection)
 		if branches[connection.Source] == nil {
 			branches[connection.Source] = map[string]struct{}{}
 		}
@@ -542,8 +546,22 @@ func validateFlowDefinition(flow *FlowDefinition) error {
 		outgoing := len(adjacency[id])
 		switch node.Type {
 		case "condition":
-			if outgoing != 2 || !hasExactBranches(branches[id], "true", "false") {
-				return invalidFlow("condition nodes require true and false branches")
+			config := flowNodeConfig(node)
+			if stringConfig(config, "condition_type") == "response_sentiment" {
+				if outgoing != 3 || !hasExactBranches(branches[id], "true", "false", "unknown") {
+					return invalidFlow("response sentiment conditions require true, false and unknown branches")
+				}
+				parents := incomingConnections[id]
+				if len(parents) != 1 {
+					return invalidFlow("response sentiment conditions require exactly one reply-aware delay parent")
+				}
+				parent := nodes[parents[0].Source]
+				parentConfig := flowNodeConfig(parent)
+				if parent.Type != "delay" || !boolConfig(parentConfig, "stop_on_reply") || connectionBranch(parents[0]) != "replied" {
+					return invalidFlow("response sentiment conditions must follow the replied branch of a reply-aware delay")
+				}
+			} else if outgoing != 2 || !hasExactBranches(branches[id], "true", "false") {
+				return invalidFlow("custom condition nodes require true and false branches")
 			}
 		case "delay":
 			config := flowNodeConfig(node)
@@ -672,6 +690,9 @@ func validateActionConfig(actionType string, config map[string]any) error {
 		if message == "" || len(message) > 4000 {
 			return invalidFlow("WhatsApp message must contain 1 to 4000 characters")
 		}
+		if !validAutomationTemplateVariables(message) {
+			return invalidFlow("WhatsApp message contains an unsupported template variable")
+		}
 	case "send_image", "send_audio", "send_video":
 		if err := requireUUIDConfig(config, "session_id"); err != nil {
 			return err
@@ -681,6 +702,9 @@ func validateActionConfig(actionType string, config map[string]any) error {
 		}
 		if len(stringConfig(config, "caption")) > 4000 || len(stringConfig(config, "filename")) > 255 || len(stringConfig(config, "mimetype")) > 100 {
 			return invalidFlow("media caption, filename or mimetype exceeds the supported limit")
+		}
+		if !validAutomationTemplateVariables(stringConfig(config, "caption")) {
+			return invalidFlow("media caption contains an unsupported template variable")
 		}
 	case "webhook":
 		if len(stringConfig(config, "webhook_url")) > 2048 || !validHTTPSURL(stringConfig(config, "webhook_url")) {
@@ -705,7 +729,7 @@ func validateActionConfig(actionType string, config map[string]any) error {
 			}
 		}
 	case "assign_user":
-		return invalidFlow("assign_user automation requires the canonical Leads command service and is not publishable yet")
+		return requireUUIDConfig(config, "user_id")
 	case "set_variable":
 		switch stringConfig(config, "actionType") {
 		case "property_interest":
@@ -761,16 +785,43 @@ func validateConditionConfig(config map[string]any) error {
 		}
 		return nil
 	}
-	if conditionType != "custom" || stringConfig(config, "variable") == "" {
+	variable := stringConfig(config, "variable")
+	if conditionType != "custom" || variable == "" {
 		return invalidFlow("condition configuration is invalid")
 	}
+	allowedVariables := map[string]struct{}{
+		"lead.name": {}, "lead.email": {}, "lead.phone": {}, "lead.source": {},
+		"lead.status": {}, "lead.pipeline_id": {}, "lead.stage_id": {},
+		"lead.assigned_user_id": {}, "organization.name": {},
+	}
+	if _, ok := allowedVariables[variable]; !ok {
+		return invalidFlow("condition variable is not supported")
+	}
 	operator := stringConfig(config, "operator")
-	for _, allowed := range []string{"equals", "not_equals", "contains", "not_contains", "greater_than", "less_than", "is_set", "is_not_set"} {
+	for _, allowed := range []string{"equals", "not_equals", "contains", "not_contains", "contains_any", "not_contains_any", "greater_than", "less_than", "is_set", "is_not_set"} {
 		if operator == allowed {
 			return nil
 		}
 	}
 	return invalidFlow("condition operator is invalid")
+}
+
+func validAutomationTemplateVariables(template string) bool {
+	allowed := map[string]struct{}{
+		"lead.name": {}, "lead.email": {}, "lead.phone": {}, "lead.source": {},
+		"lead.status": {}, "lead.pipeline_id": {}, "lead.stage_id": {},
+		"lead.assigned_user_id": {}, "organization.name": {}, "date": {},
+	}
+	for _, match := range automationTemplateVariablePattern.FindAllStringSubmatch(template, -1) {
+		if len(match) != 2 {
+			return false
+		}
+		if _, ok := allowed[strings.TrimSpace(match[1])]; !ok {
+			return false
+		}
+	}
+	remaining := automationTemplateVariablePattern.ReplaceAllString(template, "")
+	return !strings.Contains(remaining, "{{") && !strings.Contains(remaining, "}}")
 }
 
 func invalidFlow(reason string) error {

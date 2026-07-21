@@ -628,6 +628,24 @@ export function DistributionQueueEditor({
       toast.error('Adicione pelo menos um participante antes de ativar a fila');
       return;
     }
+    if (formData.settings.enable_redistribution) {
+      const timeout = formData.settings.redistribution_timeout_minutes ?? 20;
+      const warning = formData.settings.redistribution_warning_minutes ?? 5;
+      if (timeout < 1 || timeout > 10080) {
+        toast.error('O prazo de redistribuicao deve ficar entre 1 minuto e 7 dias.');
+        return;
+      }
+      if (warning < 0 || warning >= timeout) {
+        toast.error('O aviso precisa acontecer antes do prazo de redistribuicao.');
+        return;
+      }
+      const hasTeam = validMembers.some((member) => member.type === 'team');
+      const directUsers = new Set(validMembers.filter((member) => member.type === 'user').map((member) => member.entityId));
+      if (!hasTeam && directUsers.size < 2) {
+        toast.error('A redistribuicao automatica precisa de pelo menos dois corretores ativos.');
+        return;
+      }
+    }
     const sanitizedConditions = formData.conditions
       .map((condition) => ({
         ...condition,
@@ -1124,7 +1142,11 @@ export function DistributionQueueEditor({
                     </div>
 
                     {formData.settings.enable_redistribution && (
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <div className="space-y-3">
+                        <p className="rounded-md bg-background px-3 py-2 text-xs text-muted-foreground">
+                          A fila so sera ativada se houver pelo menos dois corretores elegiveis. Equipes inativas e participantes sem acesso a organizacao sao ignorados.
+                        </p>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                         <div className="space-y-2">
                           <Label>Tempo</Label>
                           <Input
@@ -1174,6 +1196,7 @@ export function DistributionQueueEditor({
                             }))}
                           />
                           <p className="text-[11px] text-muted-foreground">0 sem limite.</p>
+                        </div>
                         </div>
                       </div>
                     )}

@@ -71,8 +71,16 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) (
 			rr.name,
 			coalesce(rr.is_active, true),
 			coalesce(rr.current_position, 0),
-			rr.pipeline_id::text,
-			coalesce(rr.rules, '{}'::jsonb)::text,
+			coalesce(rr.target_pipeline_id, rr.pipeline_id)::text,
+			(
+			  coalesce(rr.rules, '{}'::jsonb)
+			  || jsonb_strip_nulls(jsonb_build_object(
+			    'strategy', coalesce(nullif(rr.strategy, ''), rr.rules->>'strategy', 'simple'),
+			    'target_stage_id', coalesce(rr.target_stage_id::text, rr.rules->>'target_stage_id'),
+			    'settings', coalesce(rr.settings, rr.rules->'settings', '{}'::jsonb),
+			    'reentry_behavior', coalesce(nullif(rr.reentry_behavior, ''), rr.rules->>'reentry_behavior', 'redistribute')
+			  ))
+			)::text,
 			rr.created_by::text,
 			rr.created_at,
 			rr.updated_at,
@@ -88,10 +96,12 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) (
 		from public.round_robins rr
 		left join public.pipelines p
 		  on p.organization_id = rr.organization_id
-		 and p.id = rr.pipeline_id
+		 and p.id = coalesce(rr.target_pipeline_id, rr.pipeline_id)
 		left join public.stages s
 		  on s.organization_id = rr.organization_id
-		 and s.id::text = rr.rules->>'target_stage_id'
+		 and s.id = coalesce(rr.target_stage_id,
+		   case when coalesce(rr.rules->>'target_stage_id', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+		     then (rr.rules->>'target_stage_id')::uuid else null end)
 		left join public.users creator
 		  on creator.id = rr.created_by
 		left join lateral (
@@ -169,8 +179,16 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, ro
 			rr.name,
 			coalesce(rr.is_active, true),
 			coalesce(rr.current_position, 0),
-			rr.pipeline_id::text,
-			coalesce(rr.rules, '{}'::jsonb)::text,
+			coalesce(rr.target_pipeline_id, rr.pipeline_id)::text,
+			(
+			  coalesce(rr.rules, '{}'::jsonb)
+			  || jsonb_strip_nulls(jsonb_build_object(
+			    'strategy', coalesce(nullif(rr.strategy, ''), rr.rules->>'strategy', 'simple'),
+			    'target_stage_id', coalesce(rr.target_stage_id::text, rr.rules->>'target_stage_id'),
+			    'settings', coalesce(rr.settings, rr.rules->'settings', '{}'::jsonb),
+			    'reentry_behavior', coalesce(nullif(rr.reentry_behavior, ''), rr.rules->>'reentry_behavior', 'redistribute')
+			  ))
+			)::text,
 			rr.created_by::text,
 			rr.created_at,
 			rr.updated_at,
@@ -186,10 +204,12 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, ro
 		from public.round_robins rr
 		left join public.pipelines p
 		  on p.organization_id = rr.organization_id
-		 and p.id = rr.pipeline_id
+		 and p.id = coalesce(rr.target_pipeline_id, rr.pipeline_id)
 		left join public.stages s
 		  on s.organization_id = rr.organization_id
-		 and s.id::text = rr.rules->>'target_stage_id'
+		 and s.id = coalesce(rr.target_stage_id,
+		   case when coalesce(rr.rules->>'target_stage_id', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+		     then (rr.rules->>'target_stage_id')::uuid else null end)
 		left join public.users creator
 		  on creator.id = rr.created_by
 		left join lateral (
@@ -254,6 +274,11 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 			organization_id,
 			name,
 			pipeline_id,
+			target_pipeline_id,
+			target_stage_id,
+			strategy,
+			settings,
+			reentry_behavior,
 			is_active,
 			current_position,
 			rules,
@@ -263,13 +288,19 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 			$1::uuid,
 			$2,
 			$3::uuid,
-			$4,
+			$3::uuid,
+			$4::uuid,
+			$5,
+			$6::jsonb,
+			$7,
+			$8,
 			0,
-			$5::jsonb,
-			$6::uuid
+			$9::jsonb,
+			$10::uuid
 		)
 		returning id::text
-	`, tenantContext.OrganizationID, input.Name, nullable(input.TargetPipelineID), input.IsActive, jsonb(metadata), tenantContext.UserID).Scan(&roundRobinID)
+	`, tenantContext.OrganizationID, input.Name, nullable(input.TargetPipelineID), nullable(input.TargetStageID), input.Strategy,
+		jsonb(input.Settings), input.ReentryBehavior, input.IsActive, jsonb(metadata), tenantContext.UserID).Scan(&roundRobinID)
 	if err != nil {
 		return RoundRobin{}, err
 	}
@@ -281,6 +312,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		return RoundRobin{}, err
 	}
 	if _, err := repo.insertMembers(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.Members); err != nil {
+		return RoundRobin{}, err
+	}
+	if err := repo.validateRedistributionCapacity(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.Settings); err != nil {
 		return RoundRobin{}, err
 	}
 
@@ -382,7 +416,21 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		addSet("is_active = coalesce($%d::boolean, false)", valueOrNil(input.IsActive.Value))
 	}
 	if input.TargetPipelineID.Set {
-		addSet("pipeline_id = $%d::uuid", nullable(pipelineID))
+		args = append(args, nullable(pipelineID))
+		position := len(args)
+		setClauses = append(setClauses, fmt.Sprintf("pipeline_id = $%d::uuid, target_pipeline_id = $%d::uuid", position, position))
+	}
+	if input.Strategy.Set {
+		addSet("strategy = $%d", stringFromObject(metadata, "strategy", "simple"))
+	}
+	if input.TargetStageID.Set {
+		addSet("target_stage_id = $%d::uuid", nullable(targetStageID))
+	}
+	if input.Settings.Set {
+		addSet("settings = $%d::jsonb", jsonb(objectFromObject(metadata, "settings")))
+	}
+	if input.ReentryBehavior.Set {
+		addSet("reentry_behavior = $%d", stringFromObject(metadata, "reentry_behavior", "redistribute"))
 	}
 	if input.Strategy.Set || input.TargetStageID.Set || input.Settings.Set || input.ReentryBehavior.Set {
 		addSet("rules = $%d::jsonb", jsonb(metadata))
@@ -428,6 +476,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		if _, err := repo.insertMembers(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.Members); err != nil {
 			return RoundRobin{}, err
 		}
+	}
+	if err := repo.validateRedistributionCapacity(ctx, tx, tenantContext.OrganizationID, roundRobinID, objectFromObject(metadata, "settings")); err != nil {
+		return RoundRobin{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -1028,8 +1079,16 @@ func (repo Repository) getStateForUpdate(ctx context.Context, q queryer, organiz
 	err := q.QueryRow(ctx, `
 		select
 			id::text,
-			pipeline_id::text,
-			coalesce(rules, '{}'::jsonb)::text
+			coalesce(target_pipeline_id, pipeline_id)::text,
+			(
+			  coalesce(rules, '{}'::jsonb)
+			  || jsonb_strip_nulls(jsonb_build_object(
+			    'strategy', coalesce(nullif(strategy, ''), rules->>'strategy', 'simple'),
+			    'target_stage_id', coalesce(target_stage_id::text, rules->>'target_stage_id'),
+			    'settings', coalesce(settings, rules->'settings', '{}'::jsonb),
+			    'reentry_behavior', coalesce(nullif(reentry_behavior, ''), rules->>'reentry_behavior', 'redistribute')
+			  ))
+			)::text
 		from public.round_robins
 		where organization_id = $1::uuid
 		  and id = $2::uuid
@@ -1090,6 +1149,45 @@ func (repo Repository) validateDestination(ctx context.Context, q queryer, organ
 		if !exists {
 			return ErrInvalidReference
 		}
+	}
+	return nil
+}
+
+func (repo Repository) validateRedistributionCapacity(ctx context.Context, q queryer, organizationID string, roundRobinID string, settings map[string]any) error {
+	if !boolFromObject(settings, "enable_redistribution") {
+		return nil
+	}
+
+	var eligibleUsers int
+	err := q.QueryRow(ctx, `
+		with entries as (
+			select rrm.organization_id, rrm.user_id, rrm.team_id
+			from public.round_robin_members rrm
+			where rrm.organization_id = $1::uuid
+			  and rrm.round_robin_id = $2::uuid
+			  and coalesce(rrm.is_active, true) = true
+		), candidates as (
+			select organization_id, user_id from entries where user_id is not null
+			union
+			select e.organization_id, tm.user_id
+			from entries e
+			join public.teams t
+			  on t.id = e.team_id and t.organization_id = e.organization_id and coalesce(t.is_active, true) = true
+			join public.team_members tm
+			  on tm.team_id = e.team_id and tm.organization_id = e.organization_id and coalesce(tm.is_active, true) = true
+			where e.team_id is not null
+		)
+		select count(distinct c.user_id)::int
+		from candidates c
+		join public.organization_members om
+		  on om.organization_id = c.organization_id and om.user_id = c.user_id and coalesce(om.is_active, true) = true
+		join public.users u on u.id = c.user_id and coalesce(u.is_active, true) = true
+	`, organizationID, roundRobinID).Scan(&eligibleUsers)
+	if err != nil {
+		return err
+	}
+	if eligibleUsers < 2 {
+		return fmt.Errorf("%w: automatic redistribution requires at least two active eligible users", ErrInvalidInput)
 	}
 	return nil
 }

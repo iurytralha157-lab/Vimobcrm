@@ -22,6 +22,11 @@ import { Plus } from 'lucide-react';
 import { useLeads } from '@/hooks/use-leads';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useStages } from '@/hooks/use-stages';
+import {
+  AUTOMATION_CUSTOM_VARIABLES,
+  DEFAULT_NEGATIVE_REPLY_KEYWORDS,
+  DEFAULT_POSITIVE_REPLY_KEYWORDS,
+} from '@/lib/automations';
 
 interface NodeConfigPanelProps {
   selectedNode: Node;
@@ -119,8 +124,7 @@ export function NodeConfigPanel({
   properties,
 }: NodeConfigPanelProps) {
   const nodeInfo = NODE_TITLES[selectedNode.type || ''] || { icon: Play, label: 'Nó', color: 'text-foreground' };
-  const isUnsupportedCrmAction = selectedNode.type === 'assign_user'
-    || selectedNode.type === 'property_interest'
+  const isUnsupportedCrmAction = selectedNode.type === 'property_interest'
     || selectedNode.type === 'deal_status';
   const Icon = nodeInfo.icon;
   const createTag = useCreateTag();
@@ -419,7 +423,12 @@ export function NodeConfigPanel({
                   <Checkbox
                     id={`stop-reply-${selectedNode.id}`}
                     checked={selectedNode.data.stop_on_reply === true}
-                    onCheckedChange={(c) => onNodeDataChange(selectedNode.id, { stop_on_reply: c === true })}
+                    onCheckedChange={(c) => onNodeDataChange(selectedNode.id, {
+                      stop_on_reply: c === true,
+                      reply_match_mode: 'any_text',
+                      expected_reply_keywords: [],
+                      handoff_on_unmatched_reply: false,
+                    })}
                   />
                   <Label htmlFor={`stop-reply-${selectedNode.id}`} className="text-xs cursor-pointer">
                     Se o lead responder
@@ -440,33 +449,9 @@ export function NodeConfigPanel({
                         Pausar ao receber áudio ou mídia
                       </Label>
                     </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Validar resposta</Label>
-                      <Select
-                        value={selectedNode.data.reply_match_mode || 'any_text'}
-                        onValueChange={(value) => onNodeDataChange(selectedNode.id, { reply_match_mode: value })}
-                      >
-                        <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                        <SelectContent className="z-[200]">
-                          <SelectItem value="any_text">Aceitar qualquer texto</SelectItem>
-                          <SelectItem value="keywords">Somente respostas esperadas</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    {selectedNode.data.reply_match_mode === 'keywords' && (
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">Respostas esperadas</Label>
-                        <Textarea
-                          rows={3}
-                          value={Array.isArray(selectedNode.data.expected_reply_keywords) ? selectedNode.data.expected_reply_keywords.join(', ') : ''}
-                          placeholder="sim, não, morar, investir"
-                          onChange={(event) => onNodeDataChange(selectedNode.id, {
-                            expected_reply_keywords: event.target.value.split(',').map((item) => item.trim()).filter(Boolean),
-                          })}
-                        />
-                        <p className="text-[10px] text-muted-foreground">Uma resposta fora desta lista pausa o fluxo e notifica o responsável.</p>
-                      </div>
-                    )}
+                    <p className="text-[10px] text-muted-foreground">
+                      Esta espera apenas captura a resposta. Use o card Condição logo após a saída “Respondeu” para classificá-la.
+                    </p>
                     <div className="space-y-1.5">
                       <Label className="text-xs">Pausar após rajada de mensagens</Label>
                       <Input
@@ -793,10 +778,19 @@ export function NodeConfigPanel({
             <div className="space-y-3">
               <div className="space-y-1.5">
                 <Label className="text-xs">Tipo de condição</Label>
-                <Select value={selectedNode.data.condition_type || 'custom'} onValueChange={(v) => onNodeDataChange(selectedNode.id, { condition_type: v })}>
+                <Select
+                  value={selectedNode.data.condition_type || 'custom'}
+                  onValueChange={(conditionType) => onNodeDataChange(selectedNode.id, conditionType === 'response_sentiment'
+                    ? {
+                        condition_type: conditionType,
+                        positive_keywords: selectedNode.data.positive_keywords || DEFAULT_POSITIVE_REPLY_KEYWORDS,
+                        negative_keywords: selectedNode.data.negative_keywords || DEFAULT_NEGATIVE_REPLY_KEYWORDS,
+                      }
+                    : { condition_type: conditionType })}
+                >
                   <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                   <SelectContent className="z-[200]">
-                    <SelectItem value="response_sentiment">Resposta do lead (positiva/negativa)</SelectItem>
+                    <SelectItem value="response_sentiment">Resposta do lead</SelectItem>
                     <SelectItem value="custom">Variável personalizada</SelectItem>
                   </SelectContent>
                 </Select>
@@ -805,12 +799,12 @@ export function NodeConfigPanel({
               {(selectedNode.data.condition_type || 'custom') === 'response_sentiment' && (
                 <div className="space-y-3">
                   <p className="text-[11px] text-muted-foreground">
-                    Analisa a última mensagem recebida do lead e classifica como positiva ou negativa.
+                    Analisa a resposta capturada pela espera anterior e classifica como positiva, negativa ou incerta.
                   </p>
                   <div className="space-y-1.5">
                     <Label className="text-xs text-green-600 dark:text-green-400">Palavras positivas</Label>
                     <Textarea
-                      value={selectedNode.data.positive_keywords || 'sim, claro, quero, pode, beleza, bora, vamos, aceito, ok, com certeza, fechado, top, pode ser, show, perfeito, ótimo, massa, interessado'}
+                      value={selectedNode.data.positive_keywords ?? DEFAULT_POSITIVE_REPLY_KEYWORDS}
                       onChange={(e) => onNodeDataChange(selectedNode.id, { positive_keywords: e.target.value })}
                       rows={3}
                       className="text-xs"
@@ -820,7 +814,7 @@ export function NodeConfigPanel({
                   <div className="space-y-1.5">
                     <Label className="text-xs text-red-600 dark:text-red-400">Palavras negativas</Label>
                     <Textarea
-                      value={selectedNode.data.negative_keywords || 'não, nao, nope, sem interesse, desculpa, obrigado mas não, talvez não, deixa pra lá, não quero, não preciso, dispenso, valeu mas não, nunca, jamais, negativo'}
+                      value={selectedNode.data.negative_keywords ?? DEFAULT_NEGATIVE_REPLY_KEYWORDS}
                       onChange={(e) => onNodeDataChange(selectedNode.id, { negative_keywords: e.target.value })}
                       rows={3}
                       className="text-xs"
@@ -834,8 +828,15 @@ export function NodeConfigPanel({
                 <div className="space-y-3">
                   <div className="space-y-1.5">
                     <Label className="text-xs">Variável</Label>
-                    <Input value={selectedNode.data.variable || ''} placeholder="Ex: lead.source" className="h-9"
-                      onChange={(e) => onNodeDataChange(selectedNode.id, { variable: e.target.value })} />
+                    <Select value={selectedNode.data.variable || ''} onValueChange={(variable) => onNodeDataChange(selectedNode.id, { variable })}>
+                      <SelectTrigger className="h-9"><SelectValue placeholder="Selecione a variável" /></SelectTrigger>
+                      <SelectContent className="z-[200]">
+                        {AUTOMATION_CUSTOM_VARIABLES.map((variable) => (
+                          <SelectItem key={variable.value} value={variable.value}>{variable.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[10px] text-muted-foreground">As chaves {'{{ }}'} são usadas somente dentro das mensagens.</p>
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs">Operador</Label>
@@ -846,6 +847,8 @@ export function NodeConfigPanel({
                         <SelectItem value="not_equals">Diferente de</SelectItem>
                         <SelectItem value="contains">Contém</SelectItem>
                         <SelectItem value="not_contains">Não contém</SelectItem>
+                        <SelectItem value="contains_any">Contém qualquer um</SelectItem>
+                        <SelectItem value="not_contains_any">Não contém nenhum</SelectItem>
                         <SelectItem value="greater_than">Maior que</SelectItem>
                         <SelectItem value="less_than">Menor que</SelectItem>
                         <SelectItem value="is_set">Existe</SelectItem>

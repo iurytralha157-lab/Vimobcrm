@@ -176,6 +176,20 @@ func attentionNotificationText(instance workerInstance, evaluation Evaluation, n
 	}
 	remaining := instance.DueAt.Sub(now).Round(time.Minute)
 	overdue := now.Sub(instance.DueAt).Round(time.Minute)
+	if instance.PolicyType == "cadence_task" {
+		taskTitle := strings.TrimSpace(stringMapValue(instance.Metadata, "task_title"))
+		if taskTitle == "" {
+			taskTitle = "Tarefa da cadencia"
+		}
+		switch evaluation.Level {
+		case "warning":
+			return "Cadencia prestes a vencer", fmt.Sprintf("%s: %s precisa ser feita em ate %s.", leadName, taskTitle, humanDuration(remaining))
+		case "escalated":
+			return "Cadencia exige atencao da gestao", fmt.Sprintf("%s: %s esta atrasada ha %s.", leadName, taskTitle, humanDuration(overdue))
+		default:
+			return "Tarefa de cadencia pendente", fmt.Sprintf("%s: %s venceu ha %s. Conclua ou reprograme o atendimento.", leadName, taskTitle, humanDuration(overdue))
+		}
+	}
 	switch evaluation.Level {
 	case "warning":
 		return "Prazo do lead se aproximando", fmt.Sprintf("%s precisa de ação em até %s (%s).", leadName, humanDuration(remaining), policyName)
