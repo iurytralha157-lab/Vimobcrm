@@ -128,7 +128,7 @@ export const APP_BOTTOM_NAVIGATION_ITEMS: readonly AppNavigationItem[] = [
       { icon: 'settings', labelKey: 'settingsAccount', path: '/settings?tab=account' },
       { icon: 'users', labelKey: 'settingsUsers', path: '/settings?tab=team', anyPermissions: ['users_manage', 'permissions_manage'] },
       { icon: 'creditCard', labelKey: 'settingsBilling', path: '/settings?tab=subscription', permission: 'settings_billing' },
-      { icon: 'plug', labelKey: 'settingsIntegrations', path: '/settings?tab=integrations', anyPermissions: ['settings_integrations', 'whatsapp_manage', 'settings_ai'] },
+      { icon: 'plug', labelKey: 'settingsIntegrations', path: '/settings?tab=integrations' },
       { icon: 'bot', labelKey: 'settingsAI', path: '/settings?tab=ai', permission: 'settings_ai', module: 'ai_agent' },
       { icon: 'building', labelKey: 'settingsProperties', path: '/settings?tab=properties', permission: 'property_manage' },
       { icon: 'globe', labelKey: 'site', path: '/settings/site', permission: 'settings_site', module: 'site' },

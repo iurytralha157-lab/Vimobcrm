@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { APP_NAVIGATION_ITEMS } from '../../config/navigation'
+import { APP_BOTTOM_NAVIGATION_ITEMS, APP_NAVIGATION_ITEMS } from '../../config/navigation'
 
 import {
   filterNavigationItems,
@@ -143,6 +143,16 @@ test('permissoes individuais liberam configuracoes sem depender do cargo', () =>
     '/settings/site',
     '/settings?tab=integrations',
   ])
+})
+
+test('integracoes permanecem visiveis para membros sem permissao de gestao', () => {
+  const result = filterNavigationItems(APP_BOTTOM_NAVIGATION_ITEMS, baseAccess)
+  const settings = result.find((item) => item.path === '/settings')
+
+  assert.equal(
+    settings?.children?.some((item) => item.path === '/settings?tab=integrations'),
+    true,
+  )
 })
 
 test('navegacao mobile usa somente itens ja autorizados', () => {

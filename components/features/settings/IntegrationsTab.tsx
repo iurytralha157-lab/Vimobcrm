@@ -90,6 +90,7 @@ interface IntegrationItem {
   detail: string;
   icon: import("react").ReactNode;
   requiresAdmin?: boolean;
+  locked?: boolean;
 }
 
 interface IntegrationsTabProps {
@@ -307,7 +308,8 @@ export function IntegrationsTab({
         key: "whatsapp" as const,
         title: "WhatsApp",
         description: "Conecte números, gerencie permissões, etiquetas e sincronizações.",
-        enabled: canManageWhatsApp && hasWhatsAppAccess,
+        enabled: hasWhatsAppAccess,
+        locked: !canManageWhatsApp,
         connected: whatsappConnected,
         detail: `${whatsappSessions.length} ${whatsappSessions.length === 1 ? "conexão" : "conexões"}`,
         icon: <MessageCircle className="h-7 w-7 text-primary" />,
@@ -348,7 +350,7 @@ export function IntegrationsTab({
         key: "google-calendar" as const,
         title: "Google Agenda",
         description: "Sincronize atividades e compromissos com sua agenda.",
-        enabled: canManageIntegrations,
+        enabled: true,
         connected: googleCalendarConnected,
         detail: googleCalendarStatus?.account_email || "Agenda",
         icon: <LogoImage src="https://cdn.simpleicons.org/googlecalendar/4285F4" alt="Google Agenda" />,
@@ -429,7 +431,7 @@ export function IntegrationsTab({
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {filteredIntegrations.map((item) => {
           const isTemporarilyDisabled = disabledIntegrations.has(item.key);
-          const isAccessLocked = item.requiresAdmin && !canManageAdminIntegrations;
+          const isAccessLocked = item.locked || (item.requiresAdmin && !canManageAdminIntegrations);
           const isDisabled = isTemporarilyDisabled || isAccessLocked;
           const tourTarget =
             item.key === "whatsapp"
@@ -474,7 +476,7 @@ export function IntegrationsTab({
                 {isAccessLocked && (
                   <p className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
                     <Lock className="h-3.5 w-3.5" />
-                    Acesso apenas para administradores.
+                    Sua função não permite gerenciar esta integração.
                   </p>
                 )}
                 <Button

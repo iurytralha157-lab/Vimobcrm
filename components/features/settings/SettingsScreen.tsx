@@ -45,7 +45,7 @@ export default function Settings() {
   const canManageAI = canManageOrganization || hasPermission('settings_ai');
   const canManageBilling = canManageOrganization || hasPermission('settings_billing');
   const canManageProperties = canManageOrganization || hasPermission('property_manage');
-  const canAccessIntegrations = canManageIntegrations || canManageWhatsApp || canManageAI;
+  const canAccessIntegrations = Boolean(profile?.id && activeOrganizationId);
   const accessReady = !!profile && (canManageOrganization || (!loading && organizationsLoaded));
   const legacyIntegrationTabs = useMemo(() => [
     ...(canManageIntegrations ? ['webhooks', 'meta', 'grupo-olx', 'api'] : []),
