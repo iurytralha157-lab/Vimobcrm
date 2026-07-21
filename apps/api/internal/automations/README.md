@@ -17,7 +17,9 @@ O grafo tem exatamente um trigger, é acíclico e totalmente alcançável. Condi
 
 Templates podem usar `{{lead.*}}`, `{{organization.name}}`, `{{date}}`, `{{now}}` e dados em `{{execution.*}}`. `date` é `DD/MM/AAAA` no `settings.timezone` do fluxo (ou timezone do trigger agendado; fallback `America/Sao_Paulo`); `now` é ISO 8601 UTC.
 
-As ações `deal_status`, `move_lead`, `assign_user` e `property_interest` estão deliberadamente bloqueadas na validação. Elas só podem voltar à paleta depois de chamar os command services canônicos de Leads, preservando reservas, logs de atribuição, notificações, realtime, auditoria e atividades. O runtime não publica mutações parciais.
+As ações `deal_status`, `assign_user` e `property_interest` continuam deliberadamente bloqueadas na validação. `move_lead` usa o comando transacional canônico instalado pela migration `20260721000613_automation_conversational_handoff.sql`, com validação de tenant/pipeline/etapa, auditoria e atividade.
+
+Esperas com `stop_on_reply` podem configurar handoff por mídia, resposta inesperada ou rajada de mensagens. Uma mensagem humana enviada na conversa cancela as execuções ativas do lead no banco, e `POST /v1/leads/{id}/automation-executions/cancel` oferece a mesma parada manual para a interface.
 
 ## Mídia e WhatsApp
 

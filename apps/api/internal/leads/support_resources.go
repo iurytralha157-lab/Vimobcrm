@@ -392,6 +392,7 @@ type DispatchChannelResult struct {
 	Enabled    bool   `json:"enabled"`
 	Attempted  bool   `json:"attempted"`
 	OK         bool   `json:"ok"`
+	Permanent  bool   `json:"permanent,omitempty"`
 	Status     int    `json:"status,omitempty"`
 	Error      string `json:"error,omitempty"`
 	Provider   string `json:"provider,omitempty"`

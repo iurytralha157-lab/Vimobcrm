@@ -111,6 +111,15 @@ export const adminAPI = {
     return response;
   },
 
+  async resendInvitation<T = AdminJSON>(id: string) {
+    const validatedId = parseDomainInput(uuidSchema, id, 'admin.invitations.resend');
+    const response = await vimobAPIRequest<Envelope<T>>(`/v1/invitations/${validatedId}/resend`, {
+      method: 'POST',
+    });
+    validateDomainResponse(apiDynamicRecordResponseSchema, response, 'admin.invitations.resend');
+    return response.data;
+  },
+
   async invitationByToken<T = AdminJSON>(token: string) {
     const validatedToken = parseDomainInput(opaqueTokenSchema, token, 'admin.invitations.token');
     const response = await vimobPublicAPIRequest<Envelope<T | null>>(`/v1/public/invitations/${validatedToken}`);

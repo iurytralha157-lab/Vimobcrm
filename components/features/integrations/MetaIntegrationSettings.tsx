@@ -59,6 +59,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 import { normalizeSearchText } from "@/lib/search-text";
 import { useAuth } from "@/contexts/AuthContext";
+import { VimobAPIError } from "@/lib/api/vimob-client";
 import {
   MetaIntegration,
   MetaPage,
@@ -117,6 +118,14 @@ const getPagePicture = (page?: MetaPage | null) => page?.picture?.data?.url || "
 const searchableText = (value: unknown) => normalizeSearchText(String(value ?? ""));
 const META_OAUTH_CHANNEL = "vimob-meta-oauth";
 const META_OAUTH_STORAGE_KEY = "vimob:meta-oauth";
+
+function metaErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof VimobAPIError && error.status === 403) {
+    return "Sem permissao para gerenciar integracoes Meta nesta organizacao.";
+  }
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+}
 
 const normalizeOAuthPayload = (payload?: OAuthPayload | null): OAuthPayload | null => {
   if (!payload) return null;
@@ -409,15 +418,19 @@ export function MetaIntegrationSettings({
   });
 
   const openOAuth = async () => {
-    const returnUrl = new URL(window.location.href);
-    returnUrl.searchParams.set("meta_oauth_popup", "1");
-    const result = await getAuthUrl.mutateAsync({ returnUrl: returnUrl.toString() });
-    const popup = window.open(result.auth_url, "meta_oauth", "width=600,height=720");
-    if (!popup) {
-      const fallbackReturnUrl = new URL(window.location.href);
-      fallbackReturnUrl.searchParams.delete("meta_oauth_popup");
-      const fallbackResult = await getAuthUrl.mutateAsync({ returnUrl: fallbackReturnUrl.toString() });
-      window.location.href = fallbackResult.auth_url;
+    try {
+      const returnUrl = new URL(window.location.href);
+      returnUrl.searchParams.set("meta_oauth_popup", "1");
+      const result = await getAuthUrl.mutateAsync({ returnUrl: returnUrl.toString() });
+      const popup = window.open(result.auth_url, "meta_oauth", "width=600,height=720");
+      if (!popup) {
+        const fallbackReturnUrl = new URL(window.location.href);
+        fallbackReturnUrl.searchParams.delete("meta_oauth_popup");
+        const fallbackResult = await getAuthUrl.mutateAsync({ returnUrl: fallbackReturnUrl.toString() });
+        window.location.href = fallbackResult.auth_url;
+      }
+    } catch (error) {
+      toast.error(metaErrorMessage(error, "Nao foi possivel iniciar a conexao com a Meta."));
     }
   };
 

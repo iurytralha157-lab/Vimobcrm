@@ -427,6 +427,13 @@ export const automationsAPI = {
     });
   },
 
+  async cancelLeadExecutions(leadId: string, organizationId?: string | null) {
+    return vimobAPIRequest<{ ok: boolean; cancelled: number }>(
+      `/v1/leads/${encodeURIComponent(leadId)}/automation-executions/cancel`,
+      { method: 'POST', organizationId },
+    );
+  },
+
   async listExecutionSteps(
     executionId: string,
     params: { limit?: number; offset?: number; organizationId?: string | null } = {},

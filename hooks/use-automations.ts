@@ -377,6 +377,28 @@ export function useCancelAutomationExecutions() {
   });
 }
 
+export function useCancelLeadExecutions() {
+  const queryClient = useQueryClient();
+  const { profile } = useAuth();
+
+  return useMutation({
+    mutationFn: (leadId: string) =>
+      automationsAPI.cancelLeadExecutions(leadId, requireOrganizationId(profile?.organization_id)),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["automation-executions"] });
+      queryClient.invalidateQueries({ queryKey: ["automation-execution-summaries"] });
+      if (result.cancelled === 0) {
+        toast.info("Nenhuma automaÃ§Ã£o ativa para este lead.");
+        return;
+      }
+      toast.success(result.cancelled === 1 ? "AutomaÃ§Ã£o interrompida." : `${result.cancelled} automaÃ§Ãµes interrompidas.`);
+    },
+    onError: (error: unknown) => {
+      toast.error("NÃ£o foi possÃ­vel interromper a automaÃ§Ã£o do lead.", { description: getErrorMessage(error) });
+    },
+  });
+}
+
 export function useAutomationExecutions(automationId?: string, limit = 50) {
   const { profile } = useAuth();
 

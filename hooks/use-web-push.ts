@@ -2,9 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { settingsAPI } from '@/lib/api/settings';
 
-// VAPID public key - must match the backend Web Push sender configuration.
-const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY?.trim() || '';
-
 const VAPID_STORAGE_KEY = 'vimob-web-push-vapid-key';
 export const WEB_PUSH_PROMPT_DISMISS_KEY = 'web-push-prompt-dismissed';
 
@@ -107,8 +104,20 @@ async function getReadyServiceWorkerRegistration() {
   return navigator.serviceWorker.ready;
 }
 
-async function createOrReusePushSubscription(registration: ServiceWorkerRegistration) {
-  const applicationServerKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+async function loadVapidPublicKey() {
+  const config = await settingsAPI.getPushConfig();
+  const publicKey = config.publicKey.trim();
+  if (!config.enabled || !publicKey) {
+    throw new Error('Notificacoes push nao estao configuradas neste ambiente.');
+  }
+  return publicKey;
+}
+
+async function createOrReusePushSubscription(
+  registration: ServiceWorkerRegistration,
+  vapidPublicKey: string,
+) {
+  const applicationServerKey = urlBase64ToUint8Array(vapidPublicKey);
   const currentKey = arrayBufferToBase64Url(applicationServerKey);
   const existingSubscription = await registration.pushManager.getSubscription();
 
@@ -166,22 +175,20 @@ export function useWebPush() {
     const isSupported =
       'serviceWorker' in navigator &&
       'PushManager' in window &&
-      'Notification' in window &&
-      !!VAPID_PUBLIC_KEY;
+      'Notification' in window;
 
     return isSupported;
   }, []);
 
   // Verifica se já está inscrito
-  const checkSubscription = useCallback(async (): Promise<PushSubscription | null> => {
+  const checkSubscription = useCallback(async (vapidPublicKey: string): Promise<PushSubscription | null> => {
     try {
-      if (!VAPID_PUBLIC_KEY) return null;
       await getServiceWorkerRegistration();
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.getSubscription();
 
       if (subscription) {
-        const currentKey = arrayBufferToBase64Url(urlBase64ToUint8Array(VAPID_PUBLIC_KEY));
+        const currentKey = arrayBufferToBase64Url(urlBase64ToUint8Array(vapidPublicKey));
 
         if (shouldReplaceSubscription(subscription, currentKey)) {
           console.log('[WebPush] Subscription usa VAPID antigo/desconhecido; removendo para reinscrever.');
@@ -200,8 +207,14 @@ export function useWebPush() {
   }, []);
 
   // Salva subscription no Supabase
-  const saveSubscription = useCallback(async (subscription: PushSubscription, options: SaveSubscriptionOptions = {}) => {
-    if (!user?.id || !profile?.organization_id) return;
+  const saveSubscription = useCallback(async (
+    subscription: PushSubscription,
+    vapidPublicKey: string,
+    options: SaveSubscriptionOptions = {},
+  ) => {
+    if (!user?.id || !profile?.organization_id) {
+      throw new Error('Sessao ou organizacao indisponivel para registrar o dispositivo.');
+    }
 
     try {
       const subscriptionJson = subscription.toJSON() as {
@@ -219,6 +232,7 @@ export function useWebPush() {
         p256dh: subscriptionJson.keys.p256dh,
         auth: subscriptionJson.keys.auth,
         userAgent: navigator.userAgent,
+        vapidPublicKey,
         syncOnly: options.syncOnly,
       }, profile.organization_id);
       console.log('[WebPush] Subscription salva');
@@ -245,13 +259,18 @@ export function useWebPush() {
   // Solicita permissão e cria subscription
   const subscribe = useCallback(async (): Promise<WebPushSubscribeResult> => {
     console.log('[WebPush] Iniciando subscription...');
-    console.log('[WebPush] VAPID key configurada:', VAPID_PUBLIC_KEY ? `${VAPID_PUBLIC_KEY.length} chars` : 'NÃO CONFIGURADA');
+    console.log('[WebPush] Configuracao VAPID sera carregada da API.');
 
     setState(prev => ({ ...prev, isLoading: true, error: null }));
 
     try {
-      if (!VAPID_PUBLIC_KEY) {
-        const errorMessage = 'Notificações push não estão configuradas neste ambiente.';
+      let vapidPublicKey: string;
+      try {
+        vapidPublicKey = await loadVapidPublicKey();
+      } catch (error) {
+        const errorMessage = error instanceof Error
+          ? error.message
+          : 'Notificacoes push nao estao configuradas neste ambiente.';
         setState(prev => ({
           ...prev,
           isLoading: false,
@@ -263,6 +282,7 @@ export function useWebPush() {
           message: errorMessage,
         };
       }
+      console.log('[WebPush] Configuracao VAPID carregada da API.');
 
       // Solicita permissão
       console.log('[WebPush] Solicitando permissão...');
@@ -308,7 +328,7 @@ export function useWebPush() {
       console.log('[WebPush] Criando subscription com PushManager...');
       let subscription: PushSubscription;
       try {
-        subscription = await createOrReusePushSubscription(registration);
+        subscription = await createOrReusePushSubscription(registration, vapidPublicKey);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Erro ao criar subscription';
         console.error('[WebPush] Erro ao criar subscription:', error);
@@ -329,7 +349,7 @@ export function useWebPush() {
       // Salva no banco
       console.log('[WebPush] Salvando subscription no banco...');
       try {
-        await saveSubscription(subscription);
+        await saveSubscription(subscription, vapidPublicKey);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Erro ao salvar subscription';
         console.error('[WebPush] Erro ao salvar subscription no servidor:', error);
@@ -379,7 +399,8 @@ export function useWebPush() {
     setState(prev => ({ ...prev, isLoading: true }));
 
     try {
-      const subscription = await checkSubscription();
+      const registration = await getServiceWorkerRegistration();
+      const subscription = await registration.pushManager.getSubscription();
       const endpoint = subscription?.endpoint;
 
       if (subscription) {
@@ -404,7 +425,7 @@ export function useWebPush() {
       }));
       return false;
     }
-  }, [checkSubscription, removeSubscription]);
+  }, [removeSubscription]);
 
   // Inicialização
   useEffect(() => {
@@ -421,14 +442,30 @@ export function useWebPush() {
       }
 
       const permission = Notification.permission;
-      let subscription = await checkSubscription();
       let syncError: string | null = null;
+      let vapidPublicKey: string;
+      try {
+        vapidPublicKey = await loadVapidPublicKey();
+      } catch (error) {
+        syncError = error instanceof Error
+          ? error.message
+          : 'Notificacoes push nao estao configuradas neste ambiente.';
+        setState({
+          isSupported: true,
+          isSubscribed: false,
+          isLoading: false,
+          permission,
+          error: syncError,
+        });
+        return;
+      }
+      let subscription = await checkSubscription(vapidPublicKey);
 
       if (!subscription && permission === 'granted' && profile?.organization_id) {
         try {
           const registration = await getReadyServiceWorkerRegistration();
-          subscription = await createOrReusePushSubscription(registration);
-          await saveSubscription(subscription);
+          subscription = await createOrReusePushSubscription(registration, vapidPublicKey);
+          await saveSubscription(subscription, vapidPublicKey);
         } catch (error) {
           syncError = error instanceof Error
             ? error.message
@@ -436,14 +473,14 @@ export function useWebPush() {
         }
       } else if (subscription && profile?.organization_id) {
         try {
-          const syncResult = await saveSubscription(subscription, { syncOnly: true });
+          const syncResult = await saveSubscription(subscription, vapidPublicKey, { syncOnly: true });
           if (syncResult?.requiresResubscribe) {
             console.log('[WebPush] Servidor rejeitou subscription antiga; reinscrevendo dispositivo.');
             clearRotatedWebPushState();
             await subscription.unsubscribe().catch(() => undefined);
             const registration = await getReadyServiceWorkerRegistration();
-            subscription = await createOrReusePushSubscription(registration);
-            await saveSubscription(subscription);
+            subscription = await createOrReusePushSubscription(registration, vapidPublicKey);
+            await saveSubscription(subscription, vapidPublicKey);
           }
         } catch (error) {
           syncError = error instanceof Error

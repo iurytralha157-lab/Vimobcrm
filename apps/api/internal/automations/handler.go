@@ -283,6 +283,19 @@ func (handler Handler) CancelAutomationExecutions(w http.ResponseWriter, r *http
 	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "cancelled": cancelled})
 }
 
+func (handler Handler) CancelLeadExecutions(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	cancelled, err := handler.repo.CancelLeadExecutions(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writeAutomationError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "cancelled": cancelled})
+}
+
 func (handler Handler) ListExecutionSteps(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := organizationContext(w, r)
 	if !ok {

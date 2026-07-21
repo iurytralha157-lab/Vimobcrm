@@ -71,7 +71,7 @@ func TestAutomationEdgeRuntimeSecurityContract(t *testing.T) {
 		"WHATSAPP_MEDIA_BUCKET",
 		"AbortController",
 		"enter_automation_delay_wait",
-		"resume_automation_delay",
+		"process_automation_inbound_message",
 		"enqueue_automation_whatsapp_outbox",
 	} {
 		if !strings.Contains(runtime, required) {

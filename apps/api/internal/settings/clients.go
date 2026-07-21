@@ -14,13 +14,14 @@ import (
 )
 
 type ExternalConfig struct {
-	ProjectURL   string
-	APIKey       string
-	ResendAPIKey string
-	FromEmail    string
-	ReplyTo      string
-	SupportEmail string
-	AppURL       string
+	ProjectURL     string
+	APIKey         string
+	ResendAPIKey   string
+	FromEmail      string
+	ReplyTo        string
+	SupportEmail   string
+	AppURL         string
+	VAPIDPublicKey string
 }
 
 type storageClient struct {

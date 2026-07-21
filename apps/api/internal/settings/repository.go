@@ -16,15 +16,18 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pushconfig"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
 type Repository struct {
-	db        *dbpkg.Postgres
-	storage   storageClient
-	authAdmin authAdminClient
-	email     passwordNotificationClient
+	db                  *dbpkg.Postgres
+	storage             storageClient
+	authAdmin           authAdminClient
+	email               passwordNotificationClient
+	vapidPublicKey      string
+	vapidKeyFingerprint string
 }
 
 type apiKeyScanner interface {
@@ -36,11 +39,22 @@ type organizationModuleScanner interface {
 }
 
 func NewRepository(db *dbpkg.Postgres, externalConfig ExternalConfig) Repository {
+	vapidPublicKey := strings.TrimSpace(externalConfig.VAPIDPublicKey)
 	return Repository{
-		db:        db,
-		storage:   newStorageClient(externalConfig),
-		authAdmin: newAuthAdminClient(externalConfig),
-		email:     newPasswordNotificationClient(externalConfig),
+		db:                  db,
+		storage:             newStorageClient(externalConfig),
+		authAdmin:           newAuthAdminClient(externalConfig),
+		email:               newPasswordNotificationClient(externalConfig),
+		vapidPublicKey:      vapidPublicKey,
+		vapidKeyFingerprint: pushconfig.Fingerprint(vapidPublicKey),
+	}
+}
+
+func (repo Repository) PublicPushConfig() PublicPushConfig {
+	return PublicPushConfig{
+		Enabled:     repo.vapidPublicKey != "",
+		PublicKey:   repo.vapidPublicKey,
+		Fingerprint: repo.vapidKeyFingerprint,
 	}
 }
 
@@ -474,6 +488,12 @@ func (repo Repository) SavePushToken(ctx context.Context, tenantContext tenant.C
 	if endpoint == "" {
 		return PushTokenResult{}, ErrInvalidInput
 	}
+	if strings.HasPrefix(strings.ToLower(endpoint), "https://") {
+		clientVAPIDPublicKey := cleanStringPointer(request.VAPIDPublicKey)
+		if clientVAPIDPublicKey == nil || *clientVAPIDPublicKey != repo.vapidPublicKey {
+			return PushTokenResult{}, ErrPushVAPIDMismatch
+		}
+	}
 	token := legacyPushTokenValue(endpoint)
 	platform := legacyPushPlatform(endpoint)
 	deviceInfo, err := legacyPushDeviceInfo(endpoint, request)
@@ -481,7 +501,7 @@ func (repo Repository) SavePushToken(ctx context.Context, tenantContext tenant.C
 		return PushTokenResult{}, err
 	}
 	if request.SyncOnly != nil && *request.SyncOnly {
-		dead, err := repo.hasInactivePushToken(ctx, tenantContext.OrganizationID, tenantContext.UserID, endpoint)
+		dead, err := repo.hasInactivePushToken(ctx, tenantContext.UserID, endpoint)
 		if isUndefinedTableError(err) {
 			return PushTokenResult{OK: true, Active: false}, nil
 		}
@@ -562,18 +582,17 @@ func (repo Repository) SavePushToken(ctx context.Context, tenantContext tenant.C
 	return PushTokenResult{OK: true, Active: true}, nil
 }
 
-func (repo Repository) hasInactivePushToken(ctx context.Context, organizationID string, userID string, endpoint string) (bool, error) {
+func (repo Repository) hasInactivePushToken(ctx context.Context, userID string, endpoint string) (bool, error) {
 	var exists bool
 	err := repo.db.Pool().QueryRow(ctx, `
 		select exists (
 			select 1
 			from public.push_tokens
-			where organization_id = $1::uuid
-			  and user_id = $2::uuid
-			  and endpoint = $3
+			where user_id = $1::uuid
+			  and endpoint = $2
 			  and coalesce(is_active, false) = false
 		)
-	`, organizationID, userID, endpoint).Scan(&exists)
+	`, userID, endpoint).Scan(&exists)
 	return exists, err
 }
 
@@ -1149,6 +1168,9 @@ func legacyPushDeviceInfo(endpoint string, request PushTokenRequest) ([]byte, er
 	}
 	if value := cleanStringPointer(request.UserAgent); value != nil {
 		deviceInfo["userAgent"] = *value
+	}
+	if value := cleanStringPointer(request.VAPIDPublicKey); value != nil {
+		deviceInfo["vapidKeyFingerprint"] = pushconfig.Fingerprint(*value)
 	}
 	return json.Marshal(deviceInfo)
 }

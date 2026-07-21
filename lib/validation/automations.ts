@@ -105,10 +105,18 @@ export const automationDelayNodeConfigSchema = z.object({
   on_reply_message: optionalConfigString,
   on_reply_stage_id: uuidSchema.nullish(),
   on_reply_move_to_stage_id: uuidSchema.nullish(),
+  handoff_on_non_text: z.boolean().optional(),
+  reply_match_mode: z.enum(['any_text', 'keywords']).optional(),
+  expected_reply_keywords: z.array(z.string().trim().min(1).max(120)).max(50).optional(),
+  handoff_on_unmatched_reply: z.boolean().optional(),
+  handoff_after_message_burst: z.number().int().min(0).max(20).optional(),
 }).passthrough().superRefine((config, ctx) => {
   const maxByUnit = { seconds: 2_592_000, minutes: 43_200, hours: 720, days: 30 } as const
   if (config.delay_value > maxByUnit[config.delay_type]) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['delay_value'], message: 'A espera nao pode ultrapassar 30 dias' })
+  }
+  if (config.reply_match_mode === 'keywords' && !config.expected_reply_keywords?.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['expected_reply_keywords'], message: 'Informe ao menos uma resposta esperada' })
   }
 })
 
@@ -197,8 +205,7 @@ export const automationFlowNodeSchema = z.discriminatedUnion('type', [
 ]).superRefine((node, ctx) => {
   if (node.type !== 'action') return
 
-  const unsupportedCrmAction = node.action_type === 'move_lead'
-    || node.action_type === 'assign_user'
+  const unsupportedCrmAction = node.action_type === 'assign_user'
     || (node.action_type === 'set_variable'
       && (node.config.actionType === 'property_interest' || node.config.actionType === 'deal_status'))
   if (unsupportedCrmAction) {

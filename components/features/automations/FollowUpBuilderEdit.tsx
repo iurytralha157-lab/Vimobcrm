@@ -31,6 +31,7 @@ import {
   GitBranch,
   Webhook,
   Tag,
+  ArrowRightLeft,
   ChevronDown,
   ChevronRight,
 } from 'lucide-react';
@@ -88,7 +89,7 @@ const nodeTypes = {
   deal_status: DealStatusNode,
 };
 
-const UNSUPPORTED_CRM_NODE_TYPES = new Set(['move_stage', 'assign_user', 'property_interest', 'deal_status']);
+const UNSUPPORTED_CRM_NODE_TYPES = new Set(['assign_user', 'property_interest', 'deal_status']);
 
 function extractAutomationMediaPath(value: unknown) {
   if (typeof value !== 'string' || !value) return '';
@@ -120,9 +121,10 @@ const NODE_PALETTE: PaletteItem[] = [
   { type: 'video', label: 'Vídeo', icon: Video, color: 'bg-rose-500 text-white', category: 'bubbles', defaultData: { media_path: '', media_bucket: 'automation-media', video_preview_url: '' } },
   { type: 'audio', label: 'Áudio', icon: Headphones, color: 'bg-amber-500 text-white', category: 'bubbles', defaultData: { media_path: '', media_bucket: 'automation-media', audio_preview_url: '' } },
   { type: 'condition', label: 'Condição', icon: GitBranch, color: 'bg-yellow-500 text-white', category: 'conditionals', defaultData: { variable: '', operator: 'equals', value: '' } },
-  { type: 'wait', label: 'Espera', icon: Timer, color: 'bg-purple-500 text-white', category: 'actions', defaultData: { wait_type: 'days', wait_value: 1 } },
+  { type: 'wait', label: 'Espera', icon: Timer, color: 'bg-purple-500 text-white', category: 'actions', defaultData: { wait_type: 'days', wait_value: 1, handoff_on_non_text: true, reply_match_mode: 'any_text', handoff_on_unmatched_reply: true, handoff_after_message_burst: 3 } },
   { type: 'webhook', label: 'Webhook', icon: Webhook, color: 'bg-indigo-500 text-white', category: 'actions', defaultData: { webhook_url: '', method: 'POST' } },
   { type: 'tag', label: 'Tag', icon: Tag, color: 'bg-teal-500 text-white', category: 'actions', defaultData: { tag_id: '', tag_action: 'add' } },
+  { type: 'move_stage', label: 'Mudar etapa', icon: ArrowRightLeft, color: 'bg-violet-500 text-white', category: 'actions', defaultData: { move_pipeline_id: '', move_stage_id: '' } },
 ];
 
 const CATEGORY_LABELS: Record<NodeCategory, string> = {
@@ -341,6 +343,11 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
               stop_on_reply: nodeConfig.stop_on_reply || false,
               on_reply_message: nodeConfig.on_reply_message || '',
               on_reply_stage_id: nodeConfig.on_reply_stage_id || nodeConfig.on_reply_move_to_stage_id || '',
+              handoff_on_non_text: nodeConfig.handoff_on_non_text !== false,
+              reply_match_mode: nodeConfig.reply_match_mode || 'any_text',
+              expected_reply_keywords: Array.isArray(nodeConfig.expected_reply_keywords) ? nodeConfig.expected_reply_keywords : [],
+              handoff_on_unmatched_reply: nodeConfig.handoff_on_unmatched_reply !== false,
+              handoff_after_message_burst: Number.isInteger(nodeConfig.handoff_after_message_burst) ? nodeConfig.handoff_after_message_burst : 3,
             },
           });
         }
@@ -715,6 +722,11 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
               on_reply_message: null,
               on_reply_stage_id: null,
               on_reply_move_to_stage_id: null,
+              handoff_on_non_text: node.data.handoff_on_non_text !== false,
+              reply_match_mode: node.data.reply_match_mode || 'any_text',
+              expected_reply_keywords: Array.isArray(node.data.expected_reply_keywords) ? node.data.expected_reply_keywords : [],
+              handoff_on_unmatched_reply: node.data.handoff_on_unmatched_reply !== false,
+              handoff_after_message_burst: Number.isInteger(node.data.handoff_after_message_burst) ? node.data.handoff_after_message_burst : 3,
 
               nodeType: 'delay',
             },

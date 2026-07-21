@@ -320,7 +320,7 @@ func (repo Repository) dispatchPendingPushNotification(ctx context.Context, noti
 	if repo.notificationPush == nil || !repo.notificationPush.hasAnySender() {
 		return DispatchChannelResult{Enabled: false, Error: "push_sender_not_configured"}
 	}
-	subscriptions, err := repo.listActivePushSubscriptions(ctx, notification.OrganizationID, notification.UserID)
+	subscriptions, err := repo.listActivePushSubscriptions(ctx, notification.UserID)
 	if err != nil {
 		return DispatchChannelResult{Enabled: true, Error: err.Error()}
 	}
@@ -336,6 +336,7 @@ func (repo Repository) dispatchPendingPushNotification(ctx context.Context, noti
 		TargetURL: firstNotificationText(notification.TargetURL, notificationTargetURL(notification)),
 	}
 	aggregate := DispatchChannelResult{Enabled: true, Attempted: true, Provider: "push", OK: true}
+	permanentFailures := 0
 	for _, subscription := range subscriptions {
 		item := repo.notificationPush.send(ctx, subscription, payload)
 		if item.Attempted && item.OK {
@@ -343,7 +344,8 @@ func (repo Repository) dispatchPendingPushNotification(ctx context.Context, noti
 			continue
 		}
 		if isPermanentPushDeliveryFailure(item) {
-			_ = repo.deactivateDeadPushSubscription(ctx, notification.OrganizationID, notification.UserID, subscription)
+			permanentFailures++
+			_ = repo.deactivateDeadPushSubscription(ctx, notification.UserID, subscription)
 		}
 		aggregate.Skipped++
 		if item.Error != "" {
@@ -355,6 +357,7 @@ func (repo Repository) dispatchPendingPushNotification(ctx context.Context, noti
 	}
 	if aggregate.Sent == 0 {
 		aggregate.OK = false
+		aggregate.Permanent = permanentFailures == len(subscriptions)
 	}
 	return aggregate
 }
@@ -380,7 +383,7 @@ func isPermanentPushDeliveryFailure(result DispatchChannelResult) bool {
 		strings.Contains(errorText, "registration-token-not-registered")
 }
 
-func (repo Repository) deactivateDeadPushSubscription(ctx context.Context, organizationID string, userID string, subscription pushSubscription) error {
+func (repo Repository) deactivateDeadPushSubscription(ctx context.Context, userID string, subscription pushSubscription) error {
 	endpoint := strings.TrimSpace(subscription.Endpoint)
 	token := nativePushToken(subscription)
 	if endpoint == "" && token == "" {
@@ -391,13 +394,12 @@ func (repo Repository) deactivateDeadPushSubscription(ctx context.Context, organ
 		update public.push_tokens
 		set is_active = false,
 		    updated_at = now()
-		where organization_id = $1::uuid
-		  and user_id = $2::uuid
+		where user_id = $1::uuid
 		  and (
-		    ($3 <> '' and endpoint = $3)
-		    or ($4 <> '' and token = $4)
+		    ($2 <> '' and endpoint = $2)
+		    or ($3 <> '' and token = $3)
 		  )
-	`, organizationID, userID, endpoint, token)
+	`, userID, endpoint, token)
 	if isUndefinedTableError(err) || isUndefinedColumnError(err) {
 		return nil
 	}
@@ -470,6 +472,8 @@ func setNotificationChannelDispatch(metadata map[string]any, channel string, res
 	switch {
 	case result.OK:
 		status = "sent"
+	case result.Permanent:
+		status = "permanent_failed"
 	case !result.Enabled:
 		status = "skipped"
 	case !result.Attempted && errorText != "":
@@ -603,7 +607,7 @@ func notificationDispatchAttempts(metadata map[string]any, channel string) int {
 	return 0
 }
 
-func (repo Repository) listActivePushSubscriptions(ctx context.Context, organizationID string, userID string) ([]pushSubscription, error) {
+func (repo Repository) listActivePushSubscriptions(ctx context.Context, userID string) ([]pushSubscription, error) {
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
 			coalesce(endpoint, ''),
@@ -613,11 +617,10 @@ func (repo Repository) listActivePushSubscriptions(ctx context.Context, organiza
 			coalesce(platform, ''),
 			coalesce(device_info, '{}'::jsonb)::text
 		from public.push_tokens
-		where organization_id = $1::uuid
-		  and user_id = $2::uuid
+		where user_id = $1::uuid
 		  and coalesce(is_active, true) = true
 		order by updated_at desc nulls last, created_at desc nulls last
-	`, organizationID, userID)
+	`, userID)
 	if isUndefinedTableError(err) || isUndefinedColumnError(err) {
 		return nil, nil
 	}
@@ -627,6 +630,7 @@ func (repo Repository) listActivePushSubscriptions(ctx context.Context, organiza
 	defer rows.Close()
 
 	subscriptions := []pushSubscription{}
+	seenSubscriptions := map[string]struct{}{}
 	for rows.Next() {
 		var item pushSubscription
 		var rawDeviceInfo string
@@ -645,9 +649,15 @@ func (repo Repository) listActivePushSubscriptions(ctx context.Context, organiza
 		if item.Endpoint == "" && item.Token != "" && item.Platform == "web" {
 			item.Endpoint = item.Token
 		}
-		if item.Endpoint != "" || item.Token != "" {
-			subscriptions = append(subscriptions, item)
+		if item.Endpoint == "" && item.Token == "" {
+			continue
 		}
+		dedupeKey := item.Endpoint + "\x00" + item.Token
+		if _, seen := seenSubscriptions[dedupeKey]; seen {
+			continue
+		}
+		seenSubscriptions[dedupeKey] = struct{}{}
+		subscriptions = append(subscriptions, item)
 	}
 	return subscriptions, rows.Err()
 }

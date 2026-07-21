@@ -4,6 +4,7 @@ import "errors"
 
 var (
 	ErrInvalidInput         = errors.New("invalid settings input")
+	ErrPushVAPIDMismatch    = errors.New("push VAPID key mismatch")
 	ErrAPIKeyNotFound       = errors.New("api key not found")
 	ErrStorageNotConfigured = errors.New("settings storage is not configured")
 	ErrStorageOperation     = errors.New("settings storage operation failed")
@@ -174,11 +175,18 @@ type SelectSubscriptionPlanRequest struct {
 }
 
 type PushTokenRequest struct {
-	Endpoint  string  `json:"endpoint"`
-	P256DH    *string `json:"p256dh"`
-	Auth      *string `json:"auth"`
-	UserAgent *string `json:"userAgent"`
-	SyncOnly  *bool   `json:"syncOnly"`
+	Endpoint       string  `json:"endpoint"`
+	P256DH         *string `json:"p256dh"`
+	Auth           *string `json:"auth"`
+	UserAgent      *string `json:"userAgent"`
+	VAPIDPublicKey *string `json:"vapidPublicKey"`
+	SyncOnly       *bool   `json:"syncOnly"`
+}
+
+type PublicPushConfig struct {
+	Enabled     bool   `json:"enabled"`
+	PublicKey   string `json:"publicKey"`
+	Fingerprint string `json:"fingerprint"`
 }
 
 type PushTokenResult struct {

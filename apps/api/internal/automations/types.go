@@ -696,7 +696,14 @@ func validateActionConfig(actionType string, config map[string]any) error {
 	case "add_tag", "remove_tag":
 		return requireUUIDConfig(config, "tag_id")
 	case "move_lead":
-		return invalidFlow("move_lead automation requires the canonical Leads command service and is not publishable yet")
+		if err := requireUUIDConfig(config, "stage_id"); err != nil {
+			return err
+		}
+		if pipelineID := stringConfig(config, "pipeline_id"); pipelineID != "" {
+			if _, ok := normalizeUUID(pipelineID); !ok {
+				return invalidFlow("pipeline_id must be a uuid")
+			}
+		}
 	case "assign_user":
 		return invalidFlow("assign_user automation requires the canonical Leads command service and is not publishable yet")
 	case "set_variable":
@@ -720,6 +727,28 @@ func validateDelayConfig(config map[string]any) error {
 	multiplier := map[string]int{"seconds": 1, "minutes": 60, "hours": 3600, "days": 86400}[unit]
 	if value < 1 || multiplier == 0 || value > maxDelaySeconds/multiplier {
 		return invalidFlow("delay duration is invalid")
+	}
+	matchMode := strings.ToLower(stringConfig(config, "reply_match_mode"))
+	if matchMode != "" && matchMode != "any_text" && matchMode != "keywords" {
+		return invalidFlow("reply_match_mode must be any_text or keywords")
+	}
+	if matchMode == "keywords" {
+		rawKeywords, ok := config["expected_reply_keywords"].([]any)
+		if !ok || len(rawKeywords) == 0 || len(rawKeywords) > 50 {
+			return invalidFlow("keyword reply matching requires 1 to 50 keywords")
+		}
+		for _, rawKeyword := range rawKeywords {
+			keyword, ok := rawKeyword.(string)
+			if !ok || strings.TrimSpace(keyword) == "" || len(strings.TrimSpace(keyword)) > 120 {
+				return invalidFlow("reply keywords must contain 1 to 120 characters")
+			}
+		}
+	}
+	if rawBurstLimit, exists := config["handoff_after_message_burst"]; exists && rawBurstLimit != nil {
+		burstLimit := integerConfig(config, "handoff_after_message_burst")
+		if burstLimit < 0 || burstLimit > 20 {
+			return invalidFlow("handoff_after_message_burst must be between 0 and 20")
+		}
 	}
 	return nil
 }

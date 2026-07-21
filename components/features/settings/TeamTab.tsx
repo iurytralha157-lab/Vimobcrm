@@ -37,12 +37,13 @@ import {
   Trash2, 
   Loader2,
   Mail,
+  RefreshCw,
   ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useDeleteUser, useDeleteUserImpact, useOrganizationUsers, useUpdateUser } from '@/hooks/use-users';
-import { useCreateInvitation, useDeleteInvitation, useInvitations } from '@/hooks/use-invitations';
+import { useCreateInvitation, useDeleteInvitation, useInvitations, useResendInvitation } from '@/hooks/use-invitations';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import { canManageOrganization } from '@/lib/access/organization';
@@ -66,6 +67,7 @@ export function TeamTab() {
   const deleteUser = useDeleteUser();
   const deleteInvitation = useDeleteInvitation();
   const createInvitation = useCreateInvitation();
+  const resendInvitation = useResendInvitation();
 
   const [userDialogOpen, setUserDialogOpen] = useState(false);
   const [deleteUserDialogOpen, setDeleteUserDialogOpen] = useState(false);
@@ -260,43 +262,69 @@ export function TeamTab() {
               </div>
             ) : (
               <div data-tour="team-users-list" className="space-y-3">
-                {pendingInvitations.map((invitation) => (
-                  <div
-                    key={`invitation-${invitation.id}`}
-                    className="flex items-center justify-between p-3 rounded-lg border border-dashed border-amber-500/30 bg-amber-500/5"
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <Avatar className="h-9 w-9">
-                        <AvatarFallback className="bg-amber-500 text-white text-sm">
-                          <Mail className="h-4 w-4" />
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="truncate text-sm font-medium">{invitation.email || 'Convite sem e-mail'}</p>
-                          <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-200">
-                            Pendente
-                          </Badge>
+                {pendingInvitations.map((invitation) => {
+                  const isExpired = invitation.is_expired === true;
+                  const isResending = resendInvitation.isPending && resendInvitation.variables === invitation.id;
+                  const isDeleting = deleteInvitation.isPending && deleteInvitation.variables === invitation.id;
+
+                  return (
+                    <div
+                      key={`invitation-${invitation.id}`}
+                      className="flex items-center justify-between p-3 rounded-lg border border-dashed border-amber-500/30 bg-amber-500/5"
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        <Avatar className="h-9 w-9">
+                          <AvatarFallback className="bg-amber-500 text-white text-sm">
+                            <Mail className="h-4 w-4" />
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="truncate text-sm font-medium">{invitation.email || 'Convite sem e-mail'}</p>
+                            <Badge
+                              variant="outline"
+                              className={isExpired
+                                ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                                : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-200'}
+                            >
+                              {isExpired ? 'Expirado' : 'Pendente'}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Convite enviado como {invitation.role === 'admin' ? t.settings.users.admin : t.settings.users.user}
+                            {!isExpired && ` · válido até ${new Intl.DateTimeFormat('pt-BR').format(new Date(invitation.expires_at))}`}
+                          </p>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          Convite enviado como {invitation.role === 'admin' ? t.settings.users.admin : t.settings.users.user}
-                        </p>
                       </div>
+                      {canManageUsers && (
+                        <div className="ml-3 flex shrink-0 items-center gap-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 gap-1.5"
+                            onClick={() => resendInvitation.mutate(invitation.id)}
+                            disabled={resendInvitation.isPending || deleteInvitation.isPending || !invitation.email}
+                            title="Gerar um novo link e renovar a validade por 7 dias"
+                            aria-label={`Reenviar convite para ${invitation.email || 'usuário'}`}
+                          >
+                            {isResending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                            <span className="hidden sm:inline">Reenviar</span>
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                            onClick={() => deleteInvitation.mutate(invitation.id)}
+                            disabled={deleteInvitation.isPending || resendInvitation.isPending}
+                            aria-label="Cancelar convite"
+                          >
+                            {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                          </Button>
+                        </div>
+                      )}
                     </div>
-                    {canManageUsers && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                        onClick={() => deleteInvitation.mutate(invitation.id)}
-                        disabled={deleteInvitation.isPending}
-                        aria-label="Cancelar convite"
-                      >
-                        {deleteInvitation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                      </Button>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
                 {users.filter(user => user.role !== 'super_admin').map(user => (
                   <div 
                     key={user.id} 

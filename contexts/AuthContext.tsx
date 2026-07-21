@@ -112,7 +112,7 @@ interface ImpersonateSession {
   orgName: string;
 }
 
-const AUTH_SNAPSHOT_VERSION = 1;
+const AUTH_SNAPSHOT_VERSION = 2;
 const AUTH_SNAPSHOT_TTL_MS = 1000 * 60 * 60 * 8;
 
 interface CachedAuthSnapshot {
@@ -180,6 +180,7 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: Error | null }>;
   refreshProfile: () => Promise<void>;
+  refreshOrganizations: () => Promise<void>;
   startImpersonate: (orgId: string, orgName: string) => Promise<void>;
   stopImpersonate: () => Promise<void>;
   switchOrganization: (orgId: string) => Promise<void>;
@@ -585,6 +586,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const isPublicRoute = typeof window !== 'undefined' && [
             '/login',
             '/cadastro',
+            '/convite',
             '/reset-password',
             '/onboarding',
             '/checkout',
@@ -772,6 +774,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const refreshOrganizations = async () => {
+    const activeUser = userRef.current || user;
+    if (!activeUser) return;
+
+    setOrganizationsLoaded(false);
+    await checkMultiOrg(activeUser.id);
+  };
+
   return (
     <AuthContext.Provider value={{
       user,
@@ -791,6 +801,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       signOut,
       resetPassword,
       refreshProfile,
+      refreshOrganizations,
       startImpersonate,
       stopImpersonate,
       switchOrganization,

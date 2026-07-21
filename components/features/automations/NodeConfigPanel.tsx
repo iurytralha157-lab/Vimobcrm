@@ -21,6 +21,7 @@ import { PropertyPickerDialog } from '@/components/features/properties/PropertyP
 import { Plus } from 'lucide-react';
 import { useLeads } from '@/hooks/use-leads';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { useStages } from '@/hooks/use-stages';
 
 interface NodeConfigPanelProps {
   selectedNode: Node;
@@ -118,8 +119,7 @@ export function NodeConfigPanel({
   properties,
 }: NodeConfigPanelProps) {
   const nodeInfo = NODE_TITLES[selectedNode.type || ''] || { icon: Play, label: 'Nó', color: 'text-foreground' };
-  const isUnsupportedCrmAction = selectedNode.type === 'move_stage'
-    || selectedNode.type === 'assign_user'
+  const isUnsupportedCrmAction = selectedNode.type === 'assign_user'
     || selectedNode.type === 'property_interest'
     || selectedNode.type === 'deal_status';
   const Icon = nodeInfo.icon;
@@ -130,6 +130,8 @@ export function NodeConfigPanel({
   const [minimumScheduledAt] = useState(() => toLocalDateTimeInput(new Date(Date.now() + 60_000).toISOString()));
   const debouncedLeadSearch = useDebouncedValue(leadSearch.trim(), 300);
   const { data: scheduledLeads = [], isLoading: scheduledLeadsLoading } = useLeads({ search: debouncedLeadSearch, limit: 10 });
+  const movePipelineId = typeof selectedNode.data.move_pipeline_id === 'string' ? selectedNode.data.move_pipeline_id : '';
+  const { data: moveStages = [] } = useStages(movePipelineId || undefined);
 
   // Dragging logic
   const panelRef = useRef<HTMLDivElement>(null);
@@ -426,7 +428,60 @@ export function NodeConfigPanel({
                 <p className="text-[10px] text-muted-foreground">
                   Cria duas saídas: &quot;Respondeu&quot; e &quot;Timeout&quot;. Configure ações diferentes para cada caminho.
                 </p>
-                {/* Legacy auto-reply message and stage move fields removed */}
+                {selectedNode.data.stop_on_reply === true && (
+                  <div className="space-y-3 rounded-md border p-3">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id={`handoff-media-${selectedNode.id}`}
+                        checked={selectedNode.data.handoff_on_non_text !== false}
+                        onCheckedChange={(checked) => onNodeDataChange(selectedNode.id, { handoff_on_non_text: checked === true })}
+                      />
+                      <Label htmlFor={`handoff-media-${selectedNode.id}`} className="text-xs cursor-pointer">
+                        Pausar ao receber áudio ou mídia
+                      </Label>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Validar resposta</Label>
+                      <Select
+                        value={selectedNode.data.reply_match_mode || 'any_text'}
+                        onValueChange={(value) => onNodeDataChange(selectedNode.id, { reply_match_mode: value })}
+                      >
+                        <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                        <SelectContent className="z-[200]">
+                          <SelectItem value="any_text">Aceitar qualquer texto</SelectItem>
+                          <SelectItem value="keywords">Somente respostas esperadas</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {selectedNode.data.reply_match_mode === 'keywords' && (
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Respostas esperadas</Label>
+                        <Textarea
+                          rows={3}
+                          value={Array.isArray(selectedNode.data.expected_reply_keywords) ? selectedNode.data.expected_reply_keywords.join(', ') : ''}
+                          placeholder="sim, não, morar, investir"
+                          onChange={(event) => onNodeDataChange(selectedNode.id, {
+                            expected_reply_keywords: event.target.value.split(',').map((item) => item.trim()).filter(Boolean),
+                          })}
+                        />
+                        <p className="text-[10px] text-muted-foreground">Uma resposta fora desta lista pausa o fluxo e notifica o responsável.</p>
+                      </div>
+                    )}
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Pausar após rajada de mensagens</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={20}
+                        className="h-9"
+                        value={Number.isInteger(selectedNode.data.handoff_after_message_burst) ? selectedNode.data.handoff_after_message_burst : 3}
+                        onChange={(event) => onNodeDataChange(selectedNode.id, {
+                          handoff_after_message_burst: Math.max(0, Math.min(20, Number.parseInt(event.target.value, 10) || 0)),
+                        })}
+                      />
+                    </div>
+                  </div>
+                )}
 
               </div>
             </div>
@@ -654,16 +709,16 @@ export function NodeConfigPanel({
                   </Select>
                 </div>
               )}
-              {selectedNode.data.move_pipeline_id && stages && stages.length > 0 && (
+              {selectedNode.data.move_pipeline_id && moveStages.length > 0 && (
                 <div className="space-y-1.5">
                   <Label className="text-xs">Etapa</Label>
                   <Select value={selectedNode.data.move_stage_id || ''} onValueChange={(v) => {
-                    const selectedStage = stages.find(s => s.id === v);
+                    const selectedStage = moveStages.find(s => s.id === v);
                     onNodeDataChange(selectedNode.id, { move_stage_id: v, stage_name: selectedStage?.name || '' });
                   }}>
                     <SelectTrigger className="h-9"><SelectValue placeholder="Selecione..." /></SelectTrigger>
                     <SelectContent className="z-[200]">
-                      {stages.map((s) => (
+                      {moveStages.map((s) => (
                         <SelectItem key={s.id} value={s.id}>
                           <div className="flex items-center gap-2">
                             <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: s.color || '#888' }} />

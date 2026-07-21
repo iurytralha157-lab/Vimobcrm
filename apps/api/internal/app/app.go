@@ -132,13 +132,14 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	scheduleHandler := schedule.NewHandler(schedule.NewRepository(postgres, gamificationRepository), realtimeHub)
 	stageConfigHandler := stageconfig.NewHandler(stageconfig.NewRepository(postgres))
 	settingsHandler := settings.NewHandler(settings.NewRepository(postgres, settings.ExternalConfig{
-		ProjectURL:   cfg.Storage.ProjectURL,
-		APIKey:       cfg.Storage.APIKey,
-		ResendAPIKey: cfg.Email.ResendAPIKey,
-		FromEmail:    cfg.Email.FromEmail,
-		ReplyTo:      cfg.Email.ReplyTo,
-		SupportEmail: cfg.Email.SupportEmail,
-		AppURL:       cfg.Email.AppURL,
+		ProjectURL:     cfg.Storage.ProjectURL,
+		APIKey:         cfg.Storage.APIKey,
+		ResendAPIKey:   cfg.Email.ResendAPIKey,
+		FromEmail:      cfg.Email.FromEmail,
+		ReplyTo:        cfg.Email.ReplyTo,
+		SupportEmail:   cfg.Email.SupportEmail,
+		AppURL:         cfg.Email.AppURL,
+		VAPIDPublicKey: cfg.Push.VAPIDPublicKey,
 	}), realtimeHub)
 	siteHandler := site.NewHandler(site.NewRepository(postgres, site.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
@@ -349,8 +350,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("GET /v1/admin/feature-requests", withAuthTenant(http.HandlerFunc(adminHandler.ListFeatureRequestsAdmin)))
 	mux.Handle("PATCH /v1/admin/feature-requests/{id}", withAuthTenant(http.HandlerFunc(adminHandler.RespondFeatureRequestAdmin)))
 	mux.Handle("GET /v1/invitations", withAuthTenant(http.HandlerFunc(adminHandler.ListInvitations)))
-	mux.Handle("POST /v1/invitations", withAuthTenant(http.HandlerFunc(adminHandler.CreateInvitation)))
-	mux.Handle("DELETE /v1/invitations/{id}", withAuthTenant(http.HandlerFunc(adminHandler.DeleteInvitation)))
+	mux.Handle("POST /v1/invitations", withPermission(permissions.UsersManage, http.HandlerFunc(adminHandler.CreateInvitation)))
+	mux.Handle("POST /v1/invitations/{id}/resend", withPermission(permissions.UsersManage, http.HandlerFunc(adminHandler.ResendInvitation)))
+	mux.Handle("DELETE /v1/invitations/{id}", withPermission(permissions.UsersManage, http.HandlerFunc(adminHandler.DeleteInvitation)))
 	mux.Handle("POST /v1/invitations/{token}/accept", withAuthTenant(http.HandlerFunc(adminHandler.AcceptInvitationAuthenticated)))
 	mux.Handle("GET /v1/onboarding-requests/mine", withAuthTenant(http.HandlerFunc(adminHandler.ShowMyOnboardingRequest)))
 	mux.Handle("POST /v1/onboarding-requests", withAuthTenant(http.HandlerFunc(adminHandler.CreateOnboardingRequest)))
@@ -422,6 +424,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("GET /v1/automation-executions/summary", withModulePermission("automations", permissions.AutomationsView, http.HandlerFunc(automationsHandler.ListExecutionSummaries)))
 	mux.Handle("GET /v1/automation-executions/{id}/steps", withModulePermission("automations", permissions.AutomationsView, http.HandlerFunc(automationsHandler.ListExecutionSteps)))
 	mux.Handle("POST /v1/automation-executions/{id}/cancel", withModulePermission("automations", permissions.AutomationsManage, http.HandlerFunc(automationsHandler.CancelExecution)))
+	mux.Handle("POST /v1/leads/{id}/automation-executions/cancel", withModulePermission("automations", permissions.AutomationsManage, http.HandlerFunc(automationsHandler.CancelLeadExecutions)))
 	mux.Handle("POST /v1/automations/{id}/executions/cancel", withModulePermission("automations", permissions.AutomationsManage, http.HandlerFunc(automationsHandler.CancelAutomationExecutions)))
 	mux.Handle("GET /v1/automation-runtime/issues", withModulePermission("automations", permissions.AutomationsView, http.HandlerFunc(automationsHandler.ListRuntimeIssues)))
 	mux.Handle("POST /v1/automation-runtime/issues/{kind}/{id}/retry", withModulePermission("automations", permissions.AutomationsManage, http.HandlerFunc(automationsHandler.RetryRuntimeIssue)))
@@ -480,6 +483,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("POST /v1/integrations/portals/grupo-olx/regenerate-webhook-token", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.RegenerateGrupoOLXWebhookToken)))
 	mux.Handle("GET /v1/integrations/portals/grupo-olx/publications", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.ListGrupoOLXPublications)))
 	mux.Handle("PUT /v1/integrations/portals/grupo-olx/publications", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.UpsertGrupoOLXPublications)))
+	mux.Handle("GET /v1/public/push-config", http.HandlerFunc(settingsHandler.PublicPushConfig))
 	mux.Handle("PATCH /v1/settings/profile", withAuthTenant(http.HandlerFunc(settingsHandler.UpdateProfile)))
 	mux.Handle("POST /v1/settings/profile/avatar", withAuthTenant(http.HandlerFunc(settingsHandler.UploadProfileAvatar)))
 	mux.Handle("PATCH /v1/settings/organization", withPermission(permissions.SettingsOrganization, http.HandlerFunc(settingsHandler.UpdateOrganization)))

@@ -30,7 +30,7 @@ function getErrorMessage(error: unknown) {
 }
 
 export function VistaImportDialog({ open, onOpenChange }: Props) {
-  const { data: integration, isLoading } = useVistaIntegration();
+  const { data: integration, isLoading } = useVistaIntegration({ enabled: open });
   const saveIntegration = useSaveVistaIntegration();
   const testConnection = useTestVistaConnection();
   const syncProperties = useSyncVistaProperties();

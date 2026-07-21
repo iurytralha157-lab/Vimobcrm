@@ -40,6 +40,11 @@ func (handler Handler) PublicSystemSettings(w http.ResponseWriter, r *http.Reque
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[map[string]any]{Data: settings})
 }
 
+func (handler Handler) PublicPushConfig(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[PublicPushConfig]{Data: handler.repo.PublicPushConfig()})
+}
+
 func (handler Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := tenant.FromContext(r.Context())
 	if !ok || tenantContext.UserID == "" {
@@ -678,6 +683,8 @@ func isAllowedImageContentType(value string) bool {
 
 func writeSettingsError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrPushVAPIDMismatch):
+		httpserver.WriteError(w, r, http.StatusConflict, "push_vapid_key_mismatch", "Push configuration changed. Refresh the app and enable notifications again.")
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_settings_input", "Settings input is invalid.")
 	case errors.Is(err, ErrAPIKeyNotFound):

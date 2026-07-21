@@ -10,6 +10,7 @@ import { authAPI } from "@/lib/api/auth";
 import { supabase } from "@/integrations/supabase/client";
 import { useInvitationByToken } from "@/hooks/use-invitation-by-token";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
 
 type AcceptResult = {
   success: boolean;
@@ -37,6 +38,7 @@ function VimobLogo() {
 
 export function InvitationScreen({ token }: { token: string }) {
   const router = useRouter();
+  const { refreshOrganizations } = useAuth();
   const { data: invitation, isLoading } = useInvitationByToken(token);
   const [name, setName] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
@@ -143,6 +145,7 @@ export function InvitationScreen({ token }: { token: string }) {
     try {
       const result = await adminAPI.acceptInvitationAuthenticated<AcceptResult>(token);
       setStatusMessage(result.message || "Convite aceito.");
+      await refreshOrganizations();
       router.replace("/select-organization?redirectTo=/dashboard");
     } catch {
       router.replace(`/login?redirectTo=/convite/${encodeURIComponent(token)}`);

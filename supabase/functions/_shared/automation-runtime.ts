@@ -152,46 +152,28 @@ function triggerMatches(config: Record<string, any>, event: AutomationEvent, cre
   }
 }
 
-async function resumeReplyAwareDelays(client: SupabaseClient, event: AutomationEvent): Promise<number> {
-  const eventTime = new Date(String(event.payload?.occurred_at || "")).getTime();
-  if (!Number.isFinite(eventTime)) return 0;
-  let resumed = 0;
-  let afterID = "";
-  for (let page = 0; page < 250; page += 1) {
-    let query = client.from("automation_executions")
-      .select("id,conversation_id")
-      .eq("organization_id", event.organization_id)
-      .eq("lead_id", event.lead_id)
-      .eq("status", "waiting")
-      .order("id", { ascending: true })
-      .limit(100);
-    if (afterID) query = query.gt("id", afterID);
-    const { data: executions, error } = await query;
-    if (error) throw error;
-    if (!executions?.length) return resumed;
-    for (const execution of executions) {
-      if (execution.conversation_id && event.conversation_id && execution.conversation_id !== event.conversation_id) continue;
-      const { data: result, error: resumeError } = await client.rpc("resume_automation_delay", {
-        p_organization_id: event.organization_id,
-        p_execution_id: execution.id,
-        p_branch: "replied",
-        p_occurred_at: new Date(eventTime).toISOString(),
-        p_reply_payload: event.payload || {},
-        p_lead_id: event.lead_id,
-        p_conversation_id: event.conversation_id || null,
-      });
-      if (resumeError) throw resumeError;
-      if (result?.ok) resumed += 1;
-    }
-    afterID = executions[executions.length - 1].id;
-    if (executions.length < 100) return resumed;
-  }
-  throw new Error("reply_waiter_page_limit_exceeded");
+async function processReplyAwareInboundMessage(client: SupabaseClient, event: AutomationEvent): Promise<void> {
+  const payload = event.payload || {};
+  const messageID = String(payload.message_id || event.entity_id || "");
+  const occurredAt = String(payload.occurred_at || "");
+  if (!UUID_RE.test(messageID) || !Number.isFinite(new Date(occurredAt).getTime())) return;
+
+  const { data, error } = await client.rpc("process_automation_inbound_message", {
+    p_organization_id: event.organization_id,
+    p_lead_id: event.lead_id,
+    p_conversation_id: event.conversation_id || payload.conversation_id || null,
+    p_message_id: messageID,
+    p_message_type: String(payload.message_type || "text"),
+    p_content: typeof payload.content === "string" ? payload.content : null,
+    p_occurred_at: occurredAt,
+  });
+  if (error) throw error;
+  if (data?.ok === false) throw new Error(`inbound_message_processing_failed:${data?.status || "unknown"}`);
 }
 
 async function processEvent(client: SupabaseClient, event: AutomationEvent): Promise<number> {
   if (!(await moduleEnabled(client, event.organization_id))) return 0;
-  if (event.event_type === "message_received") await resumeReplyAwareDelays(client, event);
+  if (event.event_type === "message_received") await processReplyAwareInboundMessage(client, event);
   const { data: lead, error: leadError } = await client.from("leads")
     .select("id,assigned_user_id,last_contact_at,updated_at,created_at")
     .eq("id", event.lead_id).eq("organization_id", event.organization_id).maybeSingle();

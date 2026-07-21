@@ -32,12 +32,11 @@ NEXT_PUBLIC_SUPABASE_URL=https://seu-projeto.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=sua-chave-publica
 NEXT_PUBLIC_VIMOB_API_URL=https://api.vimobcrm.com.br
 NEXT_PUBLIC_SITE_URL=https://app.vimobcrm.com.br
-VIMOB_NEXT_PUBLIC_VAPID_PUBLIC_KEY=chave-publica-vapid
 ```
 
-Essas variaveis entram no build do Next.js. Se trocar a URL da API, o dominio publico ou a chave publica VAPID depois, gere uma nova imagem web.
+Essas variaveis entram no build do Next.js. Se trocar a URL da API ou o dominio publico depois, gere uma nova imagem web.
 
-Para Web Push, reuse o par VAPID atual sempre que possivel. A chave publica do build web (`VIMOB_NEXT_PUBLIC_VAPID_PUBLIC_KEY`) deve ser a mesma chave publica configurada na API/stack (`WEB_PUSH_VAPID_PUBLIC_KEY`). A chave privada correspondente deve ficar somente no Portainer/segredos da API como `WEB_PUSH_VAPID_PRIVATE_KEY`.
+Para Web Push, reuse o par VAPID atual sempre que possivel. A API valida se `WEB_PUSH_VAPID_PUBLIC_KEY` e `WEB_PUSH_VAPID_PRIVATE_KEY` pertencem ao mesmo par antes de iniciar e entrega somente a chave publica ao navegador em `/v1/public/push-config`. Assim, a chave VAPID nao fica congelada no build web e a chave privada continua somente no Portainer/segredos da API.
 
 ## Variaveis da Stack no Portainer
 
@@ -182,7 +181,7 @@ No Portainer:
 6. Colar as variaveis acima em `Environment variables`.
 7. Deploy.
 
-Se `WEB_PUSH_VAPID_PUBLIC_KEY` ou `WEB_PUSH_VAPID_PRIVATE_KEY` estiverem ausentes, a stack/API deve falhar em vez de subir com push quebrado. Se a chave privada antiga tiver sido perdida, gere um novo par VAPID, configure a publica no build web e na stack, configure a privada na API, e gere nova imagem web. Usuarios com subscriptions antigas so serao reinscritos quando abrirem o app novamente. Para push nativo do app, configure `FCM_SERVICE_ACCOUNT_JSON` ou `FCM_SERVICE_ACCOUNT_FILE`; `FCM_SERVER_KEY` e legado e nao deve ser usado em deploy novo.
+Se `WEB_PUSH_VAPID_PUBLIC_KEY` ou `WEB_PUSH_VAPID_PRIVATE_KEY` estiverem ausentes, malformadas ou nao pertencerem ao mesmo par, a API falha ao iniciar em vez de subir com push quebrado. Se a chave privada antiga tiver sido perdida, gere um novo par, configure as duas chaves correspondentes na API/stack e publique a nova API; nao e necessario reconstruir a imagem web somente por causa da rotacao VAPID. Usuarios com subscriptions antigas sao reinscritos automaticamente quando abrirem o app novamente. Para push nativo do app, configure `FCM_SERVICE_ACCOUNT_JSON` ou `FCM_SERVICE_ACCOUNT_FILE`; `FCM_SERVER_KEY` e legado e nao deve ser usado em deploy novo.
 
 ## Dominios
 

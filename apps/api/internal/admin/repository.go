@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -218,11 +219,10 @@ func (repo Repository) ListInvitations(ctx context.Context, tenantContext tenant
 		return nil, err
 	}
 	return repo.queryJSONRows(ctx, `
-		select to_jsonb(i)
+		select to_jsonb(i) || jsonb_build_object('is_expired', i.expires_at <= now())
 		from public.invitations i
 		where i.organization_id = $1::uuid
 		  and i.used_at is null
-		  and i.expires_at > now()
 		order by i.created_at desc
 	`, organizationID)
 }
@@ -255,8 +255,33 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 		existingUserID, lookupErr := repo.userIDByEmail(ctx, normalizedEmail)
 		if lookupErr == nil && existingUserID != "" {
 			existingAccount = true
+			alreadyMember, memberErr := repo.userBelongsToOrganization(ctx, existingUserID, resolvedOrganizationID)
+			if memberErr != nil {
+				return nil, memberErr
+			}
+			if alreadyMember {
+				return nil, ErrInvitationUserAlreadyMember
+			}
 		} else if lookupErr != nil && !errors.Is(lookupErr, pgx.ErrNoRows) {
 			return nil, lookupErr
+		}
+
+		if _, err := repo.db.Pool().Exec(ctx, `
+			delete from public.invitations
+			where organization_id = $1::uuid
+			  and lower(btrim(email)) = lower(btrim($2))
+			  and used_at is null
+			  and expires_at <= now()
+		`, resolvedOrganizationID, normalizedEmail); err != nil {
+			return nil, err
+		}
+
+		pending, pendingErr := repo.pendingInvitationExists(ctx, resolvedOrganizationID, normalizedEmail)
+		if pendingErr != nil {
+			return nil, pendingErr
+		}
+		if pending {
+			return nil, ErrInvitationAlreadyPending
 		}
 	}
 
@@ -278,6 +303,9 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 		returning to_jsonb(invitations)
 	`, resolvedOrganizationID, email, role, tenantContext.UserID, cleanString(request.ExpiresAt))
 	if err != nil {
+		if isPendingInvitationUniqueViolation(err) {
+			return nil, ErrInvitationAlreadyPending
+		}
 		return nil, err
 	}
 
@@ -307,6 +335,160 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 	item["email_sent"] = emailSent
 	item["existing_account"] = existingAccount
 	return item, nil
+}
+
+func (repo Repository) ResendInvitation(ctx context.Context, tenantContext tenant.Context, invitationID string) (map[string]any, error) {
+	invitationID, ok := normalizeUUID(invitationID)
+	if !ok {
+		return nil, ErrInvalidInput
+	}
+
+	var scopedOrganizationID any
+	if tenantContext.IsSuperAdmin {
+		scopedOrganizationID = nil
+	} else {
+		if tenantContext.OrganizationID == "" {
+			return nil, tenant.ErrOrganizationAccessDenied
+		}
+		scopedOrganizationID = tenantContext.OrganizationID
+	}
+
+	var organizationID string
+	var email pgtype.Text
+	var role string
+	var previousToken string
+	var previousExpiresAt time.Time
+	err := repo.db.Pool().QueryRow(ctx, `
+		select organization_id::text, email, coalesce(nullif(role, ''), 'user'), token, expires_at
+		from public.invitations
+		where id = $1::uuid
+		  and used_at is null
+		  and ($2::uuid is null or organization_id = $2::uuid)
+	`, invitationID, scopedOrganizationID).Scan(
+		&organizationID,
+		&email,
+		&role,
+		&previousToken,
+		&previousExpiresAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !email.Valid || strings.TrimSpace(email.String) == "" {
+		return nil, ErrInvitationEmailMissing
+	}
+
+	normalizedEmail, err := normalizeEmail(email.String)
+	if err != nil {
+		return nil, err
+	}
+	existingAccount := false
+	existingUserID, lookupErr := repo.userIDByEmail(ctx, normalizedEmail)
+	if lookupErr == nil && existingUserID != "" {
+		existingAccount = true
+		alreadyMember, memberErr := repo.userBelongsToOrganization(ctx, existingUserID, organizationID)
+		if memberErr != nil {
+			return nil, memberErr
+		}
+		if alreadyMember {
+			return nil, ErrInvitationUserAlreadyMember
+		}
+	} else if lookupErr != nil && !errors.Is(lookupErr, pgx.ErrNoRows) {
+		return nil, lookupErr
+	}
+
+	organizationName, err := repo.organizationName(ctx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	newToken, err := randomInvitationToken()
+	if err != nil {
+		return nil, err
+	}
+
+	item, err := repo.queryJSONObject(ctx, `
+		update public.invitations
+		set token = $2,
+		    expires_at = now() + interval '7 days'
+		where id = $1::uuid
+		  and used_at is null
+		  and token = $3
+		returning to_jsonb(invitations)
+	`, invitationID, newToken, previousToken)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if err := repo.sendInvitationEmail(ctx, invitationEmailInput{
+		Email:            normalizedEmail,
+		OrganizationName: organizationName,
+		Role:             role,
+		InviteURL:        repo.invitationURL(newToken),
+		ExistingAccount:  existingAccount,
+	}); err != nil {
+		// Preserve the prior link when the delivery provider rejects the resend.
+		_, _ = repo.db.Pool().Exec(ctx, `
+			update public.invitations
+			set token = $2,
+			    expires_at = $3
+			where id = $1::uuid
+			  and token = $4
+		`, invitationID, previousToken, previousExpiresAt, newToken)
+		return nil, fmt.Errorf("%w: %v", ErrInvitationEmailFailed, err)
+	}
+
+	item["email_sent"] = true
+	item["existing_account"] = existingAccount
+	return item, nil
+}
+
+func (repo Repository) userBelongsToOrganization(ctx context.Context, userID string, organizationID string) (bool, error) {
+	var belongs bool
+	err := repo.db.Pool().QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.users u
+			where u.id = $1::uuid
+			  and (
+				u.organization_id = $2::uuid
+				or exists (
+					select 1
+					from public.organization_members om
+					where om.user_id = u.id
+					  and om.organization_id = $2::uuid
+				)
+			  )
+		)
+	`, userID, organizationID).Scan(&belongs)
+	return belongs, err
+}
+
+func (repo Repository) pendingInvitationExists(ctx context.Context, organizationID string, email string) (bool, error) {
+	var exists bool
+	err := repo.db.Pool().QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.invitations i
+			where i.organization_id = $1::uuid
+			  and lower(btrim(i.email)) = lower(btrim($2))
+			  and i.used_at is null
+			  and i.expires_at > now()
+		)
+	`, organizationID, email).Scan(&exists)
+	return exists, err
+}
+
+func isPendingInvitationUniqueViolation(err error) bool {
+	var pgError *pgconn.PgError
+	return errors.As(err, &pgError) &&
+		pgError.Code == "23505" &&
+		pgError.ConstraintName == "invitations_pending_org_email_uidx"
 }
 
 func (repo Repository) DeleteInvitation(ctx context.Context, tenantContext tenant.Context, invitationID string) error {
@@ -1581,8 +1763,8 @@ func isAllowedOnboardingField(field string) bool {
 	}
 }
 
-func randomToken() (string, error) {
-	var bytes [8]byte
+func randomInvitationToken() (string, error) {
+	var bytes [32]byte
 	if _, err := rand.Read(bytes[:]); err != nil {
 		return "", err
 	}

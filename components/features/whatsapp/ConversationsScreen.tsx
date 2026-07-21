@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent } from "@/components/ui/dropdown-menu";
-import { Search, MessageSquare, MessageCircle, User, Loader2, MoreVertical, Archive, Trash2, Users, Paperclip, Tag, UserPlus, ArrowLeft, Zap, Plus, SlidersHorizontal } from "lucide-react";
+import { Search, MessageSquare, MessageCircle, User, Loader2, MoreVertical, Archive, Trash2, Users, Paperclip, Tag, UserPlus, ArrowLeft, Zap, Plus, SlidersHorizontal, Square } from "lucide-react";
 import { StartAutomationDialog } from "@/components/features/whatsapp/StartAutomationDialog";
 import { MessageBubble } from "@/components/features/whatsapp/MessageBubble";
 import { MessageErrorBoundary } from "@/components/features/whatsapp/MessageErrorBoundary";
@@ -44,6 +44,7 @@ import { groupLatestWhatsAppReactions } from "@/lib/whatsapp-reactions";
 import { useAuth } from "@/contexts/AuthContext";
 import { useHasPermission } from "@/hooks/use-organization-roles";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
+import { useCancelLeadExecutions } from "@/hooks/use-automations";
 
 const MAX_IMAGE_DIMENSION = 1600;
 const IMAGE_QUALITY = 0.82;
@@ -197,6 +198,7 @@ async function compressImageFile(file: File): Promise<File> {
 export default function Conversations() {
   const { user, profile, organization } = useAuth();
   const { data: canStartAutomations = false } = useHasPermission("automations_manage");
+  const cancelLeadExecutions = useCancelLeadExecutions();
   const { hasPermission } = useUserPermissions();
   const canOperateWhatsApp = hasPermission("whatsapp_operate");
   const canManageWhatsApp = hasPermission("whatsapp_manage");
@@ -782,6 +784,16 @@ export default function Conversations() {
                       {selectedLeadId && canStartAutomations && (
                         <button type="button" onClick={() => setShowAutomationDialog(true)} title="Iniciar Automação">
                           <Zap className="w-5 h-5" />
+                        </button>
+                      )}
+                      {selectedLeadId && canStartAutomations && (
+                        <button
+                          type="button"
+                          onClick={() => cancelLeadExecutions.mutate(selectedLeadId)}
+                          disabled={cancelLeadExecutions.isPending}
+                          title="Parar automação"
+                        >
+                          {cancelLeadExecutions.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Square className="w-5 h-5" />}
                         </button>
                       )}
                     </>
@@ -1398,6 +1410,16 @@ export default function Conversations() {
                       {selectedLeadId && canStartAutomations && (
                         <button type="button" onClick={() => setShowAutomationDialog(true)} title="Iniciar Automação">
                           <Zap className="w-5 h-5" />
+                        </button>
+                      )}
+                      {selectedLeadId && canStartAutomations && (
+                        <button
+                          type="button"
+                          onClick={() => cancelLeadExecutions.mutate(selectedLeadId)}
+                          disabled={cancelLeadExecutions.isPending}
+                          title="Parar automação"
+                        >
+                          {cancelLeadExecutions.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Square className="w-5 h-5" />}
                         </button>
                       )}
                     </>

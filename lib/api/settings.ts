@@ -5,6 +5,7 @@ import {
   apiCreateApiKeyResponseSchema,
   apiOrganizationApiKeyListResponseSchema,
   apiOrganizationModuleListResponseSchema,
+  apiPublicPushConfigResponseSchema,
   apiRecordEnvelopeSchema,
   apiRecordListEnvelopeSchema,
   apiSetupGuideProgressResponseSchema,
@@ -60,6 +61,12 @@ export type OrganizationModule = {
 export type SetupGuideProgress = {
   completed_steps: Record<string, boolean>;
   skipped: boolean;
+};
+
+export type PublicPushConfig = {
+  enabled: boolean;
+  publicKey: string;
+  fingerprint: string;
 };
 
 export type UserPermissionItem = {
@@ -190,6 +197,15 @@ export type UpdateSubscriptionBillingInput = {
 export type SettingsJSON = Record<string, unknown>;
 
 export const settingsAPI = {
+  async getPushConfig() {
+    const response = await vimobPublicAPIRequest<Envelope<PublicPushConfig>>('/v1/public/push-config', {
+      timeoutMs: 4_000,
+      skipTelemetry: true,
+    });
+    validateDomainResponse(apiPublicPushConfigResponseSchema, response, 'settings.push-config.get');
+    return response.data;
+  },
+
   async getSystemSettings<T = SettingsJSON>() {
     const response = await vimobPublicAPIRequest<Envelope<T | null>>('/v1/public/system-settings');
     validateDomainResponse(apiUnknownEnvelopeSchema, response, 'settings.system.get');
@@ -303,6 +319,7 @@ export const settingsAPI = {
     p256dh?: string | null;
     auth?: string | null;
     userAgent?: string | null;
+    vapidPublicKey?: string | null;
     syncOnly?: boolean;
   }, organizationId?: string | null) {
     const body = parseDomainInput(pushTokenInputSchema, input, 'settings.push-token.save');

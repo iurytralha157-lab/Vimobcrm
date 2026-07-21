@@ -1,12 +1,56 @@
 package config
 
 import (
+	"crypto/ecdh"
+	"encoding/base64"
 	"strings"
 	"testing"
 
 	authpkg "github.com/vimob-crm/vimob-crm/packages/auth"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
+
+func testVAPIDKeyPair(t *testing.T, scalar byte) (string, string) {
+	t.Helper()
+	privateBytes := make([]byte, 32)
+	privateBytes[31] = scalar
+	private, err := ecdh.P256().NewPrivateKey(privateBytes)
+	if err != nil {
+		t.Fatalf("create VAPID key: %v", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(private.PublicKey().Bytes()), base64.RawURLEncoding.EncodeToString(private.Bytes())
+}
+
+func TestConfigValidateAcceptsMatchingVAPIDPair(t *testing.T) {
+	cfg := validConfigForWebhookRolloutTest()
+	cfg.Push.VAPIDPublicKey, cfg.Push.VAPIDPrivateKey = testVAPIDKeyPair(t, 1)
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected valid VAPID pair, got %v", err)
+	}
+}
+
+func TestConfigValidateRejectsMismatchedVAPIDPair(t *testing.T) {
+	cfg := validConfigForWebhookRolloutTest()
+	cfg.Push.VAPIDPublicKey, _ = testVAPIDKeyPair(t, 1)
+	_, cfg.Push.VAPIDPrivateKey = testVAPIDKeyPair(t, 2)
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "do not form a pair") {
+		t.Fatalf("expected mismatched VAPID pair error, got %v", err)
+	}
+}
+
+func TestConfigValidateRequiresVAPIDInProduction(t *testing.T) {
+	cfg := validConfigForWebhookRolloutTest()
+	cfg.Environment = "production"
+	cfg.HTTP.CORSOrigins = []string{"https://app.vimobcrm.com.br"}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "WEB_PUSH_VAPID_PUBLIC_KEY is required") || !strings.Contains(err.Error(), "WEB_PUSH_VAPID_PRIVATE_KEY is required") {
+		t.Fatalf("expected production VAPID requirements, got %v", err)
+	}
+}
 
 func TestValidateWebhookRolloutSessionIDs(t *testing.T) {
 	tests := []struct {

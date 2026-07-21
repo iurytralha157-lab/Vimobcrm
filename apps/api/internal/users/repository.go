@@ -232,6 +232,12 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 			name = $3,
 			avatar_url = coalesce($4, avatar_url),
 			whatsapp = coalesce($5, whatsapp),
+			role = case
+			  when role = 'super_admin' then role
+			  when organization_id = $2::uuid and $6 in ('owner', 'admin') then 'admin'
+			  when organization_id = $2::uuid then 'user'
+			  else role
+			end,
 			updated_at = now()
 		where id = $1::uuid
 		  and exists (
@@ -240,7 +246,7 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 		    where om.user_id = public.users.id
 		      and om.organization_id = $2::uuid
 		  )
-	`, userID, tenantContext.OrganizationID, name, input.AvatarURL, input.Whatsapp)
+	`, userID, tenantContext.OrganizationID, name, input.AvatarURL, input.Whatsapp, memberRoleFromUserRole(role))
 	if err != nil {
 		return User{}, err
 	}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pushconfig"
 	authpkg "github.com/vimob-crm/vimob-crm/packages/auth"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -172,7 +173,7 @@ func Load() (Config, error) {
 			AppURL:       getEnv("APP_PUBLIC_URL", getEnv("NEXT_PUBLIC_SITE_URL", "https://vimobcrm.com.br")),
 		},
 		Push: PushConfig{
-			VAPIDPublicKey: getEnv("WEB_PUSH_VAPID_PUBLIC_KEY", getEnv("NEXT_PUBLIC_VAPID_PUBLIC_KEY", "")),
+			VAPIDPublicKey: getEnv("WEB_PUSH_VAPID_PUBLIC_KEY", ""),
 			VAPIDPrivateKey: getEnv(
 				"WEB_PUSH_VAPID_PRIVATE_KEY",
 				getEnv("VAPID_PRIVATE_KEY", getEnv("WEB_PUSH_PRIVATE_KEY", "")),
@@ -357,13 +358,20 @@ func (cfg Config) Validate() error {
 				validationErrors = append(validationErrors, errors.New("API_CORS_ALLOWED_ORIGINS cannot contain * in production"))
 			}
 		}
+	}
 
-		if cfg.Push.VAPIDPublicKey != "" || cfg.Push.VAPIDPrivateKey != "" {
-			if cfg.Push.VAPIDPublicKey == "" {
-				validationErrors = append(validationErrors, errors.New("WEB_PUSH_VAPID_PUBLIC_KEY is required when Web Push is enabled"))
-			}
-			if cfg.Push.VAPIDPrivateKey == "" {
-				validationErrors = append(validationErrors, errors.New("WEB_PUSH_VAPID_PRIVATE_KEY is required when Web Push is enabled"))
+	vapidPublicKey := strings.TrimSpace(cfg.Push.VAPIDPublicKey)
+	vapidPrivateKey := strings.TrimSpace(cfg.Push.VAPIDPrivateKey)
+	if cfg.Environment == "production" || vapidPublicKey != "" || vapidPrivateKey != "" {
+		if vapidPublicKey == "" {
+			validationErrors = append(validationErrors, errors.New("WEB_PUSH_VAPID_PUBLIC_KEY is required"))
+		}
+		if vapidPrivateKey == "" {
+			validationErrors = append(validationErrors, errors.New("WEB_PUSH_VAPID_PRIVATE_KEY is required"))
+		}
+		if vapidPublicKey != "" && vapidPrivateKey != "" {
+			if err := pushconfig.ValidateVAPIDKeyPair(vapidPublicKey, vapidPrivateKey); err != nil {
+				validationErrors = append(validationErrors, fmt.Errorf("WEB_PUSH_VAPID key pair is invalid: %w", err))
 			}
 		}
 	}

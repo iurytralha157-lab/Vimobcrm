@@ -14,6 +14,8 @@ export interface Invitation {
   expires_at: string;
   used_at: string | null;
   created_at: string;
+  updated_at?: string;
+  is_expired?: boolean;
   email_sent?: boolean;
 }
 
@@ -65,6 +67,21 @@ export function useDeleteInvitation() {
     },
     onError: (error) => {
       toast.error('Erro ao cancelar convite: ' + error.message);
+    },
+  });
+}
+
+export function useResendInvitation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => adminAPI.resendInvitation<Invitation>(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['invitations'] });
+      toast.success('Convite reenviado. A validade foi renovada por 7 dias.');
+    },
+    onError: (error) => {
+      toast.error('Erro ao reenviar convite: ' + error.message);
     },
   });
 }

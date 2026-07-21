@@ -21,7 +21,7 @@ interface Props {
 }
 
 export function ImoviewImportDialog({ open, onOpenChange }: Props) {
-  const { data: integration, isLoading } = useImoviewIntegration();
+  const { data: integration, isLoading } = useImoviewIntegration({ enabled: open });
   const saveIntegration = useSaveImoviewIntegration();
   const testConnection = useTestImoviewConnection();
   const syncProperties = useSyncImoviewProperties();

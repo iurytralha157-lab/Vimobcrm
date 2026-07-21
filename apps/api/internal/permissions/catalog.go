@@ -207,6 +207,7 @@ func DefaultSet(memberRole string, isTeamLeader bool) map[string]bool {
 		AttentionView,
 		WhatsAppView,
 		WhatsAppOperate,
+		WhatsAppManage,
 		PropertyView,
 		ScheduleView,
 		ScheduleManage,

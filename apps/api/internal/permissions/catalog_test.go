@@ -4,12 +4,12 @@ import "testing"
 
 func TestResolveAppliesDefaultsAndLeaderScope(t *testing.T) {
 	standard := Resolve("user", false, nil, nil)
-	if !Has(standard, LeadViewOwn) || !Has(standard, LeadOperate) || Has(standard, LeadViewTeam) {
+	if !Has(standard, LeadViewOwn) || !Has(standard, LeadOperate) || !Has(standard, WhatsAppManage) || Has(standard, SettingsIntegrations) || Has(standard, LeadViewTeam) {
 		t.Fatalf("unexpected standard permissions: %v", standard)
 	}
 
 	leader := Resolve("user", true, nil, nil)
-	if !Has(leader, LeadViewTeam) || !Has(leader, TeamManage) || Has(leader, DistributionManage) {
+	if !Has(leader, LeadViewTeam) || !Has(leader, TeamManage) || !Has(leader, WhatsAppManage) || Has(leader, SettingsIntegrations) || Has(leader, DistributionManage) {
 		t.Fatalf("unexpected leader permissions: %v", leader)
 	}
 }

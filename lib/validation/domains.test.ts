@@ -148,8 +148,16 @@ test('automacao rejeita grafo desconectado, ciclico e acao desconhecida', () => 
     },
   }).success, false)
 
+  assert.equal(saveAutomationFlowInputSchema.safeParse({
+    flowDefinition: {
+      ...validAutomationFlow,
+      nodes: validAutomationFlow.nodes.map((node) => node.id === 'message-1'
+        ? { ...node, action_type: 'move_lead' as const, config: { pipeline_id: ID, stage_id: ID } }
+        : node),
+    },
+  }).success, true)
+
   const unsupportedCrmActions = [
-    { action_type: 'move_lead' as const, config: { pipeline_id: ID, stage_id: ID } },
     { action_type: 'assign_user' as const, config: { user_id: ID } },
     { action_type: 'set_variable' as const, config: { actionType: 'property_interest', property_id: ID } },
   ]

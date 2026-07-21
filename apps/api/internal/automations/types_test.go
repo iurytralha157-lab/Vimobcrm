@@ -322,12 +322,21 @@ func TestCreateRequestRejectsActiveDraftWithoutFlow(t *testing.T) {
 	}
 }
 
+func TestFlowAcceptsCanonicalMoveLeadAction(t *testing.T) {
+	request := validSaveFlowRequest()
+	actionType := "move_lead"
+	request.FlowDefinition.Nodes[1].ActionType = &actionType
+	request.FlowDefinition.Nodes[1].Config = json.RawMessage(`{"pipeline_id":"` + testUUID + `","stage_id":"` + testUUID + `"}`)
+	if _, err := request.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v, want canonical move_lead action to be accepted", err)
+	}
+}
+
 func TestFlowRejectsActionsWithoutCanonicalLeadCommandService(t *testing.T) {
 	tests := []struct {
 		actionType string
 		config     string
 	}{
-		{actionType: "move_lead", config: `{"pipeline_id":"` + testUUID + `","stage_id":"` + testUUID + `"}`},
 		{actionType: "assign_user", config: `{"user_id":"` + testUUID + `"}`},
 		{actionType: "set_variable", config: `{"actionType":"property_interest","property_id":"` + testUUID + `"}`},
 		{actionType: "set_variable", config: `{"actionType":"deal_status","status":"won"}`},

@@ -48,6 +48,7 @@ export const pushTokenInputSchema = z.object({
   p256dh: z.string().trim().max(1_000).nullish(),
   auth: z.string().trim().max(1_000).nullish(),
   userAgent: z.string().trim().max(1_000).nullish(),
+  vapidPublicKey: z.string().trim().min(1).max(500).nullish(),
   syncOnly: z.boolean().optional(),
 }).strict()
 export const createApiKeyInputSchema = z.object({
@@ -116,6 +117,11 @@ export const apiSetupGuideProgressSchema = z.object({
   completed_steps: z.record(z.boolean()),
   skipped: z.boolean(),
 }).passthrough()
+export const apiPublicPushConfigSchema = z.object({
+  enabled: z.boolean(),
+  publicKey: z.string().trim().max(500),
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict()
 export const apiSubscriptionOverviewSchema = z.object({
   org: z.record(z.unknown()).nullable(),
   plan: z.record(z.unknown()).nullable(),
@@ -143,6 +149,7 @@ export const apiAssetUploadResponseSchema = apiEnvelopeSchema(apiAssetUploadSche
 export const apiOrganizationApiKeyListResponseSchema = apiEnvelopeSchema(z.array(apiOrganizationApiKeySchema))
 export const apiOrganizationModuleListResponseSchema = apiEnvelopeSchema(z.array(apiOrganizationModuleSchema))
 export const apiSetupGuideProgressResponseSchema = apiEnvelopeSchema(apiSetupGuideProgressSchema)
+export const apiPublicPushConfigResponseSchema = apiEnvelopeSchema(apiPublicPushConfigSchema)
 export const apiCreateApiKeyResponseSchema = apiEnvelopeSchema(z.object({
   apiKey: z.string().min(1),
   key: apiOrganizationApiKeySchema,

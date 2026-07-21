@@ -162,6 +162,20 @@ func (handler Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) 
 	httpserver.WriteJSON(w, http.StatusCreated, Envelope[map[string]any]{Data: item})
 }
 
+func (handler Handler) ResendInvitation(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.UserID == "" {
+		httpserver.WriteError(w, r, http.StatusUnauthorized, "unauthorized", "Missing authenticated user.")
+		return
+	}
+	item, err := handler.repo.ResendInvitation(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writeAdminError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[map[string]any]{Data: item})
+}
+
 func (handler Handler) DeleteInvitation(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := tenant.FromContext(r.Context())
 	if !ok || tenantContext.UserID == "" {
@@ -664,6 +678,12 @@ func parsePositiveInt(value string, fallback int) int {
 
 func writeAdminError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrInvitationUserAlreadyMember):
+		httpserver.WriteError(w, r, http.StatusConflict, "invitation_user_already_member", "Este usuario ja esta cadastrado na sua imobiliaria.")
+	case errors.Is(err, ErrInvitationAlreadyPending):
+		httpserver.WriteError(w, r, http.StatusConflict, "invitation_already_pending", "Ja existe um convite pendente para este usuario nesta imobiliaria.")
+	case errors.Is(err, ErrInvitationEmailMissing):
+		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, "invitation_email_missing", "Este convite nao possui um e-mail para reenvio.")
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_admin_input", "Admin input is invalid.")
 	case errors.Is(err, ErrNotFound):

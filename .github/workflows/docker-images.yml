@@ -24,7 +24,6 @@ jobs:
       WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_AnQ_6OJi0LuPUyxFh7rVwA_biv5WTyf' }}
       WEB_NEXT_PUBLIC_VIMOB_API_URL: ${{ vars.VIMOB_NEXT_PUBLIC_API_URL || secrets.VIMOB_NEXT_PUBLIC_API_URL || 'https://api.vimobcrm.com.br' }}
       WEB_NEXT_PUBLIC_SITE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SITE_URL || secrets.VIMOB_NEXT_PUBLIC_SITE_URL || 'https://app.vimobcrm.com.br' }}
-      WEB_NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${{ vars.VIMOB_NEXT_PUBLIC_VAPID_PUBLIC_KEY || secrets.VIMOB_NEXT_PUBLIC_VAPID_PUBLIC_KEY || vars.WEB_PUSH_VAPID_PUBLIC_KEY || secrets.WEB_PUSH_VAPID_PUBLIC_KEY || 'BKHfLz2QmeOLdhRYV3kr51Ffnn0Uyo5No4MN59N3ujKPATVbmQJ3-R6tExHHBci6v8LD3wnX-Y2DwSLo4Ht67YI' }}
 
     steps:
       - name: Checkout
@@ -44,10 +43,6 @@ jobs:
           fi
           if [ -z "$WEB_NEXT_PUBLIC_VIMOB_API_URL" ]; then
             echo "::error::Missing NEXT_PUBLIC_VIMOB_API_URL in GitHub Actions variables or secrets."
-            missing=1
-          fi
-          if [ -z "$WEB_NEXT_PUBLIC_VAPID_PUBLIC_KEY" ]; then
-            echo "::error::Missing VIMOB_NEXT_PUBLIC_VAPID_PUBLIC_KEY or WEB_PUSH_VAPID_PUBLIC_KEY in GitHub Actions variables or secrets."
             missing=1
           fi
           exit "$missing"
@@ -99,5 +94,4 @@ jobs:
             NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ env.WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
             NEXT_PUBLIC_VIMOB_API_URL=${{ env.WEB_NEXT_PUBLIC_VIMOB_API_URL }}
             NEXT_PUBLIC_SITE_URL=${{ env.WEB_NEXT_PUBLIC_SITE_URL }}
-            NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ env.WEB_NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
           tags: ${{ steps.web-meta.outputs.tags }}

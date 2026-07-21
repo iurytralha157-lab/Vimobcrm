@@ -3,9 +3,12 @@ package admin
 import "errors"
 
 var (
-	ErrInvalidInput          = errors.New("invalid admin input")
-	ErrNotFound              = errors.New("admin resource not found")
-	ErrInvitationEmailFailed = errors.New("invitation email failed")
+	ErrInvalidInput                = errors.New("invalid admin input")
+	ErrNotFound                    = errors.New("admin resource not found")
+	ErrInvitationEmailFailed       = errors.New("invitation email failed")
+	ErrInvitationEmailMissing      = errors.New("invitation email is missing")
+	ErrInvitationUserAlreadyMember = errors.New("invitation user already belongs to organization")
+	ErrInvitationAlreadyPending    = errors.New("invitation already pending for organization and email")
 )
 
 type Envelope[T any] struct {

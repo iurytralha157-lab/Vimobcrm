@@ -89,6 +89,33 @@ func TestPermanentPushDeliveryFailure(t *testing.T) {
 	}
 }
 
+func TestPermanentPushFailureIsNotRetriedOrOverwritten(t *testing.T) {
+	t.Parallel()
+
+	metadata := setNotificationChannelDispatch(map[string]any{}, "push", DispatchChannelResult{
+		Enabled:   true,
+		Attempted: true,
+		Permanent: true,
+		Provider:  "web_push",
+		Status:    401,
+		Error:     "VAPID credentials do not correspond",
+	})
+	pushDispatch := mapFromAny(mapFromAny(metadata["dispatch"])["push"])
+
+	if pushDispatch["status"] != "permanent_failed" {
+		t.Fatalf("expected permanent_failed status, got %#v", pushDispatch["status"])
+	}
+	if pushDispatch["attempts"] != 1 {
+		t.Fatalf("expected one dispatch attempt, got %#v", pushDispatch["attempts"])
+	}
+	if shouldAttemptNotificationChannel(metadata, "push", nil) {
+		t.Fatal("permanent push failure must not be retried")
+	}
+	if pushDispatch["error"] != "VAPID credentials do not correspond" {
+		t.Fatalf("expected provider error to be preserved, got %#v", pushDispatch["error"])
+	}
+}
+
 func TestPushSubscriptionRoutingDoesNotTreatLegacyWebTokenAsNative(t *testing.T) {
 	t.Parallel()
 
