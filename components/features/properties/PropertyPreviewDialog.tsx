@@ -109,10 +109,13 @@ export function PropertyPreviewDialog({
   );
   const propertyId = property?.id ?? null;
   const currentImageIndex = imageSelection.propertyId === propertyId ? imageSelection.index : 0;
+  const responsibleUserId = property?.responsible_user_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(property.responsible_user_id)
+    ? property.responsible_user_id
+    : null;
   const cadastroUserId = property?.cadastrado_por && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(property.cadastrado_por)
     ? property.cadastrado_por
     : null;
-  const captorUserId = property?.corretor_id || cadastroUserId;
+  const captorUserId = responsibleUserId || cadastroUserId || property?.corretor_id;
   const { data: captorUser } = useQuery({
     queryKey: ['property-captor', property?.organization_id, captorUserId],
     queryFn: async () => {
