@@ -114,7 +114,8 @@ func (repo Repository) processRedistributionWarnings(ctx context.Context, tx pgx
 			"warning_minutes": job.WarningMinutes,
 			"round_robin_id":  job.RoundRobinID,
 			"job_id":          job.ID,
-			"dedupe_key":      notificationDedupeKey("lead_redistribution_warning", job.ID, job.CurrentAssignedUserID),
+			"attempt_count":   job.AttemptCount,
+			"dedupe_key":      redistributionWarningDedupeKey(job),
 		}); err != nil {
 			return err
 		}
@@ -131,6 +132,15 @@ func (repo Repository) processRedistributionWarnings(ctx context.Context, tx pgx
 	}
 
 	return nil
+}
+
+func redistributionWarningDedupeKey(job redistributionJob) string {
+	return notificationDedupeKey(
+		"lead_redistribution_warning",
+		job.ID,
+		job.CurrentAssignedUserID,
+		fmt.Sprintf("attempt_%d", job.AttemptCount),
+	)
 }
 
 func (repo Repository) processDueRedistributions(ctx context.Context, tx pgx.Tx) error {

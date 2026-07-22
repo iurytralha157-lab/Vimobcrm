@@ -74,3 +74,21 @@ func TestRedistributionHasHumanActivityCoversAllIdleSignals(t *testing.T) {
 		}
 	}
 }
+
+func TestRedistributionWarningDedupeKeyChangesEveryAttempt(t *testing.T) {
+	t.Parallel()
+
+	job := redistributionJob{
+		ID:                    "11111111-1111-4111-8111-111111111111",
+		CurrentAssignedUserID: "22222222-2222-4222-8222-222222222222",
+	}
+	first := redistributionWarningDedupeKey(job)
+	job.AttemptCount = 2
+	third := redistributionWarningDedupeKey(job)
+	if first == third {
+		t.Fatal("warning dedupe key must be unique for each redistribution attempt")
+	}
+	if !strings.Contains(first, "attempt_0") || !strings.Contains(third, "attempt_2") {
+		t.Fatalf("dedupe keys must identify the attempt: first=%q third=%q", first, third)
+	}
+}
