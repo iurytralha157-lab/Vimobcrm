@@ -40,14 +40,18 @@ import { CalendarView } from "@/components/features/schedule/CalendarView";
 import { EventsList } from "@/components/features/schedule/EventsList";
 import { EventSheet } from "@/components/features/schedule/EventSheet";
 import { UserFilter } from "@/components/features/schedule/UserFilter";
-import { useScheduleEvents, ScheduleEvent, useScheduleCapabilities, useUpdateScheduleEvent } from "@/hooks/use-schedule-events";
+import {
+  useScheduleEvents,
+  type EventType,
+  type ScheduleEvent,
+  useScheduleCapabilities,
+  useUpdateScheduleEvent,
+} from "@/hooks/use-schedule-events";
 import { useScheduleUsers } from "@/hooks/use-schedule-users";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { VimobLoader } from "@/components/shared/loading/VimobLoader";
@@ -62,6 +66,15 @@ const EVENT_TYPE_CONFIG: Record<string, { label: string; color: string; bg: stri
   message: { label: "Mensagem", color: "#22c55e", bg: "rgba(34,197,94,0.18)", icon: MessageSquare },
   visit: { label: "Visita ao imóvel", color: "#ec4899", bg: "rgba(236,72,153,0.18)", icon: Home },
 };
+
+const EVENT_TYPE_FILTER_OPTIONS: Array<{ value: EventType; label: string; icon: React.ElementType }> = [
+  { value: "call", label: "Ligação", icon: Phone },
+  { value: "email", label: "E-mail", icon: Mail },
+  { value: "meeting", label: "Reunião", icon: Video },
+  { value: "task", label: "Tarefa", icon: ClipboardList },
+  { value: "message", label: "Mensagem", icon: MessageSquare },
+  { value: "visit", label: "Visita ao imóvel", icon: Home },
+];
 
 const AGENDA_VIEW_MODES = ["day", "week", "month", "year", "list"] as const;
 type AgendaViewMode = typeof AGENDA_VIEW_MODES[number];
@@ -88,6 +101,7 @@ export default function Agenda() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [pivotDate, setPivotDate] = useState(new Date());
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [selectedEventType, setSelectedEventType] = useState<EventType | null>(null);
   const [viewMode, setViewMode] = useState<AgendaViewMode>(() => {
     if (typeof window === "undefined") return "week";
     const saved = localStorage.getItem("agendaViewMode");
@@ -96,15 +110,6 @@ export default function Agenda() {
   useEffect(() => {
     localStorage.setItem("agendaViewMode", viewMode);
   }, [viewMode]);
-
-  const [showThirtyMinLines, setShowThirtyMinLines] = useState(() => {
-    if (typeof window === "undefined") return false;
-    const saved = localStorage.getItem("agendaShowThirtyMinLines");
-    return saved === "true";
-  });
-  useEffect(() => {
-    localStorage.setItem("agendaShowThirtyMinLines", String(showThirtyMinLines));
-  }, [showThirtyMinLines]);
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetEvent, setSheetEvent] = useState<ScheduleEvent | null>(null);
@@ -142,16 +147,21 @@ export default function Agenda() {
     eventId: focusedEventId || undefined,
   });
 
+  const filteredEvents = useMemo(
+    () => selectedEventType ? events.filter((event) => event.event_type === selectedEventType) : events,
+    [events, selectedEventType],
+  );
+
   const upcomingEvents = useMemo(() => {
     const today = startOfDay(new Date());
     const next = addDays(today, 7);
-    return events
+    return filteredEvents
       .filter((ev) => {
         const d = new Date(ev.start_time);
         return d >= today && d <= next && ev.status !== "completed";
       })
       .slice(0, 10);
-  }, [events]);
+  }, [filteredEvents]);
 
   const openCreateSheet = useCallback(() => {
     setSheetEvent(null);
@@ -230,7 +240,7 @@ export default function Agenda() {
     { key: "visit", label: "Visita ao imóvel" },
   ];
 
-  const activeFiltersCount = (selectedUserId ? 1 : 0);
+  const activeFiltersCount = (selectedUserId ? 1 : 0) + (selectedEventType ? 1 : 0);
   const navigationStep =
     effectiveViewMode === "week" ? 7 : effectiveViewMode === "month" ? 30 : effectiveViewMode === "year" ? 365 : 1;
   const periodLabel =
@@ -313,8 +323,8 @@ export default function Agenda() {
                     )}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-80 rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 shadow-none z-50" align="end">
-                  <div className="p-4 flex flex-col gap-6">
+                <PopoverContent className="z-50 max-h-[calc(100dvh-5rem)] w-80 overflow-y-auto rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 shadow-none" align="end">
+                  <div className="flex flex-col gap-4 p-4">
                     {/* Visualização */}
                     {!isMobile && (
                     <div className="flex flex-col gap-3">
@@ -343,18 +353,44 @@ export default function Agenda() {
                     </div>
                     )}
 
-                    {/* Configurações de Grade */}
+                    {/* Filtro por tipo de agendamento */}
                     <div className="flex flex-col gap-3">
-                      <SideLabel>Configurações</SideLabel>
-                      <div className="flex items-center justify-between px-1">
-                        <Label htmlFor="grid-lines" className="text-xs font-medium text-[var(--color-text-secondary)]">
-                          Mostrar linhas de 30 min
-                        </Label>
-                        <Switch
-                          id="grid-lines"
-                          checked={showThirtyMinLines}
-                          onCheckedChange={setShowThirtyMinLines}
-                        />
+                      <SideLabel>Tipo de agendamento</SideLabel>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedEventType(null)}
+                          className={cn(
+                            "col-span-2 flex items-center gap-2 rounded-[6px] border-0 px-3 py-2 text-xs font-medium transition-colors",
+                            selectedEventType === null
+                              ? "bg-primary/15 text-primary"
+                              : "bg-[var(--app-surface-soft)] text-[var(--color-text-secondary)] hover:bg-[var(--app-surface-hover)]",
+                          )}
+                        >
+                          <CalendarIcon size={14} />
+                          Todos os tipos
+                        </button>
+                        {EVENT_TYPE_FILTER_OPTIONS.map((option) => {
+                          const active = selectedEventType === option.value;
+                          const Icon = option.icon;
+
+                          return (
+                            <button
+                              key={option.value}
+                              type="button"
+                              onClick={() => setSelectedEventType(option.value)}
+                              className={cn(
+                                "flex min-w-0 items-center gap-2 rounded-[6px] border-0 px-3 py-2 text-left text-xs font-medium transition-colors",
+                                active
+                                  ? "bg-primary/15 text-primary"
+                                  : "bg-[var(--app-surface-soft)] text-[var(--color-text-secondary)] hover:bg-[var(--app-surface-hover)]",
+                              )}
+                            >
+                              <Icon className="h-3.5 w-3.5 shrink-0" />
+                              <span className="truncate">{option.label}</span>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
 
@@ -371,13 +407,13 @@ export default function Agenda() {
                     )}
 
                     {(activeFiltersCount > 0) && (
-                      <div className="pt-4">
+                      <div>
                         <Button
-                          variant="ghost"
                           size="sm"
-                          className="w-full text-xs gap-2 text-red-400 hover:text-red-300 hover:bg-red-400/10"
+                          className="w-full gap-2 bg-primary text-xs text-primary-foreground shadow-none hover:bg-primary/90 hover:text-primary-foreground"
                           onClick={() => {
                             setSelectedUserId(null);
+                            setSelectedEventType(null);
                           }}
                         >
                           <Trash2 size={13} />
@@ -417,7 +453,7 @@ export default function Agenda() {
               </div>
             ) : effectiveViewMode !== "list" ? (
               <CalendarView
-                events={events}
+                events={filteredEvents}
                 selectedDate={selectedDate}
                 onDateSelect={setSelectedDate}
                 pivotDate={pivotDate}
@@ -431,7 +467,6 @@ export default function Agenda() {
                       visibility: updates.visibility ?? undefined,
                     })
                 }
-                showThirtyMinLines={showThirtyMinLines}
                 canManageEvents={canManageSchedule}
                 onQuickCreate={canManageSchedule ? (date) => {
                     setSelectedDate(date);

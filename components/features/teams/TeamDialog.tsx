@@ -287,7 +287,7 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                             {getInitials(user.name || '?')}
                           </AvatarFallback>
                         </Avatar>
-                        <div className="min-w-0 flex-1 max-[380px]:hidden">
+                        <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-semibold">{user.name}</p>
                           <p className="truncate text-xs text-[var(--app-text-tertiary)]">{user.email}</p>
                         </div>

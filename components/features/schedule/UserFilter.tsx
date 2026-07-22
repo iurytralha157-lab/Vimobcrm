@@ -63,8 +63,8 @@ export function UserFilter({ users, selectedUserId, onUserSelect, showAllOption 
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[200px] p-0 bg-[#171717] border border-white/[0.055] shadow-xl z-50">
-        <Command filter={commandSearchFilter}>
+      <PopoverContent className="z-50 w-[200px] border-0 bg-[var(--app-surface-solid)] p-0 shadow-none">
+        <Command className="bg-[var(--app-surface-solid)] [&_[cmdk-input-wrapper]]:border-b-0" filter={commandSearchFilter}>
           <CommandInput placeholder="Buscar usuário..." />
           <CommandList>
             <CommandEmpty>Nenhum usuário encontrado.</CommandEmpty>

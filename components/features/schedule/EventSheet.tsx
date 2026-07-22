@@ -641,7 +641,7 @@ export function EventSheet({
                     </button>
                   </PopoverTrigger>
                   <PopoverContent className={cn("w-[260px] p-0", agendaPopoverClass)} align="start">
-                    <Command filter={commandSearchFilter} className="bg-transparent">
+                    <Command filter={commandSearchFilter} className="bg-transparent [&_[cmdk-input-wrapper]]:border-b-0">
                       <CommandInput placeholder="Adicionar responsável..." />
                       <CommandList>
                         <CommandEmpty>Sem usuários disponíveis.</CommandEmpty>
@@ -743,7 +743,7 @@ export function EventSheet({
                   </button>
                 </PopoverTrigger>
                 <PopoverContent className={cn("w-[360px] p-0", agendaPopoverClass)} align="start">
-                  <Command shouldFilter={false} className="bg-transparent">
+                  <Command shouldFilter={false} className="bg-transparent [&_[cmdk-input-wrapper]]:border-b-0">
                     <CommandInput placeholder="Buscar por nome, telefone ou e-mail..." value={leadSearch} onValueChange={setLeadSearch} />
                     <CommandList>
                       <CommandEmpty>Nenhum lead encontrado.</CommandEmpty>

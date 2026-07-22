@@ -197,6 +197,15 @@ function isRuleConditionType(value: unknown): value is RuleConditionType {
   return typeof value === 'string' && CONDITION_TYPES.some((condition) => condition.value === value);
 }
 
+function conditionOptionBadgeClass(selected: boolean) {
+  return cn(
+    'cursor-pointer rounded-[6px] border px-2.5 py-1 shadow-none',
+    selected
+      ? 'border-primary bg-primary text-primary-foreground hover:bg-primary/90'
+      : 'border-[var(--app-border-strong)] bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]',
+  );
+}
+
 // Sortable Item Component for Members
 function SortableMemberRow({
   member,
@@ -674,8 +683,8 @@ export function DistributionQueueEditor({
             {SOURCE_OPTIONS.map(opt => (
               <Badge
                 key={opt.value}
-                variant={condition.values.includes(opt.value) ? 'default' : 'outline'}
-                className="cursor-pointer"
+                variant="outline"
+                className={conditionOptionBadgeClass(condition.values.includes(opt.value))}
                 onClick={() => {
                   const newValues = condition.values.includes(opt.value)
                     ? condition.values.filter(v => v !== opt.value)
@@ -701,8 +710,8 @@ export function DistributionQueueEditor({
               {incomingWebhooks.map(wh => (
                 <Badge
                   key={wh.id}
-                  variant={condition.values.includes(wh.id) ? 'default' : 'outline'}
-                  className="cursor-pointer gap-1"
+                  variant="outline"
+                  className={cn(conditionOptionBadgeClass(condition.values.includes(wh.id)), 'gap-1')}
                   onClick={() => {
                     const newValues = condition.values.includes(wh.id)
                       ? condition.values.filter(v => v !== wh.id)
@@ -730,8 +739,8 @@ export function DistributionQueueEditor({
               {activeWhatsAppSessions.map(session => (
                 <Badge
                   key={session.id}
-                  variant={condition.values.includes(session.id) ? 'default' : 'outline'}
-                  className="cursor-pointer gap-1"
+                  variant="outline"
+                  className={cn(conditionOptionBadgeClass(condition.values.includes(session.id)), 'gap-1')}
                   onClick={() => {
                     const newValues = condition.values.includes(session.id)
                       ? condition.values.filter(v => v !== session.id)
@@ -759,8 +768,8 @@ export function DistributionQueueEditor({
               {metaFormConfigs.map(form => (
                 <Badge
                   key={form.form_id}
-                  variant={condition.values.includes(form.form_id) ? 'default' : 'outline'}
-                  className="cursor-pointer gap-1"
+                  variant="outline"
+                  className={cn(conditionOptionBadgeClass(condition.values.includes(form.form_id)), 'gap-1')}
                   onClick={() => {
                     const newValues = condition.values.includes(form.form_id)
                       ? condition.values.filter(v => v !== form.form_id)
@@ -780,8 +789,8 @@ export function DistributionQueueEditor({
             {WEBSITE_CATEGORY_OPTIONS.map(opt => (
               <Badge
                 key={opt.value}
-                variant={condition.values.includes(opt.value) ? 'default' : 'outline'}
-                className="cursor-pointer gap-1"
+                variant="outline"
+                className={cn(conditionOptionBadgeClass(condition.values.includes(opt.value)), 'gap-1')}
                 onClick={() => {
                   const newValues = condition.values.includes(opt.value)
                     ? condition.values.filter(v => v !== opt.value)
@@ -814,9 +823,9 @@ export function DistributionQueueEditor({
             {tags.map(tag => (
               <Badge
                 key={tag.id}
-                variant={condition.values.includes(tag.id) ? 'default' : 'outline'}
-                className="cursor-pointer"
-                style={condition.values.includes(tag.id) ? { backgroundColor: tag.color } : {}}
+                variant="outline"
+                className={conditionOptionBadgeClass(condition.values.includes(tag.id))}
+                style={condition.values.includes(tag.id) ? { backgroundColor: tag.color, borderColor: tag.color } : {}}
                 onClick={() => {
                   const newValues = condition.values.includes(tag.id)
                     ? condition.values.filter(v => v !== tag.id)
@@ -970,7 +979,7 @@ export function DistributionQueueEditor({
                     Defina quais leads entram nesta fila. Use canal para regras amplas e os campos específicos quando quiser travar uma origem exata.
                   </p>
                   {formData.conditions.map((condition) => (
-                    <div key={condition.id} className="space-y-3 rounded-lg border-0 bg-[var(--app-surface-soft)] p-3">
+                    <div key={condition.id} className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-soft)] p-3">
                       <div className="flex items-center justify-between gap-2">
                         <Select
                           value={condition.type}
@@ -980,7 +989,7 @@ export function DistributionQueueEditor({
                             }
                           }}
                         >
-                          <SelectTrigger className="w-full min-w-0 sm:w-56">
+                          <SelectTrigger className="w-full min-w-0 border border-[var(--app-border)] bg-[var(--app-surface-solid)] shadow-none sm:w-56">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>

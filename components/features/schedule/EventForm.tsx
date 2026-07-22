@@ -271,7 +271,7 @@ export function EventForm({ open, onOpenChange, event, leadId, leadName, default
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="p-0 w-[400px]" align="start">
-                      <Command filter={commandSearchFilter} className="rounded-xl">
+                      <Command filter={commandSearchFilter} className="rounded-xl [&_[cmdk-input-wrapper]]:border-b-0">
                         <CommandInput
                           placeholder="Buscar por nome, telefone ou email..."
                           value={leadSearch}

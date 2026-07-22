@@ -5,6 +5,7 @@ import "errors"
 var (
 	ErrInvalidInput         = errors.New("invalid team input")
 	ErrTeamNotFound         = errors.New("team not found")
+	ErrTeamInUse            = errors.New("team is in use")
 	ErrTeamMemberNotFound   = errors.New("team member not found")
 	ErrStorageNotConfigured = errors.New("team storage is not configured")
 	ErrStorageOperation     = errors.New("team storage operation failed")

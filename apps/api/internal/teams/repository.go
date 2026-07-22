@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -290,18 +291,45 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 		return err
 	}
 
+	var teamInUse bool
+	if err := tx.QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.round_robin_members member
+			join public.round_robins queue
+			  on queue.id = member.round_robin_id
+			 and queue.organization_id = $1::uuid
+			where member.team_id = $2::uuid
+		)
+	`, tenantContext.OrganizationID, teamID).Scan(&teamInUse); err != nil {
+		return err
+	}
+	if teamInUse {
+		return ErrTeamInUse
+	}
+
 	tag, err := tx.Exec(ctx, `
 		delete from public.teams
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 	`, tenantContext.OrganizationID, teamID)
 	if err != nil {
+		if isTeamInUseForeignKeyViolation(err) {
+			return ErrTeamInUse
+		}
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrTeamNotFound
 	}
 	return tx.Commit(ctx)
+}
+
+func isTeamInUseForeignKeyViolation(err error) bool {
+	var databaseError *pgconn.PgError
+	return errors.As(err, &databaseError) &&
+		databaseError.Code == "23503" &&
+		databaseError.ConstraintName == "round_robin_members_team_id_fkey"
 }
 
 func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, teamID string) (Team, error) {

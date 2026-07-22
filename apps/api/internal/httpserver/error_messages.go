@@ -36,6 +36,7 @@ var exactUserErrorMessages = map[string]string{
 	"site_contact_rate_limited":            "Muitas tentativas. Aguarde um minuto e tente novamente.",
 	"streaming_not_supported":              "A atualização em tempo real não está disponível neste ambiente.",
 	"tag_already_exists":                   "Já existe uma tag com este nome.",
+	"team_in_use":                          "Não é possível excluir esta equipe porque ela está sendo usada em uma fila de distribuição. Remova-a da fila antes de tentar novamente.",
 	"tenant_resolution_failed":             "Não foi possível identificar a organização. Atualize a página e tente novamente.",
 	"unauthorized":                         "Sua sessão expirou ou não é válida. Entre novamente.",
 	"user_conflict":                        "Já existe um usuário cadastrado com esses dados.",

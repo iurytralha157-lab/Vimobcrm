@@ -349,6 +349,8 @@ func writeTeamError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_team_input", "Team input is invalid.")
+	case errors.Is(err, ErrTeamInUse):
+		httpserver.WriteError(w, r, http.StatusConflict, "team_in_use", "Team is used by a distribution queue.")
 	case errors.Is(err, ErrTeamNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "team_not_found", "Team was not found.")
 	case errors.Is(err, ErrTeamMemberNotFound):
