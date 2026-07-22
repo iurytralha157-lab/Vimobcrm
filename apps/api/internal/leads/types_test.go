@@ -382,6 +382,45 @@ func TestWonPropertyUnavailableMessage(t *testing.T) {
 	}
 }
 
+func TestReopenedPropertyRestoreStatus(t *testing.T) {
+	tests := []struct {
+		status string
+		want   string
+	}{
+		{status: "active", want: "active"},
+		{status: "Disponivel", want: "Disponivel"},
+		{status: "reserved", want: "active"},
+		{status: "Reservado", want: "active"},
+		{status: "sold", want: "active"},
+		{status: "inactive", want: "active"},
+		{status: "", want: "active"},
+	}
+
+	for _, test := range tests {
+		if got := reopenedPropertyRestoreStatus(test.status); got != test.want {
+			t.Fatalf("reopenedPropertyRestoreStatus(%q) = %q, want %q", test.status, got, test.want)
+		}
+	}
+}
+
+func TestIsReservedLeadPropertyStatus(t *testing.T) {
+	tests := []struct {
+		status string
+		want   bool
+	}{
+		{status: "reserved", want: true},
+		{status: "Reservado", want: true},
+		{status: "active", want: false},
+		{status: "", want: false},
+	}
+
+	for _, test := range tests {
+		if got := isReservedLeadPropertyStatus(test.status); got != test.want {
+			t.Fatalf("isReservedLeadPropertyStatus(%q) = %t, want %t", test.status, got, test.want)
+		}
+	}
+}
+
 func TestLeadPropertyUnavailableErrorMessage(t *testing.T) {
 	message := "Este imovel ja esta reservado. Consulte o administrador antes de marcar o lead como ganho."
 	err := fmt.Errorf("%w: %s", ErrLeadPropertyUnavailable, message)

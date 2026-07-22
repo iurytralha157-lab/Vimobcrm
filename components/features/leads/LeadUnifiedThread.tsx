@@ -425,7 +425,7 @@ function normalizeEventLabel(event: UnifiedHistoryEvent) {
   }
 
   if (event.type === 'status_change') {
-    const toStatus = String(metadata.to_status || '').toLowerCase();
+    const toStatus = String(metadata.to_status || metadata.new_status || '').toLowerCase();
     if (toStatus === 'won') return 'Lead marcado como ganho';
     if (toStatus === 'lost') return 'Lead marcado como perdido';
     if (toStatus === 'open') return 'Lead reaberto';
@@ -495,7 +495,7 @@ function isTechnicalMetaAnswerEvent(event: UnifiedHistoryEvent) {
 }
 
 function isWonStatusEvent(event: UnifiedHistoryEvent) {
-  const toStatus = String(event.metadata?.to_status || '').toLowerCase();
+  const toStatus = String(event.metadata?.to_status || event.metadata?.new_status || '').toLowerCase();
   return toStatus === 'won' || /marcado como ganho/i.test(`${event.label || ''} ${event.content || ''}`);
 }
 
@@ -525,7 +525,7 @@ function isFeedbackEvent(event: UnifiedHistoryEvent) {
 
 function getEventTone(event: UnifiedHistoryEvent) {
   const text = `${event.type} ${event.label} ${event.content || ''}`.toLowerCase();
-  const toStatus = String(event.metadata?.to_status || '').toLowerCase();
+  const toStatus = String(event.metadata?.to_status || event.metadata?.new_status || '').toLowerCase();
 
   if (event.type === 'lead_created' || text.includes('foi criado')) {
     return 'bg-green-600 !text-white';
@@ -566,16 +566,28 @@ function getEventTone(event: UnifiedHistoryEvent) {
     return 'bg-[color-mix(in_srgb,#f59e0b_16%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#f59e0b_72%,var(--app-text-primary))]';
   }
 
-  if (toStatus === 'lost' || text.includes('perdido') || text.includes('perda')) {
+  if (toStatus === 'won') {
+    return 'bg-emerald-600 !text-white';
+  }
+
+  if (toStatus === 'lost') {
     return 'bg-red-600 !text-white';
   }
 
-  if (toStatus === 'open' || text.includes('reaberto')) {
+  if (toStatus === 'open') {
     return 'bg-[color-mix(in_srgb,#f59e0b_16%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#f59e0b_72%,var(--app-text-primary))]';
   }
 
-  if (toStatus === 'won' || text.includes('ganho') || text.includes('venda conclu')) {
+  if (text.includes('ganho') || text.includes('venda conclu')) {
     return 'bg-emerald-600 !text-white';
+  }
+
+  if (text.includes('perdido') || text.includes('perda')) {
+    return 'bg-red-600 !text-white';
+  }
+
+  if (text.includes('reaberto')) {
+    return 'bg-[color-mix(in_srgb,#f59e0b_16%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#f59e0b_72%,var(--app-text-primary))]';
   }
 
   const outcomeVariant = getOutcomeVariant(event);

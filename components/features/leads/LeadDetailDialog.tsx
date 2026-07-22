@@ -8,7 +8,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { PhoneInput } from '@/components/ui/phone-input';
 import { Textarea } from '@/components/ui/textarea';
-import { Checkbox } from '@/components/ui/checkbox';
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer';
@@ -943,8 +942,7 @@ export function LeadDetailDialog({
     profissao: '',
     faixa_valor_imovel: '',
     finalidade_compra: '',
-    procura_financiamento: false,
-    is_own_resource: false
+    procura_financiamento: false
   });
 
 
@@ -1022,8 +1020,7 @@ export function LeadDetailDialog({
       profissao: leadProp.profissao || '',
       faixa_valor_imovel: leadProp.faixa_valor_imovel || '',
       finalidade_compra: leadProp.finalidade_compra || '',
-      procura_financiamento: leadProp.procura_financiamento || false,
-      is_own_resource: leadProp.is_own_resource || false
+      procura_financiamento: leadProp.procura_financiamento || false
     };
 
     let isActive = true;
@@ -1151,14 +1148,14 @@ export function LeadDetailDialog({
       property_code: propertyCode,
       property: selectedProperty,
       interest_property: selectedProperty,
-      valor_interesse: nextPropertyPrice ?? lead.valor_interesse,
+      valor_interesse: nextPropertyPrice,
       commission_percentage: nextPropertyCommission ?? lead.commission_percentage,
     };
 
     setEditForm((current) => ({
       ...current,
       property_id: property.id,
-      valor_interesse: nextPropertyPrice ? nextPropertyPrice.toString() : current.valor_interesse,
+      valor_interesse: nextPropertyPrice !== null ? nextPropertyPrice.toString() : '',
       commission_percentage: nextPropertyCommission ? nextPropertyCommission.toString() : current.commission_percentage,
     }));
     setLocalLead((current) => current ? { ...current, ...nextLeadPatch } : current);
@@ -1201,7 +1198,7 @@ export function LeadDetailDialog({
       property_id: property.id,
       interest_property_id: property.id,
       property_code: propertyCode,
-      valor_interesse: nextPropertyPrice || lead.valor_interesse,
+      valor_interesse: nextPropertyPrice,
     };
 
     if (nextPropertyCommission !== null) {
@@ -1760,8 +1757,7 @@ export function LeadDetailDialog({
       profissao: lead.profissao || '',
       faixa_valor_imovel: lead.faixa_valor_imovel || '',
       finalidade_compra: lead.finalidade_compra || '',
-      procura_financiamento: lead.procura_financiamento || false,
-      is_own_resource: lead.is_own_resource || false
+      procura_financiamento: lead.procura_financiamento || false
     });
   };
   const handleSaveContact = async () => {
@@ -1793,8 +1789,7 @@ export function LeadDetailDialog({
         profissao: editForm.profissao || null,
         faixa_valor_imovel: editForm.faixa_valor_imovel || null,
         finalidade_compra: editForm.finalidade_compra || null,
-        procura_financiamento: editForm.procura_financiamento || null,
-        is_own_resource: editForm.is_own_resource
+        procura_financiamento: editForm.procura_financiamento || null
       });
 
 
@@ -1893,16 +1888,6 @@ export function LeadDetailDialog({
     }
 
     const currentLead = localLead || lead;
-
-    // Validation when marking as "won"
-    if (newStatus === 'won') {
-      if (currentLead?.is_own_resource !== true) {
-        toast.warning('Confirme se o cliente possui recurso próprio', {
-          description: 'A regra de fechamento exige a verificação de recurso próprio para finalizar o contrato.',
-          duration: 6000,
-        });
-      }
-    }
 
     const previousLead = localLead ? { ...localLead } : null;
     const statusChangedAt = new Date().toISOString();
@@ -2112,12 +2097,6 @@ export function LeadDetailDialog({
 
         {/* Row 3 - Estágio + Deal Status lado a lado */}
         <div className="flex items-center gap-2 flex-wrap">
-          {lead.is_own_resource && (
-            <Badge variant="secondary" className="rounded-[4px] border-none bg-amber-100 px-2 text-[10px] font-bold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-              <DollarSign className="h-3 w-3 mr-0.5" />
-              Recurso Próprio
-            </Badge>
-          )}
           {/* Stage pill */}
           <Popover open={stagePopoverOpen} onOpenChange={(open) => canOperateLead && setStagePopoverOpen(open)}>
 
@@ -4284,16 +4263,6 @@ export function LeadDetailDialog({
                                 </SelectContent>
                               </Select>
                             </div>
-                          </div>
-                          <div className="flex items-center space-x-2 pt-2">
-                            <Checkbox
-                              id="is_own_resource_edit"
-                              checked={editForm.is_own_resource}
-                              onCheckedChange={(checked) => setEditForm({ ...editForm, is_own_resource: !!checked })}
-                            />
-                            <Label htmlFor="is_own_resource_edit" className="text-xs font-medium cursor-pointer">
-                              Possui Recurso Próprio para Fechamento
-                            </Label>
                           </div>
                         </div>
 

@@ -294,18 +294,22 @@ export function useDealStatusChange() {
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'], refetchType: 'inactive' });
       queryClient.invalidateQueries({ queryKey: ['enhanced-dashboard-stats'], refetchType: 'inactive' });
 
-      if (newStatus === 'won') {
+      const propertyAvailabilityChanged = newStatus === 'won' || newStatus === 'open';
+      if (propertyAvailabilityChanged) {
         queryClient.invalidateQueries({ queryKey: ['properties'], refetchType: 'inactive' });
         queryClient.invalidateQueries({ queryKey: ['properties-infinite'], refetchType: 'inactive' });
         queryClient.invalidateQueries({ queryKey: ['property'], refetchType: 'inactive' });
-        queryClient.invalidateQueries({ queryKey: ['notifications'], refetchType: 'inactive' });
-        queryClient.invalidateQueries({ queryKey: ['unread-notifications-count'], refetchType: 'inactive' });
         if (variables.propertyId) {
           queryClient.invalidateQueries({
             queryKey: ['property', variables.organizationId, variables.propertyId],
             refetchType: 'inactive',
           });
         }
+      }
+
+      if (newStatus === 'won') {
+        queryClient.invalidateQueries({ queryKey: ['notifications'], refetchType: 'inactive' });
+        queryClient.invalidateQueries({ queryKey: ['unread-notifications-count'], refetchType: 'inactive' });
 
         toast.success('Negocio fechado!', {
           description: variables.valorInteresse

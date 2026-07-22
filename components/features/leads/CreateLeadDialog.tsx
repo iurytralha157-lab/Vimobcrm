@@ -191,7 +191,6 @@ export function CreateLeadDialog({
     interest_property_ids: interestPropertyIds,
     deal_status: editableLead?.deal_status || 'open',
     lost_reason: editableLead?.lost_reason || '',
-    is_own_resource: editableLead?.is_own_resource || false,
     tag_ids: (editableLead?.tags || []).flatMap((tag) => tag.id ? [tag.id] : []),
     conversation_id: '',
   });
@@ -547,7 +546,6 @@ export function CreateLeadDialog({
           interest_property_ids: formData.interest_property_ids.length > 0 ? formData.interest_property_ids : undefined,
           deal_status: formData.deal_status || 'open',
           lost_reason: formData.deal_status === 'lost' ? formData.lost_reason || undefined : undefined,
-          is_own_resource: false,
           profile: profileInput,
         });
 
@@ -1095,8 +1093,18 @@ export function CreateLeadDialog({
                           type="button"
                           aria-label={`Remover ${property.title || property.code || 'imóvel'}`}
                           onClick={() => {
-                            const nextIds = formData.interest_property_ids.filter((id) => id !== property.id);
-                            setFormData((previous) => ({ ...previous, interest_property_ids: nextIds, property_id: nextIds[0] || '' }));
+                            setFormData((previous) => {
+                              const nextIds = previous.interest_property_ids.filter((id) => id !== property.id);
+                              const nextPrimary = properties.find((candidate) => candidate.id === nextIds[0]);
+                              return {
+                                ...previous,
+                                interest_property_ids: nextIds,
+                                property_id: nextIds[0] || '',
+                                valor_interesse: previous.property_id === property.id
+                                  ? (nextPrimary?.preco != null ? formatCurrencyInput(nextPrimary.preco) : '')
+                                  : previous.valor_interesse,
+                              };
+                            });
                           }}
                           className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[var(--app-text-tertiary)] hover:bg-destructive/10 hover:text-destructive"
                         >
@@ -1116,11 +1124,14 @@ export function CreateLeadDialog({
                         setFormData((previous) => {
                           if (previous.interest_property_ids.includes(property.id)) return previous;
                           const nextIds = [...previous.interest_property_ids, property.id];
+                          const becomesPrimary = !previous.property_id;
                           return {
                             ...previous,
                             interest_property_ids: nextIds,
                             property_id: previous.property_id || property.id,
-                            valor_interesse: previous.valor_interesse || (property.preco ? formatCurrencyInput(property.preco) : ''),
+                            valor_interesse: becomesPrimary
+                              ? (property.preco != null ? formatCurrencyInput(property.preco) : '')
+                              : previous.valor_interesse,
                           };
                         });
                       }}

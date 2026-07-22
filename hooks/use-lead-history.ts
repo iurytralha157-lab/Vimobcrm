@@ -974,7 +974,6 @@ const AUDIT_FIELD_LABELS: Record<string, string> = {
   finalidade_compra: 'Finalidade',
   trabalha: 'Trabalha',
   procura_financiamento: 'Procura financiamento',
-  is_own_resource: 'Recurso proprio',
   person_type: 'Tipo de pessoa',
   gender: 'Gênero',
   social_name: 'Nome social',
@@ -987,7 +986,7 @@ const AUDIT_FIELD_LABELS: Record<string, string> = {
   state_registration: 'Inscrição estadual',
 };
 
-const AUDIT_IGNORED_FIELDS = new Set(['origin']);
+const AUDIT_IGNORED_FIELDS = new Set(['origin', 'is_own_resource']);
 const AUDIT_FEMININE_FIELDS = new Set(['birth_date', 'source', 'empresa', 'profissao', 'renda_familiar', 'commission_percentage']);
 
 function auditChangedKeys(audit: AuditLogRow) {

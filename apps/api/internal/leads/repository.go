@@ -340,6 +340,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err := validateLostReasonContract(current, input); err != nil {
 		return Lead{}, err
 	}
+	if err := repo.applySelectedPropertyCommercialValues(ctx, tx, tenantContext.OrganizationID, current, &input); err != nil {
+		return Lead{}, err
+	}
 
 	assignments := []string{}
 	args := []any{tenantContext.OrganizationID, leadID}
@@ -544,6 +547,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	}
 
 	if err := repo.reserveWonLeadProperty(ctx, tx, tenantContext, current, input); err != nil {
+		return Lead{}, err
+	}
+	if err := repo.releaseReopenedLeadProperty(ctx, tx, tenantContext, current, input); err != nil {
 		return Lead{}, err
 	}
 
@@ -2236,6 +2242,68 @@ func (repo Repository) getTagName(ctx context.Context, tx pgx.Tx, organizationID
 	return name, nil
 }
 
+func (repo Repository) applySelectedPropertyCommercialValues(ctx context.Context, tx pgx.Tx, organizationID string, current leadSnapshot, input *updateInput) error {
+	if input == nil || (!input.PropertyID.Set && !input.InterestPropertyID.Set) {
+		return nil
+	}
+
+	currentPropertyID := current.InterestPropertyID
+	if currentPropertyID == "" {
+		currentPropertyID = current.PropertyID
+	}
+
+	propertyID := currentPropertyID
+	if input.PropertyID.Set {
+		propertyID = ""
+		if input.PropertyID.Value != nil {
+			propertyID = *input.PropertyID.Value
+		}
+	}
+	if input.InterestPropertyID.Set {
+		propertyID = ""
+		if input.InterestPropertyID.Value != nil {
+			propertyID = *input.InterestPropertyID.Value
+		}
+	}
+	if propertyID == currentPropertyID {
+		return nil
+	}
+
+	if propertyID == "" {
+		input.InterestValue = patchString{Set: true}
+		input.CommissionPercentage = patchString{Set: true}
+		return nil
+	}
+
+	var price, commission pgtype.Text
+	if err := tx.QueryRow(ctx, `
+		select coalesce(nullif(preco, 0), nullif(valor_venda_avaliado, 0))::text,
+		       commission_percentage::text
+		from public.properties
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		limit 1
+	`, organizationID, propertyID).Scan(&price, &commission); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInvalidReference
+		}
+		return err
+	}
+
+	input.InterestValue = patchString{Set: true}
+	if price.Valid {
+		value := price.String
+		input.InterestValue.Value = &value
+	}
+	input.CommissionPercentage = patchString{Set: true}
+	if commission.Valid {
+		value := commission.String
+		input.CommissionPercentage.Value = &value
+	}
+
+	return nil
+}
+
 func (repo Repository) insertDealStatusActivities(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, input updateInput) error {
 	if !input.DealStatus.Set || input.DealStatus.Value == nil || *input.DealStatus.Value == current.DealStatus {
 		return nil
@@ -2377,6 +2445,66 @@ func (repo Repository) insertLeadUpdateActivities(ctx context.Context, tx pgx.Tx
 	})
 }
 
+type propertyReservationSnapshot struct {
+	LeadID             string
+	OldStatus          string
+	OldPublishedOnSite *bool
+	OldAnnounce        *bool
+}
+
+func (repo Repository) latestPropertyReservation(ctx context.Context, tx pgx.Tx, organizationID string, propertyID string) (propertyReservationSnapshot, bool, error) {
+	var hasEventsTable bool
+	if err := tx.QueryRow(ctx, `select to_regclass('public.events') is not null`).Scan(&hasEventsTable); err != nil {
+		return propertyReservationSnapshot{}, false, err
+	}
+	if !hasEventsTable {
+		return propertyReservationSnapshot{}, false, nil
+	}
+
+	var snapshot propertyReservationSnapshot
+	var oldPublishedOnSite, oldAnnounce pgtype.Bool
+	err := tx.QueryRow(ctx, `
+		select coalesce(payload->>'reserved_by_lead_id', payload->>'lead_id', ''),
+		       coalesce(payload->>'old_status', 'active'),
+		       case
+		         when lower(payload->>'old_published_on_site') in ('true', 'false')
+		         then (payload->>'old_published_on_site')::boolean
+		       end,
+		       case
+		         when lower(payload->>'old_anunciar') in ('true', 'false')
+		         then (payload->>'old_anunciar')::boolean
+		       end
+		from public.events
+		where organization_id = $1::uuid
+		  and entity_type = 'property'
+		  and entity_id = $2::uuid
+		  and event_type = 'property_reserved_by_won_lead'
+		order by created_at desc
+		limit 1
+	`, organizationID, propertyID).Scan(
+		&snapshot.LeadID,
+		&snapshot.OldStatus,
+		&oldPublishedOnSite,
+		&oldAnnounce,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return propertyReservationSnapshot{}, false, nil
+	}
+	if err != nil {
+		return propertyReservationSnapshot{}, false, err
+	}
+	if oldPublishedOnSite.Valid {
+		value := oldPublishedOnSite.Bool
+		snapshot.OldPublishedOnSite = &value
+	}
+	if oldAnnounce.Valid {
+		value := oldAnnounce.Bool
+		snapshot.OldAnnounce = &value
+	}
+
+	return snapshot, true, nil
+}
+
 func (repo Repository) reserveWonLeadProperty(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, input updateInput) error {
 	if !input.DealStatus.Set || input.DealStatus.Value == nil || *input.DealStatus.Value != "won" || current.DealStatus == "won" {
 		return nil
@@ -2397,20 +2525,33 @@ func (repo Repository) reserveWonLeadProperty(ctx context.Context, tx pgx.Tx, te
 	}
 
 	var title, code, oldStatus string
+	var oldPublishedOnSite, oldAnnounce bool
 	err := tx.QueryRow(ctx, `
 		select coalesce(title, 'Imovel') as title,
 		       coalesce(code, '') as code,
-		       coalesce(status, 'active') as old_status
+		       coalesce(status, 'active') as old_status,
+		       coalesce(published_on_site, false),
+		       coalesce(anunciar, false)
 		from public.properties
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 		for update
-	`, tenantContext.OrganizationID, propertyID).Scan(&title, &code, &oldStatus)
+	`, tenantContext.OrganizationID, propertyID).Scan(&title, &code, &oldStatus, &oldPublishedOnSite, &oldAnnounce)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("%w: propertyId is invalid", ErrInvalidReference)
 	}
 	if err != nil {
 		return err
+	}
+
+	if isReservedLeadPropertyStatus(oldStatus) {
+		reservation, found, reservationErr := repo.latestPropertyReservation(ctx, tx, tenantContext.OrganizationID, propertyID)
+		if reservationErr != nil {
+			return reservationErr
+		}
+		if found && reservation.LeadID == current.ID {
+			return nil
+		}
 	}
 
 	if message := wonPropertyUnavailableMessage(oldStatus); message != "" {
@@ -2482,9 +2623,128 @@ func (repo Repository) reserveWonLeadProperty(ctx context.Context, tx pgx.Tx, te
 		"property_code":         code,
 		"title":                 title,
 		"old_status":            oldStatus,
+		"old_published_on_site": oldPublishedOnSite,
+		"old_anunciar":          oldAnnounce,
 		"new_status":            "reserved",
 		"organization_id":       tenantContext.OrganizationID,
 		"message":               fmt.Sprintf(`Imovel "%s" reservado por "%s" ao marcar o lead "%s" como ganho`, title, actorName, current.Name),
+	}))
+	return err
+}
+
+func (repo Repository) releaseReopenedLeadProperty(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, input updateInput) error {
+	if !input.DealStatus.Set || input.DealStatus.Value == nil || *input.DealStatus.Value != "open" || current.DealStatus == "open" {
+		return nil
+	}
+
+	propertyID := current.InterestPropertyID
+	if propertyID == "" {
+		propertyID = current.PropertyID
+	}
+	if input.PropertyID.Set && input.PropertyID.Value != nil {
+		propertyID = *input.PropertyID.Value
+	}
+	if input.InterestPropertyID.Set && input.InterestPropertyID.Value != nil {
+		propertyID = *input.InterestPropertyID.Value
+	}
+	if propertyID == "" {
+		return nil
+	}
+
+	var title, code, currentStatus string
+	err := tx.QueryRow(ctx, `
+		select coalesce(title, 'Imovel'),
+		       coalesce(code, ''),
+		       coalesce(status, 'active')
+		from public.properties
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		for update
+	`, tenantContext.OrganizationID, propertyID).Scan(&title, &code, &currentStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !isReservedLeadPropertyStatus(currentStatus) {
+		return nil
+	}
+
+	restoreStatus := "active"
+	restorePublishedOnSite := true
+	restoreAnnounce := true
+	reservation, found, err := repo.latestPropertyReservation(ctx, tx, tenantContext.OrganizationID, propertyID)
+	if err != nil {
+		return err
+	}
+	if found {
+		if reservation.LeadID != "" && reservation.LeadID != current.ID {
+			return nil
+		}
+		restoreStatus = reopenedPropertyRestoreStatus(reservation.OldStatus)
+		if reservation.OldPublishedOnSite != nil {
+			restorePublishedOnSite = *reservation.OldPublishedOnSite
+		}
+		if reservation.OldAnnounce != nil {
+			restoreAnnounce = *reservation.OldAnnounce
+		}
+	} else if current.DealStatus != "won" {
+		// Sem trilha de reserva, somente uma reabertura direta de ganho oferece
+		// evidencia suficiente para liberar o imovel com seguranca.
+		return nil
+	}
+
+	if _, err := tx.Exec(ctx, `
+		update public.properties
+		set status = $3,
+		    published_on_site = $4,
+		    anunciar = $5,
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+	`, tenantContext.OrganizationID, propertyID, restoreStatus, restorePublishedOnSite, restoreAnnounce); err != nil {
+		return err
+	}
+
+	var hasEventsTable bool
+	if err := tx.QueryRow(ctx, `select to_regclass('public.events') is not null`).Scan(&hasEventsTable); err != nil {
+		return err
+	}
+	if !hasEventsTable {
+		return nil
+	}
+
+	_, err = tx.Exec(ctx, `
+		insert into public.events (
+			organization_id,
+			event_type,
+			entity_type,
+			entity_id,
+			payload,
+			status
+		)
+		values (
+			$1::uuid,
+			'property_republished_by_reopened_lead',
+			'property',
+			$2::uuid,
+			$3::jsonb,
+			'processed'
+		)
+	`, tenantContext.OrganizationID, propertyID, jsonb(map[string]any{
+		"user_id":            tenantContext.UserID,
+		"reopened_lead_id":   current.ID,
+		"reopened_lead_name": current.Name,
+		"property_id":        propertyID,
+		"property_code":      code,
+		"title":              title,
+		"old_status":         currentStatus,
+		"new_status":         restoreStatus,
+		"published_on_site":  restorePublishedOnSite,
+		"anunciar":           restoreAnnounce,
+		"organization_id":    tenantContext.OrganizationID,
+		"message":            fmt.Sprintf(`Imovel "%s" republicado ao reabrir o lead "%s"`, title, current.Name),
 	}))
 	return err
 }
@@ -2502,6 +2762,21 @@ func wonPropertyUnavailableMessage(status string) string {
 	default:
 		return ""
 	}
+}
+
+func reopenedPropertyRestoreStatus(status string) string {
+	status = strings.TrimSpace(status)
+	switch normalizeLeadPropertyStatus(status) {
+	case "", "reserved", "reservado", "sold", "vendido", "rented", "alugado", "locado", "draft", "rascunho", "inactive", "inativo", "archived", "arquivado":
+		return "active"
+	default:
+		return status
+	}
+}
+
+func isReservedLeadPropertyStatus(status string) bool {
+	normalized := normalizeLeadPropertyStatus(status)
+	return normalized == "reserved" || normalized == "reservado"
 }
 
 func normalizeLeadPropertyStatus(value string) string {

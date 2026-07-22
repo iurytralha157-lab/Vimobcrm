@@ -799,10 +799,7 @@ export default function Pipelines() {
   const queryClient = useQueryClient();
   const realtimeOrganizationId = organization?.id || profile?.organization_id || '';
 
-  const executeLeadMove = useCallback((
-    result: DropResult,
-    options?: { isOwnResource?: boolean }
-  ) => {
+  const executeLeadMove = useCallback((result: DropResult) => {
     isDraggingRef.current = true;
 
     const { destination, source, draggableId } = result;
@@ -936,7 +933,6 @@ export default function Pipelines() {
 
       const updateResult = await leadsAPI.moveLeadStage(draggableId, {
         stageId: newStageId,
-        isOwnResource: options?.isOwnResource ?? null,
         boardOrderAt: persistedBoardOrderAt,
       }, realtimeOrganizationId);
 
@@ -1365,17 +1361,20 @@ export default function Pipelines() {
             </div>
 
             <div className="flex min-w-0 flex-nowrap items-center justify-end gap-2">
-              {!isMobile && canCreateLeads && (
-                <Button
-                  data-tour="pipeline-new-lead"
-                  size="sm"
-                  className="h-8 rounded-[6px] bg-[#FF4529] px-4 text-[10px] font-light uppercase leading-[15px] tracking-[0.08em] text-white outline-none transition-opacity hover:opacity-90"
-                  onClick={() => openNewLeadDialog()}
-                >
-                  <Plus className="mr-1.5 h-3.5 w-3.5" />
-                  {newButtonLabel}
-                </Button>
-              )}
+              <Button
+                data-tour="pipeline-refresh"
+                variant="outline"
+                size="icon"
+                className={cn(
+                  "h-8 w-8 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface)] text-muted-foreground shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-foreground",
+                  isRefreshing && "bg-primary/10 text-[#FF4529]"
+                )}
+                onClick={handleManualRefresh}
+                disabled={isRefreshing}
+                title="Atualizar pipeline"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
+              </Button>
 
               <div data-tour="pipeline-filters">
                 <SharedFilters
@@ -1418,25 +1417,21 @@ export default function Pipelines() {
                   }}
                   tourPrefix="pipeline"
                   mobileIconOnly
-                  datePosition="end"
                   triggerClassName="!text-[10px] !font-light !leading-[15px]"
                 />
               </div>
 
-              <Button
-                data-tour="pipeline-refresh"
-                variant="outline"
-                size="icon"
-                className={cn(
-                  "h-8 w-8 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface)] text-muted-foreground shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-foreground",
-                  isRefreshing && "bg-primary/10 text-[#FF4529]"
-                )}
-                onClick={handleManualRefresh}
-                disabled={isRefreshing}
-                title="Atualizar pipeline"
-              >
-                <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
-              </Button>
+              {!isMobile && canCreateLeads && (
+                <Button
+                  data-tour="pipeline-new-lead"
+                  size="sm"
+                  className="h-8 rounded-[6px] bg-[#FF4529] px-4 text-[10px] font-light uppercase leading-[15px] tracking-[0.08em] text-white outline-none transition-opacity hover:opacity-90"
+                  onClick={() => openNewLeadDialog()}
+                >
+                  <Plus className="mr-1.5 h-3.5 w-3.5" />
+                  {newButtonLabel}
+                </Button>
+              )}
             </div>
           </div>
         </div>
