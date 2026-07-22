@@ -735,27 +735,6 @@ export default function Pipelines() {
       router.replace(`/crm/pipelines${cleanSearch ? `?${cleanSearch}` : ''}`);
     };
 
-    if (stages.length > 0) {
-      for (const stage of stages) {
-        const lead = stage.leads.find((stageLead) => stageLead.id === leadId);
-        if (lead) {
-          let isActive = true;
-          queueMicrotask(() => {
-            if (!isActive) return;
-            if (lead.pipeline_id && lead.pipeline_id !== selectedPipelineId) {
-              setSelectedPipelineId(lead.pipeline_id);
-            }
-            setSelectedLead(lead);
-            clearLeadParam();
-          });
-
-          return () => {
-            isActive = false;
-          };
-        }
-      }
-    }
-
     let cancelled = false;
     const fetchLead = async () => {
       try {
@@ -789,7 +768,7 @@ export default function Pipelines() {
 
         queueMicrotask(() => {
           if (cancelled) return;
-          if (formattedLead.pipeline_id && formattedLead.pipeline_id !== selectedPipelineId) {
+          if (formattedLead.pipeline_id) {
             setSelectedPipelineId(formattedLead.pipeline_id);
           }
           setSelectedLead(formattedLead);
@@ -808,7 +787,7 @@ export default function Pipelines() {
 
     fetchLead();
     return () => { cancelled = true; };
-  }, [searchParamsString, stages, organization?.id, profile?.organization_id, selectedPipelineId, router]);
+  }, [searchParamsString, organization?.id, profile?.organization_id, router]);
 
   const queryClient = useQueryClient();
   const realtimeOrganizationId = organization?.id || profile?.organization_id || '';
