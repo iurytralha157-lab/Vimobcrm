@@ -92,3 +92,48 @@ func TestRedistributionWarningDedupeKeyChangesEveryAttempt(t *testing.T) {
 		t.Fatalf("dedupe keys must identify the attempt: first=%q third=%q", first, third)
 	}
 }
+
+func TestLockDueRedistributionJobRevalidatesCandidateUnderRowLock(t *testing.T) {
+	t.Parallel()
+
+	queryer := &redistributionActivityQueryer{row: redistributionBoolRow{value: true}}
+	locked, err := (Repository{}).lockDueRedistributionJob(
+		context.Background(),
+		queryer,
+		"11111111-1111-4111-8111-111111111111",
+	)
+	if err != nil {
+		t.Fatalf("lock due redistribution job: %v", err)
+	}
+	if !locked {
+		t.Fatal("expected active due job to be locked")
+	}
+
+	requiredFragments := []string{
+		"status in ('pending', 'warning_sent')",
+		"due_at <= now()",
+		"for update",
+	}
+	for _, fragment := range requiredFragments {
+		if !strings.Contains(queryer.sql, fragment) {
+			t.Fatalf("expected job lock SQL to contain %q", fragment)
+		}
+	}
+}
+
+func TestLockDueRedistributionJobSkipsStoppedCandidate(t *testing.T) {
+	t.Parallel()
+
+	queryer := &redistributionActivityQueryer{row: redistributionBoolRow{err: pgx.ErrNoRows}}
+	locked, err := (Repository{}).lockDueRedistributionJob(
+		context.Background(),
+		queryer,
+		"11111111-1111-4111-8111-111111111111",
+	)
+	if err != nil {
+		t.Fatalf("lock stopped redistribution job: %v", err)
+	}
+	if locked {
+		t.Fatal("stopped candidate must not be processed")
+	}
+}

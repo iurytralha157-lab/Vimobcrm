@@ -97,6 +97,14 @@ func (repo Repository) processRedistributionWarnings(ctx context.Context, tx pgx
 			return err
 		}
 
+		locked, err := repo.lockWarningRedistributionJob(ctx, tx, job.ID)
+		if err != nil {
+			return err
+		}
+		if !locked {
+			continue
+		}
+
 		reason, err := repo.redistributionStopReason(ctx, tx, job, current)
 		if err != nil {
 			return err
@@ -159,6 +167,14 @@ func (repo Repository) processDueRedistributions(ctx context.Context, tx pgx.Tx)
 				continue
 			}
 			return err
+		}
+
+		locked, err := repo.lockDueRedistributionJob(ctx, tx, job.ID)
+		if err != nil {
+			return err
+		}
+		if !locked {
+			continue
 		}
 
 		reason, err := repo.redistributionStopReason(ctx, tx, job, current)
@@ -279,7 +295,6 @@ func (repo Repository) listWarningRedistributionJobs(ctx context.Context, tx pgx
 		  and j.warning_sent_at is null
 		order by j.warning_due_at asc
 		limit $1
-		for update of j skip locked
 	`, leadRedistributionBatchLimit)
 	if err != nil {
 		return nil, err
@@ -311,7 +326,6 @@ func (repo Repository) listDueRedistributionJobs(ctx context.Context, tx pgx.Tx)
 		  and j.due_at <= now()
 		order by j.due_at asc
 		limit $1
-		for update of j skip locked
 	`, leadRedistributionBatchLimit)
 	if err != nil {
 		return nil, err
@@ -319,6 +333,45 @@ func (repo Repository) listDueRedistributionJobs(ctx context.Context, tx pgx.Tx)
 	defer rows.Close()
 
 	return scanRedistributionJobs(rows)
+}
+
+// The worker and lead mutations use the same lock order: lead first, then its
+// redistribution job. This prevents a stage-move transaction (lead -> job)
+// from deadlocking with the worker while still revalidating the candidate
+// under a row lock before any notification or transfer is performed.
+func (repo Repository) lockWarningRedistributionJob(ctx context.Context, queryer leadTeamQueryer, jobID string) (bool, error) {
+	var locked bool
+	err := queryer.QueryRow(ctx, `
+		select true
+		from public.lead_redistribution_jobs
+		where id = $1::uuid
+		  and status = 'pending'
+		  and warning_due_at is not null
+		  and warning_due_at <= now()
+		  and due_at > now()
+		  and warning_sent_at is null
+		for update
+	`, jobID).Scan(&locked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return locked, err
+}
+
+func (repo Repository) lockDueRedistributionJob(ctx context.Context, queryer leadTeamQueryer, jobID string) (bool, error) {
+	var locked bool
+	err := queryer.QueryRow(ctx, `
+		select true
+		from public.lead_redistribution_jobs
+		where id = $1::uuid
+		  and status in ('pending', 'warning_sent')
+		  and due_at <= now()
+		for update
+	`, jobID).Scan(&locked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return locked, err
 }
 
 func scanRedistributionJobs(rows pgx.Rows) ([]redistributionJob, error) {

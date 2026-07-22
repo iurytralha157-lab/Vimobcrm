@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(28);
+select plan(30);
 
 insert into auth.users (
   instance_id,
@@ -102,6 +102,15 @@ values
     2,
     true
   );
+
+insert into public.round_robins (id, organization_id, name, pipeline_id, is_active)
+values (
+  'a8000000-0000-0000-0000-000000000001',
+  'a2000000-0000-0000-0000-000000000001',
+  'Attention Test Queue',
+  'a3000000-0000-0000-0000-000000000001',
+  true
+);
 
 -- New organizations are explicit fixtures here because the migration seeds
 -- existing organizations only. Defaults must still be safe when inserted.
@@ -278,6 +287,33 @@ select is(
   'eligible integration lead opens one active stage cycle'
 );
 
+insert into public.lead_redistribution_jobs (
+  organization_id,
+  lead_id,
+  round_robin_id,
+  original_assigned_user_id,
+  current_assigned_user_id,
+  max_attempts,
+  timeout_minutes,
+  warning_minutes,
+  enrolled_at,
+  due_at,
+  warning_due_at
+)
+values (
+  'a2000000-0000-0000-0000-000000000001',
+  'a5000000-0000-0000-0000-000000000002',
+  'a8000000-0000-0000-0000-000000000001',
+  'a1000000-0000-0000-0000-000000000001',
+  'a1000000-0000-0000-0000-000000000001',
+  3,
+  10,
+  5,
+  now(),
+  now() + interval '10 minutes',
+  now() + interval '5 minutes'
+);
+
 -- Eligibility is immutable. This models both a legacy row and a manual row
 -- later edited to look like an integration lead.
 update public.leads
@@ -335,6 +371,12 @@ select is(
   'reordering inside the same stage does not open a new stage cycle'
 );
 
+select is(
+  (select status from public.lead_redistribution_jobs where lead_id = 'a5000000-0000-0000-0000-000000000002'),
+  'pending',
+  'reordering inside the same stage preserves active redistribution'
+);
+
 update public.leads
 set stage_id = 'a4000000-0000-0000-0000-000000000002',
     stage_entered_at = '1999-01-01 00:00:00+00'
@@ -363,6 +405,19 @@ select ok(
       and baseline_confidence = 'observed'
   ),
   'stage change closes the old cycle and leaves the new observed cycle active'
+);
+
+select ok(
+  exists (
+    select 1
+    from public.lead_redistribution_jobs
+    where lead_id = 'a5000000-0000-0000-0000-000000000002'
+      and status = 'stopped'
+      and stopped_reason = 'stage_changed'
+      and stopped_at is not null
+      and metadata->>'stopped_by' = 'lead_stage_change'
+  ),
+  'a real stage move stops active redistribution immediately'
 );
 
 insert into public.activities (
