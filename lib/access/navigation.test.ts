@@ -218,6 +218,9 @@ test('acao central mobile existe apenas quando a pagina e a permissao combinam',
   assert.equal(resolve('/crm/management'), 'team')
   assert.equal(resolve('/crm/management', 'tags'), null)
 
+  permissions.add('distribution_manage')
+  assert.equal(resolve('/crm/management', 'distribution'), null)
+
   assert.equal(resolveMobileFabAction({
     pathname: '/crm/pipelines',
     isBillingBlocked: true,

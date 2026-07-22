@@ -204,16 +204,6 @@ export function DistributionTab() {
     setEditorOpen(true);
   };
 
-  useEffect(() => {
-    const handleMobileCreate = () => {
-      setEditingQueue(null);
-      setEditorOpen(true);
-    };
-
-    window.addEventListener('vimob:mobile-create-distribution', handleMobileCreate);
-    return () => window.removeEventListener('vimob:mobile-create-distribution', handleMobileCreate);
-  }, []);
-
   const formatRule = (rule: RoundRobinType['rules'][number]) => {
     if (rule.match_type === 'tag') {
       const tag = tags.find(t => t.id === rule.match_value);
@@ -284,7 +274,7 @@ export function DistributionTab() {
               {visibleRoundRobins.length} {visibleRoundRobins.length === 1 ? 'fila' : 'filas'} · {activeQueues} {activeQueues === 1 ? 'ativa' : 'ativas'} · {totalLeadsDistributed} leads distribuídos
             </p>
           </div>
-          <Button data-tour="distribution-new-queue" onClick={() => openEditor()} className="h-9 gap-2 rounded-[8px] px-3 shadow-none">
+          <Button data-tour="distribution-new-queue" onClick={() => openEditor()} className="hidden h-9 gap-2 rounded-[8px] px-3 shadow-none sm:inline-flex">
             <Plus className="h-4 w-4" />
             Nova Fila
           </Button>
@@ -299,24 +289,24 @@ export function DistributionTab() {
             <p className="text-muted-foreground mb-6 max-w-sm mx-auto">
               Crie filas para distribuir leads automaticamente entre sua equipe.
             </p>
-            <Button onClick={() => openEditor()} size="lg" className="gap-2">
+            <Button onClick={() => openEditor()} size="lg" className="hidden gap-2 sm:inline-flex">
               <Plus className="h-4 w-4" />
               Nova Fila
             </Button>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-lg border-0 bg-[var(--app-surface)] [&_td:nth-child(n+4)]:hidden [&_th:nth-child(n+4)]:hidden md:[&_td:nth-child(n+4)]:table-cell md:[&_th:nth-child(n+4)]:table-cell">
+          <div className="overflow-hidden rounded-lg border-0 bg-[var(--app-surface)]">
             <Table className="crm-management-table table-fixed md:table-auto">
               <TableHeader>
                 <TableRow className="border-b border-[var(--app-border-strong)] bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-soft)]">
                   <TableHead className="w-[62px] px-3 md:w-[72px] md:px-4">Status</TableHead>
-                  <TableHead className="w-[34%] md:w-auto">Nome da fila</TableHead>
-                  <TableHead>Critério</TableHead>
-                  <TableHead>Pipeline</TableHead>
-                  <TableHead>Usuários ou equipes</TableHead>
-                  <TableHead className="text-right">Leads</TableHead>
-                  <TableHead>Criada por</TableHead>
-                  <TableHead className="w-[112px] text-right">Ações</TableHead>
+                  <TableHead className="w-auto">Nome da fila</TableHead>
+                  <TableHead className="hidden md:table-cell">Critério</TableHead>
+                  <TableHead className="hidden md:table-cell">Pipeline</TableHead>
+                  <TableHead className="hidden md:table-cell">Usuários ou equipes</TableHead>
+                  <TableHead className="hidden text-right md:table-cell">Leads</TableHead>
+                  <TableHead className="hidden md:table-cell">Criada por</TableHead>
+                  <TableHead className="w-[52px] px-2 text-right md:w-[112px] md:px-4">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -355,13 +345,13 @@ export function DistributionTab() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="min-w-0 max-w-[150px] md:max-w-[260px]">
+                      <TableCell className="hidden min-w-0 max-w-[260px] md:table-cell">
                         <p className="truncate text-sm">{formatRules(queue)}</p>
                         {queue.rules.length > 1 && (
                           <p className="text-xs text-muted-foreground">{queue.rules.length} critérios</p>
                         )}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden md:table-cell">
                         {queue.target_pipeline ? (
                           <div>
                             <p className="font-medium">{queue.target_pipeline.name}</p>
@@ -373,7 +363,7 @@ export function DistributionTab() {
                           <span className="text-sm text-muted-foreground">Sem pipeline</span>
                         )}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden md:table-cell">
                         {queue.members.length > 0 ? (
                           <div className="flex items-center gap-2">
                             <div className="flex -space-x-2">
@@ -419,16 +409,22 @@ export function DistributionTab() {
                           <span className="text-sm text-muted-foreground">Sem participantes</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-right font-medium">
+                      <TableCell className="hidden text-right font-medium md:table-cell">
                         {queue.leads_distributed || 0}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden md:table-cell">
                         <div className="text-sm">{creator}</div>
                         <div className="text-xs text-muted-foreground">{createdAt}</div>
                       </TableCell>
-                      <TableCell onClick={(event) => event.stopPropagation()}>
+                      <TableCell className="w-[52px] px-2 md:w-auto md:px-4" onClick={(event) => event.stopPropagation()}>
                         <div className="flex justify-end gap-1">
-                          <Button variant="ghost" size="icon" onClick={() => openEditor(queue)}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="hidden md:inline-flex"
+                            aria-label={`Editar fila ${queue.name}`}
+                            onClick={() => openEditor(queue)}
+                          >
                             <Pencil className="h-4 w-4" />
                           </Button>
                           {accessScope.isAdmin && (
@@ -436,6 +432,7 @@ export function DistributionTab() {
                               variant="ghost"
                               size="icon"
                               className="text-destructive hover:text-destructive"
+                              aria-label={`Excluir fila ${queue.name}`}
                               onClick={() => handleDeleteRR(queue.id)}
                             >
                               <Trash2 className="h-4 w-4" />

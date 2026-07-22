@@ -100,7 +100,6 @@ export function MobileBottomNav() {
     property: 'Novo imóvel',
     schedule: 'Novo agendamento',
     team: 'Nova equipe',
-    distribution: 'Nova distribuição',
     user: 'Novo usuário',
   }[fabAction] : '';
 
@@ -117,11 +116,6 @@ export function MobileBottomNav() {
 
     if (fabAction === 'team') {
       window.dispatchEvent(new CustomEvent('vimob:mobile-create-team'));
-      return;
-    }
-
-    if (fabAction === 'distribution') {
-      window.dispatchEvent(new CustomEvent('vimob:mobile-create-distribution'));
       return;
     }
 

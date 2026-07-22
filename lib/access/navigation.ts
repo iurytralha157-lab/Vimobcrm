@@ -86,7 +86,7 @@ function selectMobileNavigationTarget<T extends NavigationAccessItem>(item: T): 
   return (directChild || item.children[0]) as T
 }
 
-export type MobileFabAction = 'lead' | 'property' | 'schedule' | 'team' | 'distribution' | 'user'
+export type MobileFabAction = 'lead' | 'property' | 'schedule' | 'team' | 'user'
 
 type MobileFabAccess = {
   pathname: string
@@ -114,7 +114,6 @@ export function resolveMobileFabAction({
 
   if (pathname === '/crm/management') {
     if ((!tab || tab === 'teams') && hasPermission('team_manage')) return 'team'
-    if (tab === 'distribution' && hasPermission('distribution_manage')) return 'distribution'
     return null
   }
 

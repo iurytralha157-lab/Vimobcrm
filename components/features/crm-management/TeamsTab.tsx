@@ -133,7 +133,7 @@ export function TeamsTab() {
             </p>
           </div>
           {canManageAllTeams && (
-            <Button data-tour="management-team-new" onClick={handleNewTeam} className="h-9 gap-2 rounded-[8px] px-3 shadow-none">
+            <Button data-tour="management-team-new" onClick={handleNewTeam} className="hidden h-9 gap-2 rounded-[8px] px-3 shadow-none sm:inline-flex">
               <Plus className="h-4 w-4" />
               Nova Equipe
             </Button>
@@ -150,14 +150,14 @@ export function TeamsTab() {
               Organize seus corretores em equipes e configure a disponibilidade de cada um.
             </p>
             {canManageAllTeams && (
-              <Button onClick={handleNewTeam} size="lg" className="gap-2">
+              <Button onClick={handleNewTeam} size="lg" className="hidden gap-2 sm:inline-flex">
                 <Plus className="h-4 w-4" />
                 Nova Equipe
               </Button>
             )}
           </div>
         ) : (
-          <div data-tour="management-team-list" className="overflow-hidden rounded-lg border-0 bg-[var(--app-surface)] [&_td:nth-child(n+3)]:hidden [&_th:nth-child(n+3)]:hidden md:[&_td:nth-child(n+3)]:table-cell md:[&_th:nth-child(n+3)]:table-cell">
+          <div data-tour="management-team-list" className="overflow-hidden rounded-lg border-0 bg-[var(--app-surface)] [&_td:nth-child(3)]:hidden [&_td:nth-child(4)]:hidden [&_th:nth-child(3)]:hidden [&_th:nth-child(4)]:hidden md:[&_td:nth-child(3)]:table-cell md:[&_td:nth-child(4)]:table-cell md:[&_th:nth-child(3)]:table-cell md:[&_th:nth-child(4)]:table-cell">
             <Table className="crm-management-table table-fixed md:table-auto">
               <TableHeader>
                 <TableRow className="border-b border-[var(--app-border-strong)] bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-soft)]">
@@ -165,7 +165,7 @@ export function TeamsTab() {
                   <TableHead className="w-auto">Nome da equipe</TableHead>
                   <TableHead>Membros</TableHead>
                   <TableHead>Criada por</TableHead>
-                  <TableHead className="w-[112px] text-right">Ações</TableHead>
+                  <TableHead className="w-[52px] px-2 text-right md:w-[112px] md:px-4">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -283,9 +283,15 @@ export function TeamsTab() {
                         <div className="text-xs text-muted-foreground">{createdAt}</div>
                       </TableCell>
 
-                      <TableCell onClick={(event) => event.stopPropagation()}>
+                      <TableCell className="w-[52px] px-2 md:w-auto md:px-4" onClick={(event) => event.stopPropagation()}>
                         <div className="flex justify-end gap-1">
-                          <Button variant="ghost" size="icon" onClick={() => handleEdit(team)}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="hidden md:inline-flex"
+                            aria-label={`Editar equipe ${team.name}`}
+                            onClick={() => handleEdit(team)}
+                          >
                             <Pencil className="h-4 w-4" />
                           </Button>
                           {canManageAllTeams && (
@@ -293,6 +299,7 @@ export function TeamsTab() {
                               variant="ghost"
                               size="icon"
                               className="text-destructive hover:text-destructive"
+                              aria-label={`Excluir equipe ${team.name}`}
                               onClick={() => handleDelete(team)}
                             >
                               <Trash2 className="h-4 w-4" />
