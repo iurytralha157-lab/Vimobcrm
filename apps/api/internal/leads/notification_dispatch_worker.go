@@ -408,10 +408,8 @@ func isPermanentPushDeliveryFailure(result DispatchChannelResult) bool {
 	}
 
 	if provider == "web_push" {
-		return result.Status == http.StatusUnauthorized ||
-			result.Status == http.StatusNotFound ||
+		return result.Status == http.StatusNotFound ||
 			result.Status == http.StatusGone ||
-			strings.Contains(errorText, "vapid") ||
 			strings.Contains(errorText, "push subscription has unsubscribed or expired")
 	}
 

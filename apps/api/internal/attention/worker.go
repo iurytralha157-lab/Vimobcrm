@@ -201,7 +201,7 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 		    updated_at = now()
 		from public.lead_attention_policies p, public.lead_tasks lt, public.leads l
 		where p.id = i.policy_id and p.policy_type = 'cadence_task'
-		  and lt.id::text = i.metadata->>'lead_task_id'
+		  and lt.id = (i.metadata->>'lead_task_id')::uuid
 		  and l.id = i.lead_id and l.organization_id = i.organization_id
 		  and i.status not in ('resolved', 'redistributed', 'cancelled')
 		  and i.assigned_user_id is distinct from coalesce(lt.assigned_user_id, l.assigned_user_id)
@@ -459,7 +459,7 @@ func (repo Repository) resolveSatisfiedInstances(ctx context.Context, tx pgx.Tx)
 			      ) then 'first_contact_completed'
 			      when p.policy_type = 'cadence_task' and not exists (
 			        select 1 from public.lead_tasks lt
-			        where lt.id::text = i.metadata->>'lead_task_id'
+			        where lt.id = (i.metadata->>'lead_task_id')::uuid
 			          and lt.status = 'pending' and lt.is_done = false
 			      ) then 'cadence_task_completed_or_cancelled'
 			      when i.assignment_cycle_id is not null and exists (
@@ -491,7 +491,7 @@ func (repo Repository) resolveSatisfiedInstances(ctx context.Context, tx pgx.Tx)
 				))
 				or (p.policy_type = 'cadence_task' and not exists (
 				  select 1 from public.lead_tasks lt
-				  where lt.id::text = i.metadata->>'lead_task_id'
+				  where lt.id = (i.metadata->>'lead_task_id')::uuid
 				    and lt.status = 'pending' and lt.is_done = false
 				))
 				or (i.assignment_cycle_id is not null and exists (

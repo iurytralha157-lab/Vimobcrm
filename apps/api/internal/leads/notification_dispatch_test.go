@@ -83,14 +83,14 @@ func TestPermanentPushDeliveryFailure(t *testing.T) {
 	if !isPermanentPushDeliveryFailure(DispatchChannelResult{Error: "UNREGISTERED"}) {
 		t.Fatal("unregistered FCM token must be treated as permanent")
 	}
-	if !isPermanentPushDeliveryFailure(DispatchChannelResult{Provider: "web_push", Status: 401, Error: "401 Unauthorized"}) {
-		t.Fatal("401 Web Push auth errors must deactivate invalid subscriptions")
+	if isPermanentPushDeliveryFailure(DispatchChannelResult{Provider: "web_push", Status: 401, Error: "401 Unauthorized"}) {
+		t.Fatal("401 Web Push auth errors are VAPID/server credential failures and must not deactivate valid subscriptions")
 	}
 	if isPermanentPushDeliveryFailure(DispatchChannelResult{Provider: "fcm_v1", Status: 401, Error: "401 Unauthorized"}) {
 		t.Fatal("401 FCM auth errors are server credential failures and must not deactivate native tokens")
 	}
-	if !isPermanentPushDeliveryFailure(DispatchChannelResult{Provider: "web_push", Error: "the VAPID credentials in the authorization header do not correspond"}) {
-		t.Fatal("VAPID mismatch must deactivate subscriptions created with old keys")
+	if isPermanentPushDeliveryFailure(DispatchChannelResult{Provider: "web_push", Error: "the VAPID credentials in the authorization header do not correspond"}) {
+		t.Fatal("VAPID mismatch must remain retryable because it can be caused by server configuration drift")
 	}
 	if !isPermanentPushDeliveryFailure(DispatchChannelResult{Error: "web_push_subscription_incomplete"}) {
 		t.Fatal("incomplete legacy Web Push subscriptions must be deactivated")
