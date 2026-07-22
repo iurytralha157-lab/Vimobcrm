@@ -126,7 +126,7 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
       {
         selector: '[data-tour="dashboard-kpi-visits"]',
         title: "Visitas",
-        body: "Mostra visitas agendadas em relacao ao volume de leads do periodo.",
+        body: "Mostra visitas e reunioes criadas no periodo em relacao ao volume de leads.",
         closeOpenLayer: true,
       },
       {

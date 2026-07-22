@@ -608,32 +608,10 @@ func (repo Repository) countDashboardSiteVisits(ctx context.Context, tenantConte
 }
 
 func (repo Repository) countDashboardScheduledVisits(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (int64, error) {
-	leadWhere, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{})
+	where, args, err := repo.buildDashboardScheduledVisitsWhere(tenantContext, filter)
 	if err != nil {
 		return 0, err
 	}
-
-	where := []string{
-		"se.organization_id = $1::uuid",
-		"se.event_type = 'visit'",
-	}
-
-	add := func(clause string, value any) {
-		args = append(args, value)
-		where = append(where, fmt.Sprintf(clause, len(args)))
-	}
-	if filter.DateFrom != nil {
-		add("se.start_time >= $%d", *filter.DateFrom)
-	}
-	if filter.DateTo != nil {
-		add("se.start_time <= $%d", *filter.DateTo)
-	}
-	where = append(where, `exists (
-		select 1
-		from public.leads l
-		where l.id = se.lead_id
-		  and `+strings.Join(leadWhere, " and ")+`
-	)`)
 
 	var count int64
 	err = repo.db.Pool().QueryRow(ctx, `
@@ -643,6 +621,37 @@ func (repo Repository) countDashboardScheduledVisits(ctx context.Context, tenant
 		args...,
 	).Scan(&count)
 	return count, err
+}
+
+func (repo Repository) buildDashboardScheduledVisitsWhere(tenantContext tenant.Context, filter DashboardFilter) ([]string, []any, error) {
+	leadWhere, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	where := []string{
+		"se.organization_id = $1::uuid",
+		"se.event_type in ('visit', 'meeting')",
+	}
+
+	add := func(clause string, value any) {
+		args = append(args, value)
+		where = append(where, fmt.Sprintf(clause, len(args)))
+	}
+	if filter.DateFrom != nil {
+		add("se.created_at >= $%d", *filter.DateFrom)
+	}
+	if filter.DateTo != nil {
+		add("se.created_at <= $%d", *filter.DateTo)
+	}
+	where = append(where, `exists (
+		select 1
+		from public.leads l
+		where l.id = se.lead_id
+		  and `+strings.Join(leadWhere, " and ")+`
+	)`)
+
+	return where, args, nil
 }
 
 func (repo Repository) dashboardAggregate(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter, options dashboardLeadWhereOptions) (dashboardAggregate, error) {

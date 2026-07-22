@@ -587,7 +587,7 @@ function KPICardsGrid({
       rate: data.totalLeads > 0 ? ((scheduledVisits ?? 0) / data.totalLeads) * 100 : 0,
       rateVariant: "auto",
       icon: CalendarCheck,
-      tooltip: `Visitas agendadas em relação ao total de leads - ${periodLabel}`,
+      tooltip: `Visitas e reuniões criadas no período em relação ao total de leads - ${periodLabel}`,
       format: "number",
       color: "visits",
       tourTarget: "dashboard-kpi-visits",
