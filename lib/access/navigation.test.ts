@@ -21,7 +21,11 @@ const baseAccess: NavigationAccess = {
   hasPermission: () => false,
 }
 
-test('expoe o Centro de Atencao quando a feature operacional esta ativa', () => {
+test('nao expoe a Central de Atencao no menu principal', () => {
+  assert.equal(APP_NAVIGATION_ITEMS.some((item) => item.path === '/attention'), false)
+})
+
+test('mantem itens genericos quando a feature operacional esta ativa', () => {
   const items: NavigationAccessItem[] = [
     { path: '/dashboard' },
     { path: '/attention', feature: 'ENABLE_ATTENTION_CENTER' },

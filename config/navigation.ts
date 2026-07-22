@@ -46,7 +46,6 @@ export const APP_NAVIGATION_ITEMS: readonly AppNavigationItem[] = [
     ],
   },
   { icon: 'kanban', labelKey: 'pipelines', path: '/crm/pipelines', module: 'crm', anyPermissions: ['lead_view_own', 'lead_view_team', 'lead_view_all'] },
-  { icon: 'bellRing', labelKey: 'attentionCenter', path: '/attention', module: 'crm', permission: 'attention_view', feature: 'ENABLE_ATTENTION_CENTER' },
   { icon: 'messageSquare', labelKey: 'conversations', path: '/crm/conversas', module: 'whatsapp', permission: 'whatsapp_view' },
   { icon: 'users', labelKey: 'contacts', path: '/crm/contacts', module: 'crm', anyPermissions: ['lead_view_own', 'lead_view_team', 'lead_view_all'] },
   {
