@@ -706,10 +706,11 @@ func (repo Repository) updateRedistributionJobAfterTransfer(ctx context.Context,
 		set current_assigned_user_id = $2::uuid,
 		    attempt_count = $3,
 		    status = 'pending',
-		    due_at = now() + ($4 * interval '1 minute'),
+		    due_at = now() + ($4::integer * interval '1 minute'),
 		    warning_due_at = case
-		    	when $5 > 0 and $5 < $4 then now() + (($4 - $5) * interval '1 minute')
-		    	else null
+		      when $5::integer > 0 and $5::integer < $4::integer
+		        then now() + (($4::integer - $5::integer) * interval '1 minute')
+		      else null
 		    end,
 		    warning_sent_at = null,
 		    last_redistributed_at = now(),

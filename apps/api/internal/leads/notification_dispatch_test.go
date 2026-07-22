@@ -34,6 +34,17 @@ func TestShouldDispatchLeadWhatsAppNotification(t *testing.T) {
 	}
 }
 
+func TestShouldInsertTransferNotification(t *testing.T) {
+	t.Parallel()
+
+	if shouldInsertTransferNotification("auto_redistribution") {
+		t.Fatal("automatic redistribution must rely on its specialized notifications")
+	}
+	if !shouldInsertTransferNotification("manual_transfer") {
+		t.Fatal("manual transfers must keep the generic transfer notification")
+	}
+}
+
 func TestApplyNotificationDispatchMetadata(t *testing.T) {
 	t.Parallel()
 

@@ -1608,7 +1608,8 @@ func (repo Repository) insertLeadRedistributionJob(ctx context.Context, tx pgx.T
 			now(),
 			now() + ($6 * interval '1 minute'),
 			case
-				when $7 > 0 and $7 < $6 then now() + (($6 - $7) * interval '1 minute')
+			  when $7::integer > 0 and $7::integer < $6::integer
+			    then now() + (($6::integer - $7::integer) * interval '1 minute')
 				else null
 			end,
 			$8::jsonb

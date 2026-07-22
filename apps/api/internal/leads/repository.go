@@ -1840,7 +1840,7 @@ func (repo Repository) validateRoundRobinAssigneeTeam(ctx context.Context, query
 }
 
 func (repo Repository) insertTransferNotification(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, assignedUserID *string, reason string) error {
-	if assignedUserID == nil || strings.TrimSpace(*assignedUserID) == "" || current.AssignedUserID == *assignedUserID {
+	if assignedUserID == nil || strings.TrimSpace(*assignedUserID) == "" || current.AssignedUserID == *assignedUserID || !shouldInsertTransferNotification(reason) {
 		return nil
 	}
 
@@ -1860,6 +1860,13 @@ func (repo Repository) insertTransferNotification(ctx context.Context, tx pgx.Tx
 		"stage_id":          nullableString(current.StageID),
 		"dedupe_key":        notificationDedupeKey("lead_transferred", current.ID, *assignedUserID, current.AssignedUserID, reason, eventAt.Format(time.RFC3339Nano)),
 	})
+}
+
+func shouldInsertTransferNotification(reason string) bool {
+	// The redistribution worker emits richer received/away notifications after
+	// the assignment succeeds. Emitting the generic transfer notice here would
+	// duplicate WhatsApp and push deliveries for the new assignee.
+	return !strings.EqualFold(strings.TrimSpace(reason), "auto_redistribution")
 }
 
 func (repo Repository) assignmentLogUsesCanonicalSchema(ctx context.Context, tx pgx.Tx) (bool, error) {

@@ -517,6 +517,40 @@ func (repo Repository) resolveSatisfiedInstances(ctx context.Context, tx pgx.Tx)
 
 func (repo Repository) claimDueInstances(ctx context.Context, tx pgx.Tx) ([]workerInstance, error) {
 	rows, err := tx.Query(ctx, `
+		with ranked_due as (
+			select
+				i.id,
+				case
+				  when coalesce(os.engine_mode, 'shadow') = 'enabled'
+				   and p.status = 'enabled'
+				   and coalesce(i.shadow, true) = false then 0
+				  else 1
+				end as delivery_rank,
+				row_number() over (
+				  partition by i.organization_id, p.policy_type
+				  order by
+				    case
+				      when coalesce(os.engine_mode, 'shadow') = 'enabled'
+				       and p.status = 'enabled'
+				       and coalesce(i.shadow, true) = false then 0
+				      else 1
+				    end,
+				    i.next_evaluation_at,
+				    i.id
+				) as group_rank
+			from public.lead_attention_instances i
+			join public.lead_attention_policies p
+			  on p.organization_id = i.organization_id and p.id = i.policy_id
+			join public.leads l
+			  on l.organization_id = i.organization_id and l.id = i.lead_id
+			left join public.organization_attention_settings os on os.organization_id = i.organization_id
+			where l.attention_eligible = true and l.attention_enrolled_at is not null
+			  and i.status in ('monitoring', 'warning', 'breached', 'escalated', 'acknowledged', 'exception')
+			  and i.next_evaluation_at <= now()
+			  and (i.snoozed_until is null or i.snoozed_until <= now())
+			  and coalesce(os.engine_mode, 'shadow') <> 'disabled'
+			  and p.status <> 'paused'
+		)
 		select jsonb_build_object(
 			'id', i.id, 'organizationId', i.organization_id,
 			'leadId', i.lead_id, 'leadName', l.name,
@@ -553,6 +587,7 @@ func (repo Repository) claimDueInstances(ctx context.Context, tx pgx.Tx) ([]work
 			'maxReminders', coalesce(os.max_reminders, 0)
 		)
 		from public.lead_attention_instances i
+		join ranked_due due on due.id = i.id and due.group_rank <= $1
 		join public.lead_attention_policies p
 		  on p.organization_id = i.organization_id and p.id = i.policy_id
 		join public.leads l
@@ -573,7 +608,7 @@ func (repo Repository) claimDueInstances(ctx context.Context, tx pgx.Tx) ([]work
 		  and (i.snoozed_until is null or i.snoozed_until <= now())
 		  and coalesce(os.engine_mode, 'shadow') <> 'disabled'
 		  and p.status <> 'paused'
-		order by i.next_evaluation_at, i.id
+		order by due.delivery_rank, due.group_rank, i.next_evaluation_at, i.id
 		for update of i skip locked
 		limit $1
 	`, workerBatchLimit)
