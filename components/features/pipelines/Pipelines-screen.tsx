@@ -732,7 +732,15 @@ export default function Pipelines() {
       cleanParams.delete('lead');
       cleanParams.delete('t');
       const cleanSearch = cleanParams.toString();
-      router.replace(`/crm/pipelines${cleanSearch ? `?${cleanSearch}` : ''}`);
+      const cleanPath = `/crm/pipelines${cleanSearch ? `?${cleanSearch}` : ''}`;
+
+      // Remove o identificador imediatamente para que um refresh nao tente abrir
+      // novamente um lead que ja foi redistribuido. O router mantém o estado do
+      // App Router sincronizado logo em seguida.
+      if (typeof window !== 'undefined') {
+        window.history.replaceState(window.history.state, '', cleanPath);
+      }
+      router.replace(cleanPath);
     };
 
     let cancelled = false;
