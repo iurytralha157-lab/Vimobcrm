@@ -43,7 +43,9 @@ services:
       update_config:
         parallelism: 1
         delay: 10s
-        order: start-first
+        # O pooler Supabase em modo sessao possui limite de conexoes por projeto.
+        # Encerrar a tarefa antiga antes da nova evita dobrar o pool durante deploys.
+        order: stop-first
         failure_action: pause
         monitor: 8m
       restart_policy:

@@ -133,6 +133,8 @@ func isRetriableStartupPingError(err error) bool {
 
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "ecircuitbreaker") ||
+		strings.Contains(message, "emaxconnsession") ||
+		strings.Contains(message, "max clients reached") ||
 		strings.Contains(message, "temporarily blocked") ||
 		strings.Contains(message, "connection refused") ||
 		strings.Contains(message, "connection reset") ||
