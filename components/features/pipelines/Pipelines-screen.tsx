@@ -735,12 +735,11 @@ export default function Pipelines() {
       const cleanPath = `/crm/pipelines${cleanSearch ? `?${cleanSearch}` : ''}`;
 
       // Remove o identificador imediatamente para que um refresh nao tente abrir
-      // novamente um lead que ja foi redistribuido. O router mantém o estado do
-      // App Router sincronizado logo em seguida.
+      // novamente um lead que ja foi redistribuido. O Next integra a History API
+      // ao App Router e sincroniza useSearchParams sem uma nova navegacao.
       if (typeof window !== 'undefined') {
-        window.history.replaceState(window.history.state, '', cleanPath);
+        window.history.replaceState(null, '', cleanPath);
       }
-      router.replace(cleanPath);
     };
 
     let cancelled = false;
