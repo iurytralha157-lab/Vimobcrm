@@ -1365,6 +1365,18 @@ export default function Pipelines() {
             </div>
 
             <div className="flex min-w-0 flex-nowrap items-center justify-end gap-2">
+              {!isMobile && canCreateLeads && (
+                <Button
+                  data-tour="pipeline-new-lead"
+                  size="sm"
+                  className="h-8 rounded-[6px] bg-[#FF4529] px-4 text-[10px] font-light uppercase leading-[15px] tracking-[0.08em] text-white outline-none transition-opacity hover:opacity-90"
+                  onClick={() => openNewLeadDialog()}
+                >
+                  <Plus className="mr-1.5 h-3.5 w-3.5" />
+                  {newButtonLabel}
+                </Button>
+              )}
+
               <div data-tour="pipeline-filters">
                 <SharedFilters
                   datePreset={datePreset}
@@ -1406,6 +1418,8 @@ export default function Pipelines() {
                   }}
                   tourPrefix="pipeline"
                   mobileIconOnly
+                  datePosition="end"
+                  triggerClassName="!text-[10px] !font-light !leading-[15px]"
                 />
               </div>
 
@@ -1423,18 +1437,6 @@ export default function Pipelines() {
               >
                 <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
               </Button>
-
-              {!isMobile && canCreateLeads && (
-                <Button
-                  data-tour="pipeline-new-lead"
-                  size="sm"
-                  className="h-8 px-4 bg-[#FF4529] text-[11px] font-extralight uppercase tracking-[0.08em] text-white outline-none transition-opacity hover:opacity-90 rounded-[6px]"
-                  onClick={() => openNewLeadDialog()}
-                >
-                  <Plus className="h-3.5 w-3.5 mr-1.5" />
-                  {newButtonLabel}
-                </Button>
-              )}
             </div>
           </div>
         </div>

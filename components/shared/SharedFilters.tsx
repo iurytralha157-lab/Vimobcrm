@@ -64,6 +64,7 @@ interface SharedFiltersProps {
   onFiltersOpenChange?: (open: boolean) => void;
   tourPrefix?: string;
   mobileIconOnly?: boolean;
+  triggerClassName?: string;
 }
 
 export function SharedFilters({
@@ -106,6 +107,7 @@ export function SharedFilters({
   onFiltersOpenChange,
   tourPrefix,
   mobileIconOnly = false,
+  triggerClassName,
 }: SharedFiltersProps) {
   const { user, isSuperAdmin } = useAuth();
   const { hasPermission } = useUserPermissions();
@@ -310,6 +312,7 @@ export function SharedFilters({
             isMobile ? "px-2 text-xs font-medium normal-case tracking-normal" : "",
             useMobileIcons && "w-8 px-0",
             (datePreset !== "last30days" || customDateRange) && "bg-primary/10 text-primary hover:bg-primary/15",
+            triggerClassName,
           )}
           iconOnly={useMobileIcons}
           align="end"
@@ -330,6 +333,7 @@ export function SharedFilters({
                 isMobile ? "px-2.5 text-xs font-medium normal-case tracking-normal" : "",
                 useMobileIcons && "w-8 px-0",
                 hasExtraFilters && "bg-primary/10 text-primary hover:bg-primary/15",
+                triggerClassName,
               )}
             >
               <SlidersHorizontal className="h-3.5 w-3.5" />
@@ -757,6 +761,7 @@ export function SharedFilters({
             "h-8 gap-2 text-[11px] font-semibold uppercase tracking-wider px-3 border-white/[0.08] hover:border-primary/50 transition-colors",
             isMobile ? "px-2 text-xs font-medium normal-case tracking-normal" : "",
             (datePreset !== "last30days" || customDateRange) && "border-primary/50 bg-primary/5 text-primary",
+            triggerClassName,
           )}
           iconOnly={useMobileIcons}
           align="end"
