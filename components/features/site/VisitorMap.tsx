@@ -8,6 +8,25 @@ interface VisitorMapProps {
   locations: LocationData[];
 }
 
+const COUNTRY_CENTERS: Record<string, [number, number]> = {
+  BR: [-14.235, -51.925],
+  AR: [-38.4161, -63.6167],
+  BO: [-16.2902, -63.5887],
+  CL: [-35.6751, -71.543],
+  PY: [-23.4425, -58.4438],
+  PE: [-9.19, -75.0152],
+  PT: [39.3999, -8.2245],
+  US: [37.0902, -95.7129],
+  UY: [-32.5228, -55.7658],
+};
+
+function resolveLocationCoordinates(location: LocationData): [number, number] | null {
+  if (Number.isFinite(location.lat) && Number.isFinite(location.lng)) {
+    return [Number(location.lat), Number(location.lng)];
+  }
+  return COUNTRY_CENTERS[(location.country || '').toUpperCase()] || null;
+}
+
 function escapePopupText(value: unknown) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -46,12 +65,16 @@ export function VisitorMap({ locations }: VisitorMapProps) {
         maxZoom: 18,
       }).addTo(map);
 
-      if (locations.length > 0) {
+      const mappedLocations = locations
+        .map((location) => ({ location, coordinates: resolveLocationCoordinates(location) }))
+        .filter((item): item is { location: LocationData; coordinates: [number, number] } => item.coordinates !== null);
+
+      if (mappedLocations.length > 0) {
         const bounds = L.latLngBounds([]);
 
-        locations.forEach((loc) => {
+        mappedLocations.forEach(({ location: loc, coordinates }) => {
           const radius = Math.min(Math.max(loc.sessions * 3, 6), 30);
-          const marker = L.circleMarker([loc.lat, loc.lng], {
+          const marker = L.circleMarker(coordinates, {
             radius,
 			fillColor: '#FF4529',
 			color: '#D93620',
@@ -71,7 +94,7 @@ export function VisitorMap({ locations }: VisitorMapProps) {
             </div>`
           );
 
-          bounds.extend([loc.lat, loc.lng]);
+          bounds.extend(coordinates);
         });
 
         map.fitBounds(bounds, { padding: [30, 30], maxZoom: 10 });

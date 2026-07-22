@@ -918,7 +918,9 @@ function LostDealsDialog({
   onViewLead: (leadId: string) => void;
 }) {
   const lostDeals = data.lostDeals || [];
-  const reasonBuckets = (data.lostReasonBuckets || []).filter((bucket) => bucket.count > 0);
+  const reasonBuckets = [...(data.lostReasonBuckets || [])]
+    .filter((bucket) => bucket.count > 0)
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "pt-BR"));
   const totalLost = data.lostLeads || lostDeals.length;
   const topReason = reasonBuckets[0];
   const otherBucket = reasonBuckets.find((bucket) => bucket.key === "outros");
@@ -1048,31 +1050,39 @@ function LostDealsDialog({
                   {lostDeals.map((deal) => (
                     <div
                       key={deal.id}
-                      className="dashboard-dialog-list-row grid gap-y-2 gap-x-2 p-3 text-[12px] transition-colors hover:bg-[var(--app-surface-hover)] md:grid-cols-[0.78fr_1.45fr_34px_108px_auto] md:items-center"
+                      className="dashboard-dialog-list-row grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-3 p-3 text-[12px] transition-colors hover:bg-[var(--app-surface-hover)] md:grid-cols-[0.8fr_1.3fr_34px_220px_auto] md:items-center md:gap-y-2"
                     >
-                      <div className="min-w-0">
+                      <div className="col-span-2 min-w-0 md:col-span-1">
                         <p className="truncate text-[12px] font-medium text-[var(--app-text-primary)]">{deal.name}</p>
                         <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">
                           {sourceLabels[deal.source || ""] || deal.source || "Origem não informada"}
                         </p>
                       </div>
-                      <div className="min-w-0">
+                      <div className="col-span-2 min-w-0 md:col-span-1">
                         <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">Motivo</p>
                         <p className="truncate text-[12px] font-medium text-destructive">{deal.lostReasonGroup}</p>
                         <p className="break-words text-[11px] font-light text-[var(--app-text-tertiary)]">{deal.lostReason}</p>
                       </div>
-                      <div className="flex items-center md:justify-center">
-                        <DashboardAssigneeAvatar name={deal.assignedUserName} />
+                      <div className="col-span-2 min-w-0 md:col-span-1 md:flex md:justify-center">
+                        <span className="block truncate text-[11px] text-[var(--app-text-secondary)] md:hidden">
+                          Responsável: <span className="font-medium text-[var(--app-text-primary)]">{deal.assignedUserName || "Sem responsável"}</span>
+                        </span>
+                        <span className="hidden md:block"><DashboardAssigneeAvatar name={deal.assignedUserName} /></span>
                       </div>
-                      <div className="md:text-right">
-                        <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">Entrada / perda</p>
-                        <p className="text-[12px] font-medium text-[var(--app-text-primary)]">{formatDateTime(deal.createdAt)}</p>
-                        <p className="text-[11px] font-light text-destructive">{formatDateTime(deal.lostAt)}</p>
+                      <div className="col-span-2 grid grid-cols-2 gap-3 md:col-span-1 md:text-right">
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-light uppercase tracking-wide text-[var(--app-text-tertiary)]">Entrada</p>
+                          <p className="truncate text-[11px] font-medium text-[var(--app-text-primary)]">{formatDateTime(deal.createdAt)}</p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-light uppercase tracking-wide text-destructive/75">Perda</p>
+                          <p className="truncate text-[11px] font-medium text-destructive">{formatDateTime(deal.lostAt)}</p>
+                        </div>
                       </div>
                       <button
                         type="button"
                         onClick={() => onViewLead(deal.id)}
-                        className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                        className="col-span-2 inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 md:col-span-1"
                       >
                         <Eye className="h-3.5 w-3.5" />
                         Visualizar
@@ -1249,21 +1259,29 @@ function WonDealsDialog({
                   {wonDeals.map((deal) => (
                     <div
                       key={deal.id}
-                      className="dashboard-dialog-list-row grid gap-y-2 gap-x-2 p-3 text-[12px] transition-colors hover:bg-[var(--app-surface-hover)] md:grid-cols-[1.02fr_34px_0.85fr_0.75fr_auto] md:items-center"
+                      className="dashboard-dialog-list-row grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-3 p-3 text-[12px] transition-colors hover:bg-[var(--app-surface-hover)] md:grid-cols-[1fr_34px_220px_0.75fr_auto] md:items-center md:gap-y-2"
                     >
-                      <div className="min-w-0">
+                      <div className="col-span-2 min-w-0 md:col-span-1">
                         <p className="truncate text-[12px] font-medium text-[var(--app-text-primary)]">{deal.name}</p>
                         <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">
                           {sourceLabels[deal.source || ""] || deal.source || "Origem não informada"}
                         </p>
                       </div>
-                      <div className="flex items-center md:justify-center">
-                        <DashboardAssigneeAvatar name={deal.assignedUserName} />
+                      <div className="col-span-2 min-w-0 md:col-span-1 md:flex md:justify-center">
+                        <span className="block truncate text-[11px] text-[var(--app-text-secondary)] md:hidden">
+                          Responsável: <span className="font-medium text-[var(--app-text-primary)]">{deal.assignedUserName || "Sem responsável"}</span>
+                        </span>
+                        <span className="hidden md:block"><DashboardAssigneeAvatar name={deal.assignedUserName} /></span>
                       </div>
-                      <div>
-                        <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">Entrada / ganho</p>
-                        <p className="text-[12px] font-medium text-[var(--app-text-primary)]">{formatDateTime(deal.createdAt)}</p>
-                        <p className="text-[11px] font-light text-emerald-500">{formatDateTime(deal.wonAt)}</p>
+                      <div className="col-span-2 grid grid-cols-2 gap-3 md:col-span-1">
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-light uppercase tracking-wide text-[var(--app-text-tertiary)]">Entrada</p>
+                          <p className="truncate text-[11px] font-medium text-[var(--app-text-primary)]">{formatDateTime(deal.createdAt)}</p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-light uppercase tracking-wide text-emerald-500/75">Ganho</p>
+                          <p className="truncate text-[11px] font-medium text-emerald-500">{formatDateTime(deal.wonAt)}</p>
+                        </div>
                       </div>
                       <div className="md:text-right">
                         <p className="text-[12px] font-medium text-emerald-500">{formatCurrency(deal.value)}</p>
@@ -1272,7 +1290,7 @@ function WonDealsDialog({
                       <button
                         type="button"
                         onClick={() => onViewLead(deal.id)}
-                        className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                        className="col-span-2 inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 md:col-span-1"
                       >
                         <Eye className="h-3.5 w-3.5" />
                         Visualizar

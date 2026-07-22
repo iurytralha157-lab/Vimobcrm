@@ -15,6 +15,9 @@ export interface LeadJourney {
   os: string | null;
   city: string | null;
   region: string | null;
+  country: string | null;
+  utm_source: string | null;
+  referrer: string | null;
 }
 
 export interface FunnelStep {
@@ -40,8 +43,9 @@ export interface DeviceBreakdown {
 export interface LocationData {
   city: string;
   region: string | null;
-  lat: number;
-  lng: number;
+  country: string | null;
+  lat: number | null;
+  lng: number | null;
   sessions: number;
 }
 

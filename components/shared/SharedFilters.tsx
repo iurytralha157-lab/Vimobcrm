@@ -63,6 +63,7 @@ interface SharedFiltersProps {
   loadDynamicOptions?: boolean;
   onFiltersOpenChange?: (open: boolean) => void;
   tourPrefix?: string;
+  mobileIconOnly?: boolean;
 }
 
 export function SharedFilters({
@@ -104,6 +105,7 @@ export function SharedFilters({
   loadDynamicOptions = true,
   onFiltersOpenChange,
   tourPrefix,
+  mobileIconOnly = false,
 }: SharedFiltersProps) {
   const { user, isSuperAdmin } = useAuth();
   const { hasPermission } = useUserPermissions();
@@ -113,6 +115,7 @@ export function SharedFilters({
   const { data: teams = [] } = useTeams({ enabled: loadDynamicOptions && canUseScopeFilters });
   const { data: users = [] } = useOrganizationUsers({ enabled: loadDynamicOptions && canUseScopeFilters });
   const isMobile = useIsMobile();
+  const useMobileIcons = isMobile && mobileIconOnly;
   const currentUserId = user?.id;
 
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -305,8 +308,10 @@ export function SharedFilters({
           triggerClassName={cn(
             dashboardTriggerClass,
             isMobile ? "px-2 text-xs font-medium normal-case tracking-normal" : "",
+            useMobileIcons && "w-8 px-0",
             (datePreset !== "last30days" || customDateRange) && "bg-primary/10 text-primary hover:bg-primary/15",
           )}
+          iconOnly={useMobileIcons}
           align="end"
         />
       )}
@@ -323,11 +328,12 @@ export function SharedFilters({
               className={cn(
                 dashboardTriggerClass,
                 isMobile ? "px-2.5 text-xs font-medium normal-case tracking-normal" : "",
+                useMobileIcons && "w-8 px-0",
                 hasExtraFilters && "bg-primary/10 text-primary hover:bg-primary/15",
               )}
             >
               <SlidersHorizontal className="h-3.5 w-3.5" />
-              <span className={isMobile ? "hidden xs:inline" : ""}>Filtros</span>
+              <span className={useMobileIcons ? "sr-only" : isMobile ? "hidden xs:inline" : ""}>Filtros</span>
               {hasExtraFilters && (
                 <Badge
                   variant="default"
@@ -752,6 +758,7 @@ export function SharedFilters({
             isMobile ? "px-2 text-xs font-medium normal-case tracking-normal" : "",
             (datePreset !== "last30days" || customDateRange) && "border-primary/50 bg-primary/5 text-primary",
           )}
+          iconOnly={useMobileIcons}
           align="end"
         />
       )}

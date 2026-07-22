@@ -34,11 +34,17 @@ func (repo Repository) SiteSummary(ctx context.Context, tenantContext tenant.Con
 		), session_sources as (
 			select distinct on (session_id) session_id, utm_source, utm_medium, referrer
 			from current_events where session_id is not null order by session_id, created_at
+		), current_session_durations as (
+			select session_id, sum(coalesce(duration_seconds, 0))::numeric duration
+			from current_events where session_id is not null group by session_id
+		), previous_session_durations as (
+			select session_id, sum(coalesce(duration_seconds, 0))::numeric duration
+			from previous_events where session_id is not null group by session_id
 		), totals as (
 			select count(*) filter (where event_type in ('pageview','page_view'))::int views,
 			       count(distinct page_path) filter (where event_type in ('pageview','page_view'))::int unique_pages,
 			       count(distinct session_id)::int sessions,
-			       coalesce(round(sum(duration_seconds)::numeric / nullif(count(distinct session_id), 0)), 0)::int avg_duration,
+			       coalesce((select round(avg(duration)) from current_session_durations), 0)::int avg_duration,
 			       count(*) filter (where event_type = 'form_submit')::int conversions,
 			       count(distinct session_id) filter (where device_type = 'desktop')::numeric desktop,
 			       count(distinct session_id) filter (where device_type = 'mobile')::numeric mobile,
@@ -48,7 +54,7 @@ func (repo Repository) SiteSummary(ctx context.Context, tenantContext tenant.Con
 			select count(*) filter (where event_type in ('pageview','page_view'))::int views,
 			       count(distinct page_path) filter (where event_type in ('pageview','page_view'))::int unique_pages,
 			       count(distinct session_id)::int sessions,
-			       coalesce(round(sum(duration_seconds)::numeric / nullif(count(distinct session_id), 0)), 0)::int avg_duration,
+			       coalesce((select round(avg(duration)) from previous_session_durations), 0)::int avg_duration,
 			       count(*) filter (where event_type = 'form_submit')::int conversions,
 			       count(distinct session_id) filter (where device_type = 'desktop')::numeric desktop,
 			       count(distinct session_id) filter (where device_type = 'mobile')::numeric mobile
@@ -129,7 +135,11 @@ func (repo Repository) SiteDetailed(ctx context.Context, tenantContext tenant.Co
 		   (select count(*)::int from events where event_type='form_submit') conversions,
 		   coalesce(round(sum(pageviews)::numeric/nullif(count(*),0),2),0) pages_per_session,
 		   coalesce(round(count(*) filter(where pageviews<=1 and not converted)::numeric*100/nullif(count(*),0),2),0) bounce_rate,
-		   count(*) filter(where last_seen >= now()-interval '5 minutes')::int live_visitors
+		   (select count(distinct live.session_id)::int
+		      from public.site_analytics_events live
+		     where live.organization_id=$1::uuid
+		       and live.session_id is not null
+		       and live.created_at >= now()-interval '5 minutes') live_visitors
 		 from session_metrics
 		), site_leads as (
 		 select count(*)::int total from public.leads l
@@ -174,10 +184,13 @@ func (repo Repository) LeadAnalytics(ctx context.Context, tenantContext tenant.C
 		   array_agg(event_type order by created_at) event_sequence, min(created_at)::text first_event,
 		   max(created_at)::text last_event, count(*)::int total_events,
 		   bool_or(event_type='form_submit') converted, max(device_type) device_type, max(browser) browser,
-		   max(metadata->>'os') os, max(metadata->>'city') city, max(metadata->>'region') region
+		   max(metadata->>'os') os, max(metadata->>'city') city, max(metadata->>'region') region,
+		   max(metadata->>'country') country, max(utm_source) utm_source, max(referrer) referrer
 		 from events where session_id is not null group by session_id order by max(created_at) desc limit 100
 		), funnel as (
-		 select event_type, count(*)::int total from events group by event_type order by total desc
+		 select event_type, count(*)::int total from events
+		 where event_type not in ('session_start', 'page_duration')
+		 group by event_type order by total desc
 		), pages as (
 		 select page_path, count(*)::int views from events where event_type in ('pageview','page_view') group by page_path order by views desc limit 20
 		), daily as (
@@ -185,11 +198,15 @@ func (repo Repository) LeadAnalytics(ctx context.Context, tenantContext tenant.C
 		), devices as (
 		 select coalesce(device_type,'unknown') device_type, count(distinct session_id)::int total from events group by device_type
 		), locations as (
-		 select max(metadata->>'city') city, max(metadata->>'region') region,
+		 select coalesce(max(metadata->>'city'), max(metadata->>'country'), 'Localizacao nao identificada') city,
+		   max(metadata->>'region') region, max(metadata->>'country') country,
 		   max(case when metadata->>'lat' ~ '^-?[0-9]+([.][0-9]+)?$' then (metadata->>'lat')::numeric end) lat,
 		   max(case when metadata->>'lng' ~ '^-?[0-9]+([.][0-9]+)?$' then (metadata->>'lng')::numeric end) lng,
 		   count(distinct session_id)::int sessions
-		 from events where metadata->>'city' is not null group by metadata->>'city', metadata->>'region' order by sessions desc limit 50
+		 from events
+		 where metadata->>'city' is not null or metadata->>'country' is not null
+		 group by coalesce(metadata->>'city', metadata->>'country'), metadata->>'region'
+		 order by sessions desc limit 50
 		)
 		select jsonb_build_object(
 		 'journeys',coalesce((select jsonb_agg(to_jsonb(x)) from journeys x),'[]'::jsonb),
@@ -236,7 +253,11 @@ func (repo Repository) siteDetailedLegacy(ctx context.Context, tenantContext ten
 		   (select count(*)::int from events where event_type='form_submit') conversions,
 		   coalesce(round(sum(pageviews)::numeric/nullif(count(*),0),2),0) pages_per_session,
 		   coalesce(round(count(*) filter(where pageviews<=1 and not converted)::numeric*100/nullif(count(*),0),2),0) bounce_rate,
-		   count(*) filter(where last_seen >= now()-interval '5 minutes')::int live_visitors
+		   (select count(distinct live.session_id)::int
+		      from public.site_analytics_events live
+		     where live.organization_id=$1::uuid
+		       and live.session_id is not null
+		       and live.created_at >= now()-interval '5 minutes') live_visitors
 		 from session_metrics
 		), site_leads as (
 		 select count(*)::int total from public.leads l
@@ -270,10 +291,13 @@ func (repo Repository) leadAnalyticsLegacy(ctx context.Context, tenantContext te
 		   array_agg(event_type order by created_at) event_sequence, min(created_at)::text first_event,
 		   max(created_at)::text last_event, count(*)::int total_events,
 		   bool_or(event_type='form_submit') converted, max(device_type) device_type, max(browser) browser,
-		   null::text os, null::text city, null::text region
+		   null::text os, null::text city, null::text region, null::text country,
+		   max(utm_source) utm_source, max(referrer) referrer
 		 from events where session_id is not null group by session_id order by max(created_at) desc limit 100
 		), funnel as (
-		 select event_type, count(*)::int total from events group by event_type order by total desc
+		 select event_type, count(*)::int total from events
+		 where event_type not in ('session_start', 'page_duration')
+		 group by event_type order by total desc
 		), pages as (
 		 select page_path, count(*)::int views from events where event_type in ('pageview','page_view') group by page_path order by views desc limit 20
 		), daily as (

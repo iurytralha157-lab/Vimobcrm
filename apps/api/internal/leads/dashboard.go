@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -1228,6 +1229,13 @@ func buildLostReasonBuckets(deals []LostDealDetail, lostLeads int64) []LostReaso
 			Color:      colors[key],
 		})
 	}
+
+	sort.SliceStable(buckets, func(i, j int) bool {
+		if buckets[i].Count == buckets[j].Count {
+			return buckets[i].Label < buckets[j].Label
+		}
+		return buckets[i].Count > buckets[j].Count
+	})
 
 	return buckets
 }

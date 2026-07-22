@@ -19,6 +19,7 @@ interface DateFilterPopoverProps {
   align?: "start" | "center" | "end";
   defaultPreset?: DatePreset;
   showCalendar?: boolean;
+  iconOnly?: boolean;
 }
 
 export function DateFilterPopover({
@@ -31,6 +32,7 @@ export function DateFilterPopover({
   align = "start",
   defaultPreset = "last30days",
   showCalendar = true,
+  iconOnly = false,
 }: DateFilterPopoverProps) {
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [tempDateRange, setTempDateRange] = useState<{ from?: Date; to?: Date }>({});
@@ -113,10 +115,12 @@ export function DateFilterPopover({
           variant="outline"
           size="sm"
           data-tour={triggerDataTour}
-          className={cn("h-9 gap-2 text-sm", isActive && "border-primary text-primary", triggerClassName)}
+          aria-label={iconOnly ? `Período: ${getDateLabel()}` : undefined}
+          title={iconOnly ? `Período: ${getDateLabel()}` : undefined}
+          className={cn("h-9 gap-2 text-sm", iconOnly && "w-8 px-0", isActive && "border-primary text-primary", triggerClassName)}
         >
           <CalendarIcon className="h-4 w-4 shrink-0" />
-          <span className="truncate">{getDateLabel()}</span>
+          {!iconOnly && <span className="truncate">{getDateLabel()}</span>}
         </Button>
       </PopoverTrigger>
       <PopoverContent

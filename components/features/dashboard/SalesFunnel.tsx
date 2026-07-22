@@ -97,20 +97,16 @@ export function SalesFunnel({ data, isLoading }: SalesFunnelProps) {
     );
   }
 
-  const total = data.reduce((sum, d) => sum + d.value, 0);
   const maxStages = data.length;
 
   return (
     <Card className="app-card overflow-hidden">
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center">
           <CardTitle className="text-sm font-medium flex items-center gap-2">
             <TrendingDown className="h-4 w-4 text-primary" />
             Funil de Vendas
           </CardTitle>
-          <span className="text-xs text-muted-foreground">
-            {total} leads no total
-          </span>
         </div>
       </CardHeader>
       <CardContent className="pt-0 pb-3">

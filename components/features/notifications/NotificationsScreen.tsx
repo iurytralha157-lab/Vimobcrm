@@ -1,13 +1,13 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { Bell, Check, CheckCheck, Loader2, UserPlus, CheckSquare, Info, MessageCircle, Settings, AlertTriangle, Zap, SlidersHorizontal } from 'lucide-react';
+import { Bell, Check, CheckCheck, Loader2, UserPlus, CheckSquare, Info, MessageCircle, Settings, AlertTriangle, Zap } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/shared/layout/AppLayout';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useNotifications, useMarkNotificationRead, useMarkAllNotificationsRead, Notification } from '@/hooks/use-notifications';
@@ -15,7 +15,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Badge } from '@/components/ui/badge';
 import { getNotificationRoute } from '@/lib/notification-routing';
 
@@ -128,80 +127,8 @@ export default function Notifications() {
   return (
     <AppLayout title="Notificações">
       <div className="space-y-6">
-        {/* Mobile: actions row with filter popover + mark all */}
-        {isMobile && (
-          <div className="flex items-center justify-between gap-2">
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-1.5">
-                  <SlidersHorizontal className="h-3.5 w-3.5" />
-                  Filtros
-                  {categoryFilter !== 'all' && (
-                    <Badge variant="default" className="h-4 w-4 p-0 flex items-center justify-center text-[10px] rounded-full">
-                      •
-                    </Badge>
-                  )}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-56 p-2">
-                <div className="space-y-1">
-                  {(Object.keys(notificationCategories) as CategoryKey[]).map((key) => {
-                    const category = notificationCategories[key];
-                    const CategoryIcon = category.icon;
-                    const count = categoryCounts[key];
-                    const isActive = categoryFilter === key;
-                    return (
-                      <button
-                        key={key}
-                        onClick={() => setCategoryFilter(key)}
-                        className={cn(
-                          "flex items-center gap-2 w-full px-3 py-2 rounded-md text-sm transition-colors",
-                          isActive
-                            ? "bg-primary text-primary-foreground"
-                            : "hover:bg-white/[0.055]"
-                        )}
-                      >
-                        <CategoryIcon className="h-4 w-4" />
-                        <span className="flex-1 text-left">{category.label}</span>
-                        {count > 0 && (
-                          <span className={cn(
-                            "text-xs rounded-full px-1.5 min-w-[20px] text-center",
-                            isActive
-                              ? "bg-primary-foreground/20 text-primary-foreground"
-                              : "bg-primary/10 text-primary"
-                          )}>
-                            {count}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              </PopoverContent>
-            </Popover>
-
-            {unreadCount > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleMarkAllAsRead}
-                disabled={markAllAsRead.isPending}
-              >
-                {markAllAsRead.isPending ? (
-                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                ) : (
-                  <CheckCheck className="h-3.5 w-3.5 mr-1.5" />
-                )}
-                Marcar lidas
-              </Button>
-            )}
-          </div>
-        )}
-
-        {/* Desktop: Category Filter inline */}
-        {!isMobile && (
-          <ScrollArea className="w-full whitespace-nowrap pb-2">
-            <div className="flex gap-2">
+        <ScrollArea className="w-full whitespace-nowrap">
+          <div className="flex w-max min-w-full items-center gap-2 pb-2">
               {(Object.keys(notificationCategories) as CategoryKey[]).map((key) => {
                 const category = notificationCategories[key];
                 const CategoryIcon = category.icon;
@@ -213,17 +140,17 @@ export default function Notifications() {
                     key={key}
                     onClick={() => setCategoryFilter(key)}
                     className={cn(
-                      "flex items-center gap-2 px-4 py-2 rounded-lg transition-all shrink-0",
+                      "flex h-8 shrink-0 items-center gap-1.5 rounded-[6px] border-0 px-3 text-[11px] font-medium shadow-none transition-colors",
                       isActive
                         ? "bg-primary text-primary-foreground"
-                        : "bg-white/[0.045] hover:bg-white/[0.07]"
+                        : "bg-[var(--app-surface)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
                     )}
                   >
-                    <CategoryIcon className="h-4 w-4" />
-                    <span className="text-sm font-medium">{category.label}</span>
+                    <CategoryIcon className="h-3.5 w-3.5" />
+                    <span>{category.label}</span>
                     {count > 0 && (
                       <span className={cn(
-                        "text-xs rounded-full px-1.5 min-w-[20px] text-center",
+                        "min-w-[18px] rounded-[4px] px-1 text-center text-[10px]",
                         isActive
                           ? "bg-primary-foreground/20 text-primary-foreground"
                           : "bg-primary/10 text-primary"
@@ -234,38 +161,34 @@ export default function Notifications() {
                   </button>
                 );
               })}
-            </div>
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
-        )}
+            <div className="mx-0.5 h-5 w-px shrink-0 bg-[var(--app-border)]" />
+            <Tabs value={filter} onValueChange={(value) => setFilter(value as 'all' | 'unread')}>
+              <TabsList className="h-8 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface)] p-0.5 shadow-none">
+                <TabsTrigger value="all" className="h-7 rounded-[5px] px-2.5 text-[11px] font-medium shadow-none data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:shadow-none">Todas</TabsTrigger>
+                <TabsTrigger value="unread" className="h-7 gap-1 rounded-[5px] px-2.5 text-[11px] font-medium shadow-none data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:shadow-none">
+                  Não lidas
+                  {unreadCount > 0 && <span className="rounded-[4px] bg-primary px-1 text-[10px] text-primary-foreground">{unreadCount}</span>}
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+            {unreadCount > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 shrink-0 gap-1.5 rounded-[6px] border-0 bg-[var(--app-surface)] px-3 text-[11px] font-medium shadow-none hover:bg-[var(--app-surface-hover)]"
+                onClick={handleMarkAllAsRead}
+                disabled={markAllAsRead.isPending}
+              >
+                {markAllAsRead.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCheck className="h-3.5 w-3.5" />}
+                Marcar lidas
+              </Button>
+            )}
+          </div>
+          <ScrollBar orientation="horizontal" />
+        </ScrollArea>
 
         <Card className="app-card">
-          <CardHeader className={cn(isMobile && "px-3 py-3")}>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className={cn(isMobile && "text-base")}>{isMobile ? 'Notificações' : 'Suas Notificações'}</CardTitle>
-                {!isMobile && (
-                  <CardDescription>
-                    {filteredNotifications.length} notificações
-                  </CardDescription>
-                )}
-              </div>
-              <Tabs value={filter} onValueChange={(v) => setFilter(v as 'all' | 'unread')}>
-                <TabsList className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-1">
-                  <TabsTrigger value="all" className="h-7 rounded-[4px] px-3 text-xs font-normal data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:shadow-none">Todas</TabsTrigger>
-                  <TabsTrigger value="unread" className="h-7 gap-1 rounded-[4px] px-3 text-xs font-normal data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:shadow-none">
-                    Não lidas
-                    {unreadCount > 0 && (
-                      <span className="ml-1 rounded-[4px] bg-primary px-1.5 text-xs text-primary-foreground">
-                        {unreadCount}
-                      </span>
-                    )}
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
-            </div>
-          </CardHeader>
-          <CardContent className={cn("px-4 md:px-6 pb-4", isMobile && "px-3")}>
+          <CardContent className={cn("px-4 pb-4 pt-4 md:px-6", isMobile && "px-3 pt-3")}>
             {isLoading ? (
               <div className="space-y-3">
                 {[...Array(5)].map((_, i) => (

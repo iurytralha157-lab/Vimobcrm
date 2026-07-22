@@ -40,6 +40,20 @@ func TestEnrichTrackingLocationRejectsInvalidCoordinates(t *testing.T) {
 	}
 }
 
+func TestEnrichTrackingLocationKeepsCountryWithoutCoordinates(t *testing.T) {
+	request := PublicTrackingRequest{}
+	header := http.Header{"Cf-Ipcountry": []string{"BR"}}
+
+	enrichTrackingLocation(&request, header)
+
+	if request.Metadata["country"] != "BR" {
+		t.Fatalf("country-only location should be stored: %#v", request.Metadata)
+	}
+	if _, exists := request.Metadata["lat"]; exists {
+		t.Fatalf("missing coordinates should not be invented: %#v", request.Metadata)
+	}
+}
+
 func TestPublicPropertyJSONDoesNotExposeExactLocation(t *testing.T) {
 	query := publicPropertyJSONSQL()
 

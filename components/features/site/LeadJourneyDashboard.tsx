@@ -35,6 +35,16 @@ interface LeadJourneyDashboardProps {
   dateTo: Date;
 }
 
+function getJourneyOrigin(journey: LeadJourney) {
+  if (journey.utm_source?.trim()) return journey.utm_source.trim();
+  if (!journey.referrer?.trim()) return 'Direto';
+  try {
+    return new URL(journey.referrer).hostname.replace(/^www\./, '') || 'Referência';
+  } catch {
+    return journey.referrer;
+  }
+}
+
 function FunnelStage({ item, index, max }: { item: { name: string; total: number }; index: number; max: number }) {
 	const width = Math.max(36, Math.round((item.total / max) * 100));
 	const intensity = Math.max(16, 34 - index * 3);
@@ -87,7 +97,7 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
 
   const analytics = data || {
     journeys: [] as LeadJourney[], funnel: [] as { event_type: string; total: number }[], top_pages: [] as { page_path: string; views: number }[], daily_views: [] as { date: string; views: number }[],
-    total_sessions: 0, total_conversions: 0, device_breakdown: [] as { device_type: string; total: number }[], locations: [] as { city: string; region: string | null; lat: number; lng: number; sessions: number }[],
+    total_sessions: 0, total_conversions: 0, device_breakdown: [] as { device_type: string; total: number }[], locations: [] as { city: string; region: string | null; country: string | null; lat: number | null; lng: number | null; sessions: number }[],
   };
 
   const conversionRate = analytics.total_sessions > 0
@@ -154,9 +164,9 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
         {funnelData.length > 0 && (
-          <Card className="app-card">
+          <Card className="app-card flex h-full min-h-[430px] flex-col overflow-hidden">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm flex items-center gap-2">
                 <MousePointerClick className="w-4 h-4 text-primary" />
@@ -208,7 +218,7 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
                 Páginas Mais Acessadas
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-1 px-3 pb-3">
+            <CardContent className="app-scrollbar h-[350px] flex-1 space-y-1 overflow-y-auto px-3 pb-3">
               {analytics.top_pages.map((page, i) => (
                 <div key={page.page_path} className="flex min-w-0 items-center gap-3 rounded-[7px] px-2 py-2.5 hover:bg-[var(--app-surface-soft)]">
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] text-[11px] font-semibold text-[var(--app-text-secondary)]">{i + 1}</span>
@@ -222,7 +232,7 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
         )}
 
         {/* Visitor Location Map */}
-        <Card className="app-card">
+        <Card className="app-card flex h-full min-h-[430px] flex-col overflow-hidden">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm flex items-center gap-2">
               <MapPin className="w-4 h-4 text-primary" />
@@ -265,13 +275,17 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
               const eventNames = [...new Set(j.event_sequence)].map(evt => EVENT_LABELS[evt] || evt);
               const firstPath = j.path_sequence[0] || 'Página não identificada';
               const lastPath = j.path_sequence[j.path_sequence.length - 1] || firstPath;
+              const journeyOrigin = getJourneyOrigin(j);
               return (
-                <div key={j.session_id} className={cn('grid min-w-0 gap-3 rounded-[7px] px-3 py-3 hover:bg-[var(--app-surface-soft)] md:grid-cols-[110px_minmax(0,1fr)_180px_110px_32px] md:items-center', j.converted && 'bg-emerald-500/[0.05]')}>
+                  <div key={j.session_id} className={cn('grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 rounded-[7px] px-3 py-3 hover:bg-[var(--app-surface-soft)] md:grid-cols-[110px_minmax(0,1fr)_180px_110px_32px] md:items-center', j.converted && 'bg-emerald-500/[0.05]')}>
                   <div className="flex items-center gap-2"><span className={cn('h-2 w-2 rounded-full', j.converted ? 'bg-emerald-500' : 'bg-[#FF4529]')} /><div><p className="font-mono text-xs text-[var(--app-text-primary)]">{j.session_id.substring(0, 8)}</p><p className="text-[10px] text-[var(--app-text-tertiary)]">{format(new Date(j.first_event), 'dd/MM HH:mm', { locale: ptBR })}</p></div></div>
-                  <div className="flex min-w-0 items-center gap-2 font-mono text-[11px] text-[var(--app-text-secondary)]"><span className="min-w-0 truncate" title={firstPath}>{firstPath}</span>{j.path_sequence.length > 1 && <><ArrowRight className="h-3 w-3 shrink-0 text-[#FF4529]" /><span className="min-w-0 truncate" title={lastPath}>{lastPath}</span></>}</div>
-                  <p className="min-w-0 truncate text-[11px] text-[var(--app-text-tertiary)]" title={eventNames.join(', ')}>{eventNames.join(' · ') || 'Sem eventos'}</p>
+                  <div className="col-span-2 flex min-w-0 items-start gap-2 font-mono text-[11px] text-[var(--app-text-secondary)] md:col-span-1 md:items-center"><span className="min-w-0 break-all md:truncate" title={firstPath}>{firstPath}</span>{j.path_sequence.length > 1 && <><ArrowRight className="mt-0.5 h-3 w-3 shrink-0 text-[#FF4529] md:mt-0" /><span className="min-w-0 break-all md:truncate" title={lastPath}>{lastPath}</span></>}</div>
+                  <div className="col-span-2 min-w-0 text-[11px] text-[var(--app-text-tertiary)] md:col-span-1">
+                    <p className="break-words md:truncate" title={eventNames.join(', ')}>{eventNames.join(' · ') || 'Sem eventos'}</p>
+                    <p className="mt-0.5 flex min-w-0 items-center gap-1"><Globe className="h-3 w-3 shrink-0" /><span className="truncate">{journeyOrigin}</span></p>
+                  </div>
                   <div className="flex items-center gap-1.5 text-[11px] text-[var(--app-text-secondary)]">{j.converted && <CheckCircle className="h-3.5 w-3.5 text-emerald-500" />}<span>{j.total_events} eventos</span></div>
-                  <Button variant="ghost" size="icon" className="h-7 w-7 rounded-[6px] shadow-none hover:bg-[var(--app-surface-hover)]" aria-label={`Ver jornada da sessão ${j.session_id.substring(0, 8)}`} title="Ver detalhes da jornada" onClick={() => setSelectedJourney(j)}><Eye className="h-4 w-4" /></Button>
+                  <Button variant="ghost" size="icon" className="col-start-2 row-start-1 h-7 w-7 rounded-[6px] shadow-none hover:bg-[var(--app-surface-hover)] md:col-start-auto md:row-start-auto" aria-label={`Ver jornada da sessão ${j.session_id.substring(0, 8)}`} title="Ver detalhes da jornada" onClick={() => setSelectedJourney(j)}><Eye className="h-4 w-4" /></Button>
                 </div>
               );
             })}
@@ -293,7 +307,7 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
 
       {/* Session Detail Dialog */}
       <Dialog open={!!selectedJourney} onOpenChange={(open) => !open && setSelectedJourney(null)}>
-        <DialogContent className="z-[200] max-h-[88dvh] w-[calc(100vw-24px)] overflow-y-auto rounded-[8px] p-5 shadow-none sm:max-w-lg">
+        <DialogContent className="z-[200] max-h-[88dvh] w-[calc(100vw-24px)] min-w-0 overflow-x-hidden overflow-y-auto rounded-[8px] p-4 shadow-none sm:max-w-lg sm:p-5">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
               <Route className="h-4 w-4 text-primary" />
@@ -332,7 +346,7 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
               </div>
 
               {/* Device & Location Info */}
-              <div className="grid grid-cols-3 gap-3 text-sm">
+              <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
                 {selectedJourney.device_type && (
 				  <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                     <div className="flex items-center gap-1 mb-1">
@@ -364,17 +378,25 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
               </div>
 
               {/* City/Region */}
-              {(selectedJourney.city || selectedJourney.region) && (
+              {(selectedJourney.city || selectedJourney.region || selectedJourney.country) && (
 				<div className="rounded-[8px] bg-[var(--app-surface-soft)] p-3 text-sm">
                   <div className="flex items-center gap-1 mb-1">
                     <MapPin className="h-3 w-3 text-muted-foreground" />
                     <p className="text-[10px] text-muted-foreground">Localização</p>
                   </div>
                   <p className="text-xs font-medium">
-                    {[selectedJourney.city, selectedJourney.region].filter(Boolean).join(', ')}
+                    {[selectedJourney.city, selectedJourney.region, selectedJourney.country].filter(Boolean).join(', ')}
                   </p>
                 </div>
               )}
+
+              <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-3 text-sm">
+                <div className="mb-1 flex items-center gap-1">
+                  <Globe className="h-3 w-3 text-muted-foreground" />
+                  <p className="text-[10px] text-muted-foreground">Origem da sessão</p>
+                </div>
+                <p className="break-all text-xs font-medium">{getJourneyOrigin(selectedJourney)}</p>
+              </div>
 
               {/* Events */}
               <div>
@@ -409,7 +431,7 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
                             {idx + 1}
                           </div>
                           <div className="flex-1 pb-2.5 min-w-0">
-                            <p className="font-mono text-xs truncate">{path}</p>
+                            <p className="whitespace-normal break-all font-mono text-xs">{path}</p>
                           </div>
                         </div>
                       );

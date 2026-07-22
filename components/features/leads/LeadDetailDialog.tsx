@@ -399,6 +399,7 @@ function hasLeadTrackingData(leadMeta: CampaignTrackingDetails | null | undefine
 }
 
 function CampaignTrackingHover({ leadMeta }: { leadMeta: CampaignTrackingDetails | null | undefined }) {
+  const [open, setOpen] = useState(false);
   if (!hasLeadTrackingData(leadMeta)) return null;
 
   const sourceLabel = trackingSourceLabel(leadMeta?.platform) || trackingSourceLabel(leadMeta?.source_type);
@@ -453,10 +454,12 @@ function CampaignTrackingHover({ leadMeta }: { leadMeta: CampaignTrackingDetails
   const hasLinks = links.some(([, value]) => Boolean(metaText(value)));
 
   return (
-    <HoverCard openDelay={100} closeDelay={420}>
+    <HoverCard open={open} onOpenChange={setOpen} openDelay={100} closeDelay={420}>
       <HoverCardTrigger asChild>
         <button
           type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((current) => !current)}
           className="group inline-flex min-w-0 max-w-full items-center justify-end gap-1 text-right font-medium text-[var(--app-text-primary)] outline-none transition-colors hover:text-primary focus-visible:text-primary"
         >
           <span className="truncate underline decoration-dotted decoration-[var(--app-text-tertiary)] underline-offset-4 group-hover:decoration-primary group-focus-visible:decoration-primary">
@@ -607,6 +610,8 @@ function LeadProfileHover({
       <HoverCardTrigger asChild>
         <button
           type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((current) => !current)}
           className="group inline-flex min-w-0 max-w-full items-center justify-end gap-1 text-right font-medium text-[var(--app-text-primary)] outline-none transition-colors hover:text-primary focus-visible:text-primary"
         >
           <span className="truncate underline decoration-dotted decoration-[var(--app-text-tertiary)] underline-offset-4 group-hover:decoration-primary">

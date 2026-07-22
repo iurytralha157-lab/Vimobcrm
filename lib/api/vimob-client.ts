@@ -18,6 +18,7 @@ type RequestOptions = {
   signal?: AbortSignal
   timeoutMs?: number
   skipTelemetry?: boolean
+  keepalive?: boolean
 }
 
 type APIErrorEnvelope = {
@@ -194,6 +195,7 @@ async function makeRequest(path: string, options: RequestOptions, headers: Heade
       headers,
       body: serializeRequestBody(options.body),
       signal,
+      keepalive: options.keepalive,
     })
     const text = await response.text()
 

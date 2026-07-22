@@ -67,18 +67,17 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
   const { data: funnelData = [], isLoading: funnelLoading } = useFunnelData(filters, manualPipelineId);
 
   const isLoading = !organizationId || funnelLoading;
-  const total = funnelData.reduce((sum, d) => sum + d.value, 0);
   const maxStages = Math.max(funnelData.length, 1);
 
   return (
     <Card className="app-card overflow-hidden h-full flex flex-col">
       <CardHeader className="pb-3 pt-4 px-4 shrink-0">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <div className="flex items-center justify-between gap-3">
           <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[var(--app-text-primary)]">
             <TrendingDown className="h-3.5 w-3.5 text-primary" />
             Funil de vendas
           </CardTitle>
-          <div className="flex items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center">
             {pipelines.length > 1 && (
               <Select
                 value={selectedPipelineId || ''}
@@ -101,9 +100,6 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
                 </SelectContent>
               </Select>
             )}
-            <div className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">
-              {total} LEADS
-            </div>
           </div>
         </div>
       </CardHeader>

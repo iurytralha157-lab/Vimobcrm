@@ -362,24 +362,30 @@ func (handler Handler) TrackPublicEvent(w http.ResponseWriter, r *http.Request) 
 func enrichTrackingLocation(request *PublicTrackingRequest, header http.Header) {
 	latitude, latOK := trackingCoordinate(header, "X-Vercel-IP-Latitude", "CF-IPLatitude")
 	longitude, lngOK := trackingCoordinate(header, "X-Vercel-IP-Longitude", "CF-IPLongitude")
-	if !latOK || !lngOK || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 {
+	city := trackingHeaderValue(header, "X-Vercel-IP-City", "CF-IPCity")
+	region := trackingHeaderValue(header, "X-Vercel-IP-Country-Region", "CF-Region", "CF-Region-Code")
+	country := trackingHeaderValue(header, "X-Vercel-IP-Country", "CF-IPCountry")
+	hasCoordinates := latOK && lngOK && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
+	if !hasCoordinates && city == "" && region == "" && country == "" {
 		return
 	}
 	if request.Metadata == nil {
 		request.Metadata = map[string]any{}
 	}
-	request.Metadata["lat"] = latitude
-	request.Metadata["lng"] = longitude
-	if city := trackingHeaderValue(header, "X-Vercel-IP-City", "CF-IPCity"); city != "" {
+	if hasCoordinates {
+		request.Metadata["lat"] = latitude
+		request.Metadata["lng"] = longitude
+	}
+	if city != "" {
 		if decoded, err := url.QueryUnescape(city); err == nil {
 			city = decoded
 		}
 		request.Metadata["city"] = cleanTrackingLocationText(city)
 	}
-	if region := trackingHeaderValue(header, "X-Vercel-IP-Country-Region", "CF-Region"); region != "" {
+	if region != "" {
 		request.Metadata["region"] = cleanTrackingLocationText(region)
 	}
-	if country := trackingHeaderValue(header, "X-Vercel-IP-Country", "CF-IPCountry"); country != "" {
+	if country != "" {
 		request.Metadata["country"] = cleanTrackingLocationText(country)
 	}
 }

@@ -79,6 +79,7 @@ import { notifyLeadRealtimeChange } from '@/contexts/LeadRealtimeBus';
 import { toast } from 'sonner';
 import { getClientRateLimitMessage } from '@/lib/client-action-rate-limit';
 import { leadsAPI } from '@/lib/api/leads';
+import { VimobAPIError } from '@/lib/api/vimob-client';
 import { getLeadEnrichments } from '@/lib/api/lead-enrichments';
 import { pipelinesAPI } from '@/lib/api/pipelines';
 import { getPipelineBoard } from '@/lib/api/pipeline-board';
@@ -313,6 +314,14 @@ const getErrorMessage = (error: unknown) => {
   return 'Erro desconhecido';
 };
 
+const LEAD_DIALOG_CHUNK_RELOAD_KEY = 'vimob:lead-dialog-chunk-reload-at';
+const LEAD_DIALOG_CHUNK_RELOAD_WINDOW_MS = 5 * 60 * 1000;
+
+function isChunkLoadError(error: unknown) {
+  const message = getErrorMessage(error).toLowerCase();
+  return message.includes('failed to load chunk') || message.includes('chunkloaderror') || message.includes('/_next/static/chunks/');
+}
+
 type LeadDialogBoundaryProps = {
   leadId?: string | null;
   onClose: () => void;
@@ -344,22 +353,27 @@ class LeadDialogErrorBoundary extends Component<LeadDialogBoundaryProps, LeadDia
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('[LeadDialogErrorBoundary] Erro ao abrir lead', error, errorInfo);
+    if (!isChunkLoadError(error) || typeof window === 'undefined') return;
+
+    const previousAttempt = Number(window.sessionStorage.getItem(LEAD_DIALOG_CHUNK_RELOAD_KEY) || 0);
+    if (!previousAttempt || Date.now() - previousAttempt > LEAD_DIALOG_CHUNK_RELOAD_WINDOW_MS) {
+      window.sessionStorage.setItem(LEAD_DIALOG_CHUNK_RELOAD_KEY, String(Date.now()));
+      window.location.reload();
+    }
   }
 
   render() {
     if (this.state.error) {
+      const chunkError = isChunkLoadError(this.state.error);
       return (
         <Dialog open onOpenChange={() => this.props.onClose()}>
           <DialogContent className="app-card max-w-md rounded-[6px] text-[var(--app-text-primary)]">
             <DialogHeader>
-              <DialogTitle className="font-extralight tracking-wide text-foreground">Erro ao abrir lead</DialogTitle>
+              <DialogTitle className="font-extralight tracking-wide text-foreground">{chunkError ? 'Aplicativo atualizado' : 'Não foi possível abrir o lead'}</DialogTitle>
             </DialogHeader>
             <div className="space-y-3 text-sm font-extralight tracking-wide text-muted-foreground">
-              <p>O card deste lead encontrou um dado incompleto ao carregar.</p>
-              <pre className="max-h-40 overflow-auto rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-3 text-xs text-muted-foreground whitespace-pre-wrap">
-                {this.state.error.message}
-              </pre>
-              <Button onClick={this.props.onClose} className="w-full h-12 rounded-[6px] border-0 text-[12px] font-extralight uppercase tracking-[0.08em] text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground bg-transparent">Fechar</Button>
+              <p>{chunkError ? 'Uma versão nova do Vimob foi publicada. Recarregue para continuar com os arquivos atualizados.' : 'O lead não pôde ser carregado agora. Feche esta janela e tente novamente.'}</p>
+              <Button onClick={chunkError ? () => window.location.reload() : this.props.onClose} className="h-12 w-full rounded-[6px] border-0 bg-transparent text-[12px] font-extralight uppercase tracking-[0.08em] text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground">{chunkError ? 'Recarregar' : 'Fechar'}</Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -748,7 +762,16 @@ export default function Pipelines() {
         const { data: lead, error } = await leadsAPI.getLead(leadId, activeOrganizationId);
 
         if (cancelled) return;
-        if (error || !lead) return;
+        if (error) {
+          clearLeadParam();
+          toast.error('Não foi possível abrir o lead agora. Atualize a pipeline e tente novamente.');
+          return;
+        }
+        if (!lead) {
+          clearLeadParam();
+          toast.info('Este lead não está mais disponível para você. Ele pode ter sido redistribuído para outro corretor.');
+          return;
+        }
 
         const leadRow = lead as PipelineLead;
         const [enrichment] = await getLeadEnrichments([leadRow.id], activeOrganizationId);
@@ -772,7 +795,15 @@ export default function Pipelines() {
           setSelectedLead(formattedLead);
           clearLeadParam();
         });
-      } catch {}
+      } catch (error) {
+        if (cancelled) return;
+        clearLeadParam();
+        if (error instanceof VimobAPIError && (error.status === 403 || error.status === 404)) {
+          toast.info('Este lead não está mais disponível para você. Ele provavelmente foi redistribuído para outro corretor.');
+          return;
+        }
+        toast.error('Não foi possível abrir o lead agora. Atualize a pipeline e tente novamente.');
+      }
     };
 
     fetchLead();
@@ -1347,22 +1378,7 @@ export default function Pipelines() {
               </div>
             </div>
 
-            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-              <Button
-                data-tour="pipeline-refresh"
-                variant="outline"
-                size="icon"
-                className={cn(
-                  "h-8 w-8 ml-1 rounded-[6px] border-0 bg-transparent text-muted-foreground transition-colors hover:bg-[var(--app-surface-hover)] hover:text-foreground",
-                  isRefreshing && "text-[#FF4529] border-[#FF4529]"
-                )}
-                onClick={handleManualRefresh}
-                disabled={isRefreshing}
-                title="Atualizar pipeline"
-              >
-                <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
-              </Button>
-
+            <div className="flex min-w-0 flex-nowrap items-center justify-end gap-2">
               <div data-tour="pipeline-filters">
                 <SharedFilters
                   datePreset={datePreset}
@@ -1403,8 +1419,24 @@ export default function Pipelines() {
                     if (open) setShouldLoadFilterOptions(true);
                   }}
                   tourPrefix="pipeline"
+                  mobileIconOnly
                 />
               </div>
+
+              <Button
+                data-tour="pipeline-refresh"
+                variant="outline"
+                size="icon"
+                className={cn(
+                  "h-8 w-8 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface)] text-muted-foreground shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-foreground",
+                  isRefreshing && "bg-primary/10 text-[#FF4529]"
+                )}
+                onClick={handleManualRefresh}
+                disabled={isRefreshing}
+                title="Atualizar pipeline"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
+              </Button>
 
               {!isMobile && canCreateLeads && (
                 <Button

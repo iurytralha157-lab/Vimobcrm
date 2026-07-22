@@ -15,7 +15,7 @@ export function PublicSiteTracker({
 }>) {
   useEffect(() => {
     const startedAt = Date.now();
-    let durationRecorded = false;
+    let lastDurationRecordedAt = startedAt;
     void trackEvent({ organizationId, eventType: "pageview", pageTitle, propertyId });
 
     const query = Object.fromEntries(new URLSearchParams(window.location.search));
@@ -36,9 +36,10 @@ export function PublicSiteTracker({
     }
 
     const recordDuration = () => {
-	  if (durationRecorded) return;
-	  durationRecorded = true;
-      const durationSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+      const now = Date.now();
+      const durationSeconds = Math.floor((now - lastDurationRecordedAt) / 1000);
+      if (durationSeconds < 1) return;
+      lastDurationRecordedAt = now;
       void trackEvent({
         organizationId,
         eventType: "page_duration",
@@ -47,11 +48,18 @@ export function PublicSiteTracker({
         metadata: { duration_seconds: durationSeconds },
       });
     };
+    const heartbeat = window.setInterval(recordDuration, 30_000);
+    const recordWhenHidden = () => {
+      if (document.visibilityState === "hidden") recordDuration();
+    };
     window.addEventListener("pagehide", recordDuration);
+    document.addEventListener("visibilitychange", recordWhenHidden);
     return () => {
-	  window.removeEventListener("pagehide", recordDuration);
-	  recordDuration();
-	};
+      window.clearInterval(heartbeat);
+      window.removeEventListener("pagehide", recordDuration);
+      document.removeEventListener("visibilitychange", recordWhenHidden);
+      recordDuration();
+    };
   }, [organizationId, pageTitle, propertyId]);
 
   return null;

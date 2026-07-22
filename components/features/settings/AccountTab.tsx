@@ -453,9 +453,8 @@ export function AccountTab() {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-6 items-start">
-        <div className="space-y-6">
         {/* LEFT: Profile Card */}
-        <Card data-tour="account-profile" className="app-card h-fit lg:col-start-1 lg:row-start-1">
+        <Card data-tour="account-profile" className="app-card order-1 h-fit">
           <CardHeader className="px-4 md:px-5 pt-5 pb-2">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -542,14 +541,12 @@ export function AccountTab() {
             </div>
 
             {/* Preferences */}
-            <div data-tour="account-preferences" className="flex flex-col gap-3 pt-4 border-t border-white/[0.045] sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex w-full items-center gap-3 sm:w-auto">
-                <Label className="flex items-center gap-2 text-sm">
-                  <Globe className="h-4 w-4" />
-                  {t.settings.profile.language}
-                </Label>
+            <div data-tour="account-preferences" className="grid grid-cols-2 gap-3 border-t border-white/[0.045] pt-4">
+              <div className="flex min-w-0 items-center gap-2">
+                <Globe className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <Label className="sr-only">{t.settings.profile.language}</Label>
                 <Select value={language} onValueChange={handleLanguageChange}>
-                  <SelectTrigger className="h-10 w-40 border-0 bg-[var(--app-surface-soft)]">
+                  <SelectTrigger aria-label={t.settings.profile.language} className="h-10 min-w-0 flex-1 border-0 bg-[var(--app-surface-soft)] sm:w-40 sm:flex-none">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="border-0 bg-[var(--app-surface-solid)]">
@@ -558,13 +555,11 @@ export function AccountTab() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex w-full items-center gap-3 sm:w-auto sm:justify-end">
-                <Label className="flex items-center gap-2 text-sm">
-                  <Monitor className="h-4 w-4" />
-                  Tema
-                </Label>
+              <div className="flex min-w-0 items-center justify-end gap-2">
+                <Monitor className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <Label className="sr-only">Tema</Label>
                 <Select value={profileForm.theme_mode} onValueChange={handleThemeModeChange}>
-                  <SelectTrigger className="h-10 w-40 border-0 bg-[var(--app-surface-soft)]">
+                  <SelectTrigger aria-label="Tema" className="h-10 min-w-0 flex-1 border-0 bg-[var(--app-surface-soft)] sm:w-40 sm:flex-none">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="border-0 bg-[var(--app-surface-solid)]">
@@ -661,7 +656,7 @@ export function AccountTab() {
           </CardContent>
         </Card>
 
-        <Card data-tour="account-password" className="app-card h-fit">
+        <Card data-tour="account-password" className="app-card order-3 h-fit lg:col-span-2">
         <CardContent className="p-4 md:p-5">
           <div className="space-y-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -788,10 +783,8 @@ export function AccountTab() {
           </div>
         </CardContent>
         </Card>
-        </div>
-
         {/* RIGHT: Organization Card */}
-        <Card data-tour="account-company" className="app-card h-fit">
+        <Card data-tour="account-company" className="app-card order-2 h-fit">
           <CardHeader className="px-4 md:px-5 pt-5 pb-2">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -1057,7 +1050,7 @@ export function AccountTab() {
                     </Tooltip>
                   </TooltipProvider>
                 </h4>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-[auto_minmax(5rem,6rem)_auto] sm:items-center lg:justify-end">
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(4.5rem,6rem)] items-center gap-2 sm:grid-cols-[auto_minmax(5rem,6rem)_auto] lg:justify-end">
                   <Label className="flex items-center gap-2 text-xs leading-tight">
                     <Percent className="h-3 w-3" />
                     Comissão Padrão (%)
@@ -1077,7 +1070,7 @@ export function AccountTab() {
                     size="sm"
                     onClick={handleSaveOrganization}
                     disabled={savingOrg || !orgForm.name.trim()}
-                    className="h-9 gap-2"
+                    className="col-span-2 h-9 gap-2 sm:col-span-1"
                   >
                     {savingOrg && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                     Salvar

@@ -52,6 +52,7 @@ export const publicSiteAPI = {
     return vimobPublicAPIRequest<{ ok: boolean }>('/v1/public/tracking/events', {
       method: 'POST',
       body: input,
+      keepalive: true,
     }).then((response) => {
       validateDomainResponse(okResponseSchema, response, 'public-site.track')
       return response
