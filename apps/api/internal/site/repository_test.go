@@ -54,6 +54,19 @@ func TestEnrichTrackingLocationKeepsCountryWithoutCoordinates(t *testing.T) {
 	}
 }
 
+func TestEnrichTrackingLocationInfersCountryFromBrowserMetadata(t *testing.T) {
+	request := PublicTrackingRequest{Metadata: map[string]any{
+		"timezone": "America/Sao_Paulo",
+		"locale":   "pt-BR",
+	}}
+
+	enrichTrackingLocation(&request, http.Header{})
+
+	if request.Metadata["country"] != "BR" {
+		t.Fatalf("browser metadata should provide a country fallback: %#v", request.Metadata)
+	}
+}
+
 func TestPublicPropertyJSONDoesNotExposeExactLocation(t *testing.T) {
 	query := publicPropertyJSONSQL()
 

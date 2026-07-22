@@ -365,6 +365,9 @@ func enrichTrackingLocation(request *PublicTrackingRequest, header http.Header) 
 	city := trackingHeaderValue(header, "X-Vercel-IP-City", "CF-IPCity")
 	region := trackingHeaderValue(header, "X-Vercel-IP-Country-Region", "CF-Region", "CF-Region-Code")
 	country := trackingHeaderValue(header, "X-Vercel-IP-Country", "CF-IPCountry")
+	if country == "" {
+		country = trackingCountryFromMetadata(request.Metadata)
+	}
 	hasCoordinates := latOK && lngOK && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
 	if !hasCoordinates && city == "" && region == "" && country == "" {
 		return
@@ -388,6 +391,55 @@ func enrichTrackingLocation(request *PublicTrackingRequest, header http.Header) 
 	if country != "" {
 		request.Metadata["country"] = cleanTrackingLocationText(country)
 	}
+}
+
+func trackingCountryFromMetadata(metadata map[string]any) string {
+	if metadata == nil {
+		return ""
+	}
+
+	timezone, _ := metadata["timezone"].(string)
+	timezone = strings.TrimSpace(timezone)
+	timezoneCountries := map[string]string{
+		"America/Araguaina":              "BR",
+		"America/Bahia":                  "BR",
+		"America/Belem":                  "BR",
+		"America/Boa_Vista":              "BR",
+		"America/Campo_Grande":           "BR",
+		"America/Cuiaba":                 "BR",
+		"America/Eirunepe":               "BR",
+		"America/Fortaleza":              "BR",
+		"America/Maceio":                 "BR",
+		"America/Manaus":                 "BR",
+		"America/Noronha":                "BR",
+		"America/Porto_Velho":            "BR",
+		"America/Recife":                 "BR",
+		"America/Rio_Branco":             "BR",
+		"America/Santarem":               "BR",
+		"America/Sao_Paulo":              "BR",
+		"Atlantic/Azores":                "PT",
+		"Atlantic/Madeira":               "PT",
+		"Europe/Lisbon":                  "PT",
+		"America/Argentina/Buenos_Aires": "AR",
+		"America/Montevideo":             "UY",
+		"America/Asuncion":               "PY",
+		"America/La_Paz":                 "BO",
+		"America/Lima":                   "PE",
+		"America/Santiago":               "CL",
+	}
+	if country := timezoneCountries[timezone]; country != "" {
+		return country
+	}
+
+	locale, _ := metadata["locale"].(string)
+	parts := strings.FieldsFunc(strings.TrimSpace(locale), func(r rune) bool { return r == '-' || r == '_' })
+	for index := len(parts) - 1; index >= 0; index-- {
+		candidate := strings.ToUpper(parts[index])
+		if len(candidate) == 2 && candidate[0] >= 'A' && candidate[0] <= 'Z' && candidate[1] >= 'A' && candidate[1] <= 'Z' {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func trackingCoordinate(header http.Header, names ...string) (float64, bool) {
