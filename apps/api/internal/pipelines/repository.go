@@ -447,7 +447,23 @@ func (repo Repository) ReorderStages(ctx context.Context, tenantContext tenant.C
 		return nil, err
 	}
 
-	for _, item := range input.Stages {
+	var maxPosition int
+	if err := tx.QueryRow(ctx, `
+		select coalesce(max(position), -1)
+		from public.stages
+		where organization_id = $1::uuid
+		  and pipeline_id = $2::uuid
+	`, tenantContext.OrganizationID, pipelineID).Scan(&maxPosition); err != nil {
+		return nil, err
+	}
+	temporaryPositionBase := maxPosition + len(input.Stages) + 1
+
+	// Libera as posicoes atuais antes de aplicar a ordem final. A tabela possui
+	// unicidade por (pipeline_id, position), portanto trocar duas colunas
+	// diretamente faria a primeira colidir com a posicao ainda ocupada pela
+	// segunda. As posicoes temporarias sao exclusivas e ficam acima do maior
+	// valor atual; qualquer falha continua protegida pelo rollback da transacao.
+	for index, item := range input.Stages {
 		var existingPipelineID pgtype.Text
 		err := tx.QueryRow(ctx, `
 			select pipeline_id::text
@@ -461,7 +477,21 @@ func (repo Repository) ReorderStages(ctx context.Context, tenantContext tenant.C
 		if existingPipelineID.Valid && existingPipelineID.String != pipelineID {
 			return nil, ErrInvalidReference
 		}
+		if existingPipelineID.Valid {
+			if _, err := tx.Exec(ctx, `
+				update public.stages
+				set position = $4,
+				    updated_at = now()
+				where organization_id = $1::uuid
+				  and pipeline_id = $2::uuid
+				  and id = $3::uuid
+			`, tenantContext.OrganizationID, pipelineID, item.ID, temporaryPositionBase+index); err != nil {
+				return nil, err
+			}
+		}
+	}
 
+	for _, item := range input.Stages {
 		_, err = tx.Exec(ctx, `
 			insert into public.stages (
 				id,
