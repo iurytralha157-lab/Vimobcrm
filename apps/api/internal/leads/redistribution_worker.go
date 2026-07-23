@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
@@ -31,6 +32,10 @@ type redistributionJob struct {
 	WarningMinutes        int
 	EnrolledAt            time.Time
 	LeadName              string
+}
+
+type leadRedistributionExecutor interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 }
 
 func (repo Repository) StartRedistributionWorker(ctx context.Context, logger *slog.Logger) {
@@ -118,6 +123,14 @@ func (repo Repository) processRedistributionWarnings(ctx context.Context, tx pgx
 			continue
 		}
 
+		_, canRedistribute, err := repo.selectOrDeferRedistribution(ctx, tx, job, current)
+		if err != nil {
+			return err
+		}
+		if !canRedistribute {
+			continue
+		}
+
 		if err := repo.insertNotification(ctx, tx, job.OrganizationID, job.CurrentAssignedUserID, job.LeadID, "Lead quase redistribuido", fmt.Sprintf("%s sera redistribuido em %d minuto(s) se nao houver atendimento.", job.LeadName, job.WarningMinutes), "lead_redistribution_warning", map[string]any{
 			"lead_name":       job.LeadName,
 			"timeout_minutes": job.TimeoutMinutes,
@@ -134,6 +147,7 @@ func (repo Repository) processRedistributionWarnings(ctx context.Context, tx pgx
 			update public.lead_redistribution_jobs
 			set status = 'warning_sent',
 			    warning_sent_at = now(),
+			    metadata = metadata - 'waiting_for_available_member' - 'next_candidate_check_at',
 			    updated_at = now()
 			where id = $1::uuid
 		`, job.ID); err != nil {
@@ -190,31 +204,11 @@ func (repo Repository) processDueRedistributions(ctx context.Context, tx pgx.Tx)
 			continue
 		}
 
-		selection, reason, err := repo.selectRoundRobinMemberForRedistribution(ctx, tx, job.OrganizationID, job.RoundRobinID, current.AssignedUserID, current.TeamID)
+		selection, canRedistribute, err := repo.selectOrDeferRedistribution(ctx, tx, job, current)
 		if err != nil {
 			return err
 		}
-		if reason != "" || selection.UserID == "" {
-			nextCheckAt, hasAlternative, availabilityErr := repo.nextRoundRobinMemberAvailability(
-				ctx,
-				tx,
-				job.OrganizationID,
-				job.RoundRobinID,
-				current.AssignedUserID,
-				current.TeamID,
-			)
-			if availabilityErr != nil {
-				return availabilityErr
-			}
-			if hasAlternative {
-				if err := repo.deferRedistributionJobUntil(ctx, tx, job.ID, nextCheckAt); err != nil {
-					return err
-				}
-				continue
-			}
-			if err := repo.finishRedistributionJob(ctx, tx, job.ID, "no_next_member", "no_next_member"); err != nil {
-				return err
-			}
+		if !canRedistribute {
 			continue
 		}
 
@@ -287,6 +281,58 @@ func (repo Repository) processDueRedistributions(ctx context.Context, tx pgx.Tx)
 	}
 
 	return nil
+}
+
+func (repo Repository) selectOrDeferRedistribution(
+	ctx context.Context,
+	tx pgx.Tx,
+	job redistributionJob,
+	current leadSnapshot,
+) (roundRobinSelection, bool, error) {
+	selection, _, err := repo.selectRoundRobinMemberForRedistribution(
+		ctx,
+		tx,
+		job.OrganizationID,
+		job.RoundRobinID,
+		current.AssignedUserID,
+		current.TeamID,
+	)
+	if err != nil {
+		return roundRobinSelection{}, false, err
+	}
+	if selection.UserID != "" {
+		return selection, true, nil
+	}
+
+	nextAvailableAt, hasAlternative, err := repo.nextRoundRobinMemberAvailability(
+		ctx,
+		tx,
+		job.OrganizationID,
+		job.RoundRobinID,
+		current.AssignedUserID,
+		current.TeamID,
+	)
+	if err != nil {
+		return roundRobinSelection{}, false, err
+	}
+	if hasAlternative {
+		if err := repo.deferRedistributionJobUntilAvailability(
+			ctx,
+			tx,
+			job.ID,
+			nextAvailableAt,
+			job.TimeoutMinutes,
+			job.WarningMinutes,
+		); err != nil {
+			return roundRobinSelection{}, false, err
+		}
+		return roundRobinSelection{}, false, nil
+	}
+
+	if err := repo.finishRedistributionJob(ctx, tx, job.ID, "no_next_member", "no_next_member"); err != nil {
+		return roundRobinSelection{}, false, err
+	}
+	return roundRobinSelection{}, false, nil
 }
 
 func (repo Repository) listWarningRedistributionJobs(ctx context.Context, tx pgx.Tx) ([]redistributionJob, error) {
@@ -937,11 +983,24 @@ func (repo Repository) updateRedistributionJobAfterTransfer(ctx context.Context,
 	return err
 }
 
-func (repo Repository) deferRedistributionJobUntil(ctx context.Context, tx pgx.Tx, jobID string, nextCheckAt time.Time) error {
-	_, err := tx.Exec(ctx, `
+func (repo Repository) deferRedistributionJobUntilAvailability(
+	ctx context.Context,
+	executor leadRedistributionExecutor,
+	jobID string,
+	nextAvailableAt time.Time,
+	timeoutMinutes int,
+	warningMinutes int,
+) error {
+	_, err := executor.Exec(ctx, `
 		update public.lead_redistribution_jobs
-		set due_at = $2,
-		    warning_due_at = null,
+		set status = 'pending',
+		    due_at = $2::timestamptz + ($3::integer * interval '1 minute'),
+		    warning_due_at = case
+		      when $4::integer > 0 and $4::integer < $3::integer
+		        then $2::timestamptz + (($3::integer - $4::integer) * interval '1 minute')
+		      else null
+		    end,
+		    warning_sent_at = null,
 		    metadata = metadata || jsonb_build_object(
 		      'waiting_for_available_member', true,
 		      'next_candidate_check_at', $2::timestamptz
@@ -949,7 +1008,7 @@ func (repo Repository) deferRedistributionJobUntil(ctx context.Context, tx pgx.T
 		    updated_at = now()
 		where id = $1::uuid
 		  and status in ('pending', 'warning_sent')
-	`, jobID, nextCheckAt)
+	`, jobID, nextAvailableAt, timeoutMinutes, warningMinutes)
 	return err
 }
 

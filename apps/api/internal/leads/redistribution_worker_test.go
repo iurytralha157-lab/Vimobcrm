@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -51,6 +52,18 @@ func (row redistributionAvailabilityRow) Scan(dest ...any) error {
 		Valid: !row.nextAt.IsZero(),
 	}
 	return nil
+}
+
+type redistributionExecutor struct {
+	sql  string
+	args []any
+	err  error
+}
+
+func (executor *redistributionExecutor) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
+	executor.sql = sql
+	executor.args = arguments
+	return pgconn.CommandTag{}, executor.err
 }
 
 func TestRedistributionHasHumanActivityCoversAllIdleSignals(t *testing.T) {
@@ -200,5 +213,45 @@ func TestNextRoundRobinMemberAvailabilityUsesConfiguredSchedule(t *testing.T) {
 	}
 	if strings.Contains(queryer.sql, "user_activity_sessions") {
 		t.Fatal("live browser presence must not be a hard eligibility requirement")
+	}
+}
+
+func TestDeferRedistributionRestartsTimerWithoutWarningSpamOrAttempt(t *testing.T) {
+	t.Parallel()
+
+	executor := &redistributionExecutor{}
+	nextAvailableAt := time.Date(2026, 7, 24, 8, 0, 0, 0, time.UTC)
+	err := (Repository{}).deferRedistributionJobUntilAvailability(
+		context.Background(),
+		executor,
+		"11111111-1111-4111-8111-111111111111",
+		nextAvailableAt,
+		20,
+		5,
+	)
+	if err != nil {
+		t.Fatalf("defer redistribution: %v", err)
+	}
+
+	requiredFragments := []string{
+		"set status = 'pending'",
+		"due_at = $2::timestamptz + ($3::integer * interval '1 minute')",
+		"then $2::timestamptz + (($3::integer - $4::integer) * interval '1 minute')",
+		"warning_sent_at = null",
+		"'waiting_for_available_member', true",
+	}
+	for _, fragment := range requiredFragments {
+		if !strings.Contains(executor.sql, fragment) {
+			t.Fatalf("expected defer SQL to contain %q", fragment)
+		}
+	}
+	if strings.Contains(executor.sql, "attempt_count") {
+		t.Fatal("waiting for another scheduled member must not consume a redistribution attempt")
+	}
+	if len(executor.args) != 4 {
+		t.Fatalf("defer args = %d, want 4", len(executor.args))
+	}
+	if got := executor.args[1].(time.Time); !got.Equal(nextAvailableAt) {
+		t.Fatalf("next availability = %s, want %s", got, nextAvailableAt)
 	}
 }
