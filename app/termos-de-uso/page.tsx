@@ -23,11 +23,11 @@ function LegalSection({
   title: string;
 }>) {
   return (
-    <section className="space-y-4">
+    <section className="space-y-3">
       <h2 className="border-l-2 border-[var(--public-accent)] pl-4 text-lg font-semibold text-[var(--public-foreground)]">
         {title}
       </h2>
-      <div className="space-y-4 text-sm leading-7 text-[var(--public-muted)] sm:text-[15px]">
+      <div className="space-y-3 text-sm leading-6 text-[var(--public-muted)] sm:text-[15px] sm:leading-7">
         {children}
       </div>
     </section>
@@ -36,7 +36,7 @@ function LegalSection({
 
 export default function TermsOfUsePage() {
   return (
-    <PublicPageShell plainBackground>
+    <PublicPageShell legalDocument plainBackground>
       <PublicHero
         backgroundImage="/images/legal-hero-background.webp"
         compact
@@ -45,9 +45,9 @@ export default function TermsOfUsePage() {
         meta="Última atualização: junho de 2026"
       />
 
-      <section className="mx-auto w-full max-w-4xl px-5 py-12 sm:px-8 lg:py-14">
-        <div className="space-y-10">
-          <p className="text-sm leading-7 text-[var(--public-muted)] sm:text-[15px]">
+      <section className="mx-auto w-full max-w-4xl px-5 py-9 sm:px-8 lg:py-12">
+        <div className="space-y-8">
+          <p className="text-sm leading-6 text-[var(--public-muted)] sm:text-[15px] sm:leading-7">
             Ao acessar ou utilizar o Vimob, o cliente declara que leu, entendeu
             e concorda com estes Termos de Uso. O documento regula o uso da
             plataforma de CRM imobiliário, seus módulos, integrações e serviços
@@ -66,7 +66,7 @@ export default function TermsOfUsePage() {
 
           <LegalSection title="2. Responsabilidades do usuário">
             <p>Ao utilizar a infraestrutura do Vimob, o cliente compromete-se a:</p>
-            <ul className="space-y-3 pl-5 marker:text-[var(--public-accent)]">
+            <ul className="space-y-2 pl-5 marker:text-[var(--public-accent)]">
               {responsibilityItems.map((item) => (
                 <li key={item}>{item}</li>
               ))}

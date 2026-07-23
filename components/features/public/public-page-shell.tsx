@@ -22,9 +22,11 @@ export function VimobPublicLogo({ className }: Readonly<{ className?: string }>)
 
 export function PublicPageShell({
   children,
+  legalDocument = false,
   plainBackground = false,
 }: Readonly<{
   children: ReactNode;
+  legalDocument?: boolean;
   plainBackground?: boolean;
 }>) {
   return (
@@ -42,7 +44,10 @@ export function PublicPageShell({
 
           <Link
             href="/login"
-            className="inline-flex h-10 items-center gap-2 rounded-full bg-[var(--public-accent)] px-4 text-sm font-medium text-white transition hover:bg-[#e63b23]"
+            className={cn(
+              "inline-flex h-10 items-center gap-2 bg-[var(--public-accent)] px-4 text-sm font-medium text-white transition hover:bg-[#e63b23]",
+              legalDocument ? "rounded-[10px]" : "rounded-full"
+            )}
           >
             Entrar
             <ArrowRight className="h-4 w-4" />
@@ -53,7 +58,14 @@ export function PublicPageShell({
       <main>{children}</main>
 
       <footer className="bg-white">
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-5 py-8 text-sm text-[var(--public-muted)] sm:px-8 md:flex-row md:items-center md:justify-between">
+        <div
+          className={cn(
+            "mx-auto flex w-full max-w-6xl flex-col px-5 text-sm text-[var(--public-muted)] sm:px-8",
+            legalDocument
+              ? "items-center justify-center gap-3 py-7 text-center"
+              : "gap-5 py-8 md:flex-row md:items-center md:justify-between"
+          )}
+        >
           <VimobPublicLogo className="[&_img]:h-8" />
           <p>© 2026 Vimob. Todos os direitos reservados.</p>
         </div>
@@ -96,8 +108,12 @@ export function PublicHero({
       <div
         className={cn(
           "mx-auto flex w-full max-w-6xl flex-col items-center px-5 text-center sm:px-8",
-          compact ? "py-12 lg:py-14" : "py-16 lg:py-20",
-          backgroundImage && "min-h-[230px] justify-center"
+          compact ? "py-9 sm:py-10 lg:py-12" : "py-16 lg:py-20",
+          backgroundImage && (
+            compact
+              ? "min-h-[190px] justify-center sm:min-h-[210px]"
+              : "min-h-[230px] justify-center"
+          )
         )}
       >
         <p
@@ -110,9 +126,11 @@ export function PublicHero({
         </p>
         <h1
           className={cn(
-            "mt-5 max-w-4xl font-semibold tracking-normal",
+            "max-w-4xl font-semibold tracking-normal",
             backgroundImage ? "text-white" : "text-[var(--public-foreground)]",
-            compact ? "text-4xl sm:text-5xl" : "text-4xl sm:text-5xl lg:text-6xl"
+            compact
+              ? "mt-3 text-[34px] leading-[1.08] sm:text-5xl"
+              : "mt-5 text-4xl sm:text-5xl lg:text-6xl"
           )}
         >
           {title}
@@ -130,7 +148,8 @@ export function PublicHero({
         {meta ? (
           <p
             className={cn(
-              "mt-4 text-xs font-medium uppercase tracking-[0.18em]",
+              "text-xs font-medium uppercase tracking-[0.18em]",
+              compact ? "mt-3" : "mt-4",
               backgroundImage ? "text-white/75" : "text-[var(--public-muted)]"
             )}
           >

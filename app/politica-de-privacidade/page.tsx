@@ -40,11 +40,11 @@ function LegalSection({
   title: string;
 }>) {
   return (
-    <section className="space-y-4">
+    <section className="space-y-3">
       <h2 className="border-l-2 border-[var(--public-accent)] pl-4 text-lg font-semibold text-[var(--public-foreground)]">
         {title}
       </h2>
-      <div className="space-y-4 text-sm leading-7 text-[var(--public-muted)] sm:text-[15px]">
+      <div className="space-y-3 text-sm leading-6 text-[var(--public-muted)] sm:text-[15px] sm:leading-7">
         {children}
       </div>
     </section>
@@ -53,7 +53,7 @@ function LegalSection({
 
 export default function PrivacyPolicyPage() {
   return (
-    <PublicPageShell plainBackground>
+    <PublicPageShell legalDocument plainBackground>
       <PublicHero
         backgroundImage="/images/legal-hero-background.webp"
         compact
@@ -62,9 +62,9 @@ export default function PrivacyPolicyPage() {
         meta="Última atualização: junho de 2026"
       />
 
-      <section className="mx-auto w-full max-w-4xl px-5 py-12 sm:px-8 lg:py-14">
-        <div className="space-y-10">
-          <div className="space-y-4 text-sm leading-7 text-[var(--public-muted)] sm:text-[15px]">
+      <section className="mx-auto w-full max-w-4xl px-5 py-9 sm:px-8 lg:py-12">
+        <div className="space-y-8">
+          <div className="space-y-3 text-sm leading-6 text-[var(--public-muted)] sm:text-[15px] sm:leading-7">
             <p>
               Esta Política de Privacidade explica, de forma clara e objetiva,
               como o Vimob trata dados pessoais no contexto da utilização de sua
@@ -87,7 +87,7 @@ export default function PrivacyPolicyPage() {
               Para viabilizar o funcionamento da plataforma e a prestação dos
               serviços contratados, o Vimob poderá tratar:
             </p>
-            <ul className="space-y-3 pl-5 marker:text-[var(--public-accent)]">
+            <ul className="space-y-2 pl-5 marker:text-[var(--public-accent)]">
               {collectionItems.map((item) => (
                 <li key={item}>{item}</li>
               ))}
@@ -99,7 +99,7 @@ export default function PrivacyPolicyPage() {
               Os dados poderão ser tratados conforme a natureza da contratação,
               funcionalidades utilizadas e integrações autorizadas pelo cliente:
             </p>
-            <ol className="space-y-3 pl-5 marker:text-[var(--public-accent)]">
+            <ol className="space-y-2 pl-5 marker:text-[var(--public-accent)]">
               {usageItems.map((item) => (
                 <li key={item}>{item}</li>
               ))}
@@ -112,7 +112,7 @@ export default function PrivacyPolicyPage() {
               quando necessário para operação da plataforma, execução do
               contrato, cumprimento de obrigação legal ou proteção de direitos.
             </p>
-            <ul className="space-y-3 pl-5 marker:text-[var(--public-accent)]">
+            <ul className="space-y-2 pl-5 marker:text-[var(--public-accent)]">
               {sharingItems.map((item) => (
                 <li key={item}>{item}</li>
               ))}
