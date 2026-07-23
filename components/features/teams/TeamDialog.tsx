@@ -339,17 +339,17 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
             </ScrollArea>
           </div>
 
-          <div className="mt-4 flex gap-3">
+          <div className="mt-4 grid min-w-0 grid-cols-[minmax(0,3fr)_minmax(0,7fr)] gap-3">
             <Button
               type="button"
-              className="h-10 w-[30%] rounded-[8px] border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]"
+              className="h-10 min-w-0 rounded-[8px] border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]"
               onClick={() => onOpenChange(false)}
             >
               Cancelar
             </Button>
             <Button
               type="button"
-              className="h-10 w-[70%] rounded-[8px] shadow-none"
+              className="h-10 min-w-0 rounded-[8px] shadow-none"
               onClick={handleSubmit}
               disabled={isSubmitting || !name.trim()}
             >

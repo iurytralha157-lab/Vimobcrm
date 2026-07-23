@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -15,6 +16,7 @@ const (
 	leadRedistributionWorkerInterval = 30 * time.Second
 	leadRedistributionBatchLimit     = 50
 	leadRedistributionLockKey        = int64(860421704)
+	leadRedistributionNoMemberDelay  = 24 * time.Hour
 )
 
 type redistributionJob struct {
@@ -193,6 +195,23 @@ func (repo Repository) processDueRedistributions(ctx context.Context, tx pgx.Tx)
 			return err
 		}
 		if reason != "" || selection.UserID == "" {
+			nextCheckAt, hasAlternative, availabilityErr := repo.nextRoundRobinMemberAvailability(
+				ctx,
+				tx,
+				job.OrganizationID,
+				job.RoundRobinID,
+				current.AssignedUserID,
+				current.TeamID,
+			)
+			if availabilityErr != nil {
+				return availabilityErr
+			}
+			if hasAlternative {
+				if err := repo.deferRedistributionJobUntil(ctx, tx, job.ID, nextCheckAt); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := repo.finishRedistributionJob(ctx, tx, job.ID, "no_next_member", "no_next_member"); err != nil {
 				return err
 			}
@@ -699,6 +718,139 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 	return selection, "", nil
 }
 
+func (repo Repository) nextRoundRobinMemberAvailability(
+	ctx context.Context,
+	queryer leadTeamQueryer,
+	organizationID string,
+	roundRobinID string,
+	excludedUserID string,
+	requiredTeamID string,
+) (time.Time, bool, error) {
+	var hasAlternative bool
+	var nextAvailability pgtype.Timestamptz
+
+	err := queryer.QueryRow(ctx, `
+		with entries as (
+			select
+				rrm.id,
+				rrm.round_robin_id,
+				rrm.organization_id,
+				rrm.user_id,
+				rrm.team_id,
+				rrm.created_at
+			from public.round_robin_members rrm
+			join public.round_robins rr
+			  on rr.id = rrm.round_robin_id
+			 and rr.organization_id = rrm.organization_id
+			where rrm.organization_id = $1::uuid
+			  and rrm.round_robin_id = $2::uuid
+			  and coalesce(rrm.is_active, true) = true
+			  and coalesce(rr.is_active, true) = true
+		),
+		candidates as (
+			select
+				entries.organization_id,
+				entries.user_id,
+				tm.id as team_member_id
+			from entries
+			left join public.team_members tm
+			  on tm.organization_id = entries.organization_id
+			 and tm.team_id = entries.team_id
+			 and tm.user_id = entries.user_id
+			 and coalesce(tm.is_active, true) = true
+			where entries.user_id is not null
+
+			union all
+
+			select
+				entries.organization_id,
+				tm.user_id,
+				tm.id as team_member_id
+			from entries
+			join public.teams t
+			  on t.id = entries.team_id
+			 and t.organization_id = entries.organization_id
+			 and coalesce(t.is_active, true) = true
+			join public.team_members tm
+			  on tm.organization_id = entries.organization_id
+			 and tm.team_id = entries.team_id
+			 and coalesce(tm.is_active, true) = true
+			where entries.user_id is null
+			  and entries.team_id is not null
+		),
+		eligible as (
+			select distinct
+				candidates.organization_id,
+				candidates.user_id,
+				candidates.team_member_id
+			from candidates
+			join public.organization_members om
+			  on om.organization_id = candidates.organization_id
+			 and om.user_id = candidates.user_id
+			 and coalesce(om.is_active, true) = true
+			join public.users u
+			  on u.id = candidates.user_id
+			 and coalesce(u.is_active, true) = true
+			where (nullif($3, '')::uuid is null or candidates.user_id <> nullif($3, '')::uuid)
+			  and (
+			    nullif($4, '')::uuid is null
+			    or exists (
+			      select 1
+			      from public.team_members required_member
+			      where required_member.organization_id = candidates.organization_id
+			        and required_member.team_id = nullif($4, '')::uuid
+			        and required_member.user_id = candidates.user_id
+			        and coalesce(required_member.is_active, true) = true
+			    )
+			  )
+		),
+		clock as (
+			select now() at time zone 'America/Sao_Paulo' as local_now
+		),
+		next_windows as (
+			select
+				(
+					(
+						(clock.local_now::date + offsets.day_offset)::date
+						+ case
+						    when coalesce(ma.is_all_day, false) then time '00:00'
+						    else ma.start_time
+						  end
+					) at time zone 'America/Sao_Paulo'
+				) as starts_at
+			from eligible
+			join public.member_availability ma
+			  on ma.organization_id = eligible.organization_id
+			 and ma.team_member_id = eligible.team_member_id
+			 and coalesce(ma.is_active, true) = true
+			cross join clock
+			cross join generate_series(0, 7) as offsets(day_offset)
+			where extract(dow from (clock.local_now::date + offsets.day_offset)::date)::int = ma.day_of_week
+			  and (coalesce(ma.is_all_day, false) = true or ma.start_time is not null)
+		)
+		select
+			exists (select 1 from eligible),
+			(
+				select min(next_windows.starts_at)
+				from next_windows
+				where next_windows.starts_at > now()
+			)
+	`, organizationID, roundRobinID, excludedUserID, requiredTeamID).Scan(&hasAlternative, &nextAvailability)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+
+	if !hasAlternative {
+		return time.Time{}, false, nil
+	}
+
+	now := time.Now().UTC()
+	if nextAvailability.Valid && nextAvailability.Time.After(now) {
+		return nextAvailability.Time, true, nil
+	}
+	return now.Add(leadRedistributionNoMemberDelay), true, nil
+}
+
 func (repo Repository) insertAutoRedistributionLog(ctx context.Context, tx pgx.Tx, job redistributionJob, selection roundRobinSelection, previousUserID string) error {
 	_, err := tx.Exec(ctx, `
 		insert into public.round_robin_logs (
@@ -758,6 +910,7 @@ func (repo Repository) updateRedistributionJobAfterTransfer(ctx context.Context,
 			    stopped_at = now(),
 			    stopped_reason = 'max_attempts_reached',
 			    warning_sent_at = null,
+			    metadata = metadata - 'waiting_for_available_member' - 'next_candidate_check_at',
 			    updated_at = now()
 			where id = $1::uuid
 		`, job.ID, nextUserID, attemptCount)
@@ -777,9 +930,26 @@ func (repo Repository) updateRedistributionJobAfterTransfer(ctx context.Context,
 		    end,
 		    warning_sent_at = null,
 		    last_redistributed_at = now(),
+		    metadata = metadata - 'waiting_for_available_member' - 'next_candidate_check_at',
 		    updated_at = now()
 		where id = $1::uuid
 	`, job.ID, nextUserID, attemptCount, job.TimeoutMinutes, job.WarningMinutes)
+	return err
+}
+
+func (repo Repository) deferRedistributionJobUntil(ctx context.Context, tx pgx.Tx, jobID string, nextCheckAt time.Time) error {
+	_, err := tx.Exec(ctx, `
+		update public.lead_redistribution_jobs
+		set due_at = $2,
+		    warning_due_at = null,
+		    metadata = metadata || jsonb_build_object(
+		      'waiting_for_available_member', true,
+		      'next_candidate_check_at', $2::timestamptz
+		    ),
+		    updated_at = now()
+		where id = $1::uuid
+		  and status in ('pending', 'warning_sent')
+	`, jobID, nextCheckAt)
 	return err
 }
 
