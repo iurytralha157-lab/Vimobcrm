@@ -326,6 +326,8 @@ func writeScheduleError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_schedule_input", err.Error())
 	case errors.Is(err, ErrInvalidReference):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_schedule_reference", "One or more schedule references do not belong to this organization.")
+	case errors.Is(err, ErrRecurrenceCreate):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "schedule_recurrence_failed", "Nao foi possivel criar a recorrencia. Tente novamente em instantes.")
 	case errors.Is(err, ErrEventNotFound), errors.Is(err, ErrCommentNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "schedule_not_found", "Schedule resource was not found.")
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):

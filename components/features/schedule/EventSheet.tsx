@@ -55,6 +55,7 @@ const timeOptions = Array.from({ length: 24 * 4 }, (_, index) => {
 
 const recurrenceOptions = [
   { value: "none", label: "Não se repete" },
+  { value: "daily", label: "Diariamente" },
   { value: "weekly", label: "Semanal" },
   { value: "monthly", label: "Mensal" },
   { value: "yearly", label: "Anual" },
@@ -84,6 +85,13 @@ const visibilityOptions: {
 
 type RecurrenceRule = (typeof recurrenceOptions)[number]["value"];
 
+const recurrenceLimitLabels: Partial<Record<RecurrenceRule, string>> = {
+  daily: "Próximos 90 dias",
+  weekly: "Próximas 52 semanas",
+  monthly: "Próximos 24 meses",
+  yearly: "Próximos 5 anos",
+};
+
 const agendaFieldClass =
   "rounded-[8px] border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] shadow-none outline-none ring-0 placeholder:text-[var(--app-text-tertiary)] focus-visible:ring-1 focus-visible:ring-primary/30 focus-visible:ring-offset-0";
 const agendaControlClass =
@@ -93,7 +101,7 @@ const agendaPopoverClass =
   "border-0 bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] shadow-none";
 
 function isRecurrenceRule(value: string | null | undefined): value is RecurrenceRule {
-  return value === "none" || value === "weekly" || value === "monthly" || value === "yearly";
+  return value === "none" || value === "daily" || value === "weekly" || value === "monthly" || value === "yearly";
 }
 
 const formatPropertyPrice = (value: number | null, tipo: string | null) => {
@@ -166,7 +174,7 @@ export function EventSheet({
   const [duration, setDuration] = useState(30);
   const [isAllDay, setIsAllDay] = useState(false);
   const durationTouched = useRef(false);
-  const [recurrenceRule, setRecurrenceRule] = useState<"none" | "weekly" | "monthly" | "yearly">("none");
+  const [recurrenceRule, setRecurrenceRule] = useState<RecurrenceRule>("none");
 
   const [leadSearch, setLeadSearch] = useState("");
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
@@ -622,6 +630,11 @@ export function EventSheet({
                       ))}
                     </SelectContent>
                   </Select>
+                  {recurrenceRule !== "none" && (
+                    <span data-tour="agenda-event-recurrence-limit" className="text-[11px] text-[var(--app-text-tertiary)]">
+                      {recurrenceLimitLabels[recurrenceRule]}
+                    </span>
+                  )}
                 </div>
               </div>
             )}

@@ -18,6 +18,7 @@ var (
 	ErrEventNotFound     = errors.New("schedule event not found")
 	ErrCommentNotFound   = errors.New("schedule comment not found")
 	ErrNoScheduleChanges = errors.New("no schedule changes provided")
+	ErrRecurrenceCreate  = errors.New("schedule recurrence could not be created")
 )
 
 type Event struct {
@@ -292,7 +293,7 @@ func (request CreateRequest) Validate(defaultUserID string) (createInput, error)
 		input.PropertyID = &value
 	}
 	if request.RecurrenceRule != "" && request.RecurrenceRule != "none" {
-		if !validEnum(request.RecurrenceRule, "weekly", "monthly", "yearly") {
+		if !validEnum(request.RecurrenceRule, "daily", "weekly", "monthly", "yearly") {
 			return createInput{}, fmt.Errorf("%w: recurrence_rule is invalid", ErrInvalidInput)
 		}
 		value := request.RecurrenceRule
@@ -366,7 +367,7 @@ func (request UpdateRequest) Validate() (updateInput, error) {
 	if input.UserID.Set && (input.UserID.Value == nil || *input.UserID.Value == "") {
 		return updateInput{}, fmt.Errorf("%w: user_id cannot be null", ErrInvalidInput)
 	}
-	if input.RecurrenceRule.Set && input.RecurrenceRule.Value != nil && *input.RecurrenceRule.Value != "" && *input.RecurrenceRule.Value != "none" && !validEnum(*input.RecurrenceRule.Value, "weekly", "monthly", "yearly") {
+	if input.RecurrenceRule.Set && input.RecurrenceRule.Value != nil && *input.RecurrenceRule.Value != "" && *input.RecurrenceRule.Value != "none" && !validEnum(*input.RecurrenceRule.Value, "daily", "weekly", "monthly", "yearly") {
 		return updateInput{}, fmt.Errorf("%w: recurrence_rule is invalid", ErrInvalidInput)
 	}
 	if input.StartTime.Set && input.StartTime.Value == nil {

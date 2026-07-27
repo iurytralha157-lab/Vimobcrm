@@ -22,7 +22,7 @@ type Envelope<T> = {
 
 export type EventType = 'call' | 'email' | 'meeting' | 'task' | 'message' | 'visit'
 export type ScheduleEventVisibility = 'default' | 'public' | 'private'
-export type ScheduleRecurrenceFrequency = 'none' | 'weekly' | 'monthly' | 'yearly'
+export type ScheduleRecurrenceFrequency = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly'
 
 export interface ScheduleEvent {
   id: string

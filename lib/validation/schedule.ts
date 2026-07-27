@@ -3,7 +3,7 @@ import { apiEnvelopeSchema, nonNegativeIntegerSchema, timestampSchema, uuidSchem
 
 export const scheduleEventTypeSchema = z.enum(['call', 'email', 'meeting', 'task', 'message', 'visit'])
 export const scheduleVisibilitySchema = z.enum(['default', 'public', 'private'])
-export const scheduleRecurrenceSchema = z.enum(['none', 'weekly', 'monthly', 'yearly'])
+export const scheduleRecurrenceSchema = z.enum(['none', 'daily', 'weekly', 'monthly', 'yearly'])
 export const scheduleStatusSchema = z.enum(['scheduled', 'completed', 'cancelled', 'canceled', 'no_show'])
 
 const eventDateSchema = z.string().trim().refine(

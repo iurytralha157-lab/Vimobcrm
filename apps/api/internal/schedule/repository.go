@@ -193,9 +193,12 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	}
 
 	recurrenceCount := (*int)(nil)
+	recurrenceUntil := (*time.Time)(nil)
 	if input.RecurrenceRule != nil {
-		value := 1
-		recurrenceCount = &value
+		count := recurrenceMax(*input.RecurrenceRule)
+		until := addRecurrence(input.StartTime, *input.RecurrenceRule, count-1)
+		recurrenceCount = &count
+		recurrenceUntil = &until
 	}
 
 	var eventID string
@@ -215,6 +218,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 			visibility,
 			reminder_minutes,
 			recurrence_rule,
+			recurrence_until,
 			recurrence_count
 		)
 		values (
@@ -232,10 +236,11 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 			$12,
 			$13::integer,
 			$14,
-			$15::integer
+			$15::timestamptz,
+			$16::integer
 		)
 		returning id::text
-	`, tenantContext.OrganizationID, input.UserID, nullable(input.LeadID), nullable(input.PropertyID), input.Title, nullable(input.Description), input.EventType, input.StartTime, input.EndTime, input.IsAllDay, nullable(input.Location), input.Visibility, input.ReminderMinutes, nullable(input.RecurrenceRule), recurrenceCount).Scan(&eventID)
+	`, tenantContext.OrganizationID, input.UserID, nullable(input.LeadID), nullable(input.PropertyID), input.Title, nullable(input.Description), input.EventType, input.StartTime, input.EndTime, input.IsAllDay, nullable(input.Location), input.Visibility, input.ReminderMinutes, nullable(input.RecurrenceRule), recurrenceUntil, recurrenceCount).Scan(&eventID)
 	if err != nil {
 		return Event{}, err
 	}
@@ -244,7 +249,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	if input.RecurrenceRule != nil {
 		recurringIDs, err := repo.insertRecurringEvents(ctx, tx, tenantContext.OrganizationID, eventID, input)
 		if err != nil {
-			return Event{}, err
+			return Event{}, fmt.Errorf("%w: %v", ErrRecurrenceCreate, err)
 		}
 		eventIDs = append(eventIDs, recurringIDs...)
 	}
@@ -795,13 +800,14 @@ func (repo Repository) insertRecurringEvents(ctx context.Context, tx pgx.Tx, org
 	}
 
 	maxOccurrences := recurrenceMax(*input.RecurrenceRule)
+	recurrenceUntil := addRecurrence(input.StartTime, *input.RecurrenceRule, maxOccurrences-1)
 	ids := make([]string, 0, maxOccurrences-1)
+	batch := &pgx.Batch{}
 	for index := 1; index < maxOccurrences; index++ {
 		nextStart := addRecurrence(input.StartTime, *input.RecurrenceRule, index)
 		nextEnd := addRecurrence(input.EndTime, *input.RecurrenceRule, index)
 
-		var id string
-		err := tx.QueryRow(ctx, `
+		batch.Queue(`
 			insert into public.schedule_events (
 				organization_id,
 				user_id,
@@ -818,6 +824,7 @@ func (repo Repository) insertRecurringEvents(ctx context.Context, tx pgx.Tx, org
 				reminder_minutes,
 				recurrence_parent_id,
 				recurrence_rule,
+				recurrence_until,
 				recurrence_count
 			)
 			values (
@@ -836,23 +843,39 @@ func (repo Repository) insertRecurringEvents(ctx context.Context, tx pgx.Tx, org
 				$13::integer,
 				$14::uuid,
 				$15,
-				$16::integer
+				$16::timestamptz,
+				$17::integer
 			)
 			returning id::text
-		`, organizationID, input.UserID, nullable(input.LeadID), nullable(input.PropertyID), input.Title, nullable(input.Description), input.EventType, nextStart, nextEnd, input.IsAllDay, nullable(input.Location), input.Visibility, input.ReminderMinutes, parentID, *input.RecurrenceRule, maxOccurrences).Scan(&id)
+		`, organizationID, input.UserID, nullable(input.LeadID), nullable(input.PropertyID), input.Title, nullable(input.Description), input.EventType, nextStart, nextEnd, input.IsAllDay, nullable(input.Location), input.Visibility, input.ReminderMinutes, parentID, *input.RecurrenceRule, recurrenceUntil, maxOccurrences)
+	}
+
+	results := tx.SendBatch(ctx, batch)
+	defer func() { _ = results.Close() }()
+	for index := 1; index < maxOccurrences; index++ {
+		var id string
+		err := results.QueryRow().Scan(&id)
 		if err != nil {
 			return nil, err
 		}
 		ids = append(ids, id)
+	}
+	if err := results.Close(); err != nil {
+		return nil, err
 	}
 
 	return ids, nil
 }
 
 func (repo Repository) insertAssignees(ctx context.Context, tx pgx.Tx, organizationID string, eventIDs []string, assigneeIDs []string) error {
+	if len(eventIDs) == 0 || len(assigneeIDs) == 0 {
+		return nil
+	}
+
+	batch := &pgx.Batch{}
 	for _, eventID := range eventIDs {
 		for _, userID := range assigneeIDs {
-			_, err := tx.Exec(ctx, `
+			batch.Queue(`
 				insert into public.schedule_event_assignees (
 					organization_id,
 					event_id,
@@ -865,13 +888,21 @@ func (repo Repository) insertAssignees(ctx context.Context, tx pgx.Tx, organizat
 				)
 				on conflict (event_id, user_id) do nothing
 			`, organizationID, eventID, userID)
+		}
+	}
+
+	results := tx.SendBatch(ctx, batch)
+	defer func() { _ = results.Close() }()
+	for range eventIDs {
+		for range assigneeIDs {
+			_, err := results.Exec()
 			if err != nil {
 				return err
 			}
 		}
 	}
 
-	return nil
+	return results.Close()
 }
 
 func (repo Repository) validateUser(ctx context.Context, querier queryRower, organizationID string, userID string) error {
@@ -1668,6 +1699,8 @@ func scanComment(row scanner) (Comment, error) {
 
 func addRecurrence(value time.Time, frequency string, amount int) time.Time {
 	switch frequency {
+	case "daily":
+		return value.AddDate(0, 0, amount)
 	case "weekly":
 		return value.AddDate(0, 0, amount*7)
 	case "monthly":
@@ -1681,12 +1714,14 @@ func addRecurrence(value time.Time, frequency string, amount int) time.Time {
 
 func recurrenceMax(frequency string) int {
 	switch frequency {
+	case "daily":
+		return 90
 	case "weekly":
-		return 260
+		return 52
 	case "monthly":
-		return 120
+		return 24
 	case "yearly":
-		return 20
+		return 5
 	default:
 		return 0
 	}

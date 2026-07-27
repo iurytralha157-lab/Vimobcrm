@@ -78,6 +78,10 @@ export function getFriendlyErrorMessage(error: unknown): string {
     return 'Lead, imóvel ou responsável fora do seu escopo. Selecione uma opção permitida e tente novamente.';
   }
 
+  if (code === 'schedule_recurrence_failed') {
+    return 'Não foi possível criar a recorrência. Tente novamente em alguns instantes.';
+  }
+
   // Specific check for SMTP/Email sending errors
   if (lowerMessage.includes('error sending') || lowerMessage.includes('535') || lowerMessage.includes('5.7.8')) {
     return 'Erro no servidor de e-mail. Verifique a configuração SMTP no painel do Supabase.';
