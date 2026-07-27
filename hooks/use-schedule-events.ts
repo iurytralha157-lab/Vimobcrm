@@ -130,11 +130,20 @@ export function useUpdateScheduleEvent() {
     }: Partial<
       Omit<
         ScheduleEvent,
-        'id' | 'user' | 'lead' | 'property' | 'completed_by_user' | 'assignee_user_ids' | 'is_masked' | 'visibility'
+        | 'id'
+        | 'user'
+        | 'lead'
+        | 'property'
+        | 'completed_by_user'
+        | 'assignee_user_ids'
+        | 'is_masked'
+        | 'visibility'
+        | 'user_id'
       >
     > & {
       id: string
       visibility?: ScheduleEventVisibility
+      user_id?: string
     }) => {
       if (!organizationId) throw new Error('Organização não encontrada')
       return scheduleAPI.updateScheduleEvent(id, toScheduleUpdateBody(updates), organizationId)

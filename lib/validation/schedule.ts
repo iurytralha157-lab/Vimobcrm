@@ -77,7 +77,7 @@ const scheduleUserRefSchema = z.object({
 export const apiScheduleEventSchema = z.object({
   id: uuidSchema,
   organization_id: uuidSchema,
-  user_id: uuidSchema,
+  user_id: uuidSchema.nullable(),
   lead_id: uuidSchema.nullable(),
   property_id: uuidSchema.nullable(),
   title: z.string(),
@@ -102,7 +102,15 @@ export const apiScheduleEventSchema = z.object({
   user: scheduleUserRefSchema.nullable().optional(),
   assignee_user_ids: z.array(uuidSchema).optional(),
   is_masked: z.boolean().optional(),
-}).passthrough()
+}).passthrough().superRefine((event, ctx) => {
+  if (!event.is_masked && event.user_id === null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['user_id'],
+      message: 'Responsavel obrigatorio para evento visivel',
+    })
+  }
+})
 
 export const apiScheduleCommentSchema = z.object({
   id: uuidSchema,

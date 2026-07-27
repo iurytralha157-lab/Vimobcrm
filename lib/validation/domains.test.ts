@@ -15,7 +15,11 @@ import {
 } from './financial'
 import { metaFormConfigInputSchema, vistaIntegrationInputSchema } from './integrations'
 import { propertyCreateInputSchema, propertyListQuerySchema } from './properties'
-import { createScheduleEventInputSchema, scheduleCommentInputSchema } from './schedule'
+import {
+  apiScheduleEventListResponseSchema,
+  createScheduleEventInputSchema,
+  scheduleCommentInputSchema,
+} from './schedule'
 import { assignUserRoleInputSchema, changePasswordInputSchema, updateOrganizationInputSchema } from './settings'
 import {
   addRoundRobinMemberInputSchema,
@@ -422,6 +426,43 @@ test('agenda rejeita horario invertido e comentario vazio', () => {
     end_time: '2026-07-12T14:00:00Z',
   }).success, false)
   assert.equal(scheduleCommentInputSchema.safeParse({ content: '   ' }).success, false)
+})
+
+test('agenda aceita identidade oculta somente em evento mascarado', () => {
+  const maskedEvent = {
+    id: ID,
+    organization_id: ID,
+    user_id: null,
+    lead_id: null,
+    property_id: null,
+    title: 'Horario ocupado',
+    description: 'Informacao privada',
+    event_type: 'task',
+    start_time: '2026-07-27T12:30:00Z',
+    end_time: '2026-07-27T14:30:00Z',
+    is_all_day: false,
+    location: null,
+    status: 'scheduled',
+    visibility: 'default',
+    reminder_minutes: null,
+    recurrence_parent_id: null,
+    recurrence_rule: null,
+    recurrence_until: null,
+    recurrence_count: null,
+    google_event_id: null,
+    completed_by: null,
+    completed_at: null,
+    created_at: '2026-07-27T00:00:00Z',
+    updated_at: '2026-07-27T00:00:00Z',
+    user: null,
+    assignee_user_ids: [],
+    is_masked: true,
+  }
+
+  assert.equal(apiScheduleEventListResponseSchema.safeParse({ data: [maskedEvent] }).success, true)
+  assert.equal(apiScheduleEventListResponseSchema.safeParse({
+    data: [{ ...maskedEvent, is_masked: false }],
+  }).success, false)
 })
 
 test('financeiro valida categoria, lancamento e contrato', () => {

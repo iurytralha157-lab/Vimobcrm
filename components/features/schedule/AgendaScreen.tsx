@@ -511,7 +511,6 @@ export default function Agenda() {
                   canManageSchedule && updateEventMutation.mutate({
                       id,
                       ...updates,
-                      visibility: updates.visibility ?? undefined,
                     })
                 }
                 canManageEvents={canManageSchedule}

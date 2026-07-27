@@ -27,7 +27,7 @@ export type ScheduleRecurrenceFrequency = 'none' | 'daily' | 'weekly' | 'monthly
 export interface ScheduleEvent {
   id: string
   organization_id: string
-  user_id: string
+  user_id: string | null
   lead_id: string | null
   property_id: string | null
   title: string
@@ -110,23 +110,28 @@ export type CreateScheduleEventInput = {
 }
 
 export type UpdateScheduleEventInput = Partial<
-  Pick<
-    ScheduleEvent,
-    | 'title'
-    | 'description'
-    | 'event_type'
-    | 'start_time'
-    | 'end_time'
-    | 'is_all_day'
-    | 'user_id'
-    | 'lead_id'
-    | 'property_id'
-    | 'location'
-    | 'status'
-    | 'visibility'
-    | 'reminder_minutes'
-    | 'recurrence_rule'
-  >
+  Omit<
+    Pick<
+      ScheduleEvent,
+      | 'title'
+      | 'description'
+      | 'event_type'
+      | 'start_time'
+      | 'end_time'
+      | 'is_all_day'
+      | 'user_id'
+      | 'lead_id'
+      | 'property_id'
+      | 'location'
+      | 'status'
+      | 'visibility'
+      | 'reminder_minutes'
+      | 'recurrence_rule'
+    >,
+    'user_id'
+  > & {
+    user_id: string
+  }
 >
 
 export const scheduleAPI = {

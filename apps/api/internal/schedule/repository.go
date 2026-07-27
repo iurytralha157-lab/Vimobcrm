@@ -1648,7 +1648,7 @@ func scanEvent(row scanner) (Event, error) {
 		return Event{}, err
 	}
 
-	event.UserID = textValue(userID)
+	event.UserID = textPtr(userID)
 	event.LeadID = textPtr(leadID)
 	event.PropertyID = textPtr(propertyID)
 	event.Description = textPtr(description)

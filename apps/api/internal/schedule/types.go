@@ -24,7 +24,7 @@ var (
 type Event struct {
 	ID                 string       `json:"id"`
 	OrganizationID     string       `json:"organization_id"`
-	UserID             string       `json:"user_id"`
+	UserID             *string      `json:"user_id"`
 	LeadID             *string      `json:"lead_id"`
 	PropertyID         *string      `json:"property_id"`
 	Title              string       `json:"title"`

@@ -73,13 +73,15 @@ function getUserEventColor(userId?: string | null) {
   return userEventColors[hash % userEventColors.length];
 }
 
+type ScheduleEventTimeUpdate = Partial<Pick<ScheduleEvent, 'start_time' | 'end_time'>>;
+
 interface ActivityCardProps {
   event: ScheduleEvent;
   displayStart?: Date;
   displayEnd?: Date;
   dragId?: string;
   onEditEvent?: (event: ScheduleEvent) => void;
-  onEventUpdate?: (id: string, updates: Partial<ScheduleEvent>) => void;
+  onEventUpdate?: (id: string, updates: ScheduleEventTimeUpdate) => void;
   isDragging?: boolean;
   style?: React.CSSProperties;
   className?: string;
@@ -297,7 +299,7 @@ interface CalendarViewProps {
   onPivotChange: (date: Date) => void;
   viewMode: 'day' | 'week' | 'month' | 'year';
   onEditEvent?: (event: ScheduleEvent) => void;
-  onEventUpdate?: (id: string, updates: Partial<ScheduleEvent>) => void;
+  onEventUpdate?: (id: string, updates: ScheduleEventTimeUpdate) => void;
   onQuickCreate?: (date: Date) => void;
   showThirtyMinLines?: boolean;
   canManageEvents?: boolean;
