@@ -4,6 +4,7 @@ import {
   adminListLimitSchema,
   adminModuleAccessInputSchema,
   adminOrganizationAccessInputSchema,
+  adminOrganizationDeleteInputSchema,
   adminOrganizationMutationInputSchema,
   adminOrganizationQuerySchema,
   adminPeriodSchema,
@@ -28,6 +29,11 @@ type Envelope<T> = {
 };
 
 export type AdminJSON = Record<string, unknown>;
+export type AdminOrganizationDeleteResponse = {
+  ok: boolean;
+  deleted_users?: number;
+  cleanup_warnings?: string[];
+};
 
 export const adminAPI = {
   async listOrganizations(params: { search?: string; status?: string; segment?: string } = {}) {
@@ -272,10 +278,14 @@ export const adminAPI = {
     return response;
   },
 
-  async deleteOrganization(id: string) {
+  async deleteOrganization(id: string, confirmationName: string): Promise<AdminOrganizationDeleteResponse> {
     const validatedId = parseDomainInput(uuidSchema, id, 'admin.organizations.delete.id');
-    const response = await vimobAPIRequest<{ ok: boolean }>(`/v1/admin/organizations/${validatedId}`, {
+    const body = parseDomainInput(adminOrganizationDeleteInputSchema, {
+      confirmation_name: confirmationName,
+    }, 'admin.organizations.delete');
+    const response = await vimobAPIRequest<AdminOrganizationDeleteResponse>(`/v1/admin/organizations/${validatedId}`, {
       method: 'DELETE',
+      body,
     });
     validateDomainResponse(okResponseSchema, response, 'admin.organizations.delete');
     return response;

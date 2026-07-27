@@ -102,14 +102,20 @@ export function useSuperAdmin() {
   });
 
   const deleteOrganization = useMutation({
-    mutationFn: (organizationId: string) => adminAPI.deleteOrganization(organizationId),
+    mutationFn: ({
+      organizationId,
+      confirmationName,
+    }: {
+      organizationId: string;
+      confirmationName: string;
+    }) => adminAPI.deleteOrganization(organizationId, confirmationName),
     onSuccess: () => {
-      toast.success('Organização desativada com sucesso!');
+      toast.success('Organização excluída permanentemente!');
       queryClient.invalidateQueries({ queryKey: ['super-admin-organizations'] });
       queryClient.invalidateQueries({ queryKey: ['super-admin-users'] });
     },
     onError: (error) => {
-      toast.error('Erro ao desativar organização: ' + getFriendlyErrorMessage(error));
+      toast.error('Erro ao excluir organização: ' + getFriendlyErrorMessage(error));
     },
   });
 

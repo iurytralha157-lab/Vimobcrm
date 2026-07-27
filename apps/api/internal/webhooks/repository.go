@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -241,6 +243,17 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 	adID := payloadString(payload, "ad_id", "adId")
 	adName := payloadString(payload, "ad_name", "adName")
 	formID := payloadString(payload, "form_id", "formId")
+	providerEventID := payloadString(payload,
+		"event_id", "eventId",
+		"submission_id", "submissionId",
+		"leadgen_id", "leadgenId",
+		"external_id", "externalId",
+	)
+	providerEventKey := providerEventID
+	if providerEventID != nil {
+		qualified := webhook.ID + ":" + *providerEventID
+		providerEventKey = &qualified
+	}
 	utmSource := payloadString(payload, "utm_source", "utmSource")
 	utmMedium := payloadString(payload, "utm_medium", "utmMedium")
 	utmCampaign := payloadString(payload, "utm_campaign", "utmCampaign")
@@ -248,10 +261,13 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 	utmContent := payloadString(payload, "utm_content", "utmContent")
 
 	metadata := map[string]any{
-		"source":       "generic_webhook",
-		"webhook_id":   webhook.ID,
-		"webhook_name": webhook.Name,
-		"payload":      payload,
+		"source":            "generic_webhook",
+		"provider":          "generic_webhook",
+		"provider_event_id": nullableString(providerEventKey),
+		"external_event_id": nullableString(providerEventID),
+		"webhook_id":        webhook.ID,
+		"webhook_name":      webhook.Name,
+		"payload":           payload,
 	}
 	if formAnswers := webhookFormAnswers(payload); len(formAnswers) > 0 {
 		metadata["form_answers"] = formAnswers
@@ -264,6 +280,52 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 		return IncomingLeadResult{}, err
 	}
 	defer tx.Rollback(ctx)
+
+	if providerEventKey != nil {
+		if _, err := tx.Exec(ctx, `
+			select pg_advisory_xact_lock(
+				hashtextextended('lead-entry:generic_webhook:' || $1 || ':' || $2, 0)
+			)
+		`, webhook.OrganizationID, *providerEventKey); err != nil {
+			return IncomingLeadResult{}, err
+		}
+
+		var duplicateLeadID string
+		err := tx.QueryRow(ctx, `
+			select lead_id::text
+			from public.lead_entry_events
+			where organization_id = $1::uuid
+			  and provider = 'generic_webhook'
+			  and provider_event_id = $2
+			  and is_countable = true
+			order by occurred_at, created_at, id
+			limit 1
+		`, webhook.OrganizationID, *providerEventKey).Scan(&duplicateLeadID)
+		if err == nil {
+			return IncomingLeadResult{
+				OK:             true,
+				OrganizationID: webhook.OrganizationID,
+				LeadID:         duplicateLeadID,
+				Idempotent:     true,
+				Message:        "Evento ja processado",
+			}, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return IncomingLeadResult{}, err
+		}
+	}
+	if phone != nil {
+		if _, err := tx.Exec(ctx, `
+			select pg_advisory_xact_lock(
+				hashtextextended(
+					'lead-phone:' || $1 || ':' || regexp_replace($2, '[^0-9]', '', 'g'),
+					0
+				)
+			)
+		`, webhook.OrganizationID, *phone); err != nil {
+			return IncomingLeadResult{}, err
+		}
+	}
 
 	pipelineID, stageID, err := repo.resolveWebhookDestination(ctx, tx, webhook)
 	if err != nil {
@@ -283,22 +345,22 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 			set name = $3,
 			    email = coalesce($4, email),
 			    phone = coalesce($5, phone),
-			    source = 'webhook',
-			    source_detail = $6,
-			    source_webhook_id = $7::uuid,
+			    source = coalesce(nullif(source, ''), 'webhook'),
+			    source_detail = coalesce(source_detail, $6),
+			    source_webhook_id = coalesce(source_webhook_id, $7::uuid),
 			    message = coalesce($8, message),
 			    property_code = coalesce($9, property_code),
 			    property_id = coalesce($10::uuid, property_id),
 			    interest_property_id = coalesce($10::uuid, interest_property_id),
-			    meta_campaign_id = coalesce($11, meta_campaign_id),
-			    meta_adset_id = coalesce($12, meta_adset_id),
-			    meta_ad_id = coalesce($13, meta_ad_id),
-			    meta_form_id = coalesce($14, meta_form_id),
-			    utm_source = coalesce($15, utm_source),
-			    utm_medium = coalesce($16, utm_medium),
-			    utm_campaign = coalesce($17, utm_campaign),
-			    utm_term = coalesce($18, utm_term),
-			    utm_content = coalesce($19, utm_content),
+			    meta_campaign_id = coalesce(meta_campaign_id, $11),
+			    meta_adset_id = coalesce(meta_adset_id, $12),
+			    meta_ad_id = coalesce(meta_ad_id, $13),
+			    meta_form_id = coalesce(meta_form_id, $14),
+			    utm_source = coalesce(utm_source, $15),
+			    utm_medium = coalesce(utm_medium, $16),
+			    utm_campaign = coalesce(utm_campaign, $17),
+			    utm_term = coalesce(utm_term, $18),
+			    utm_content = coalesce(utm_content, $19),
 			    pipeline_id = coalesce($20::uuid, pipeline_id),
 			    stage_id = coalesce($21::uuid, stage_id),
 			    stage_entered_at = case
@@ -389,7 +451,7 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 	if err := repo.insertLeadTags(ctx, tx, webhook.OrganizationID, leadID, webhook.TargetTagIDs); err != nil {
 		return IncomingLeadResult{}, err
 	}
-	if err := repo.insertWebhookLeadEntry(ctx, tx, webhook, leadID, propertyID, payloadJSON); err != nil {
+	if err := repo.insertWebhookLeadEntry(ctx, tx, webhook, leadID, propertyID, sourceDetail, providerEventKey, campaignID, campaignName, adsetID, adsetName, adID, adName, formID, utmSource, utmMedium, utmCampaign, utmContent, utmTerm, webhookOccurredAt(payload), payloadJSON, reentry); err != nil {
 		return IncomingLeadResult{}, err
 	}
 	if err := repo.insertWebhookActivity(ctx, tx, webhook, leadID, *name, reentry, metadata); err != nil {
@@ -602,19 +664,136 @@ func (repo Repository) insertLeadTags(ctx context.Context, tx pgx.Tx, organizati
 	return nil
 }
 
-func (repo Repository) insertWebhookLeadEntry(ctx context.Context, tx pgx.Tx, webhook incomingWebhook, leadID string, propertyID *string, payload []byte) error {
-	_, err := tx.Exec(ctx, `
+func (repo Repository) insertWebhookLeadEntry(
+	ctx context.Context,
+	tx pgx.Tx,
+	webhook incomingWebhook,
+	leadID string,
+	propertyID *string,
+	sourceDetail *string,
+	providerEventID *string,
+	campaignID *string,
+	campaignName *string,
+	adsetID *string,
+	adsetName *string,
+	adID *string,
+	adName *string,
+	formID *string,
+	utmSource *string,
+	utmMedium *string,
+	utmCampaign *string,
+	utmContent *string,
+	utmTerm *string,
+	occurredAt time.Time,
+	payload []byte,
+	reentry bool,
+) error {
+	entryType := "initial"
+	if reentry {
+		entryType = "reentry"
+	}
+
+	if !reentry {
+		tag, err := tx.Exec(ctx, `
+			update public.lead_entry_events
+			set source = 'webhook',
+			    provider = 'generic_webhook',
+			    provider_event_id = $3,
+			    occurred_at = $4,
+			    is_countable = true,
+			    source_detail = coalesce($5, source_detail),
+			    property_id = coalesce($6::uuid, property_id),
+			    campaign_id = coalesce($7, campaign_id),
+			    campaign_name = coalesce($8, campaign_name),
+			    adset_id = coalesce($9, adset_id),
+			    adset_name = coalesce($10, adset_name),
+			    ad_id = coalesce($11, ad_id),
+			    ad_name = coalesce($12, ad_name),
+			    form_id = coalesce($13, form_id),
+			    utm_source = coalesce($14, utm_source),
+			    utm_medium = coalesce($15, utm_medium),
+			    utm_campaign = coalesce($16, utm_campaign),
+			    utm_content = coalesce($17, utm_content),
+			    utm_term = coalesce($18, utm_term),
+			    payload = $19::jsonb
+			where id = (
+				select initial.id
+				from public.lead_entry_events initial
+				where initial.organization_id = $1::uuid
+				  and initial.lead_id = $2::uuid
+				  and initial.entry_type = 'initial'
+				order by initial.created_at, initial.id
+				limit 1
+			)
+		`, webhook.OrganizationID, leadID, nullableString(providerEventID), occurredAt, nullableString(sourceDetail), nullableString(propertyID), nullableString(campaignID), nullableString(campaignName), nullableString(adsetID), nullableString(adsetName), nullableString(adID), nullableString(adName), nullableString(formID), nullableString(utmSource), nullableString(utmMedium), nullableString(utmCampaign), nullableString(utmContent), nullableString(utmTerm), string(payload))
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() > 0 {
+			return nil
+		}
+	}
+
+	tag, err := tx.Exec(ctx, `
 		insert into public.lead_entry_events (
 			organization_id,
 			lead_id,
 			source,
+			provider,
+			provider_event_id,
+			occurred_at,
+			is_countable,
+			source_detail,
 			entry_type,
 			property_id,
+			campaign_id,
+			campaign_name,
+			adset_id,
+			adset_name,
+			ad_id,
+			ad_name,
+			form_id,
+			utm_source,
+			utm_medium,
+			utm_campaign,
+			utm_content,
+			utm_term,
 			payload
 		)
-		values ($1::uuid, $2::uuid, 'webhook', 'webhook', $3::uuid, $4::jsonb)
-	`, webhook.OrganizationID, leadID, nullableString(propertyID), string(payload))
+		values (
+			$1::uuid, $2::uuid, 'webhook', 'generic_webhook', $3, $4, true, $5,
+			$6, $7::uuid, $8, $9, $10, $11, $12, $13, $14,
+			$15, $16, $17, $18, $19, $20::jsonb
+		)
+		on conflict (organization_id, provider, provider_event_id)
+			where provider_event_id is not null and is_countable = true
+		do nothing
+	`, webhook.OrganizationID, leadID, nullableString(providerEventID), occurredAt, nullableString(sourceDetail), entryType, nullableString(propertyID), nullableString(campaignID), nullableString(campaignName), nullableString(adsetID), nullableString(adsetName), nullableString(adID), nullableString(adName), nullableString(formID), nullableString(utmSource), nullableString(utmMedium), nullableString(utmCampaign), nullableString(utmContent), nullableString(utmTerm), string(payload))
+	if err == nil && providerEventID != nil && tag.RowsAffected() == 0 {
+		return errors.New("generic webhook event was already processed")
+	}
 	return err
+}
+
+func webhookOccurredAt(payload map[string]any) time.Time {
+	for _, key := range []string{"occurred_at", "occurredAt", "submitted_at", "submittedAt", "created_at", "createdAt", "timestamp"} {
+		value := payloadText(payload[key])
+		if value == nil {
+			continue
+		}
+		if parsed, err := time.Parse(time.RFC3339, *value); err == nil {
+			return parsed.UTC()
+		}
+		if unixValue, err := strconv.ParseInt(*value, 10, 64); err == nil {
+			if len(*value) == 13 {
+				unixValue /= 1000
+			}
+			if unixValue > 0 {
+				return time.Unix(unixValue, 0).UTC()
+			}
+		}
+	}
+	return time.Now().UTC()
 }
 
 func (repo Repository) insertWebhookActivity(ctx context.Context, tx pgx.Tx, webhook incomingWebhook, leadID string, leadName string, reentry bool, metadata map[string]any) error {

@@ -1398,7 +1398,7 @@ func scheduleEventsQuery(whereClause string) string {
 		visible as (
 			select
 				base.*,
-				(base.visibility = 'public' and not base.is_participant and not base.is_manager) as is_masked
+				(base.visibility = 'default' and not base.is_participant and not base.is_manager) as is_masked
 			from base
 			where base.visibility <> 'private'
 			   or base.is_participant

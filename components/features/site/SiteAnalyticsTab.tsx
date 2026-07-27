@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { useQuery } from '@tanstack/react-query';
 import { siteAPI } from '@/lib/api/site';
+import { getSitePublicUrl } from '@/lib/site/site-publication';
 
 function getTrendIcon(current: number, previous: number) {
   if (current > previous) return <ArrowUpRight className="w-3 h-3 text-emerald-500" />;
@@ -38,13 +39,11 @@ function useSiteBaseUrl() {
     enabled: !!organizationId,
   });
 
-  if (siteInfo?.custom_domain && siteInfo?.domain_verified) {
-    return `https://${siteInfo.custom_domain}`;
-  }
-  if (siteInfo?.subdomain) {
-    return `https://vimob.vettercompany.com.br/sites/${siteInfo.subdomain}`;
-  }
-  return null;
+  return getSitePublicUrl({
+    customDomain: siteInfo?.custom_domain,
+    domainVerified: siteInfo?.domain_verified,
+    subdomain: siteInfo?.subdomain,
+  });
 }
 
 export function SiteAnalyticsTab() {

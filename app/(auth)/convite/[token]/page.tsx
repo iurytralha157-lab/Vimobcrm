@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { InvitationScreen } from "@/components/features/auth/invitation-screen";
+import { PublicQueryProvider } from "@/components/providers/public-query-provider";
 
 export const metadata: Metadata = {
   title: "Convite | Vimob",
@@ -8,5 +9,9 @@ export const metadata: Metadata = {
 
 export default async function InvitationPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  return <InvitationScreen token={token} />;
+  return (
+    <PublicQueryProvider>
+      <InvitationScreen token={token} />
+    </PublicQueryProvider>
+  );
 }

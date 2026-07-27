@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   format,
@@ -33,6 +33,7 @@ import {
   Trash2,
   AlertCircle,
   RefreshCw,
+  CalendarSync,
 } from "lucide-react";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { Button } from "@/components/ui/button";
@@ -55,6 +56,15 @@ import { Badge } from "@/components/ui/badge";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { VimobLoader } from "@/components/shared/loading/VimobLoader";
+import { GoogleCalendarConnect } from "@/components/features/schedule/GoogleCalendarConnect";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { toast } from "sonner";
 
 // --- helpers ----------------------------------------------------------------
 
@@ -113,6 +123,8 @@ export default function Agenda() {
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetEvent, setSheetEvent] = useState<ScheduleEvent | null>(null);
+  const [googleCalendarOpen, setGoogleCalendarOpen] = useState(false);
+  const handledGoogleOAuthRef = useRef(false);
   const updateEventMutation = useUpdateScheduleEvent();
   const effectiveViewMode: AgendaViewMode = isMobile ? "day" : viewMode;
 
@@ -208,6 +220,26 @@ export default function Agenda() {
     return () => window.removeEventListener("vimob:mobile-create-agenda", handleMobileCreate);
   }, [openCreateSheet]);
 
+  useEffect(() => {
+    const connected = searchParams.get("google_calendar_connected") === "1";
+    const callbackError = searchParams.get("google_calendar_error");
+    if ((!connected && !callbackError) || handledGoogleOAuthRef.current) return;
+
+    handledGoogleOAuthRef.current = true;
+    setGoogleCalendarOpen(true);
+    if (connected) {
+      toast.success("Google Agenda conectada e sincronizada.");
+    } else if (callbackError) {
+      toast.error(`Nao foi possivel conectar o Google Agenda: ${callbackError.slice(0, 300)}`);
+    }
+
+    const cleanParams = new URLSearchParams(searchParamsString);
+    cleanParams.delete("google_calendar_connected");
+    cleanParams.delete("google_calendar_error");
+    const cleanSearch = cleanParams.toString();
+    router.replace(`/agenda${cleanSearch ? `?${cleanSearch}` : ""}`);
+  }, [router, searchParams, searchParamsString]);
+
 
   const canFilterUsers = Boolean(scheduleCapabilities?.isTeamLeader && canFilterScheduleUsers);
 
@@ -301,6 +333,21 @@ export default function Agenda() {
             </span>
 
             <div className="flex items-center gap-2">
+              <Button
+                data-tour="google-calendar-agenda"
+                variant="ghost"
+                size="sm"
+                className={cn(
+                  "h-9 gap-2 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[var(--color-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)]",
+                  isMobile && "w-9 px-0",
+                )}
+                onClick={() => setGoogleCalendarOpen(true)}
+                aria-label="Configurar Google Agenda"
+              >
+                <CalendarSync size={14} />
+                {!isMobile && <span>Google Agenda</span>}
+              </Button>
+
               {/* Novo Botão de Filtros */}
               <Popover>
                 <PopoverTrigger asChild>
@@ -511,6 +558,18 @@ export default function Agenda() {
           </div>
         </div>
       </div>
+
+      <Dialog open={googleCalendarOpen} onOpenChange={setGoogleCalendarOpen}>
+        <DialogContent className="w-[calc(100vw-24px)] max-w-xl rounded-[12px] p-5 sm:p-6">
+          <DialogHeader>
+            <DialogTitle>Google Agenda</DialogTitle>
+            <DialogDescription>
+              Conecte sua conta pessoal para enviar e receber compromissos automaticamente.
+            </DialogDescription>
+          </DialogHeader>
+          <GoogleCalendarConnect />
+        </DialogContent>
+      </Dialog>
 
       <EventSheet
         open={sheetOpen}

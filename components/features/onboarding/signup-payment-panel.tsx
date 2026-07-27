@@ -509,7 +509,7 @@ export function SignupPaymentPanel({
           <button
             type="button"
             onClick={onAccessPlatform}
-            className="h-12 w-full rounded-[6px] bg-[#FF4529] text-[12px] font-extralight uppercase tracking-[0.08em] text-white outline-none transition-opacity hover:opacity-90 focus-visible:opacity-90"
+            className="auth-primary-action h-12 w-full rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors"
           >
             Acessar plataforma
           </button>
@@ -740,7 +740,7 @@ export function SignupPaymentPanel({
             type="button"
             onClick={handlePayment}
             disabled={method === "PIX" ? !canSubmitPix : !canSubmitCard}
-            className="h-12 w-full rounded-[6px] bg-[#FF4529] text-[12px] font-extralight uppercase tracking-[0.08em] text-white outline-none transition-opacity hover:opacity-90 focus-visible:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
+            className="auth-primary-action h-12 w-full rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-45"
           >
             {submitting
               ? "Processando"

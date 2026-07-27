@@ -93,7 +93,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const action = body.action || "get_auth_url";
     const user = await authenticateUser(req);
-    const profile = await getUserProfile(user.id);
+    const profile = await getUserProfile(user.id, body.organization_id || body.organizationId || null);
 
     if (action === "get_auth_url") {
       const state = await createOAuthState({
@@ -106,7 +106,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === "status") {
-      const connection = await getConnectionForUser(profile.id, { requireSyncEnabled: false });
+      const connection = await getConnectionForUser(profile.id, profile.organization_id, { requireSyncEnabled: false });
       return jsonResponse({
         success: true,
         connection: connection ? {
@@ -123,13 +123,22 @@ Deno.serve(async (req) => {
           last_synced_at: connection.last_synced_at,
           watch_expires_at: connection.watch_expires_at,
           last_error: connection.last_error,
+          disconnected_at: connection.disconnected_at,
+          created_at: connection.created_at,
+          updated_at: connection.updated_at,
         } : null,
       });
     }
 
     if (action === "disconnect") {
-      const connection = body.connection_id ? await getConnectionById(body.connection_id) : await getConnectionForUser(profile.id, { requireSyncEnabled: false });
-      if (!connection || connection.user_id !== profile.id) {
+      const connection = body.connection_id
+        ? await getConnectionById(body.connection_id)
+        : await getConnectionForUser(profile.id, profile.organization_id, { requireSyncEnabled: false });
+      if (
+        !connection
+        || connection.user_id !== profile.id
+        || connection.organization_id !== profile.organization_id
+      ) {
         return jsonResponse({ success: false, error: "Conexao Google nao encontrada." }, 404);
       }
 
@@ -138,8 +147,14 @@ Deno.serve(async (req) => {
     }
 
     if (action === "set_sync_enabled") {
-      const connection = body.connection_id ? await getConnectionById(body.connection_id) : await getConnectionForUser(profile.id, { requireSyncEnabled: false });
-      if (!connection || connection.user_id !== profile.id) {
+      const connection = body.connection_id
+        ? await getConnectionById(body.connection_id)
+        : await getConnectionForUser(profile.id, profile.organization_id, { requireSyncEnabled: false });
+      if (
+        !connection
+        || connection.user_id !== profile.id
+        || connection.organization_id !== profile.organization_id
+      ) {
         return jsonResponse({ success: false, error: "Conexao Google nao encontrada." }, 404);
       }
 
@@ -162,8 +177,14 @@ Deno.serve(async (req) => {
     }
 
     if (action === "sync_now") {
-      const connection = body.connection_id ? await getConnectionById(body.connection_id) : await getConnectionForUser(profile.id, { requireSyncEnabled: false });
-      if (!connection || connection.user_id !== profile.id) {
+      const connection = body.connection_id
+        ? await getConnectionById(body.connection_id)
+        : await getConnectionForUser(profile.id, profile.organization_id, { requireSyncEnabled: false });
+      if (
+        !connection
+        || connection.user_id !== profile.id
+        || connection.organization_id !== profile.organization_id
+      ) {
         return jsonResponse({ success: false, error: "Conexao Google nao encontrada." }, 404);
       }
 

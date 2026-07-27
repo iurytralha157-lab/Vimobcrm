@@ -145,7 +145,7 @@ func (repo Repository) ListLeadTimeline(ctx context.Context, tenantContext tenan
 						) end
 				)
 			)
-			order by e.created_at asc, e.id asc
+			order by e.occurred_at asc, e.created_at asc, e.id asc
 		), '[]'::jsonb)
 		from public.lead_timeline_events e
 		join public.leads l on l.id = e.lead_id

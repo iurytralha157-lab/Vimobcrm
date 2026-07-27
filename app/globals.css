@@ -1603,6 +1603,51 @@ body {
   line-height: var(--app-line-height-title);
 }
 
+.auth-page .auth-primary-action {
+  background-color: #d9341f;
+  color: #ffffff;
+}
+
+.auth-page .auth-primary-action:hover,
+.auth-page .auth-primary-action:focus-visible {
+  background-color: #cf301a;
+  opacity: 1;
+}
+
+.auth-page .auth-primary-action:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.auth-page .auth-primary-action:disabled {
+  opacity: 0.55;
+}
+
+.auth-page:not(.auth-page-light) input {
+  color-scheme: dark;
+}
+
+.auth-page:not(.auth-page-light) input:-webkit-autofill,
+.auth-page:not(.auth-page-light) input:-webkit-autofill:hover,
+.auth-page:not(.auth-page-light) input:-webkit-autofill:focus,
+.auth-page:not(.auth-page-light) input:-webkit-autofill:active {
+  -webkit-text-fill-color: #ffffff;
+  border-color: #121212 !important;
+  caret-color: #ffffff;
+  outline: none;
+  -webkit-box-shadow: 0 0 0 1000px #121212 inset;
+  box-shadow: 0 0 0 1000px #121212 inset;
+  transition: background-color 9999s ease-out 0s;
+}
+
+.auth-page:not(.auth-page-light) input:autofill {
+  color: #ffffff;
+  border-color: #121212 !important;
+  caret-color: #ffffff;
+  outline: none;
+  box-shadow: 0 0 0 1000px #121212 inset;
+}
+
 .auth-page-light {
   --auth-background: #f7f8f6;
   --auth-overlay-mobile: linear-gradient(

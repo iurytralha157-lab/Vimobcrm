@@ -31,6 +31,7 @@ type IncomingLeadResult struct {
 	OrganizationID string `json:"organizationId,omitempty"`
 	LeadID         string `json:"leadId"`
 	Reentry        bool   `json:"reentry"`
+	Idempotent     bool   `json:"idempotent,omitempty"`
 	Message        string `json:"message"`
 }
 

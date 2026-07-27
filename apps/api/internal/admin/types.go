@@ -9,6 +9,9 @@ var (
 	ErrInvitationEmailMissing      = errors.New("invitation email is missing")
 	ErrInvitationUserAlreadyMember = errors.New("invitation user already belongs to organization")
 	ErrInvitationAlreadyPending    = errors.New("invitation already pending for organization and email")
+	ErrOrganizationDeleteConfirm   = errors.New("organization deletion confirmation does not match")
+	ErrOrganizationExternalCleanup = errors.New("organization external cleanup failed")
+	ErrOrganizationPurgeUnsafe     = errors.New("organization purge could not determine a safe deletion order")
 )
 
 type Envelope[T any] struct {
@@ -37,6 +40,16 @@ type OrganizationUpdateRequest struct {
 type OrganizationAccessRequest struct {
 	OrganizationUpdates OrganizationUpdateRequest `json:"organizationUpdates"`
 	Modules             []string                  `json:"modules"`
+}
+
+type OrganizationDeleteRequest struct {
+	ConfirmationName string `json:"confirmation_name"`
+}
+
+type OrganizationDeleteResult struct {
+	OK              bool     `json:"ok"`
+	DeletedUsers    int      `json:"deleted_users"`
+	CleanupWarnings []string `json:"cleanup_warnings,omitempty"`
 }
 
 type ModuleAccessRequest struct {

@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { RootProvider } from "@/components/providers";
-import { FilterProviderWrapper } from "@/components/providers/filter-provider";
+import { RootProvider } from "@/components/providers/root-provider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -45,9 +44,7 @@ export default function RootLayout({
     >
       <body className="min-h-full" suppressHydrationWarning>
         <RootProvider>
-          <FilterProviderWrapper>
-            {children}
-          </FilterProviderWrapper>
+          {children}
         </RootProvider>
       </body>
     </html>

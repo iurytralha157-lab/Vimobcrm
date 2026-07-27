@@ -583,11 +583,17 @@ func (handler Handler) DeleteOrganization(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if err := handler.repo.DeleteOrganization(r.Context(), tenantContext, r.PathValue("id")); err != nil {
+	defer r.Body.Close()
+	var request OrganizationDeleteRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	result, err := handler.repo.DeleteOrganization(r.Context(), tenantContext, r.PathValue("id"), request)
+	if err != nil {
 		writeAdminError(w, r, err)
 		return
 	}
-	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	httpserver.WriteJSON(w, http.StatusOK, result)
 }
 
 func (handler Handler) UpdateModuleAccess(w http.ResponseWriter, r *http.Request) {
@@ -692,6 +698,12 @@ func writeAdminError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	case errors.Is(err, ErrInvitationEmailFailed):
 		httpserver.WriteError(w, r, http.StatusBadGateway, "invitation_email_failed", "Nao foi possivel enviar o convite por e-mail. Verifique a configuracao de envio.")
+	case errors.Is(err, ErrOrganizationDeleteConfirm):
+		httpserver.WriteError(w, r, http.StatusConflict, "organization_delete_confirmation_mismatch", "O nome informado nao corresponde a organizacao.")
+	case errors.Is(err, ErrOrganizationExternalCleanup):
+		httpserver.WriteError(w, r, http.StatusBadGateway, "organization_external_cleanup_failed", "A organizacao foi inativada, mas uma integracao externa nao pôde ser desconectada. Tente novamente.")
+	case errors.Is(err, ErrOrganizationPurgeUnsafe):
+		httpserver.WriteError(w, r, http.StatusConflict, "organization_purge_unsafe", "A exclusao foi interrompida porque o banco nao encontrou uma ordem segura para remover os dados.")
 	default:
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "admin_operation_failed", "Unable to complete admin operation.")
 	}

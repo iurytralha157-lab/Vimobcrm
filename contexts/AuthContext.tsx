@@ -175,7 +175,7 @@ interface AuthContextType {
   loading: boolean;
   isSuperAdmin: boolean;
   impersonating: ImpersonateSession | null;
-  signIn: (email: string, password: string) => Promise<{ error: Error | null; isSuperAdmin?: boolean }>;
+  signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, name: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: Error | null }>;
@@ -682,15 +682,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signIn = async (email: string, password: string) => {
     const { error, data } = await supabase.auth.signInWithPassword({ email, password });
-    let signedInIsSuperAdmin = false;
-    if (!error && data.user) {
-      try {
-        const response = await meAPI.getMe();
-        signedInIsSuperAdmin = response.context.isSuperAdmin;
-      } catch (contextError) {
-        authDebugWarn('[AuthContext] could not resolve tenant immediately after sign-in:', contextError);
-      }
-    }
 
     // Log successful login (async to avoid blocking)
     if (!error && data.user) {
@@ -702,7 +693,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }, 0);
     }
 
-    return { error, isSuperAdmin: signedInIsSuperAdmin };
+    return { error };
   };
 
   const signUp = async (email: string, password: string, name: string) => {

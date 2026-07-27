@@ -1019,12 +1019,11 @@ func (repo Repository) buildDashboardLeadWhere(tenantContext tenant.Context, fil
 		where = append(where, searchtext.AnySQL([]string{"l.name", "l.email", "l.phone"}, fmt.Sprintf("$%d", index)))
 	}
 
-	addMetaCondition := func(leadColumns []string, idColumn string, nameColumn string, value string) {
-		addLeadMetaFilterCondition(&args, &where, "l", "dlm", leadColumns, idColumn, nameColumn, value)
-	}
-	addMetaCondition([]string{"meta_campaign_id", "utm_campaign"}, "campaign_id", "campaign_name", filter.CampaignID)
-	addMetaCondition([]string{"meta_adset_id"}, "adset_id", "adset_name", filter.AdSetID)
-	addMetaCondition([]string{"meta_ad_id"}, "ad_id", "ad_name", filter.AdID)
+	addLeadAttributionFilterCondition(&args, &where, "l", "dlm", leadAttributionFilter{
+		Campaign: filter.CampaignID,
+		AdSet:    filter.AdSetID,
+		Ad:       filter.AdID,
+	})
 
 	return where, args, nil
 }

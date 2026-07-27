@@ -25,6 +25,10 @@ import { Phone, Mail, Calendar as CalendarIcon, CheckSquare, MessageSquare, Home
 import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScheduleEvent, EventType } from '@/hooks/use-schedule-events';
+import {
+  splitScheduleEventByDay,
+  type ScheduleEventDaySegment,
+} from '@/lib/schedule-event-segments';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   DndContext,
@@ -71,17 +75,33 @@ function getUserEventColor(userId?: string | null) {
 
 interface ActivityCardProps {
   event: ScheduleEvent;
+  displayStart?: Date;
+  displayEnd?: Date;
+  dragId?: string;
   onEditEvent?: (event: ScheduleEvent) => void;
   onEventUpdate?: (id: string, updates: Partial<ScheduleEvent>) => void;
   isDragging?: boolean;
   style?: React.CSSProperties;
   className?: string;
   editable?: boolean;
+  resizable?: boolean;
 }
 
-function ActivityCard({ event, onEditEvent, onEventUpdate, isDragging, style, className, editable = false }: ActivityCardProps) {
+function ActivityCard({
+  event,
+  displayStart,
+  displayEnd,
+  dragId,
+  onEditEvent,
+  onEventUpdate,
+  isDragging,
+  style,
+  className,
+  editable = false,
+  resizable = true,
+}: ActivityCardProps) {
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
-    id: event.id,
+    id: dragId ?? event.id,
     data: event,
     disabled: !editable,
   });
@@ -89,9 +109,9 @@ function ActivityCard({ event, onEditEvent, onEventUpdate, isDragging, style, cl
   const [resizing, setResizing] = useState(false);
   const [tempHeight, setTempHeight] = useState<number | null>(null);
 
-  const start = parseISO(event.start_time);
-  const end = parseISO(event.end_time);
-  const duration = event.is_all_day ? 24 * 60 : differenceInMinutes(end, start);
+  const start = displayStart ?? parseISO(event.start_time);
+  const end = displayEnd ?? parseISO(event.end_time);
+  const duration = event.is_all_day ? 24 * 60 : Math.max(differenceInMinutes(end, start), 1);
   const userColor = getUserEventColor(event.user_id);
   const styleWidth = typeof style?.width === 'string' ? style.width : undefined;
 
@@ -107,7 +127,7 @@ function ActivityCard({ event, onEditEvent, onEventUpdate, isDragging, style, cl
   } : undefined;
 
   const handleResizeMouseDown = (e: React.MouseEvent) => {
-    if (!editable) return;
+    if (!editable || !resizable) return;
     e.stopPropagation();
     e.preventDefault();
     setResizing(true);
@@ -141,7 +161,9 @@ function ActivityCard({ event, onEditEvent, onEventUpdate, isDragging, style, cl
     document.addEventListener('mouseup', onMouseUp);
   };
 
-  const currentHeight = tempHeight !== null ? tempHeight : (duration * (56 / 60));
+  const currentHeight = tempHeight !== null
+    ? `${tempHeight}px`
+    : style?.height ?? `${duration * (56 / 60)}px`;
 
   // Tiny mode: single line with just title + time on hover
   if (isTiny) {
@@ -158,7 +180,7 @@ function ActivityCard({ event, onEditEvent, onEventUpdate, isDragging, style, cl
           isDragging && "opacity-50 grayscale",
           className
         )}
-        style={{ ...style, ...dragStyle, backgroundColor: userColor.background, height: `${currentHeight}px` }}
+        style={{ ...style, ...dragStyle, backgroundColor: userColor.background, height: currentHeight }}
       >
         <span className="text-[9px] font-bold tabular-nums opacity-80 shrink-0">
           {event.is_all_day ? 'Dia inteiro' : format(start, 'HH:mm')}
@@ -191,7 +213,7 @@ function ActivityCard({ event, onEditEvent, onEventUpdate, isDragging, style, cl
         ...style,
         ...dragStyle,
         backgroundColor: userColor.background,
-        height: `${currentHeight}px`
+        height: currentHeight
       }}
     >
       <div className={cn(
@@ -225,7 +247,7 @@ function ActivityCard({ event, onEditEvent, onEventUpdate, isDragging, style, cl
         </div>
 
         {/* Resize handle */}
-        {editable && (
+        {editable && resizable && (
           <div
             className="absolute bottom-0 left-0 right-0 h-1.5 cursor-ns-resize hover:bg-white/20 active:bg-white/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
             onMouseDown={handleResizeMouseDown}
@@ -312,57 +334,61 @@ export function CalendarView({
     setActiveEvent(event.active.data.current as ScheduleEvent);
   };
 
-  const calculateEventLayouts = useCallback((dayEvents: ScheduleEvent[]) => {
-    if (dayEvents.length === 0) return [];
+  const calculateEventLayouts = useCallback((daySegments: ScheduleEventDaySegment<ScheduleEvent>[]) => {
+    if (daySegments.length === 0) return [];
 
     // Sort events by start time, then duration
-    const sorted = [...dayEvents].sort((a, b) => {
-      const startA = new Date(a.start_time).getTime();
-      const startB = new Date(b.start_time).getTime();
+    const sorted = [...daySegments].sort((a, b) => {
+      const startA = a.start.getTime();
+      const startB = b.start.getTime();
       if (startA !== startB) return startA - startB;
 
-      const durA = new Date(a.end_time).getTime() - startA;
-      const durB = new Date(b.end_time).getTime() - startB;
+      const durA = a.end.getTime() - startA;
+      const durB = b.end.getTime() - startB;
       return durB - durA;
     });
 
-    const layouts: { event: ScheduleEvent; column: number; totalColumns: number }[] = [];
-    let currentCluster: ScheduleEvent[] = [];
+    const layouts: {
+      segment: ScheduleEventDaySegment<ScheduleEvent>;
+      column: number;
+      totalColumns: number;
+    }[] = [];
+    let currentCluster: ScheduleEventDaySegment<ScheduleEvent>[] = [];
     let clusterMaxEnd = 0;
 
-    const processCluster = (cluster: ScheduleEvent[]) => {
+    const processCluster = (cluster: ScheduleEventDaySegment<ScheduleEvent>[]) => {
       if (cluster.length === 0) return;
 
-      const columns: ScheduleEvent[][] = [];
-      cluster.forEach(event => {
+      const columns: ScheduleEventDaySegment<ScheduleEvent>[][] = [];
+      cluster.forEach(segment => {
         let placed = false;
-        const eventStart = new Date(event.start_time).getTime();
+        const eventStart = segment.start.getTime();
 
         for (let i = 0; i < columns.length; i++) {
           const lastEventInCol = columns[i][columns[i].length - 1];
-          if (eventStart >= new Date(lastEventInCol.end_time).getTime()) {
-            columns[i].push(event);
-            layouts.push({ event, column: i, totalColumns: 0 });
+          if (eventStart >= lastEventInCol.end.getTime()) {
+            columns[i].push(segment);
+            layouts.push({ segment, column: i, totalColumns: 0 });
             placed = true;
             break;
           }
         }
 
         if (!placed) {
-          columns.push([event]);
-          layouts.push({ event, column: columns.length - 1, totalColumns: 0 });
+          columns.push([segment]);
+          layouts.push({ segment, column: columns.length - 1, totalColumns: 0 });
         }
       });
 
       // Update totalColumns for all events in this cluster
-      cluster.forEach(event => {
-        const layout = layouts.find(l => l.event.id === event.id);
+      cluster.forEach(segment => {
+        const layout = layouts.find(item => item.segment.key === segment.key);
         if (layout) layout.totalColumns = columns.length;
       });
     };
 
-    sorted.forEach(event => {
-      const eventStart = new Date(event.start_time).getTime();
+    sorted.forEach(segment => {
+      const eventStart = segment.start.getTime();
 
       if (eventStart >= clusterMaxEnd && currentCluster.length > 0) {
         processCluster(currentCluster);
@@ -370,8 +396,8 @@ export function CalendarView({
         clusterMaxEnd = 0;
       }
 
-      currentCluster.push(event);
-      const eventEnd = new Date(event.end_time).getTime();
+      currentCluster.push(segment);
+      const eventEnd = segment.end.getTime();
       if (eventEnd > clusterMaxEnd) clusterMaxEnd = eventEnd;
     });
 
@@ -402,11 +428,12 @@ export function CalendarView({
   };
 
   const eventsByDate = useMemo(() => {
-    const map: Record<string, ScheduleEvent[]> = {};
+    const map: Record<string, ScheduleEventDaySegment<ScheduleEvent>[]> = {};
     events.forEach(event => {
-      const dateKey = format(parseISO(event.start_time), 'yyyy-MM-dd');
-      if (!map[dateKey]) map[dateKey] = [];
-      map[dateKey].push(event);
+      splitScheduleEventByDay(event).forEach(segment => {
+        if (!map[segment.dateKey]) map[segment.dateKey] = [];
+        map[segment.dateKey].push(segment);
+      });
     });
     return map;
   }, [events]);
@@ -431,14 +458,14 @@ export function CalendarView({
         <div className="grid grid-cols-7 gap-px bg-white/[0.045] flex-1 overflow-hidden">
           {calendarDays.map(day => {
             const dateKey = format(day, 'yyyy-MM-dd');
-            const dayEvents = eventsByDate[dateKey] || [];
+            const daySegments = eventsByDate[dateKey] || [];
             const isCurrentMonth = isSameMonth(day, pivotDate);
             const isSelected = isSameDay(day, selectedDate);
             const isDayToday = isToday(day);
 
             const maxVisibleEvents = 3;
-            const visibleEvents = dayEvents.slice(0, maxVisibleEvents);
-            const moreCount = dayEvents.length - maxVisibleEvents;
+            const visibleEvents = daySegments.slice(0, maxVisibleEvents);
+            const moreCount = daySegments.length - maxVisibleEvents;
 
             return (
               <div
@@ -463,12 +490,13 @@ export function CalendarView({
                 </div>
 
                 <div className="space-y-1 flex-1">
-                  {visibleEvents.map(event => {
+                  {visibleEvents.map(segment => {
+                    const event = segment.event;
                     const Icon = eventTypeIcons[event.event_type as EventType] || CalendarIcon;
                     const userColor = getUserEventColor(event.user_id);
                     return (
                       <div
-                        key={event.id}
+                        key={segment.key}
                         onClick={(e) => {
                           e.stopPropagation();
                           onEditEvent?.(event);
@@ -499,12 +527,13 @@ export function CalendarView({
                           {format(day, "dd 'de' MMMM", { locale: ptBR })}
                         </div>
                         <div className="space-y-1 max-h-[300px] overflow-y-auto pr-1">
-                          {dayEvents.map(event => {
+                          {daySegments.map(segment => {
+                            const event = segment.event;
                             const Icon = eventTypeIcons[event.event_type as EventType] || CalendarIcon;
                             const userColor = getUserEventColor(event.user_id);
                             return (
                               <div
-                                key={event.id}
+                                key={segment.key}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   onEditEvent?.(event);
@@ -518,7 +547,7 @@ export function CalendarView({
                                 <div className="flex flex-col truncate">
                                   <span className="truncate tracking-tight leading-tight">{event.title}</span>
                                   <span className="text-[8px] opacity-70">
-                                    {event.is_all_day ? 'Dia inteiro' : format(new Date(event.start_time), 'HH:mm')}
+                                    {event.is_all_day ? 'Dia inteiro' : format(segment.start, 'HH:mm')}
                                   </span>
                                 </div>
                               </div>
@@ -543,7 +572,7 @@ export function CalendarView({
       end: endOfDay(pivotDate)
     });
 
-    const dayEvents = eventsByDate[format(pivotDate, 'yyyy-MM-dd')] || [];
+    const daySegments = eventsByDate[format(pivotDate, 'yyyy-MM-dd')] || [];
 
     return (
       <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
@@ -592,9 +621,8 @@ export function CalendarView({
               })}
 
               {/* Events */}
-              {calculateEventLayouts(dayEvents).map(({ event, column, totalColumns }) => {
-                const start = parseISO(event.start_time);
-                const end = parseISO(event.end_time);
+              {calculateEventLayouts(daySegments).map(({ segment, column, totalColumns }) => {
+                const { event, start, end } = segment;
                 const top = event.is_all_day ? 0 : (start.getHours() * 60 + start.getMinutes()) * (56 / 60);
                 const duration = event.is_all_day ? 24 * 60 : Math.max((end.getTime() - start.getTime()) / (1000 * 60), 15);
                 const height = duration * (56 / 60);
@@ -604,11 +632,15 @@ export function CalendarView({
 
                 return (
                   <ActivityCard
-                    key={event.id}
+                    key={segment.key}
                     event={event}
+                    displayStart={start}
+                    displayEnd={end}
+                    dragId={segment.key}
                     onEditEvent={onEditEvent}
                     onEventUpdate={onEventUpdate}
                     editable={isEventEditable(event)}
+                    resizable={segment.isLast}
                     style={{
                       top: `${top}px`,
                       height: `${height}px`,
@@ -711,9 +743,8 @@ export function CalendarView({
                   })}
 
                   {/* Events for this day */}
-                  {calculateEventLayouts(eventsByDate[format(day, 'yyyy-MM-dd')] || []).map(({ event, column, totalColumns }) => {
-                    const start = parseISO(event.start_time);
-                    const end = parseISO(event.end_time);
+                  {calculateEventLayouts(eventsByDate[format(day, 'yyyy-MM-dd')] || []).map(({ segment, column, totalColumns }) => {
+                    const { event, start, end } = segment;
                     const top = event.is_all_day ? 0 : (start.getHours() * 60 + start.getMinutes()) * (56 / 60);
                     const duration = event.is_all_day ? 24 * 60 : Math.max((end.getTime() - start.getTime()) / (1000 * 60), 15);
                     const height = duration * (56 / 60);
@@ -723,11 +754,15 @@ export function CalendarView({
 
                     return (
                       <ActivityCard
-                        key={event.id}
+                        key={segment.key}
                         event={event}
+                        displayStart={start}
+                        displayEnd={end}
+                        dragId={segment.key}
                         onEditEvent={onEditEvent}
                         onEventUpdate={onEventUpdate}
                         editable={isEventEditable(event)}
+                        resizable={segment.isLast}
                         style={{
                           top: `${top}px`,
                           height: `${height}px`,

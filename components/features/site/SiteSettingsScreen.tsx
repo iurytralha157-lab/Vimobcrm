@@ -14,21 +14,27 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
-import { Globe, Palette, Phone, Share2, Search, ExternalLink, Loader2, Menu, Info, Save } from "lucide-react";
+import { AlertCircle, Globe, Palette, Phone, Share2, Search, ExternalLink, Loader2, Menu, Info, RefreshCw, Save } from "lucide-react";
 import { AnimatedIcon } from "@/components/shared/icons/AnimatedIcon";
 import GLOBE_JSON from "@/components/shared/icons/globe-icon.json";
 import { MenuTab } from "@/components/features/site/MenuTab";
 import { SearchFiltersTab } from "@/components/features/site/SearchFiltersTab";
 import { AboutTab } from "@/components/features/site/AboutTab";
+import {
+  DomainConnectionGuide,
+  SiteGeneralDashboard,
+  type SiteGeneralValues,
+} from "@/components/features/site";
 import { Slider } from "@/components/ui/slider";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
-import { DnsVerificationStatus } from "@/components/features/site/DnsVerificationStatus";
 import { ImageUpload } from "@/components/ui/image-upload";
 import { cn } from "@/lib/utils";
 import { canManageOrganization } from "@/lib/access/organization";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
+import { getCloudflareWorkerCode } from "@/lib/site/cloudflare-worker";
+import { getSitePublicUrl } from "@/lib/site/site-publication";
 
 type AboutStat = {
   value: string;
@@ -43,6 +49,8 @@ type AboutFeature = {
 
 type SiteFormData = {
   is_active: boolean;
+  maintenance_mode: boolean;
+  maintenance_message: string;
   subdomain: string;
   custom_domain: string;
   site_title: string;
@@ -151,6 +159,10 @@ function normalizeSiteTab(value: string | null) {
     : 'general';
 }
 
+function normalizeGeneralView(value: string | null) {
+  return value === 'domain-guide' ? 'domain-guide' : 'dashboard';
+}
+
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   if (typeof error === "object" && error && "message" in error) {
@@ -165,7 +177,12 @@ export default function SiteSettings() {
   const searchParams = useSearchParams();
   const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
   const { hasPermission } = useUserPermissions();
-  const { data: site, isLoading } = useOrganizationSite();
+  const {
+    data: site,
+    isLoading,
+    isError: isSiteError,
+    refetch: refetchSite,
+  } = useOrganizationSite();
   const createSite = useCreateOrganizationSite();
   const updateSite = useUpdateOrganizationSite();
   const activeOrganizationId = organization?.id || profile?.organization_id;
@@ -177,6 +194,8 @@ export default function SiteSettings() {
 
   const [formData, setFormData] = useState<SiteFormData>({
     is_active: false,
+    maintenance_mode: false,
+    maintenance_message: '',
     subdomain: '',
     custom_domain: '',
     site_title: '',
@@ -230,12 +249,23 @@ export default function SiteSettings() {
   });
 
   const [isSaving, setIsSaving] = useState(false);
-  const [copied, setCopied] = useState(false);
   const siteActiveTab = normalizeSiteTab(searchParams.get('tab'));
+  const generalView = normalizeGeneralView(searchParams.get('view'));
   const setSiteActiveTab = (value: string) => {
     router.replace(value === 'general' ? '/settings/site' : `/settings/site?tab=${value}`);
   };
-  const previewUrl = getPublishedSiteUrl() || (activeOrganizationId ? `/site/preview?org=${activeOrganizationId}` : '/site/preview');
+  const setGeneralView = (view: 'dashboard' | 'domain-guide') => {
+    router.replace(view === 'dashboard' ? '/settings/site' : '/settings/site?view=domain-guide');
+  };
+  const publicUrl = getSitePublicUrl({
+    customDomain: formData.custom_domain,
+    domainVerified: site?.domain_verified,
+    subdomain: formData.subdomain,
+  });
+  const previewUrl = formData.is_active ? publicUrl : null;
+  const workerCode = site?.domain_verification_token
+    ? getCloudflareWorkerCode(site.domain_verification_token)
+    : '';
 
   useEffect(() => {
     if (!site) return;
@@ -245,6 +275,8 @@ export default function SiteSettings() {
       if (!isActive) return;
       setFormData({
         is_active: site.is_active,
+        maintenance_mode: site.maintenance_mode,
+        maintenance_message: site.maintenance_message || '',
         subdomain: site.subdomain || '',
         custom_domain: site.custom_domain || '',
         site_title: site.site_title || '',
@@ -358,144 +390,6 @@ export default function SiteSettings() {
   };
 
 
-  function getPublishedSiteUrl() {
-    if (formData.custom_domain && site?.domain_verified) {
-      return `https://${formData.custom_domain}`;
-    }
-    if (formData.subdomain) {
-      return `https://vimob.vettercompany.com.br/sites/${formData.subdomain}`;
-    }
-    return null;
-  }
-
-  const copyPublishedLink = () => {
-    const url = getPublishedSiteUrl();
-    if (url) {
-      navigator.clipboard.writeText(url);
-      toast.success('Link copiado!');
-    }
-  };
-
-  const getWorkerCode = () => {
-    return `const SITE_ORIGIN = 'https://app.vimobcrm.com.br';
-const HTML_CACHE_SECONDS = 300;
-const STALE_SECONDS = 86400;
-
-function isHtmlRequest(request) {
-  if (request.method !== 'GET' && request.method !== 'HEAD') return false;
-
-  const accept = request.headers.get('accept') || '';
-  return accept.includes('text/html') || accept.includes('*/*');
-}
-
-function buildOriginRequest(request) {
-  const sourceUrl = new URL(request.url);
-  const originUrl = new URL(SITE_ORIGIN);
-  const targetUrl = new URL(request.url);
-
-  targetUrl.protocol = originUrl.protocol;
-  targetUrl.hostname = originUrl.hostname;
-  targetUrl.port = originUrl.port;
-
-  const headers = new Headers(request.headers);
-  headers.set('X-Forwarded-Host', sourceUrl.hostname);
-  headers.set('X-Forwarded-Proto', 'https');
-  headers.set('X-Vimob-Public-Site', '1');
-  headers.delete('host');
-
-  return new Request(targetUrl.toString(), {
-    method: request.method,
-    headers,
-    body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
-    redirect: 'follow'
-  });
-}
-
-function withPublicCacheHeaders(response) {
-  const headers = new Headers(response.headers);
-  headers.delete('set-cookie');
-  headers.set(
-    'Cache-Control',
-    'public, max-age=60, s-maxage=' + HTML_CACHE_SECONDS + ', stale-while-revalidate=' + STALE_SECONDS + ', stale-if-error=' + STALE_SECONDS
-  );
-  headers.set('X-Vimob-Public-Proxy', 'cloudflare-worker');
-
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers
-  });
-}
-
-async function fetchAndCache(request, cacheKey, cache) {
-  const response = await fetch(buildOriginRequest(request));
-  const publicResponse = withPublicCacheHeaders(response);
-
-  if (publicResponse.ok && isHtmlRequest(request)) {
-    await cache.put(cacheKey, publicResponse.clone());
-  }
-
-  return publicResponse;
-}
-
-export default {
-  async fetch(request, env, ctx) {
-    const cache = caches.default;
-    const cacheable = isHtmlRequest(request);
-    const cacheKey = cacheable ? new Request(request.url, { headers: request.headers }) : null;
-
-    if (cacheable && cacheKey) {
-      const cached = await cache.match(cacheKey);
-      if (cached) {
-        ctx.waitUntil(fetchAndCache(request, cacheKey, cache).catch(() => undefined));
-        return cached;
-      }
-    }
-
-    try {
-      if (!cacheable || !cacheKey) {
-        return fetch(buildOriginRequest(request));
-      }
-
-      return await fetchAndCache(request, cacheKey, cache);
-    } catch {
-      if (cacheable && cacheKey) {
-        const cached = await cache.match(cacheKey);
-        if (cached) return cached;
-      }
-
-      return new Response('Site temporariamente indisponível. Tente novamente em instantes.', {
-        status: 503,
-        headers: {
-          'Content-Type': 'text/plain; charset=utf-8',
-          'Cache-Control': 'no-store'
-        }
-      });
-    }
-  }
-};`;
-  };
-
-  const copyDnsInstructions = () => {
-    const instructions = `Configuração de domínio próprio via Cloudflare Worker para ${formData.custom_domain}:
-
-1. Crie uma conta gratuita em https://cloudflare.com
-2. Adicione seu dominio (${formData.custom_domain}) no Cloudflare
-3. Altere os nameservers no seu registrador para os fornecidos pelo Cloudflare
-4. No Cloudflare, vá em Workers and Routes > Create Worker
-5. Cole o codigo do Worker gerado pelo sistema
-6. Configure a rota: ${formData.custom_domain}/* → seu Worker
-7. O Worker deve apontar para https://app.vimobcrm.com.br e preservar o dominio original
-
-Codigo do Worker:
-${getWorkerCode()}`;
-
-    navigator.clipboard.writeText(instructions);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-    toast.success('Instruções copiadas!');
-  };
-
   if (isLoading) {
     return (
       <AppLayout>
@@ -523,6 +417,28 @@ ${getWorkerCode()}`;
                 </p>
               </div>
             </div>
+          </CardContent>
+        </Card>
+      </AppLayout>
+    );
+  }
+
+  if (isSiteError) {
+    return (
+      <AppLayout title="Configurações do Site">
+        <Card className="app-card">
+          <CardContent className="flex flex-col items-center px-6 py-12 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+              <AlertCircle className="h-6 w-6" />
+            </div>
+            <h2 className="mt-4 text-lg font-semibold">Não foi possível carregar seu site</h2>
+            <p className="mt-2 max-w-md text-sm text-muted-foreground">
+              Seu site não foi removido. Tivemos um problema ao consultar as configurações agora.
+            </p>
+            <Button className="mt-5" variant="outline" onClick={() => void refetchSite()}>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Tentar novamente
+            </Button>
           </CardContent>
         </Card>
       </AppLayout>
@@ -593,16 +509,30 @@ ${getWorkerCode()}`;
               </nav>
 
               <div className="flex shrink-0 items-center gap-2">
-                <a data-tour="site-preview" href={previewUrl} target="_blank" rel="noopener noreferrer">
+                {previewUrl ? (
+                  <a data-tour="site-preview" href={previewUrl} target="_blank" rel="noopener noreferrer">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-11 min-w-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-4 text-foreground hover:bg-[var(--app-surface-hover)]"
+                    >
+                      <ExternalLink className="mr-2 h-4 w-4" />
+                      Preview
+                    </Button>
+                  </a>
+                ) : (
                   <Button
+                    data-tour="site-preview"
                     type="button"
                     variant="ghost"
-                    className="h-11 min-w-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-4 text-foreground hover:bg-[var(--app-surface-hover)]"
+                    disabled
+                    title="Publique o site e defina um slug para liberar a pré-visualização."
+                    className="h-11 min-w-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-4"
                   >
                     <ExternalLink className="mr-2 h-4 w-4" />
                     Preview
                   </Button>
-                </a>
+                )}
                 {isAdmin && (
                   <Button
                     data-tour="site-save-button"
@@ -620,185 +550,43 @@ ${getWorkerCode()}`;
 
             <div className="min-w-0 space-y-6">
             <TabsContent data-tour="site-general-settings" value="general" className="mt-0">
-              <Card className="app-card">
-                <CardHeader>
-                  <CardTitle className="text-lg">Configuração geral</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4 px-4 pb-5 md:px-6">
-                  <div className="app-card-soft border-0 p-4">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                      <div className="min-w-0">
-                        <h3 className="text-sm font-medium">Site ativo</h3>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className={cn(
-                          "rounded-[6px] px-2.5 py-1 text-xs font-medium",
-                          formData.is_active ? "bg-emerald-600 text-white" : "bg-muted text-muted-foreground"
-                        )}>
-                          {formData.is_active ? 'Publicado' : 'Inativo'}
-                        </span>
-                        <Switch
-                          checked={formData.is_active}
-                          onCheckedChange={(checked) => setFormData({ ...formData, is_active: checked })}
-                          disabled={!isAdmin}
-                        />
-                      </div>
-                    </div>
-
-                    {formData.subdomain && site?.is_active && (
-                      <div className="mt-4 rounded-[6px] bg-emerald-500/10 p-4">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="min-w-0">
-                            <h4 className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Site publicado</h4>
-                            <a
-                              href={getPublishedSiteUrl()!}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="mt-1 block truncate font-mono text-sm text-emerald-700 underline-offset-4 hover:underline dark:text-emerald-300"
-                            >
-                              {getPublishedSiteUrl()}
-                            </a>
-                          </div>
-                          <Button variant="outline" size="sm" onClick={copyPublishedLink} className="shrink-0">
-                            Copiar
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="app-card-soft border-0 p-4">
-                    <h3 className="mb-4 text-sm font-medium">Logo do site</h3>
-                    <div className="grid items-start gap-4 md:grid-cols-[minmax(0,1.35fr)_minmax(220px,0.65fr)]">
-                      <ImageUpload
-                        label="Logo"
-                        description="PNG ou JPG recomendado"
-                        value={site?.logo_url}
-                        onChange={async (url) => {
-                          await updateSite.mutateAsync({ logo_url: url || null });
-                        }}
-                        bucket="site-images"
-                        path="sites"
-                        assetType="logo"
-                        disabled={!isAdmin}
-                        aspectRatio="banner"
-                        className="min-w-0"
-                      />
-
-                      <ImageUpload
-                        label="Favicon"
-                        description="Ícone do navegador"
-                        value={site?.favicon_url}
-                        onChange={async (url) => {
-                          await updateSite.mutateAsync({ favicon_url: url || null });
-                        }}
-                        bucket="site-images"
-                        path="sites"
-                        assetType="favicon"
-                        disabled={!isAdmin}
-                        aspectRatio="square"
-                        className="min-w-0 md:max-w-[260px]"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid gap-4 xl:grid-cols-2">
-                    <div className="app-card-soft border-0 p-4">
-                      <h3 className="mb-4 text-sm font-medium">Informações básicas</h3>
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <Label>Título do site</Label>
-                          <Input
-                            placeholder="Nome da sua imobiliária"
-                            value={formData.site_title}
-                            onChange={(e) => setFormData({ ...formData, site_title: e.target.value })}
-                            disabled={!isAdmin}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Descrição</Label>
-                          <Textarea
-                            placeholder="Uma breve descrição da sua imobiliária..."
-                            value={formData.site_description}
-                            onChange={(e) => setFormData({ ...formData, site_description: e.target.value })}
-                            rows={4}
-                            disabled={!isAdmin}
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="app-card-soft border-0 p-4">
-                      <h3 className="mb-4 text-sm font-medium">Endereço público</h3>
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <Label>Slug do site</Label>
-                          <Input
-                            placeholder="sua-imobiliaria"
-                            value={formData.subdomain}
-                            onChange={(e) => setFormData({ ...formData, subdomain: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })}
-                            disabled={!isAdmin}
-                          />
-                          {formData.subdomain && (
-                            <p className="truncate text-xs text-muted-foreground">
-                              URL: <span className="font-mono">
-                                {formData.custom_domain && site?.domain_verified
-                                  ? `https://${formData.custom_domain}`
-                                  : `https://vimob.vettercompany.com.br/sites/${formData.subdomain}`}
-                              </span>
-                            </p>
-                          )}
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label>Domínio próprio</Label>
-                          <Input
-                            placeholder="www.suaimobiliaria.com.br"
-                            value={formData.custom_domain}
-                            onChange={(e) => setFormData({ ...formData, custom_domain: e.target.value.toLowerCase() })}
-                            disabled={!isAdmin}
-                          />
-                          <DnsVerificationStatus
-                            domain={formData.custom_domain}
-                            isVerified={site?.domain_verified || false}
-                            verifiedAt={site?.domain_verified_at}
-                          />
-                        </div>
-
-                        {formData.custom_domain && !site?.domain_verified && (
-                          <div className="rounded-[6px] border border-border/50 bg-[var(--app-surface)] p-4">
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                              <h4 className="text-sm font-medium">Publicar com Cloudflare Worker</h4>
-                              <Button variant="outline" size="sm" onClick={copyDnsInstructions}>
-                                {copied ? 'Copiado' : 'Copiar instruções'}
-                              </Button>
-                            </div>
-                            <div className="mt-4 space-y-3 text-sm">
-                              {[
-                                'Crie uma conta gratuita em cloudflare.com.',
-                                `Adicione o domínio ${formData.custom_domain} e altere os nameservers no registrador.`,
-                                'No Cloudflare, acesse Workers and Routes e crie um Worker.',
-                                'Cole o código gerado pelo sistema no editor do Worker.',
-                                `Configure a rota ${formData.custom_domain}/* apontando para o Worker.`,
-                              ].map((step, index) => (
-                                <div key={step} className="flex gap-3">
-                                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
-                                    {index + 1}
-                                  </span>
-                                  <p>{step}</p>
-                                </div>
-                              ))}
-                            </div>
-                            <div className="mt-4 rounded-[6px] bg-background p-3 text-xs text-muted-foreground">
-                              SSL é automático pelo Cloudflare. A propagação de DNS pode levar até 72h.
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+              {generalView === 'domain-guide' ? (
+                <DomainConnectionGuide
+                  site={site}
+                  domain={formData.custom_domain}
+                  canManage={isAdmin}
+                  workerCode={workerCode}
+                  onDomainChange={(customDomain) => setFormData((current) => ({
+                    ...current,
+                    custom_domain: customDomain,
+                  }))}
+                  onBack={() => setGeneralView('dashboard')}
+                />
+              ) : (
+                <SiteGeneralDashboard
+                  site={site}
+                  values={{
+                    is_active: formData.is_active,
+                    maintenance_mode: formData.maintenance_mode,
+                    maintenance_message: formData.maintenance_message,
+                    subdomain: formData.subdomain,
+                    custom_domain: formData.custom_domain,
+                    site_title: formData.site_title,
+                    site_description: formData.site_description,
+                  } satisfies SiteGeneralValues}
+                  canManage={isAdmin}
+                  publicUrl={publicUrl}
+                  previewUrl={previewUrl}
+                  onChange={(patch) => setFormData((current) => ({ ...current, ...patch }))}
+                  onOpenDomainGuide={() => setGeneralView('domain-guide')}
+                  onUploadLogo={async (url) => {
+                    await updateSite.mutateAsync({ logo_url: url || null });
+                  }}
+                  onUploadFavicon={async (url) => {
+                    await updateSite.mutateAsync({ favicon_url: url || null });
+                  }}
+                />
+              )}
             </TabsContent>
 
             <TabsContent data-tour="site-appearance-settings" value="appearance" className="mt-0">

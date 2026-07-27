@@ -1,0 +1,39 @@
+{
+  "gerado_em": "2026-07-22",
+  "cli_validacao": "2.109.1",
+  "diff_public_private_com_pendencias_bytes": 2347,
+  "diff_public_private_com_pendencias_sha256": "58055E07684C97654150EB80809F7E25369823C373B84A111EF7D11AC9FD8BA3",
+  "diff_externo": "vazio",
+  "arquivos": [
+    {
+      "arquivo": "20260721000000_required_extensions.sql",
+      "bytes": 315,
+      "sha256": "239F920F79E9CA4C5F684ADCB8732595DB99CB7739DEAAE4BC9A928BA87E584B"
+    },
+    {
+      "arquivo": "20260722000000_production_public_private_baseline.sql",
+      "bytes": 1188538,
+      "sha256": "D68CD56C2E31B3615576466A96405444128359844FCFB8B161B8050B3901E01A"
+    },
+    {
+      "arquivo": "20260722000001_baseline_alignment.sql",
+      "bytes": 40927,
+      "sha256": "2D35F93A4160617E5890B2E2E387EC9E522D59D8086ED6546CA960D26D35DA1B"
+    },
+    {
+      "arquivo": "20260722000002_external_schema_objects.sql",
+      "bytes": 11446,
+      "sha256": "2D21DCC59B9AF89DB7CA5D3561C9707C5F3FE2A5865455766A27F8957F439AFB"
+    },
+    {
+      "arquivo": "20260722103039_stop_redistribution_on_stage_move.sql",
+      "bytes": 2337,
+      "sha256": "F8BAFFA9A69A139422634EBE99AAFE9140B88BB53FDA0F685C7A0E279E29251F"
+    },
+    {
+      "arquivo": "20260722210631_announcements_schedule.sql",
+      "bytes": 2647,
+      "sha256": "1FC0FF548E096173185EC2260CC4FDFF7873151DCCCF806A246A65F74BDD5550"
+    }
+  ]
+}

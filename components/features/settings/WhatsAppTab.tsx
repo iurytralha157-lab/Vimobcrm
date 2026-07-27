@@ -35,6 +35,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
+import { canManageOrganization } from "@/lib/access/organization";
 
 interface WhatsAppTabProps {
   embedded?: boolean;
@@ -65,7 +66,7 @@ function wait(ms: number) {
 }
 
 export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
-  const { profile } = useAuth();
+  const { profile, tenantContext, isSuperAdmin } = useAuth();
   const queryClient = useQueryClient();
   const { data: sessions, isLoading } = useWhatsAppSessions();
   const createSession = useCreateWhatsAppSession();
@@ -92,6 +93,10 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
     : sessionQuota ? null : "Verificando limite";
   const newSessionDisabled = !canCreateSession || isLoading;
   const newSessionTitle = !canCreateSession ? "Limite do plano atingido" : undefined;
+  const canManageNotificationSession = canManageOrganization({
+    isSuperAdmin,
+    memberRole: tenantContext?.memberRole,
+  });
 
   // Refs para evitar stale closures no polling
   const selectedSessionRef = useRef(selectedSession);
@@ -485,7 +490,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                         {session.owner?.name || "-"}
                       </span>
                     </div>
-                    {canManageThisSession &&
+                    {canManageThisSession && canManageNotificationSession &&
                 <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>

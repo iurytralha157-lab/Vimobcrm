@@ -891,7 +891,7 @@ func canManageMetaIntegrations(tenantContext tenant.Context) bool {
 	return tenantContext.HasPermission(permissions.SettingsIntegrations)
 }
 
-const googleCalendarIntegrationEnabled = false
+const googleCalendarIntegrationEnabled = true
 
 func allowedFunction(name string) bool {
 	switch name {

@@ -173,7 +173,7 @@ func TestLockDueRedistributionJobSkipsStoppedCandidate(t *testing.T) {
 func TestNextRoundRobinMemberAvailabilityUsesConfiguredSchedule(t *testing.T) {
 	t.Parallel()
 
-	expected := time.Date(2026, 7, 24, 8, 0, 0, 0, time.UTC)
+	expected := time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second)
 	queryer := &redistributionActivityQueryer{
 		row: redistributionAvailabilityRow{
 			hasAlternative: true,

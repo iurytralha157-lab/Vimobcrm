@@ -1,6 +1,5 @@
 'use client';
 
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
@@ -12,6 +11,7 @@ import { usePasswordStrength, type PasswordStrength } from "@/hooks/use-password
 import { VimobLoader } from "@/components/shared/loading";
 import { supabase } from "@/integrations/supabase/client";
 import { getFriendlyErrorMessage } from "@/lib/error-handler";
+import { AuthLogo } from "@/components/features/auth/auth-logo";
 
 type RecoveryState = "checking" | "ready" | "invalid" | "success";
 
@@ -69,17 +69,22 @@ function authValidationErrorMessage(error: unknown) {
   return "Não foi possível validar este link de recuperação. Solicite um novo link e tente novamente.";
 }
 
-function VimobLogo() {
+function isExpectedRecoveryValidationError(error: unknown) {
+  const name = error instanceof Error ? error.name : "";
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String(error.code).toLowerCase()
+      : "";
+
   return (
-    <Image
-      src="/images/logo-white.png"
-      alt="Vimob"
-      width={1228}
-      height={429}
-      priority
-      className="mx-auto"
-      style={{ width: "148px", height: "auto" }}
-    />
+    name === "AuthPKCECodeVerifierMissingError" ||
+    code === "flow_state_not_found" ||
+    code === "bad_code_verifier" ||
+    code === "otp_expired" ||
+    message.includes("pkce code verifier") ||
+    message.includes("expired") ||
+    message.includes("invalid")
   );
 }
 
@@ -206,7 +211,9 @@ export default function ResetPasswordScreen() {
       } catch (error) {
         if (await markReadyFromExistingSession()) return;
 
-        console.error("Error validating password recovery session:", error);
+        if (!isExpectedRecoveryValidationError(error)) {
+          console.error("Error validating password recovery session:", error);
+        }
         cleanRecoveryUrl();
         markInvalid(authValidationErrorMessage(error));
       }
@@ -307,29 +314,14 @@ export default function ResetPasswordScreen() {
   }
 
   return (
-    <div className="auth-page auth-page-dark relative h-dvh max-h-dvh w-full overflow-hidden font-sans">
-      <div className="absolute inset-0 z-0 h-full w-full" aria-hidden="true">
-        <div className="relative h-full w-full">
-          <Image
-            src="/images/login-hero.webp"
-            alt=""
-            fill
-            priority
-            unoptimized
-            className="object-cover object-[63%_center] brightness-[0.6] md:object-[68%_center] md:brightness-[0.88]"
-            sizes="100vw"
-          />
-        </div>
-      </div>
-
-      <div className="auth-hero-overlay absolute inset-0 z-[1] h-full w-full" aria-hidden="true" />
-      <div className="auth-hero-vignette absolute inset-0 z-[2] h-full w-full" aria-hidden="true" />
-
-      <div className="relative z-10 flex h-full w-full">
-        <section className="flex w-full items-center justify-center px-8 py-16 lg:w-[45%] lg:px-16 xl:w-[42%]">
-          <div className="w-full max-w-sm">
+    <div className="w-full max-w-sm">
             <header className="mb-4 text-center">
-              <VimobLogo />
+              <AuthLogo />
+              {recoveryState !== "success" ? (
+                <h1 className="sr-only">
+                  {recoveryState === "ready" ? "Definir nova senha" : "Recuperar senha"}
+                </h1>
+              ) : null}
               <p className="mt-4 text-sm font-extralight tracking-wide text-white/50">
                 {recoveryState === "ready" ? "Defina sua nova senha de acesso" : "Recuperação de senha"}
               </p>
@@ -359,7 +351,7 @@ export default function ResetPasswordScreen() {
                 <button
                   type="button"
                   onClick={() => router.push(ROUTES.LOGIN)}
-                  className="h-12 w-full cursor-pointer rounded-[6px] bg-[#FF4529] text-[12px] font-extralight uppercase tracking-[0.08em] text-white outline-none transition-opacity hover:opacity-90 focus-visible:opacity-90"
+                  className="auth-primary-action h-12 w-full cursor-pointer rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors"
                 >
                   Voltar para o login
                 </button>
@@ -397,7 +389,12 @@ export default function ResetPasswordScreen() {
             ) : null}
 
             {recoveryState === "ready" ? (
-              <form method="post" onSubmit={handleSubmit} className="space-y-5">
+              <form
+                method="post"
+                onSubmit={handleSubmit}
+                className="space-y-5"
+                aria-busy={loading}
+              >
                 <p className="text-sm font-extralight leading-6 tracking-wide text-white/72">
                   Escolha uma senha forte e diferente das que você usa em outros serviços.
                 </p>
@@ -421,6 +418,7 @@ export default function ResetPasswordScreen() {
                       disabled={loading}
                       placeholder="Mínimo 8 caracteres"
                       aria-invalid={Boolean(errors.password)}
+                      aria-describedby={errors.password ? "password-error" : undefined}
                       className="h-12 w-full rounded-[6px] border border-transparent bg-[#121212] px-4 pl-11 pr-12 text-sm font-extralight tracking-wide text-white outline-none transition-colors placeholder:text-white/30 focus:border-transparent focus:bg-[#121212] disabled:cursor-not-allowed disabled:opacity-60"
                     />
                     <button
@@ -460,7 +458,11 @@ export default function ResetPasswordScreen() {
                   ) : null}
 
                   {errors.password ? (
-                    <p className="text-sm font-extralight leading-5 text-[#FF4529]" role="alert">
+                    <p
+                      id="password-error"
+                      className="text-sm font-extralight leading-5 text-[#FF4529]"
+                      role="alert"
+                    >
                       {errors.password}
                     </p>
                   ) : null}
@@ -485,6 +487,11 @@ export default function ResetPasswordScreen() {
                       disabled={loading}
                       placeholder="Repita a senha"
                       aria-invalid={Boolean(errors.confirmPassword || passwordMismatch)}
+                      aria-describedby={
+                        errors.confirmPassword || passwordMismatch
+                          ? "confirm-password-error"
+                          : undefined
+                      }
                       className="h-12 w-full rounded-[6px] border border-transparent bg-[#121212] px-4 pl-11 pr-12 text-sm font-extralight tracking-wide text-white outline-none transition-colors placeholder:text-white/30 focus:border-transparent focus:bg-[#121212] disabled:cursor-not-allowed disabled:opacity-60"
                     />
                     <button
@@ -499,7 +506,11 @@ export default function ResetPasswordScreen() {
                   </div>
 
                   {errors.confirmPassword || passwordMismatch ? (
-                    <p className="text-sm font-extralight leading-5 text-[#FF4529]" role="alert">
+                    <p
+                      id="confirm-password-error"
+                      className="text-sm font-extralight leading-5 text-[#FF4529]"
+                      role="alert"
+                    >
                       {errors.confirmPassword || "As senhas não coincidem"}
                     </p>
                   ) : null}
@@ -508,7 +519,7 @@ export default function ResetPasswordScreen() {
                 <button
                   type="submit"
                   disabled={submitDisabled}
-                  className="flex h-12 w-full cursor-pointer items-center justify-center rounded-[6px] bg-[#FF4529] text-[12px] font-extralight uppercase tracking-[0.08em] text-white outline-none transition-opacity hover:opacity-90 focus-visible:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
+                  className="auth-primary-action flex h-12 w-full cursor-pointer items-center justify-center rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-55"
                 >
                   {loading ? <VimobLoader size="sm" className="mr-2" label="Alterando senha..." /> : null}
                   Alterar senha
@@ -521,9 +532,6 @@ export default function ResetPasswordScreen() {
                 </footer>
               </form>
             ) : null}
-          </div>
-        </section>
-      </div>
     </div>
   );
 }

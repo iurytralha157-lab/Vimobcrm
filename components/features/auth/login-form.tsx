@@ -1,9 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
+import { AuthLogo } from "./auth-logo";
 import { useAuth } from "@/contexts/AuthContext";
 
 type FormMode = "login" | "recover";
@@ -62,20 +62,6 @@ function getSelectOrganizationPath(redirectTo: string) {
   const safeRedirectTo = getSafeRedirectPath(redirectTo);
   const params = new URLSearchParams({ redirectTo: safeRedirectTo });
   return `/select-organization?${params.toString()}`;
-}
-
-function VimobLogo({ theme }: { theme: AuthTheme }) {
-  return (
-    <Image
-      src={theme === "light" ? "/images/logo-black.png" : "/images/logo-white.png"}
-      alt="Vimob"
-      width={1228}
-      height={429}
-      loading="eager"
-      className="mx-auto"
-      style={{ width: "148px", height: "auto" }}
-    />
-  );
 }
 
 function EnvelopeIcon({ className = "text-white/40" }: { className?: string }) {
@@ -153,6 +139,7 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
   const {
     signIn,
     resetPassword,
+    user,
     loading,
     authInitialized,
     organizationsLoaded,
@@ -164,6 +151,7 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
   const [formMode, setFormMode] = useState<FormMode>("login");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+  const [email, setEmail] = useState("");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
@@ -197,19 +185,38 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
     if (typeof window === "undefined") return;
 
     const url = new URL(window.location.href);
+    let messageTimer: number | undefined;
+    let rememberedEmailTimer: number | undefined;
+
+    try {
+      const rememberedEmail = localStorage.getItem("remembered_email");
+      if (rememberedEmail) {
+        rememberedEmailTimer = window.setTimeout(() => {
+          setEmail(rememberedEmail);
+          setRememberMe(true);
+        }, 0);
+      }
+    } catch {
+      // Browser storage can be unavailable in restricted contexts.
+    }
+
     if (url.searchParams.get("passwordReset") === "success") {
       url.searchParams.delete("passwordReset");
       window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-      const messageTimer = window.setTimeout(() => {
+      messageTimer = window.setTimeout(() => {
         setRecoveryMessage("Senha alterada com sucesso. Entre usando sua nova senha.");
       }, 0);
-
-      return () => window.clearTimeout(messageTimer);
     }
+
+    return () => {
+      if (messageTimer) window.clearTimeout(messageTimer);
+      if (rememberedEmailTimer) window.clearTimeout(rememberedEmailTimer);
+    };
   }, []);
 
   useEffect(() => {
     if (!pendingPostLoginPath) return;
+    if (!user) return;
     if (loading || !authInitialized) return;
 
     const activeOrganizations = userOrganizations.filter((org) => org.is_active);
@@ -241,6 +248,7 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
     organizationsLoaded,
     pendingPostLoginPath,
     router,
+    user,
     userOrganizations,
   ]);
 
@@ -276,7 +284,7 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
     let shouldKeepRouting = false;
 
     try {
-      const { error, isSuperAdmin: signedInIsSuperAdmin } = await signIn(email, password);
+      const { error } = await signIn(email, password);
 
       if (error) {
         setLoginError("E-mail ou senha invalidos. Confira os dados e tente novamente.");
@@ -299,11 +307,6 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
 
       shouldKeepRouting = true;
       const nextPath = getCurrentRedirectPath();
-      if (signedInIsSuperAdmin) {
-        router.replace(nextPath.startsWith("/admin") ? nextPath : "/admin");
-        return;
-      }
-      router.replace(nextPath);
       setPendingPostLoginPath(nextPath);
     } catch {
       setLoginError("Não foi possível entrar agora. Tente novamente em instantes.");
@@ -349,7 +352,10 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
   return (
     <div className="w-full max-w-sm">
       <header className="mb-4 text-center">
-        <VimobLogo theme={theme} />
+        <AuthLogo theme={theme} />
+        <h1 className="sr-only">
+          {isRecoveringPassword ? "Recuperar acesso" : "Entrar no Vimob CRM"}
+        </h1>
         <p className={`mt-4 text-sm font-extralight tracking-wide ${mutedTextClass}`}>
           {isRecoveringPassword
             ? "Recupere o acesso à sua conta"
@@ -358,7 +364,13 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
       </header>
 
       {isRecoveringPassword ? (
-        <form method="post" autoComplete="on" onSubmit={handleRecoverySubmit} className="space-y-6">
+        <form
+          method="post"
+          autoComplete="on"
+          onSubmit={handleRecoverySubmit}
+          className="space-y-6"
+          aria-busy={isSubmittingRecovery}
+        >
           <button
             type="button"
             onClick={showLoginForm}
@@ -396,6 +408,8 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
                 enterKeyHint="send"
                 required
                 placeholder="seu@email.com"
+                aria-invalid={Boolean(recoveryError)}
+                aria-describedby={recoveryError ? "recovery-error" : undefined}
                 className={`${inputClass} pl-11`}
               />
             </div>
@@ -404,13 +418,17 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
           <button
             type="submit"
             disabled={isSubmittingRecovery}
-            className="h-12 w-full cursor-pointer rounded-[6px] bg-[#FF4529] text-[12px] font-extralight uppercase tracking-[0.08em] text-white outline-none transition-opacity hover:opacity-90 focus-visible:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
+            className="auth-primary-action h-12 w-full cursor-pointer rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-55"
           >
             {isSubmittingRecovery ? "Enviando..." : "Enviar link de recuperação"}
           </button>
 
           {recoveryError ? (
-            <p className="text-center text-sm font-extralight leading-5 text-[#FF4529]" aria-live="polite">
+            <p
+              id="recovery-error"
+              className="text-center text-sm font-extralight leading-5 text-[#FF4529]"
+              role="alert"
+            >
               {recoveryError}
             </p>
           ) : null}
@@ -423,7 +441,13 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
         </form>
       ) : (
         <>
-          <form method="post" autoComplete="on" onSubmit={handleSubmit} className="space-y-4">
+          <form
+            method="post"
+            autoComplete="on"
+            onSubmit={handleSubmit}
+            className="space-y-4"
+            aria-busy={isSubmittingLogin}
+          >
             <div className="space-y-2">
               <label
                 htmlFor="email"
@@ -447,6 +471,10 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
                   enterKeyHint="next"
                   required
                   placeholder="seu@email.com"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  aria-invalid={Boolean(loginError)}
+                  aria-describedby={loginError ? "login-error" : undefined}
                   className={`${inputClass} pl-11`}
                 />
               </div>
@@ -467,6 +495,8 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
                   autoComplete="current-password"
                   required
                   placeholder="••••••••"
+                  aria-invalid={Boolean(loginError)}
+                  aria-describedby={loginError ? "login-error" : undefined}
                   className={`${inputClass} pr-12`}
                 />
                 <button
@@ -483,6 +513,8 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
             <label className="flex cursor-pointer items-center gap-3">
               <span className="relative flex h-4 w-4 items-center justify-center">
                 <input
+                  id="remember-email"
+                  name="remember-email"
                   type="checkbox"
                   checked={rememberMe}
                   onChange={(event) => setRememberMe(event.target.checked)}
@@ -499,13 +531,17 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
             <button
               type="submit"
               disabled={isSubmittingLogin}
-              className="h-12 w-full cursor-pointer rounded-[6px] bg-[#FF4529] text-[12px] font-extralight uppercase tracking-[0.08em] text-white outline-none transition-opacity hover:opacity-90 focus-visible:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
+              className="auth-primary-action h-12 w-full cursor-pointer rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-55"
             >
               {isSubmittingLogin ? "Entrando..." : "Entrar"}
             </button>
 
             {loginError ? (
-              <p className="text-center text-sm font-extralight leading-5 text-[#FF4529]" aria-live="polite">
+              <p
+                id="login-error"
+                className="text-center text-sm font-extralight leading-5 text-[#FF4529]"
+                role="alert"
+              >
                 {loginError}
               </p>
             ) : null}

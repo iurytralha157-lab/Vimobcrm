@@ -270,27 +270,27 @@ export function TeamTab() {
                   return (
                     <div
                       key={`invitation-${invitation.id}`}
-                      className="flex items-center justify-between p-3 rounded-lg border border-dashed border-amber-500/30 bg-amber-500/5"
+                      className="flex min-w-0 items-center justify-between gap-2 rounded-[6px] border-0 bg-amber-500/5 p-3"
                     >
-                      <div className="flex min-w-0 items-center gap-3">
-                        <Avatar className="h-9 w-9">
+                      <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+                        <Avatar className="h-8 w-8 shrink-0 sm:h-9 sm:w-9">
                           <AvatarFallback className="bg-amber-500 text-white text-sm">
                             <Mail className="h-4 w-4" />
                           </AvatarFallback>
                         </Avatar>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
                             <p className="truncate text-sm font-medium">{invitation.email || 'Convite sem e-mail'}</p>
                             <Badge
-                              variant="outline"
+                              variant="secondary"
                               className={isExpired
-                                ? 'border-destructive/40 bg-destructive/10 text-destructive'
-                                : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-200'}
+                                ? 'shrink-0 rounded-[6px] border-0 bg-destructive/10 text-destructive'
+                                : 'shrink-0 rounded-[6px] border-0 bg-amber-500/10 text-amber-700 dark:text-amber-200'}
                             >
                               {isExpired ? 'Expirado' : 'Pendente'}
                             </Badge>
                           </div>
-                          <p className="text-xs text-muted-foreground">
+                          <p className="truncate text-[10px] text-muted-foreground sm:text-xs">
                             Convite enviado como {invitation.role === 'admin' ? t.settings.users.admin : t.settings.users.user}
                             {!isExpired && ` · válido até ${new Intl.DateTimeFormat('pt-BR').format(new Date(invitation.expires_at))}`}
                           </p>
@@ -299,9 +299,9 @@ export function TeamTab() {
                       {canManageUsers && (
                         <div className="ml-3 flex shrink-0 items-center gap-1">
                           <Button
-                            variant="outline"
+                            variant="ghost"
                             size="sm"
-                            className="h-8 gap-1.5"
+                            className="h-8 w-8 gap-1.5 rounded-[6px] border-0 bg-background/80 p-0 shadow-none hover:bg-[var(--app-surface-hover)] sm:w-auto sm:px-3"
                             onClick={() => resendInvitation.mutate(invitation.id)}
                             disabled={resendInvitation.isPending || deleteInvitation.isPending || !invitation.email}
                             title="Gerar um novo link e renovar a validade por 7 dias"
@@ -313,7 +313,7 @@ export function TeamTab() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                            className="h-8 w-8 rounded-[6px] border-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
                             onClick={() => deleteInvitation.mutate(invitation.id)}
                             disabled={deleteInvitation.isPending || resendInvitation.isPending}
                             aria-label="Cancelar convite"
@@ -328,32 +328,30 @@ export function TeamTab() {
                 {users.filter(user => user.role !== 'super_admin').map(user => (
                   <div 
                     key={user.id} 
-                    className="flex items-center justify-between p-3 rounded-lg border-0 bg-muted/40 hover:bg-muted/60 transition-colors"
+                    className="flex min-w-0 items-center gap-2 rounded-[6px] border-0 bg-muted/40 p-2.5 transition-colors hover:bg-muted/60 sm:gap-3 sm:p-3"
                   >
-                    <div className="flex items-center gap-3">
-                      <Avatar className="h-9 w-9">
+                    <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+                      <Avatar className="h-8 w-8 shrink-0 sm:h-9 sm:w-9">
                         <AvatarImage src={user.avatar_url || undefined} />
                         <AvatarFallback className="bg-primary text-primary-foreground text-sm">
                           {user.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
                         </AvatarFallback>
                       </Avatar>
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {canManagePermissions ? (
-                            <Link href={`/settings/users/${user.id}`} className="text-sm font-medium hover:underline">
-                              {user.name}
-                            </Link>
-                          ) : (
-                            <p className="text-sm font-medium">{user.name}</p>
-                          )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+                          <p className="truncate text-sm font-medium">{user.name}</p>
                           {!user.is_active && (
-                            <Badge variant="secondary" className="text-xs">{t.common.inactive}</Badge>
+                            <Badge variant="secondary" className="hidden shrink-0 rounded-[6px] border-0 text-xs sm:inline-flex">
+                              {t.common.inactive}
+                            </Badge>
                           )}
                         </div>
-                        <p className="text-xs text-muted-foreground">{user.email}</p>
+                        <p className="truncate text-[10px] leading-tight text-muted-foreground sm:text-xs sm:leading-normal">
+                          {user.email}
+                        </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                    <div className="ml-auto flex shrink-0 items-center justify-end gap-0.5 sm:gap-2">
                       {canManageUsers ? (
                         <>
                           {/* Tipo de usuÃ¡rio (admin/user) */}
@@ -362,7 +360,7 @@ export function TeamTab() {
                             onValueChange={v => handleUpdateUserRole(user.id, v as 'admin' | 'user')} 
                             disabled={user.id === profile?.id}
                           >
-                            <SelectTrigger data-tour="team-user-role" className="w-24 h-8 text-xs">
+                            <SelectTrigger data-tour="team-user-role" className="hidden h-8 w-24 text-xs sm:flex">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -372,24 +370,35 @@ export function TeamTab() {
                           </Select>
                           
                           {canManagePermissions && (
-                            <Button asChild variant="ghost" size="icon" className="h-8 w-8" title="Editar permissoes">
+                            <Button
+                              asChild
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-0 font-medium text-foreground shadow-none hover:bg-[var(--app-surface-hover)] sm:w-auto sm:px-3"
+                              title="Editar permissões"
+                            >
                               <Link href={`/settings/users/${user.id}`} aria-label={`Editar permissoes de ${user.name}`}>
-                                <ShieldCheck className="h-4 w-4" />
+                                <ShieldCheck className="h-4 w-4 sm:hidden" />
+                                <span className="hidden text-xs sm:inline">Permissões</span>
                               </Link>
                             </Button>
                           )}
                           
-                          <Switch
-                            data-tour="team-user-active"
-                            checked={user.is_active || false} 
-                            onCheckedChange={() => handleToggleUserActive(user.id, user.is_active || false)} 
-                            disabled={user.id === profile?.id} 
-                          />
+                          <div className="-mx-1 flex shrink-0 sm:mx-0">
+                            <Switch
+                              data-tour="team-user-active"
+                              className="scale-[0.85] sm:scale-100"
+                              checked={user.is_active || false}
+                              onCheckedChange={() => handleToggleUserActive(user.id, user.is_active || false)}
+                              disabled={user.id === profile?.id}
+                              aria-label={`${user.is_active ? 'Desativar' : 'Ativar'} ${user.name}`}
+                            />
+                          </div>
                           <Button
                             data-tour="team-user-delete"
                             variant="ghost" 
                             size="icon" 
-                            className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10" 
+                            className="h-8 w-8 rounded-[6px] border-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
                             onClick={() => {
                               setUserToDelete({ id: user.id, name: user.name });
                               setTransferLeadsToUserId('');
@@ -397,19 +406,27 @@ export function TeamTab() {
                               setDeleteUserDialogOpen(true);
                             }} 
                             disabled={user.id === profile?.id}
+                            aria-label={`Excluir ${user.name}`}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </>
                       ) : (
-                        <div className="flex items-center gap-2">
-                          <Badge variant={user.role === 'admin' ? 'default' : 'secondary'}>
+                        <div className="flex items-center gap-0.5 sm:gap-2">
+                          <Badge variant={user.role === 'admin' ? 'default' : 'secondary'} className="hidden rounded-[6px] border-0 sm:inline-flex">
                             {user.role === 'admin' ? t.settings.users.admin : t.settings.users.user}
                           </Badge>
                           {canManagePermissions && (
-                            <Button asChild variant="ghost" size="icon" className="h-8 w-8" title="Editar permissoes">
+                            <Button
+                              asChild
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-0 font-medium text-foreground shadow-none hover:bg-[var(--app-surface-hover)] sm:w-auto sm:px-3"
+                              title="Editar permissões"
+                            >
                               <Link href={`/settings/users/${user.id}`} aria-label={`Editar permissoes de ${user.name}`}>
-                                <ShieldCheck className="h-4 w-4" />
+                                <ShieldCheck className="h-4 w-4 sm:hidden" />
+                                <span className="hidden text-xs sm:inline">Permissões</span>
                               </Link>
                             </Button>
                           )}

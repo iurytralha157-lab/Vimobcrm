@@ -101,6 +101,60 @@ func TestProviderActionRequiresWhatsAppManager(t *testing.T) {
 	}
 }
 
+func TestNotificationSenderAdministrationRequiresOrganizationAdmin(t *testing.T) {
+	tests := []struct {
+		name string
+		ctx  tenant.Context
+		want bool
+	}{
+		{
+			name: "ordinary user with WhatsApp management permission",
+			ctx: tenant.Context{
+				MemberRole:  "user",
+				Permissions: []string{"whatsapp_manage"},
+			},
+			want: false,
+		},
+		{
+			name: "organization admin",
+			ctx:  tenant.Context{MemberRole: "admin"},
+			want: true,
+		},
+		{
+			name: "organization owner",
+			ctx:  tenant.Context{MemberRole: "owner"},
+			want: true,
+		},
+		{
+			name: "super admin",
+			ctx:  tenant.Context{MemberRole: "user", IsSuperAdmin: true},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := canManageNotificationSender(tt.ctx); got != tt.want {
+				t.Fatalf("canManageNotificationSender() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestToggleNotificationSessionRejectsOrdinaryUserBeforeDatabaseAccess(t *testing.T) {
+	repo := Repository{}
+	err := repo.ToggleNotificationSession(context.Background(), tenant.Context{
+		OrganizationID: "20000000-0000-0000-0000-000000000001",
+		UserID:         "10000000-0000-0000-0000-000000000001",
+		MemberRole:     "user",
+		Permissions:    []string{"whatsapp_manage"},
+	}, "40000000-0000-0000-0000-000000000001", true)
+
+	if !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
+		t.Fatalf("ToggleNotificationSession() error = %v, want organization access denied", err)
+	}
+}
+
 func TestLeadVisibilityCanDisableOwnLeadBranch(t *testing.T) {
 	query := leadVisibilitySQL(false)
 	if !strings.Contains(query, "(false and l.assigned_user_id = $2::uuid)") {

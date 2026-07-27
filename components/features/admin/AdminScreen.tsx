@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ElementType, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -17,12 +18,14 @@ import {
   Loader2,
   Inbox,
   KeyRound,
+  MoreHorizontal,
   Pencil,
   Plus,
   Power,
   Search,
   Settings,
   ShieldCheck,
+  Trash2,
   UserPlus,
   Users,
   X,
@@ -37,6 +40,12 @@ import { VimobLoader } from "@/components/shared/loading";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -61,6 +70,11 @@ import {
   type DashboardPeriod,
 } from "@/hooks/use-admin-dashboard";
 import { useAdminPlans, type SubscriptionPlan } from "@/hooks/use-admin-plans";
+import {
+  useAdminOrganizationActions,
+  useAdminOrganizationsList,
+  type AdminOrganization,
+} from "@/hooks/use-admin-organizations";
 import { adminAPI } from "@/lib/api/admin";
 import { notificationsAPI } from "@/lib/api/notifications";
 import { usersAPI } from "@/lib/api/users";
@@ -163,10 +177,22 @@ const VALUE_LABELS: Record<string, string> = {
   sent: "Enviado",
   submitted: "Enviado",
   super_admin: "Super admin",
-  trial: "Trial",
+  trial: "Período de teste",
   unread: "Não lida",
   user: "Usuário",
   annual: "Anual",
+};
+
+const ORGANIZATION_STATUS_LABELS: Record<string, string> = {
+  active: "Ativa",
+  inactive: "Inativa",
+  trial: "Período de teste",
+  pending_payment: "Pagamento pendente",
+  overdue: "Em atraso",
+  past_due: "Em atraso",
+  blocked: "Bloqueada",
+  cancelled: "Cancelada",
+  canceled: "Cancelada",
 };
 
 const LEGACY_TABLES = [
@@ -339,6 +365,9 @@ function formatStatusValue(value: unknown, activeLabel = "Ativo") {
 
   const normalized = normalizeValue(value);
   if (!normalized) return "--";
+  if (activeLabel === "Ativa" && ORGANIZATION_STATUS_LABELS[normalized]) {
+    return ORGANIZATION_STATUS_LABELS[normalized];
+  }
   if (normalized === "true" || normalized === "sim" || normalized === "active") return activeLabel;
   if (normalized === "false" || normalized === "não" || normalized === "nao" || normalized === "inactive") {
     return getInactiveLabel(activeLabel);
@@ -368,7 +397,7 @@ function StatusBadge({
     <Badge
       variant="outline"
       className={cn(
-        "border-0 px-2.5 py-1 font-medium transition-colors",
+        "rounded-[6px] border-0 px-2.5 py-1 font-medium transition-colors",
         tone === "active" && "bg-[#FF4529] text-white hover:bg-[#FF4529]",
         tone === "warning" && "bg-amber-500 text-white hover:bg-amber-500",
         tone === "muted" && "bg-[var(--app-surface-soft)] text-muted-foreground hover:bg-[var(--app-surface-soft)]",
@@ -469,6 +498,27 @@ function getEnabledModulesFromRows(rows: OrganizationModuleRow[], fallback: Syst
     .filter((row) => row.is_enabled)
     .map((row) => row.module_name)
     .filter((module): module is SystemModuleKey => typeof module === "string" && SYSTEM_MODULE_KEY_SET.has(module));
+}
+
+function getOrganizationAccessForm(
+  organization: AdminRecord,
+  currentPlan: SubscriptionPlan | null,
+  moduleRows: OrganizationModuleRow[],
+): OrganizationAccessForm {
+  const planModules = normalizePlanModules(currentPlan?.modules);
+  const fallbackModules = planModules.length > 0 ? planModules : [...DEFAULT_PLAN_MODULES];
+
+  return {
+    planId: getOptionalString(organization, "plan_id") || NO_PLAN_VALUE,
+    subscriptionStatus: getRecordInputValue(organization, "subscription_status") || "active",
+    maxUsers: getRecordInputValue(organization, "max_users"),
+    maxWhatsappSessions: getRecordInputValue(organization, "max_whatsapp_sessions_override"),
+    subscriptionValue: getRecordInputValue(organization, "subscription_value"),
+    billingDay: getRecordInputValue(organization, "billing_day"),
+    nextBillingDate: getDateInputValue(organization.next_billing_date),
+    trialEndsAt: getDateInputValue(organization.trial_ends_at),
+    modules: getEnabledModulesFromRows(moduleRows, fallbackModules),
+  };
 }
 
 function useSafeAdminQuery<T>(
@@ -847,42 +897,203 @@ function StatusTile({
   );
 }
 
+function OrganizationListActions({ organization }: { organization: AdminOrganization }) {
+  const { toggleStatus } = useAdminOrganizationActions();
+  const nextActiveStatus = !organization.is_active;
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)]"
+            aria-label={`Ações de ${organization.name}`}
+            title="Ações da organização"
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-52 rounded-[6px] border-0">
+          <DropdownMenuItem
+            className="cursor-pointer rounded-[4px]"
+            disabled={toggleStatus.isPending}
+            onSelect={() => toggleStatus.mutate({ id: organization.id, isActive: nextActiveStatus })}
+          >
+            {toggleStatus.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
+            {nextActiveStatus ? "Reativar organização" : "Desativar organização"}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="cursor-pointer rounded-[4px] text-destructive focus:bg-destructive/10 focus:text-destructive"
+            onSelect={() => setDeleteOpen(true)}
+          >
+            <Trash2 className="h-4 w-4" />
+            Excluir permanentemente
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <OrganizationDeleteDialog
+        organizationId={organization.id}
+        organizationName={organization.name}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+      />
+    </>
+  );
+}
+
+function OrganizationDeleteDialog({
+  organizationId,
+  organizationName,
+  open,
+  onOpenChange,
+  onDeleted,
+}: {
+  organizationId: string;
+  organizationName: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onDeleted?: () => void;
+}) {
+  const [confirmationName, setConfirmationName] = useState("");
+  const { deleteOrganization } = useAdminOrganizationActions();
+  const confirmed = confirmationName.trim() === organizationName.trim();
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (deleteOrganization.isPending) return;
+    if (!nextOpen) setConfirmationName("");
+    onOpenChange(nextOpen);
+  };
+
+  const handleDelete = async () => {
+    if (!confirmed) return;
+    await deleteOrganization.mutateAsync({
+      id: organizationId,
+      confirmationName: confirmationName.trim(),
+    });
+    setConfirmationName("");
+    onOpenChange(false);
+    onDeleted?.();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent
+        className="max-w-lg rounded-[8px] border-0"
+        onEscapeKeyDown={(event) => {
+          if (deleteOrganization.isPending) event.preventDefault();
+        }}
+        onPointerDownOutside={(event) => {
+          if (deleteOrganization.isPending) event.preventDefault();
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-destructive">
+            <Trash2 className="h-5 w-5" />
+            Excluir organização permanentemente
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="rounded-[6px] bg-destructive/10 p-4 text-sm text-destructive">
+            <p className="font-semibold">Esta ação é irreversível.</p>
+            <p className="mt-1 text-foreground/75">
+              Leads, imóveis, site, arquivos, agendas, WhatsApp, integrações, requisições e usuários exclusivos
+              desta organização serão removidos.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor={`delete-organization-${organizationId}`}>
+              Digite <span className="font-semibold">{organizationName}</span> para confirmar
+            </Label>
+            <Input
+              id={`delete-organization-${organizationId}`}
+              value={confirmationName}
+              onChange={(event) => setConfirmationName(event.target.value)}
+              disabled={deleteOrganization.isPending}
+              autoComplete="off"
+              className="rounded-[6px] border-0 bg-[var(--app-surface-soft)]"
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => handleOpenChange(false)}
+            disabled={deleteOrganization.isPending}
+            className="rounded-[6px] border-0"
+          >
+            Cancelar
+          </Button>
+          <Button
+            type="button"
+            onClick={handleDelete}
+            disabled={!confirmed || deleteOrganization.isPending}
+            className="rounded-[6px] border-0 bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            {deleteOrganization.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            Excluir todos os dados
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function OrganizationsContent() {
   const [search, setSearch] = useState("");
-  const organizations = useAdminRows("organizations", 120);
-  const rows = organizations.data?.data || [];
+  const organizations = useAdminOrganizationsList();
+  const rows = organizations.data || [];
   const filteredRows = rows.filter((org) => {
-    const haystack = [org.name, org.email, org.cnpj, org.cidade, org.subscription_status].map(normalizeText).join(" ");
+    const haystack = [org.name, org.email, org.cnpj, org.plan_name, org.subscription_status].map(normalizeText).join(" ");
     return haystack.includes(normalizeSearchText(search));
   });
 
   return (
     <div className="space-y-4">
-      <AdminWarning message={organizations.data?.errorMessage} />
-      <Toolbar search={search} onSearch={setSearch} placeholder="Buscar organização, CNPJ, cidade ou status..." />
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {filteredRows.map((org) => (
-          <Link key={getString(org, "id")} href={`/admin/organizations/${getString(org, "id")}`} className="app-card card-hover p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-base font-semibold">{getString(org, "name", "Organização sem nome")}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{getString(org, "email", "E-mail não informado")}</p>
+      <AdminWarning message={organizations.error ? getErrorMessage(organizations.error) : null} />
+      <Toolbar search={search} onSearch={setSearch} placeholder="Buscar organização, plano, CNPJ ou status..." />
+      {organizations.isLoading ? (
+        <div className="flex min-h-[280px] items-center justify-center">
+          <VimobLoader label="Carregando organizações..." />
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {filteredRows.map((org) => (
+            <div key={org.id} className="app-card card-hover p-4">
+              <div className="flex items-start justify-between gap-3">
+                <Link href={`/admin/organizations/${org.id}`} className="min-w-0 flex-1">
+                  <p className="truncate text-base font-semibold">{org.name || "Organização sem nome"}</p>
+                  <p className="mt-1 truncate text-xs text-muted-foreground">{org.email || "E-mail não informado"}</p>
+                </Link>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <StatusBadge
+                    value={org.is_active === false ? "inactive" : org.subscription_status || "active"}
+                    activeLabel="Ativa"
+                  />
+                  <OrganizationListActions organization={org} />
+                </div>
               </div>
-              <StatusBadge value={getOrganizationStatus(org)} activeLabel="Ativa" />
+              <Link href={`/admin/organizations/${org.id}`} className="mt-4 grid grid-cols-2 gap-2 text-sm">
+                <MiniInfo label="Plano" value={org.plan_name || "Sem plano"} />
+                <MiniInfo label="Usuários cadastrados" value={formatNumber(org.user_count)} />
+                <MiniInfo label="CNPJ" value={org.cnpj || "--"} />
+                <MiniInfo label="Criada em" value={formatDate(org.created_at)} />
+              </Link>
             </div>
-            <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-              <MiniInfo label="CNPJ" value={getString(org, "cnpj", "--")} />
-              <MiniInfo label="Usuários" value={getString(org, "max_users", "--")} />
-              <MiniInfo label="Cidade" value={getString(org, "cidade", "--")} />
-              <MiniInfo label="Criada em" value={formatDate(org.created_at)} />
-            </div>
-          </Link>
-        ))}
-      </div>
-      {filteredRows.length === 0 && (
+          ))}
+        </div>
+      )}
+      {!organizations.isLoading && filteredRows.length === 0 && (
         <EmptyState
           title="Nenhuma organização na listagem"
-          description="O Supabase conectado ainda não retornou organizações para este painel."
+          description="Nenhuma organização corresponde aos filtros informados."
         />
       )}
     </div>
@@ -953,6 +1164,7 @@ export function OrganizationDetailContent({ organizationId }: { organizationId?:
 }
 
 function OrganizationDetailManagementContent({ organizationId }: { organizationId?: string }) {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const organizations = useAdminRows("organizations", 200);
   const users = useAdminRows("users", 200);
@@ -982,6 +1194,8 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
     trialEndsAt: "",
     modules: [...DEFAULT_PLAN_MODULES],
   });
+  const [isEditingAccess, setIsEditingAccess] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const organizationsById = useMemo(() => {
     return new Map(organizationRows.map((org) => [getString(org, "id"), org]));
   }, [organizationRows]);
@@ -998,6 +1212,7 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
       });
     },
     onSuccess: async (_, variables) => {
+      setIsEditingAccess(false);
       toast.success("Acessos da organização atualizados.");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["admin-rows", "organizations"] }),
@@ -1014,22 +1229,8 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
   useEffect(() => {
     if (!organization) return;
 
-    const planModules = normalizePlanModules(currentPlan?.modules);
-    const fallbackModules = planModules.length > 0 ? planModules : [...DEFAULT_PLAN_MODULES];
-    const enabledModules = getEnabledModulesFromRows(moduleRows, fallbackModules);
-
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Sincroniza o formulario quando a organizacao carregada muda.
-    setAccessForm({
-      planId: getOptionalString(organization, "plan_id") || NO_PLAN_VALUE,
-      subscriptionStatus: getRecordInputValue(organization, "subscription_status") || "active",
-      maxUsers: getRecordInputValue(organization, "max_users"),
-      maxWhatsappSessions: getRecordInputValue(organization, "max_whatsapp_sessions_override"),
-      subscriptionValue: getRecordInputValue(organization, "subscription_value"),
-      billingDay: getRecordInputValue(organization, "billing_day"),
-      nextBillingDate: getDateInputValue(organization.next_billing_date),
-      trialEndsAt: getDateInputValue(organization.trial_ends_at),
-      modules: enabledModules,
-    });
+    setAccessForm(getOrganizationAccessForm(organization, currentPlan, moduleRows));
   }, [organization, currentPlan, moduleRows]);
 
   const updateAccessForm = <K extends keyof OrganizationAccessForm>(key: K, value: OrganizationAccessForm[K]) => {
@@ -1094,6 +1295,12 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
     });
   };
 
+  const handleCancelAccessEdit = () => {
+    if (!organization) return;
+    setAccessForm(getOrganizationAccessForm(organization, currentPlan, moduleRows));
+    setIsEditingAccess(false);
+  };
+
   if (!organization && organizations.isLoading) {
     return (
       <div className="flex min-h-[300px] items-center justify-center">
@@ -1127,6 +1334,15 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
           </div>
           <div className="flex flex-wrap gap-2">
             <StatusBadge value={getOrganizationStatus(organization)} activeLabel="Ativa" />
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setDeleteOpen(true)}
+              className="h-8 rounded-[6px] border-0 bg-destructive/10 px-3 text-destructive hover:bg-destructive/15 hover:text-destructive"
+            >
+              <Trash2 className="h-4 w-4" />
+              Excluir organização
+            </Button>
           </div>
         </div>
         <div className="mt-5 grid gap-3 md:grid-cols-4">
@@ -1137,160 +1353,239 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
         </div>
       </div>
 
+      <OrganizationDeleteDialog
+        organizationId={organizationId || ""}
+        organizationName={getString(organization, "name")}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        onDeleted={() => router.replace("/admin/organizations")}
+      />
+
       <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.1fr)_minmax(560px,0.9fr)]">
         <div className="app-card p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <h2 className="text-base font-semibold">Acessos, plano e limites</h2>
+              <h2 className="text-base font-semibold">Plano, status e limites</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Ajuste manualmente o que esta organização pode usar, sem depender de uma nova contratação.
+                {isEditingAccess
+                  ? "Altere o plano, o status e os limites liberados para esta organização."
+                  : "Consulte os acessos atuais. Para fazer alterações, clique em Editar."}
               </p>
             </div>
-            <Button
-              onClick={handleSaveAccess}
-              disabled={updateOrganizationAccess.isPending}
-              className="h-10 rounded-[6px] bg-[#FF4529] text-white hover:bg-[#FF4529]/90"
-            >
-              {updateOrganizationAccess.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              Salvar acessos
-            </Button>
-          </div>
-
-          <div className="mt-4 grid gap-3 md:grid-cols-3">
-            <div className="space-y-2 md:col-span-2">
-              <Label htmlFor="organization-plan">Plano comercial</Label>
-              <select
-                id="organization-plan"
-                value={accessForm.planId}
-                disabled={plansLoading}
-                onChange={(event) => handlePlanChange(event.target.value)}
-                className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-sm outline-none"
+            {isEditingAccess ? (
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleCancelAccessEdit}
+                  disabled={updateOrganizationAccess.isPending}
+                  className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)]"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleSaveAccess}
+                  disabled={updateOrganizationAccess.isPending}
+                  className="h-9 rounded-[6px] bg-[#FF4529] text-white hover:bg-[#FF4529]/90"
+                >
+                  {updateOrganizationAccess.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  Salvar alterações
+                </Button>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsEditingAccess(true)}
+                className="h-9 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)]"
               >
-                <option value={NO_PLAN_VALUE}>Sem plano vinculado</option>
-                {plans.map((plan) => (
-                  <option key={plan.id} value={plan.id}>
-                    {plan.name} - {formatCurrency(plan.price)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="organization-status">Status</Label>
-              <select
-                id="organization-status"
-                value={accessForm.subscriptionStatus}
-                onChange={(event) => updateAccessForm("subscriptionStatus", event.target.value)}
-                className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-sm outline-none"
-              >
-                <option value="trial">Trial</option>
-                <option value="active">Ativa</option>
-                <option value="pending_payment">Pagamento pendente</option>
-                <option value="overdue">Atrasada</option>
-                <option value="blocked">Bloqueada</option>
-                <option value="cancelled">Cancelada</option>
-              </select>
-            </div>
+                <Pencil className="h-4 w-4" />
+                Editar
+              </Button>
+            )}
           </div>
 
-          <div className="mt-3 grid gap-3 md:grid-cols-5">
-            <div className="space-y-2">
-              <Label htmlFor="organization-max-users">Usuários</Label>
-              <Input
-                id="organization-max-users"
-                inputMode="numeric"
-                value={accessForm.maxUsers}
-                onChange={(event) => updateAccessForm("maxUsers", event.target.value)}
-                className="border-0 bg-[var(--app-surface-soft)]"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="organization-whatsapp">WhatsApp</Label>
-              <Input
-                id="organization-whatsapp"
-                inputMode="numeric"
-                value={accessForm.maxWhatsappSessions}
-                onChange={(event) => updateAccessForm("maxWhatsappSessions", event.target.value)}
-                placeholder="Sem limite"
-                className="border-0 bg-[var(--app-surface-soft)]"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="organization-value">Valor mensal</Label>
-              <Input
-                id="organization-value"
-                inputMode="decimal"
-                value={accessForm.subscriptionValue}
-                onChange={(event) => updateAccessForm("subscriptionValue", event.target.value)}
-                className="border-0 bg-[var(--app-surface-soft)]"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="organization-billing-day">Dia cobrança</Label>
-              <Input
-                id="organization-billing-day"
-                inputMode="numeric"
-                value={accessForm.billingDay}
-                onChange={(event) => updateAccessForm("billingDay", event.target.value)}
-                placeholder="Ex.: 10"
-                className="border-0 bg-[var(--app-surface-soft)]"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="organization-next-billing">Próximo vencimento</Label>
-              <Input
-                id="organization-next-billing"
-                type="date"
-                value={accessForm.nextBillingDate}
-                onChange={(event) => updateAccessForm("nextBillingDate", event.target.value)}
-                className="border-0 bg-[var(--app-surface-soft)]"
-              />
-            </div>
-          </div>
-
-          <div className="mt-3 grid gap-3 md:grid-cols-3">
-            <div className="space-y-2">
-              <Label htmlFor="organization-trial-end">Fim do trial</Label>
-              <Input
-                id="organization-trial-end"
-                type="date"
-                value={accessForm.trialEndsAt}
-                onChange={(event) => updateAccessForm("trialEndsAt", event.target.value)}
-                className="border-0 bg-[var(--app-surface-soft)]"
-              />
-            </div>
-            <MiniInfo label="Plano salvo" value={currentPlan?.name || "Sem plano"} />
-            <MiniInfo label="Módulos ativos" value={formatNumber(accessForm.modules.length)} />
-          </div>
-
-          <div className="mt-4 space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <Label>Módulos liberados</Label>
-              <span className="text-xs text-muted-foreground">{accessForm.modules.length} ativos</span>
-            </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
-              {SYSTEM_MODULES.map((module) => {
-                const checked = accessForm.modules.includes(module.key);
-
-                return (
-                  <button
-                    key={module.key}
-                    type="button"
-                    aria-pressed={checked}
-                    onClick={() => toggleOrganizationModule(module.key)}
-                    className={cn(
-                      "flex h-10 items-center justify-between gap-2 rounded-[6px] px-2.5 text-left text-xs font-medium transition-colors",
-                      checked
-                        ? "bg-[#FF4529] text-white shadow-sm"
-                        : "bg-[var(--app-surface-soft)] text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground",
-                    )}
+          {isEditingAccess ? (
+            <>
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="organization-plan">Plano comercial</Label>
+                  <select
+                    id="organization-plan"
+                    value={accessForm.planId}
+                    disabled={plansLoading}
+                    onChange={(event) => handlePlanChange(event.target.value)}
+                    className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-sm outline-none"
                   >
-                    <span className="truncate">{module.label}</span>
-                    <Check className={cn("h-3.5 w-3.5 shrink-0", !checked && "opacity-0")} strokeWidth={1.9} />
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+                    <option value={NO_PLAN_VALUE}>Sem plano vinculado</option>
+                    {plans.map((plan) => (
+                      <option key={plan.id} value={plan.id}>
+                        {plan.name} - {formatCurrency(plan.price)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="organization-status">Status</Label>
+                  <select
+                    id="organization-status"
+                    value={accessForm.subscriptionStatus}
+                    onChange={(event) => updateAccessForm("subscriptionStatus", event.target.value)}
+                    className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-sm outline-none"
+                  >
+                    <option value="trial">Período de teste</option>
+                    <option value="active">Ativa</option>
+                    <option value="pending_payment">Pagamento pendente</option>
+                    <option value="overdue">Em atraso</option>
+                    <option value="blocked">Bloqueada</option>
+                    <option value="cancelled">Cancelada</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-3 grid gap-3 md:grid-cols-5">
+                <div className="space-y-2">
+                  <Label htmlFor="organization-max-users">Limite de usuários</Label>
+                  <Input
+                    id="organization-max-users"
+                    inputMode="numeric"
+                    value={accessForm.maxUsers}
+                    onChange={(event) => updateAccessForm("maxUsers", event.target.value)}
+                    className="border-0 bg-[var(--app-surface-soft)]"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="organization-whatsapp">Limite de WhatsApp</Label>
+                  <Input
+                    id="organization-whatsapp"
+                    inputMode="numeric"
+                    value={accessForm.maxWhatsappSessions}
+                    onChange={(event) => updateAccessForm("maxWhatsappSessions", event.target.value)}
+                    placeholder="Sem limite"
+                    className="border-0 bg-[var(--app-surface-soft)]"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="organization-value">Valor mensal</Label>
+                  <Input
+                    id="organization-value"
+                    inputMode="decimal"
+                    value={accessForm.subscriptionValue}
+                    onChange={(event) => updateAccessForm("subscriptionValue", event.target.value)}
+                    className="border-0 bg-[var(--app-surface-soft)]"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="organization-billing-day">Dia da cobrança</Label>
+                  <Input
+                    id="organization-billing-day"
+                    inputMode="numeric"
+                    value={accessForm.billingDay}
+                    onChange={(event) => updateAccessForm("billingDay", event.target.value)}
+                    placeholder="Ex.: 10"
+                    className="border-0 bg-[var(--app-surface-soft)]"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="organization-next-billing">Próximo vencimento</Label>
+                  <Input
+                    id="organization-next-billing"
+                    type="date"
+                    value={accessForm.nextBillingDate}
+                    onChange={(event) => updateAccessForm("nextBillingDate", event.target.value)}
+                    className="border-0 bg-[var(--app-surface-soft)]"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <div className="space-y-2">
+                  <Label htmlFor="organization-trial-end">Fim do período de teste</Label>
+                  <Input
+                    id="organization-trial-end"
+                    type="date"
+                    value={accessForm.trialEndsAt}
+                    onChange={(event) => updateAccessForm("trialEndsAt", event.target.value)}
+                    className="border-0 bg-[var(--app-surface-soft)]"
+                  />
+                </div>
+                <MiniInfo label="Plano salvo" value={currentPlan?.name || "Sem plano"} />
+                <MiniInfo label="Módulos ativos" value={formatNumber(accessForm.modules.length)} />
+              </div>
+
+              <div className="mt-4 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <Label>Módulos liberados</Label>
+                  <span className="text-xs text-muted-foreground">{accessForm.modules.length} ativos</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+                  {SYSTEM_MODULES.map((module) => {
+                    const checked = accessForm.modules.includes(module.key);
+
+                    return (
+                      <button
+                        key={module.key}
+                        type="button"
+                        aria-pressed={checked}
+                        onClick={() => toggleOrganizationModule(module.key)}
+                        className={cn(
+                          "flex h-10 items-center justify-between gap-2 rounded-[6px] px-2.5 text-left text-xs font-medium transition-colors",
+                          checked
+                            ? "bg-[#FF4529] text-white shadow-sm"
+                            : "bg-[var(--app-surface-soft)] text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground",
+                        )}
+                      >
+                        <span className="truncate">{module.label}</span>
+                        <Check className={cn("h-3.5 w-3.5 shrink-0", !checked && "opacity-0")} strokeWidth={1.9} />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <MiniInfo label="Plano comercial" value={currentPlan?.name || "Sem plano vinculado"} />
+                <div className="rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2">
+                  <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Status</p>
+                  <div className="mt-1">
+                    <StatusBadge value={getOrganizationStatus(organization)} activeLabel="Ativa" />
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <MiniInfo label="Limite de usuários" value={accessForm.maxUsers || "--"} />
+                <MiniInfo label="Limite de WhatsApp" value={accessForm.maxWhatsappSessions || "Sem limite"} />
+                <MiniInfo label="Valor mensal" value={formatCurrency(accessForm.subscriptionValue)} />
+                <MiniInfo label="Dia da cobrança" value={accessForm.billingDay || "--"} />
+                <MiniInfo label="Próximo vencimento" value={formatDateOnly(accessForm.nextBillingDate)} />
+                <MiniInfo label="Fim do período de teste" value={formatDateOnly(accessForm.trialEndsAt)} />
+              </div>
+              <div className="mt-4">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium">Módulos liberados</p>
+                  <span className="text-xs text-muted-foreground">{accessForm.modules.length} ativos</span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {accessForm.modules.length > 0 ? (
+                    accessForm.modules.map((module) => (
+                      <Badge
+                        key={module}
+                        variant="secondary"
+                        className="rounded-[6px] border-0 bg-[var(--app-surface-soft)] font-medium"
+                      >
+                        {getSystemModuleLabel(module)}
+                      </Badge>
+                    ))
+                  ) : (
+                    <span className="text-sm text-muted-foreground">Nenhum módulo liberado.</span>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="space-y-4">
@@ -1584,11 +1879,11 @@ function AdminUserActions({ user }: { user: AdminRecord }) {
   const toggleStatus = useMutation({
     mutationFn: async () => adminAPI.updateUser({ userId, is_active: !isActive }),
     onSuccess: async () => {
-      toast.success(isActive ? "UsuÃ¡rio inativado." : "UsuÃ¡rio reativado.");
+      toast.success(isActive ? "Usuário inativado." : "Usuário reativado.");
       await invalidateUsers();
     },
     onError: (error) => {
-      toast.error(`Erro ao alterar usuÃ¡rio: ${getErrorMessage(error)}`);
+      toast.error(`Erro ao alterar usuário: ${getErrorMessage(error)}`);
     },
   });
 
@@ -1601,7 +1896,7 @@ function AdminUserActions({ user }: { user: AdminRecord }) {
         password: getString(result, "temporary_password", ""),
       };
       setResetResult(payload);
-      toast.success("Senha temporÃ¡ria gerada.");
+      toast.success("Senha temporária gerada.");
     },
     onError: (error) => {
       toast.error(`Erro ao resetar senha: ${getErrorMessage(error)}`);
@@ -1640,7 +1935,7 @@ function AdminUserActions({ user }: { user: AdminRecord }) {
       <Dialog open={Boolean(resetResult)} onOpenChange={(open) => !open && setResetResult(null)}>
         <DialogContent className="max-w-md rounded-[8px]">
           <DialogHeader>
-            <DialogTitle>Senha temporÃ¡ria</DialogTitle>
+            <DialogTitle>Senha temporária</DialogTitle>
           </DialogHeader>
           {resetResult ? (
             <div className="space-y-3">
@@ -1656,7 +1951,7 @@ function AdminUserActions({ user }: { user: AdminRecord }) {
                     await copyCredentials(resetResult);
                     toast.success("Dados copiados.");
                   } catch {
-                    toast.error("NÃ£o foi possÃ­vel copiar automaticamente.");
+                    toast.error("Não foi possível copiar automaticamente.");
                   }
                 }}
               >
@@ -1689,7 +1984,7 @@ function CreateOrganizationUserDialog({ organizationId }: { organizationId?: str
 
   const createUser = useMutation({
     mutationFn: async () => {
-      if (!organizationId) throw new Error("OrganizaÃ§Ã£o nÃ£o informada.");
+      if (!organizationId) throw new Error("Organização não informada.");
       return usersAPI.createUser({
         name: form.name.trim(),
         email: form.email.trim(),
@@ -1698,7 +1993,7 @@ function CreateOrganizationUserDialog({ organizationId }: { organizationId?: str
       }, organizationId);
     },
     onSuccess: async (result) => {
-      toast.success(result.generatedPassword ? "UsuÃ¡rio criado com senha temporÃ¡ria." : "UsuÃ¡rio vinculado Ã  organizaÃ§Ã£o.");
+      toast.success(result.generatedPassword ? "Usuário criado com senha temporária." : "Usuário vinculado à organização.");
       if (result.generatedPassword) {
         setCreatedCredentials({
           name: result.user.name,
@@ -1715,7 +2010,7 @@ function CreateOrganizationUserDialog({ organizationId }: { organizationId?: str
       ]);
     },
     onError: (error) => {
-      toast.error(`Erro ao criar usuÃ¡rio: ${getErrorMessage(error)}`);
+      toast.error(`Erro ao criar usuário: ${getErrorMessage(error)}`);
     },
   });
 
@@ -1726,15 +2021,16 @@ function CreateOrganizationUserDialog({ organizationId }: { organizationId?: str
     }}>
       <Button
         type="button"
-        className="h-9 rounded-[6px] bg-[#FF4529] text-white hover:bg-[#FF4529]/90"
+        className="h-9 shrink-0 gap-2 rounded-[6px] bg-[#FF4529] px-3 font-medium text-white shadow-none hover:bg-[#FF4529]/90"
         onClick={() => setOpen(true)}
+        aria-label="Adicionar novo usuário"
       >
         <UserPlus className="h-4 w-4" />
-        Novo usuÃ¡rio
+        <span className="hidden sm:inline">Novo usuário</span>
       </Button>
       <DialogContent className="max-w-lg rounded-[8px] p-0">
         <DialogHeader className="border-b border-white/[0.045] px-4 py-3">
-          <DialogTitle>Novo usuÃ¡rio</DialogTitle>
+          <DialogTitle>Novo usuário</DialogTitle>
         </DialogHeader>
 
         {createdCredentials ? (
@@ -1751,7 +2047,7 @@ function CreateOrganizationUserDialog({ organizationId }: { organizationId?: str
                   await copyCredentials(createdCredentials);
                   toast.success("Dados copiados.");
                 } catch {
-                  toast.error("NÃ£o foi possÃ­vel copiar automaticamente.");
+                  toast.error("Não foi possível copiar automaticamente.");
                 }
               }}
             >
@@ -1796,7 +2092,7 @@ function CreateOrganizationUserDialog({ organizationId }: { organizationId?: str
                   onChange={(event) => setForm((current) => ({ ...current, role: event.target.value as "admin" | "user" }))}
                   className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-sm outline-none"
                 >
-                  <option value="user">UsuÃ¡rio</option>
+                  <option value="user">Usuário</option>
                   <option value="admin">Admin</option>
                 </select>
               </label>

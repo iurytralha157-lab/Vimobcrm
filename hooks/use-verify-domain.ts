@@ -1,19 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { integrationsAPI } from "@/lib/api";
+import { siteAPI } from "@/lib/api/site";
 import { toast } from "sonner";
 
 interface VerifyDomainResult {
   domain: string;
   verified: boolean;
-  records: Array<{
-    type: string;
-    name: string;
-    data: string;
-    TTL?: number;
-  }>;
-  expected_ip: string;
-  error?: string;
+  checked_at: string;
+  reason?: 'challenge_unavailable' | 'challenge_mismatch';
 }
 
 export function useVerifyDomain() {
@@ -22,10 +16,9 @@ export function useVerifyDomain() {
 
   return useMutation({
     mutationFn: async (domain: string): Promise<VerifyDomainResult> => {
-      return integrationsAPI.invokeFunction<VerifyDomainResult>('verify-domain-dns', {
-        domain,
-        organization_id: organization?.id,
-      }, organization?.id);
+      if (!organization?.id) throw new Error('Organização não encontrada.');
+      if (!domain.trim()) throw new Error('Domínio não informado.');
+      return siteAPI.verifyDomain(organization?.id);
     },
     onSuccess: (data) => {
       if (data.verified) {

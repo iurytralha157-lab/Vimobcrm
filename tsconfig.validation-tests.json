@@ -33,6 +33,10 @@
     "lib/whatsapp-query-cache.test.ts",
     "lib/search-text.ts",
     "lib/search-text.test.ts",
+    "lib/schedule-event-segments.ts",
+    "lib/schedule-event-segments.test.ts",
+    "supabase/functions/_shared/google-calendar-event.ts",
+    "supabase/functions/_shared/google-calendar-event.test.ts",
     "lib/automations/index.ts",
     "lib/automations/engine.ts",
     "lib/automations/engine.test.ts"

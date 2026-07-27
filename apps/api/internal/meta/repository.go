@@ -25,6 +25,14 @@ type Repository struct {
 	client *http.Client
 }
 
+type duplicateLeadgenError struct {
+	leadID string
+}
+
+func (err duplicateLeadgenError) Error() string {
+	return "Meta leadgen event was already processed"
+}
+
 func NewRepository(db *dbpkg.Postgres, config Config) Repository {
 	if strings.TrimSpace(config.GraphVersion) == "" {
 		config.GraphVersion = "v25.0"
@@ -299,6 +307,13 @@ func (repo Repository) processLeadgenChange(ctx context.Context, webhookPayload 
 
 	leadID, reentry, err := repo.persistLead(ctx, webhookPayload, details, change, integration, formConfig, lead)
 	if err != nil {
+		var duplicateErr duplicateLeadgenError
+		if errors.As(err, &duplicateErr) {
+			result.Status = "duplicate"
+			result.LeadID = duplicateErr.leadID
+			result.Error = ""
+			return result
+		}
 		result.Error = err.Error()
 		return result
 	}
@@ -722,6 +737,29 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 	}
 	defer tx.Rollback(ctx)
 
+	if _, err := tx.Exec(ctx, `
+		select pg_advisory_xact_lock(
+			hashtextextended('lead-entry:meta:' || $1 || ':' || $2, 0)
+		)
+	`, integration.OrganizationID, change.LeadgenID); err != nil {
+		return "", false, err
+	}
+	if duplicateLeadID, err := findLeadByProviderEventID(ctx, tx, integration.OrganizationID, "meta", change.LeadgenID); err != nil {
+		return "", false, err
+	} else if duplicateLeadID != "" {
+		return "", false, duplicateLeadgenError{leadID: duplicateLeadID}
+	}
+
+	if digitsOnly(lead.Phone) != "" {
+		if _, err := tx.Exec(ctx, `
+			select pg_advisory_xact_lock(
+				hashtextextended('lead-phone:' || $1 || ':' || normalize_phone($2), 0)
+			)
+		`, integration.OrganizationID, *lead.Phone); err != nil {
+			return "", false, err
+		}
+	}
+
 	destination, err := repo.resolveDestination(ctx, tx, integration, formConfig)
 	if err != nil {
 		return "", false, err
@@ -757,20 +795,20 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 			set name = $3,
 			    email = coalesce($4, email),
 			    phone = coalesce($5, phone),
-			    source = $6,
+			    source = coalesce(nullif(source, ''), $6),
 			    message = coalesce($7, message),
 			    cargo = coalesce($8, cargo),
 			    empresa = coalesce($9, empresa),
 			    cidade = coalesce($10, cidade),
 			    bairro = coalesce($11, bairro),
-			    meta_lead_id = coalesce($12, meta_lead_id),
-			    meta_form_id = coalesce($13, meta_form_id),
-			    meta_campaign_id = coalesce($14, meta_campaign_id),
-			    meta_adset_id = coalesce($15, meta_adset_id),
-			    meta_ad_id = coalesce($16, meta_ad_id),
-			    utm_source = coalesce($17, utm_source),
-			    utm_medium = coalesce($18, utm_medium),
-			    utm_campaign = coalesce($19, utm_campaign),
+			    meta_lead_id = coalesce(meta_lead_id, $12),
+			    meta_form_id = coalesce(meta_form_id, $13),
+			    meta_campaign_id = coalesce(meta_campaign_id, $14),
+			    meta_adset_id = coalesce(meta_adset_id, $15),
+			    meta_ad_id = coalesce(meta_ad_id, $16),
+			    utm_source = coalesce(utm_source, $17),
+			    utm_medium = coalesce(utm_medium, $18),
+			    utm_campaign = coalesce(utm_campaign, $19),
 			    pipeline_id = coalesce($20::uuid, pipeline_id),
 			    stage_entered_at = case
 			      when $21::uuid is null or stage_id is not distinct from $21::uuid then stage_entered_at
@@ -1295,13 +1333,45 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 func (repo Repository) findLeadByMetaLeadID(ctx context.Context, organizationID string, leadgenID string) (string, error) {
 	var leadID string
 	err := repo.db.Pool().QueryRow(ctx, `
-		select id::text
-		from public.leads
-		where organization_id = $1::uuid
-		  and meta_lead_id = $2
-		order by created_at desc
+		select candidate.lead_id
+		from (
+			select entry.lead_id::text as lead_id, 0 as priority, entry.occurred_at as matched_at
+			from public.lead_entry_events entry
+			where entry.organization_id = $1::uuid
+			  and entry.provider = 'meta'
+			  and entry.provider_event_id = $2
+			  and entry.is_countable = true
+			union all
+			select lead.id::text, 1, lead.created_at
+			from public.leads lead
+			where lead.organization_id = $1::uuid
+			  and lead.meta_lead_id = $2
+		) candidate
+		order by candidate.priority, candidate.matched_at desc
 		limit 1
 	`, organizationID, leadgenID).Scan(&leadID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return leadID, err
+}
+
+func findLeadByProviderEventID(ctx context.Context, tx pgx.Tx, organizationID string, provider string, providerEventID string) (string, error) {
+	if strings.TrimSpace(providerEventID) == "" {
+		return "", nil
+	}
+
+	var leadID string
+	err := tx.QueryRow(ctx, `
+		select lead_id::text
+		from public.lead_entry_events
+		where organization_id = $1::uuid
+		  and provider = $2
+		  and provider_event_id = $3
+		  and is_countable = true
+		order by occurred_at, created_at, id
+		limit 1
+	`, organizationID, provider, providerEventID).Scan(&leadID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -1437,6 +1507,7 @@ func (repo Repository) insertLeadEntry(ctx context.Context, tx pgx.Tx, organizat
 	if err != nil {
 		return err
 	}
+	occurredAt := metaLeadOccurredAt(change.CreatedTime)
 	entryType := "initial"
 	if reentry {
 		entryType = "reentry"
@@ -1445,18 +1516,57 @@ func (repo Repository) insertLeadEntry(ctx context.Context, tx pgx.Tx, organizat
 		updateQuery := fmt.Sprintf(`
 			update public.lead_entry_events
 			set source = 'meta',
-			    property_id = coalesce($3::uuid, property_id),
-			    valor_interesse = coalesce($4::numeric, valor_interesse),
-			    campaign_name = coalesce($5, campaign_name),
+			    provider = 'meta',
+			    provider_event_id = $3,
+			    occurred_at = $4,
+			    is_countable = true,
+			    source_detail = coalesce($5, source_detail),
+			    campaign_id = coalesce($6, campaign_id),
+			    campaign_name = coalesce($7, campaign_name),
+			    adset_id = coalesce($8, adset_id),
+			    adset_name = coalesce($9, adset_name),
+			    ad_id = coalesce($10, ad_id),
+			    ad_name = coalesce($11, ad_name),
+			    form_id = coalesce($12, form_id),
+			    form_name = coalesce($13, form_name),
+			    page_id = coalesce($14, page_id),
+			    page_name = coalesce($15, page_name),
+			    property_id = coalesce($16::uuid, property_id),
+			    valor_interesse = coalesce($17::numeric, valor_interesse),
 			    utm_source = 'facebook',
 			    utm_medium = 'lead_ads',
-			    utm_campaign = coalesce($6, utm_campaign),
-			    %s = coalesce(%s, '{}'::jsonb) || $7::jsonb
-			where organization_id = $1::uuid
-			  and lead_id = $2::uuid
-			  and entry_type = 'initial'
+			    utm_campaign = coalesce($7, utm_campaign),
+			    %s = coalesce(%s, '{}'::jsonb) || $18::jsonb
+			where id = (
+				select initial.id
+				from public.lead_entry_events initial
+				where initial.organization_id = $1::uuid
+				  and initial.lead_id = $2::uuid
+				  and initial.entry_type = 'initial'
+				order by initial.created_at, initial.id
+				limit 1
+			)
 		`, jsonColumn, jsonColumn)
-		tag, err := tx.Exec(ctx, updateQuery, organizationID, leadID, nullablePointer(propertyID), nullablePointer(interestValue), nullableString(metaText(details, change.Raw, "campaign_name")), nullableString(metaText(details, change.Raw, "campaign_name")), jsonb(metadata))
+		tag, err := tx.Exec(ctx, updateQuery,
+			organizationID,
+			leadID,
+			change.LeadgenID,
+			occurredAt,
+			nullableString(textFromAny(metadata["source_detail"])),
+			nullableString(metaText(details, change.Raw, "campaign_id")),
+			nullableString(metaText(details, change.Raw, "campaign_name")),
+			nullableString(metaText(details, change.Raw, "adset_id")),
+			nullableString(metaText(details, change.Raw, "adset_name")),
+			nullableString(metaText(details, change.Raw, "ad_id")),
+			nullableString(metaText(details, change.Raw, "ad_name")),
+			change.FormID,
+			nullablePointer(formConfigName(metadata)),
+			change.PageID,
+			nullableString(textFromAny(metadata["page_name"])),
+			nullablePointer(propertyID),
+			nullablePointer(interestValue),
+			jsonb(metadata),
+		)
 		if err != nil {
 			return err
 		}
@@ -1470,10 +1580,24 @@ func (repo Repository) insertLeadEntry(ctx context.Context, tx pgx.Tx, organizat
 			organization_id,
 			lead_id,
 			source,
+			provider,
+			provider_event_id,
+			occurred_at,
+			is_countable,
+			source_detail,
 			entry_type,
 			property_id,
 			valor_interesse,
+			campaign_id,
 			campaign_name,
+			adset_id,
+			adset_name,
+			ad_id,
+			ad_name,
+			form_id,
+			form_name,
+			page_id,
+			page_name,
 			utm_source,
 			utm_medium,
 			utm_campaign,
@@ -1483,19 +1607,81 @@ func (repo Repository) insertLeadEntry(ctx context.Context, tx pgx.Tx, organizat
 			$1::uuid,
 			$2::uuid,
 			'meta',
+			'meta',
 			$3,
-			$4::uuid,
-			$5::numeric,
+			$4,
+			true,
+			$5,
 			$6,
+			$7::uuid,
+			$8::numeric,
+			$9,
+			$10,
+			$11,
+			$12,
+			$13,
+			$14,
+			$15,
+			$16,
+			$17,
+			$18,
 			'facebook',
 			'lead_ads',
-			$7,
-			$8::jsonb
+			$10,
+			$19::jsonb
 		)
+		on conflict (organization_id, provider, provider_event_id)
+			where provider_event_id is not null and is_countable = true
+		do nothing
 	`, jsonColumn)
 
-	_, err = tx.Exec(ctx, query, organizationID, leadID, entryType, nullablePointer(propertyID), nullablePointer(interestValue), nullableString(metaText(details, change.Raw, "campaign_name")), nullableString(metaText(details, change.Raw, "campaign_name")), jsonb(metadata))
+	tag, err := tx.Exec(ctx, query,
+		organizationID,
+		leadID,
+		change.LeadgenID,
+		occurredAt,
+		nullableString(textFromAny(metadata["source_detail"])),
+		entryType,
+		nullablePointer(propertyID),
+		nullablePointer(interestValue),
+		nullableString(metaText(details, change.Raw, "campaign_id")),
+		nullableString(metaText(details, change.Raw, "campaign_name")),
+		nullableString(metaText(details, change.Raw, "adset_id")),
+		nullableString(metaText(details, change.Raw, "adset_name")),
+		nullableString(metaText(details, change.Raw, "ad_id")),
+		nullableString(metaText(details, change.Raw, "ad_name")),
+		change.FormID,
+		nullablePointer(formConfigName(metadata)),
+		change.PageID,
+		nullableString(textFromAny(metadata["page_name"])),
+		jsonb(metadata),
+	)
+	if err == nil && tag.RowsAffected() == 0 {
+		return duplicateLeadgenError{leadID: leadID}
+	}
 	return err
+}
+
+func formConfigName(metadata map[string]any) *string {
+	value := textFromAny(metadata["form_name"])
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func metaLeadOccurredAt(raw string) time.Time {
+	raw = strings.TrimSpace(raw)
+	seconds, err := strconv.ParseInt(raw, 10, 64)
+	if err == nil {
+		if len(raw) == 13 {
+			seconds /= 1000
+		}
+		if seconds > 0 {
+			return time.Unix(seconds, 0).UTC()
+		}
+	}
+	return time.Now().UTC()
 }
 
 func (repo Repository) leadEntryJSONColumn(ctx context.Context, tx pgx.Tx) (string, error) {

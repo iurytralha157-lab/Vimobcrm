@@ -1,6 +1,7 @@
 import { vimobAPIRequest } from './vimob-client'
 import {
   apiOptionalOrganizationSiteResponseSchema,
+  apiDomainVerificationResponseSchema,
   apiOrganizationSiteResponseSchema,
   apiSiteAssetResponseSchema,
   apiSiteMenuItemListResponseSchema,
@@ -28,10 +29,13 @@ export interface OrganizationSite {
   id: string
   organization_id: string
   is_active: boolean
+  maintenance_mode: boolean
+  maintenance_message: string | null
   subdomain: string | null
   custom_domain: string | null
   domain_verified: boolean
   domain_verified_at: string | null
+  domain_verification_token: string
   site_title: string | null
   site_description: string | null
   logo_url: string | null
@@ -137,6 +141,20 @@ export const siteAPI = {
       body,
     })
     validateDomainResponse(apiOrganizationSiteResponseSchema, response, 'site.update')
+    return response.data
+  },
+
+  async verifyDomain(organizationId?: string | null) {
+    const response = await vimobAPIRequest<Envelope<{
+      domain: string
+      verified: boolean
+      checked_at: string
+      reason?: 'challenge_unavailable' | 'challenge_mismatch'
+    }>>('/v1/site/domain/verify', {
+      method: 'POST',
+      organizationId,
+    })
+    validateDomainResponse(apiDomainVerificationResponseSchema, response, 'site.domain.verify')
     return response.data
   },
 

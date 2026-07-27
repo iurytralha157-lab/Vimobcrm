@@ -385,23 +385,51 @@ func applyNativeInboundBusinessEffects(
 		"ctwa_clid":           message.CampaignCTWAClid,
 		"property_code":       message.CampaignPropertyCode,
 	})
-	entryType := "reentry"
 	if conversation.LeadIsNew {
-		entryType = "initial"
-	}
-	if _, err := tx.Exec(ctx, `
+		if _, err := tx.Exec(ctx, `
+			update public.lead_entry_events
+			set source = 'whatsapp',
+			    provider = 'whatsapp',
+			    provider_event_id = nullif($3, ''),
+			    occurred_at = $4::timestamptz,
+			    is_countable = true,
+			    source_detail = 'whatsapp_click_to_message',
+			    campaign_name = nullif($5, ''),
+			    ad_id = nullif($6, ''),
+			    ad_name = nullif($5, ''),
+			    utm_source = 'facebook',
+			    utm_medium = 'click_to_whatsapp',
+			    utm_campaign = nullif($5, ''),
+			    metadata = coalesce(metadata, '{}'::jsonb) || $7::jsonb,
+			    payload = $7::jsonb
+			where id = (
+				select initial.id
+				from public.lead_entry_events initial
+				where initial.organization_id = $1::uuid
+				  and initial.lead_id = $2::uuid
+				  and initial.entry_type = 'initial'
+				order by initial.created_at, initial.id
+				limit 1
+			)
+		`, session.OrganizationID, conversation.LeadID, message.ProviderMessageID, message.SentAt, message.CampaignHeadline, message.CampaignSourceID, effectMetadata); err != nil {
+			return err
+		}
+	} else if _, err := tx.Exec(ctx, `
 		insert into public.lead_entry_events (
-		  organization_id, lead_id, source, entry_type, campaign_name,
-		  utm_source, utm_medium, utm_campaign, metadata, payload
+		  organization_id, lead_id, source, provider, provider_event_id,
+		  occurred_at, is_countable, source_detail, entry_type, campaign_name,
+		  ad_id, ad_name, utm_source, utm_medium, utm_campaign, metadata, payload
 		)
-		select $1::uuid, $2::uuid, 'whatsapp', $3, nullif($4, ''),
-		       'facebook', 'click_to_whatsapp', nullif($4, ''), $5::jsonb, $5::jsonb
-		where not exists (
-		  select 1 from public.lead_entry_events entry
-		  where entry.organization_id = $1::uuid and entry.lead_id = $2::uuid
-		    and entry.source = 'whatsapp' and entry.metadata->>'message_id' = $6
+		values (
+		  $1::uuid, $2::uuid, 'whatsapp', 'whatsapp', nullif($3, ''),
+		  $4::timestamptz, true, 'whatsapp_click_to_message', 'reentry', nullif($5, ''),
+		  nullif($6, ''), nullif($5, ''), 'facebook', 'click_to_whatsapp',
+		  nullif($5, ''), $7::jsonb, $7::jsonb
 		)
-	`, session.OrganizationID, conversation.LeadID, entryType, message.CampaignHeadline, effectMetadata, message.ProviderMessageID); err != nil {
+		on conflict (organization_id, provider, provider_event_id)
+			where provider_event_id is not null and is_countable = true
+		do nothing
+	`, session.OrganizationID, conversation.LeadID, message.ProviderMessageID, message.SentAt, message.CampaignHeadline, message.CampaignSourceID, effectMetadata); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `

@@ -5,6 +5,8 @@ import { createClientId } from "@/lib/client-id";
 export interface PublicSiteConfig {
   id: string;
   is_active: boolean;
+  maintenance_mode: boolean;
+  maintenance_message: string | null;
   subdomain: string | null;
   custom_domain: string | null;
   site_title: string;

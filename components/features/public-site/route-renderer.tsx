@@ -14,6 +14,7 @@ import {
   type PublicSiteConfig,
 } from "@/lib/api/public-site-server";
 import { PublicSiteUnavailable } from "@/components/public/PublicSiteUnavailable";
+import { PublicSiteMaintenance } from "./PublicSiteMaintenance";
 import { PublicSiteShell } from "./PublicSiteShell";
 import {
   PublicAboutScreen,
@@ -70,6 +71,10 @@ export async function renderPublicSiteRoute({
   }
 
   const site = resolved.site;
+  if (site.maintenance_mode) {
+    return <PublicSiteMaintenance site={site} />;
+  }
+
   const [menuItems, searchFilters] = await Promise.all([
     getPublicMenuItems(site.organization_id),
     getPublicSearchFilters(site.organization_id),
@@ -84,7 +89,7 @@ export async function renderPublicSiteRoute({
     );
   }
 
-  if (route.kind === "properties") {
+  else if (route.kind === "properties") {
     const query = normalizePropertiesQuery(route.query);
     const data = await getPublicProperties(site.organization_id, query);
     return (
@@ -184,6 +189,15 @@ export async function generatePublicSiteMetadata({
   let imageAlt = siteTitle;
   let canonicalPath = buildRouteCanonicalPath(route);
   let shouldIndex = true;
+
+  if (site.maintenance_mode) {
+    title = `Manutenção | ${siteTitle}`;
+    shareTitle = title;
+    description = cleanMetadataText(
+      site.maintenance_message || "Este site está temporariamente em manutenção.",
+    ).slice(0, 160);
+    shouldIndex = false;
+  }
 
   if (route.kind === "properties") {
     title = `Imóveis em ${location || "destaque"} | ${siteTitle}`;

@@ -1,2 +1,17 @@
 [functions.evolution-go-webhook]
 verify_jwt = false
+
+# OAuth callback is public; POST requests validate the Supabase bearer token
+# inside the handler and OAuth state is single-use.
+[functions.google-calendar-oauth]
+verify_jwt = false
+
+# Scheduled requests use a private Vault-backed header; user actions validate
+# their Supabase bearer token inside the handler.
+[functions.google-calendar-sync]
+verify_jwt = false
+
+# Google push notifications authenticate with channel id + hashed channel
+# token, so the platform JWT gateway must not reject them first.
+[functions.google-calendar-webhook]
+verify_jwt = false

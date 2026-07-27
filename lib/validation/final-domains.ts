@@ -38,6 +38,9 @@ export const adminOrganizationAccessInputSchema = z.object({
   organizationUpdates: dynamicRecordSchema,
   modules: z.array(z.string().trim().min(1).max(120)).max(500),
 }).strict()
+export const adminOrganizationDeleteInputSchema = z.object({
+  confirmation_name: z.string().trim().min(1).max(300),
+}).strict()
 export const adminPeriodSchema = z.number().int().min(1).max(3650)
 export const adminListLimitSchema = z.number().int().min(1).max(500)
 export const adminOrganizationMutationInputSchema = nonEmptyDynamicRecordSchema

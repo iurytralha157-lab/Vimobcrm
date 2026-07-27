@@ -76,13 +76,17 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		APIKey:     cfg.Storage.APIKey,
 	}))
 	adminHandler := admin.NewHandler(admin.NewRepository(postgres, admin.ExternalConfig{
-		ProjectURL:   cfg.Storage.ProjectURL,
-		APIKey:       cfg.Storage.APIKey,
-		ResendAPIKey: cfg.Email.ResendAPIKey,
-		FromEmail:    cfg.Email.FromEmail,
-		ReplyTo:      cfg.Email.ReplyTo,
-		SupportEmail: cfg.Email.SupportEmail,
-		AppURL:       cfg.Email.AppURL,
+		ProjectURL:        cfg.Storage.ProjectURL,
+		APIKey:            cfg.Storage.APIKey,
+		ResendAPIKey:      cfg.Email.ResendAPIKey,
+		FromEmail:         cfg.Email.FromEmail,
+		ReplyTo:           cfg.Email.ReplyTo,
+		SupportEmail:      cfg.Email.SupportEmail,
+		AppURL:            cfg.Email.AppURL,
+		EvolutionGoURL:    cfg.EvolutionGo.APIURL,
+		EvolutionGoAPIKey: cfg.EvolutionGo.APIKey,
+		AsaasURL:          cfg.Asaas.APIURL,
+		AsaasAPIKey:       cfg.Asaas.APIKey,
 	}))
 	aiRepository := ai.NewRepository(postgres)
 	aiService := ai.NewService(aiRepository, ai.Config{
@@ -519,6 +523,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("GET /v1/site", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.ShowSite)))
 	mux.Handle("POST /v1/site", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.CreateSite)))
 	mux.Handle("PATCH /v1/site", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.UpdateSite)))
+	mux.Handle("POST /v1/site/domain/verify", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.VerifyDomain)))
 	mux.Handle("POST /v1/site/assets", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.UploadAsset)))
 	mux.Handle("GET /v1/site/menu-items", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.ListMenuItems)))
 	mux.Handle("POST /v1/site/menu-items", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.CreateMenuItem)))

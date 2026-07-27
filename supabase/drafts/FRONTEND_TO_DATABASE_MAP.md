@@ -20,7 +20,7 @@ Routes:
 - `/settings`
 
 Draft:
-- `20260621_001_security_helpers.sql`
+- `supabase/legacy-migrations/20260622000100_apply_vimob_v3_schema.sql` (seção de helpers de segurança)
 
 Core tables:
 - `organizations`
@@ -57,8 +57,7 @@ Routes:
 - `/crm/management`
 
 Draft:
-- `20260621_002_crm_core.sql`
-- `20260621_008_frontend_rpc_compatibility.sql`
+- `supabase/legacy-migrations/20260622000100_apply_vimob_v3_schema.sql` (seções do núcleo de CRM e RPCs do frontend)
 
 Tables:
 - `pipelines`
@@ -129,7 +128,7 @@ Routes:
 - `/settings/site`
 
 Drafts:
-- `20260621_003_properties_public_site.sql`
+- `supabase/legacy-migrations/20260622000100_apply_vimob_v3_schema.sql` (seção de imóveis e site público)
 - Existing migration `20260621120000_add_site_module_tables.sql`
 
 Tables:
@@ -171,8 +170,7 @@ Routes:
 - `/notifications`
 
 Draft:
-- `20260621_004_communications_integrations.sql`
-- `20260621_008_frontend_rpc_compatibility.sql`
+- `supabase/legacy-migrations/20260622000100_apply_vimob_v3_schema.sql` (seções de comunicações e RPCs do frontend)
 
 Tables:
 - `whatsapp_sessions`
@@ -231,7 +229,7 @@ Routes:
 - `/financeiro/dre`
 
 Draft:
-- `20260621_005_schedule_financial.sql`
+- `supabase/legacy-migrations/20260622000100_apply_vimob_v3_schema.sql` (seção de agenda e financeiro)
 
 Tables:
 - `schedule_events`
@@ -271,8 +269,7 @@ Routes:
 - `/settings?tab=api`
 
 Draft:
-- `20260621_006_automations_gamification_admin.sql`
-- `20260621_008_frontend_rpc_compatibility.sql`
+- `supabase/legacy-migrations/20260622000100_apply_vimob_v3_schema.sql` (seções de automações, gamificação, administração e RPCs do frontend)
 
 Tables:
 - `automations`
@@ -324,7 +321,7 @@ Review focus:
 ## Storage
 
 Draft:
-- `20260621_007_storage_buckets.sql`
+- `supabase/legacy-migrations/20260622000100_apply_vimob_v3_schema.sql` (seção de buckets do Storage)
 
 Buckets:
 - Public: `avatars`, `logos`, `properties`, `site-images`

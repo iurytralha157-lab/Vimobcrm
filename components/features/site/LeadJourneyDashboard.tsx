@@ -16,6 +16,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useQuery } from '@tanstack/react-query';
 import { siteAPI } from '@/lib/api/site';
 import { VisitorMap } from './VisitorMap';
+import { getSitePublicUrl } from '@/lib/site/site-publication';
 
 const EVENT_LABELS: Record<string, string> = {
   pageview: 'Visualização',
@@ -74,15 +75,11 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
     enabled: !!organizationId,
   });
 
-  const siteBaseUrl = (() => {
-    if (siteInfo?.custom_domain && siteInfo?.domain_verified) {
-      return `https://${siteInfo.custom_domain}`;
-    }
-    if (siteInfo?.subdomain) {
-      return `https://vimob.vettercompany.com.br/sites/${siteInfo.subdomain}`;
-    }
-    return null;
-  })();
+  const siteBaseUrl = getSitePublicUrl({
+    customDomain: siteInfo?.custom_domain,
+    domainVerified: siteInfo?.domain_verified,
+    subdomain: siteInfo?.subdomain,
+  });
 
   if (isLoading) {
     return (

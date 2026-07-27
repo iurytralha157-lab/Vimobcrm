@@ -1,11 +1,23 @@
 "use client";
 
-import Image from "next/image";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { AuthLogo } from "@/components/features/auth/auth-logo";
+import { VimobLoader } from "@/components/shared/loading";
 import { useAuth } from "@/contexts/AuthContext";
-import { SignupPaymentPanel } from "./signup-payment-panel";
+
+const SignupPaymentPanel = dynamic(
+  () => import("./signup-payment-panel").then((module) => module.SignupPaymentPanel),
+  {
+    loading: () => (
+      <div className="flex min-h-32 items-center justify-center">
+        <VimobLoader size="sm" label="Carregando pagamento..." />
+      </div>
+    ),
+  },
+);
 
 type OnboardingStep = 1 | 2 | 3 | 4;
 
@@ -318,20 +330,6 @@ function translateSignupMessage(message?: string) {
   return message || "Não foi possível concluir o cadastro.";
 }
 
-function VimobLogo() {
-  return (
-    <Image
-      src="/images/logo-white.png"
-      alt="Vimob"
-      width={1228}
-      height={429}
-      loading="eager"
-      className="mx-auto"
-      style={{ width: "148px", height: "auto" }}
-    />
-  );
-}
-
 function EnvelopeIcon() {
   return (
     <svg
@@ -422,7 +420,15 @@ function StepIndicator({ step }: { step: OnboardingStep }) {
   const currentStep = Math.min(step, 3);
 
   return (
-    <div className="mb-5" aria-label={`Etapa ${currentStep} de 3`}>
+    <div
+      className="mb-5"
+      role="progressbar"
+      aria-label="Progresso do cadastro"
+      aria-valuemin={1}
+      aria-valuemax={3}
+      aria-valuenow={currentStep}
+      aria-valuetext={`Etapa ${currentStep} de 3`}
+    >
       <div className="grid grid-cols-3 gap-2">
         {steps.map((item) => (
           <span
@@ -490,6 +496,7 @@ export function OnboardingForm() {
   const [isChangingCheckoutPlan, setIsChangingCheckoutPlan] = useState(false);
   const [isUpdatingCheckoutPlan, setIsUpdatingCheckoutPlan] = useState(false);
   const [planOptions, setPlanOptions] = useState<PlanOption[]>(fallbackPlanOptions);
+  const plansRequestStarted = useRef(false);
   const selectedPlan = planOptions.find((plan) => plan.slug === formData.planSlug);
   const shouldShowPaymentPanel = step === 3 && !!selectedPlan;
   const isCheckoutPlanLocked = Boolean(checkoutToken) && !isChangingCheckoutPlan;
@@ -527,12 +534,14 @@ export function OnboardingForm() {
     !!selectedPlan && !isSubmitting && !isUpdatingCheckoutPlan && !checkoutToken;
 
   useEffect(() => {
+    if (step < 2 || plansRequestStarted.current) return;
+
+    plansRequestStarted.current = true;
     let isMounted = true;
 
     async function loadPlans() {
       try {
         const response = await fetch("/api/onboarding/plans", {
-          cache: "no-store",
           headers: { Accept: "application/json" },
         });
         const payload = (await response.json()) as PublicPlansResponse;
@@ -553,7 +562,12 @@ export function OnboardingForm() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [step]);
+
+  useEffect(() => {
+    if (step !== 2) return;
+    void import("./signup-payment-panel");
+  }, [step]);
 
   const handleAccessPlatform = useCallback(
     async (organizationId?: string | null) => {
@@ -726,7 +740,8 @@ export function OnboardingForm() {
   return (
     <div className="relative w-full max-w-sm">
       <header className="mb-5 text-center">
-        <VimobLogo />
+        <AuthLogo />
+        {step !== 4 ? <h1 className="sr-only">Criar conta no Vimob CRM</h1> : null}
         <p className="mt-4 text-sm font-extralight tracking-wide text-white/50">
           {step === 4
             ? "Estamos preparando seu ambiente"
@@ -755,7 +770,7 @@ export function OnboardingForm() {
           </div>
           <Link
             href="/login"
-            className="inline-flex h-12 w-full items-center justify-center rounded-[6px] bg-[#FF4529] text-[12px] font-extralight uppercase tracking-[0.08em] text-white outline-none transition-opacity hover:opacity-90 focus-visible:opacity-90"
+            className="auth-primary-action inline-flex h-12 w-full items-center justify-center rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors"
           >
             Ir para login
           </Link>
@@ -837,7 +852,7 @@ export function OnboardingForm() {
 
               <button
                 type="submit"
-                className="h-12 w-full rounded-[6px] bg-[#FF4529] text-[12px] font-extralight uppercase tracking-[0.08em] text-white outline-none transition-opacity hover:opacity-90 focus-visible:opacity-90"
+                className="auth-primary-action h-12 w-full rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors"
               >
                 Continuar
               </button>
@@ -1010,7 +1025,7 @@ export function OnboardingForm() {
                 <button
                   type="submit"
                   disabled={!canContinueAccess}
-                  className="h-12 flex-1 rounded-[6px] bg-[#FF4529] text-[12px] font-extralight uppercase tracking-[0.08em] text-white outline-none transition-opacity hover:opacity-90 focus-visible:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
+                  className="auth-primary-action h-12 flex-1 rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   Continuar
                 </button>
@@ -1092,7 +1107,7 @@ export function OnboardingForm() {
                 <button
                   type="submit"
                   disabled={!canSubmitPlan}
-                  className="h-12 flex-1 rounded-[6px] bg-[#FF4529] text-[12px] font-extralight uppercase tracking-[0.08em] text-white outline-none transition-opacity hover:opacity-90 focus-visible:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
+                  className="auth-primary-action h-12 flex-1 rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   {isUpdatingCheckoutPlan
                     ? "Atualizando plano"

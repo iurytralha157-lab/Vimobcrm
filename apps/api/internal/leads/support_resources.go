@@ -2786,7 +2786,23 @@ func buildContactWhere(tenantContext tenant.Context, filter ContactListFilter) (
 	if filter.DealStatus != "" {
 		add("l.deal_status = $%d", filter.DealStatus)
 	}
-	if filter.Search == "" {
+	var occurredFrom any
+	var occurredTo any
+	if filter.Search == "" && filter.CreatedFrom != "" {
+		occurredFrom = filter.CreatedFrom
+	}
+	if filter.Search == "" && filter.CreatedTo != "" {
+		occurredTo = filter.CreatedTo
+	}
+	hasAttributionFilter := addLeadAttributionFilterCondition(&args, &where, "l", "lm", leadAttributionFilter{
+		Campaign:     filter.CampaignID,
+		AdSet:        filter.AdSetID,
+		Ad:           filter.AdID,
+		OccurredFrom: occurredFrom,
+		OccurredTo:   occurredTo,
+		DateCast:     "::timestamptz",
+	})
+	if filter.Search == "" && !hasAttributionFilter {
 		if filter.CreatedFrom != "" {
 			add("l.created_at >= $%d::timestamptz", filter.CreatedFrom)
 		}
@@ -2794,12 +2810,6 @@ func buildContactWhere(tenantContext tenant.Context, filter ContactListFilter) (
 			add("l.created_at <= $%d::timestamptz", filter.CreatedTo)
 		}
 	}
-	addMeta := func(leadColumns []string, columnID string, columnName string, value string) {
-		addLeadMetaFilterCondition(&args, &where, "l", "lm", leadColumns, columnID, columnName, value)
-	}
-	addMeta([]string{"meta_campaign_id", "utm_campaign"}, "campaign_id", "campaign_name", filter.CampaignID)
-	addMeta([]string{"meta_adset_id"}, "adset_id", "adset_name", filter.AdSetID)
-	addMeta([]string{"meta_ad_id"}, "ad_id", "ad_name", filter.AdID)
 
 	return where, args, nil
 }

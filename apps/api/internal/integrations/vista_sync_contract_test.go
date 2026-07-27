@@ -63,7 +63,7 @@ func TestVistaEdgeFunctionSecurityAndTimeoutContracts(t *testing.T) {
 }
 
 func TestVistaCronUsesVaultWithoutEmbeddedCredential(t *testing.T) {
-	pattern := filepath.Join("..", "..", "..", "..", "supabase", "migrations", "*_secure_vista_scheduled_sync.sql")
+	pattern := filepath.Join("..", "..", "..", "..", "supabase", "legacy-migrations", "*_secure_vista_scheduled_sync.sql")
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		t.Fatalf("glob Vista scheduler migration: %v", err)

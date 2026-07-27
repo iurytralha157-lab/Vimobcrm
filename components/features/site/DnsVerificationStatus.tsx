@@ -20,24 +20,32 @@ export function DnsVerificationStatus({
   const verifyDomain = useVerifyDomain();
   const [lastCheck, setLastCheck] = useState<{
     verified: boolean;
-    error?: string;
+    reason?: 'challenge_unavailable' | 'challenge_mismatch';
   } | null>(null);
 
   const handleVerify = async () => {
-    const result = await verifyDomain.mutateAsync(domain);
-    setLastCheck({
-      verified: result.verified,
-      error: result.error
-    });
-    if (result.verified && onVerified) {
-      onVerified();
+    if (!domain.trim()) return;
+    try {
+      const result = await verifyDomain.mutateAsync(domain);
+      setLastCheck({
+        verified: result.verified,
+        reason: result.reason,
+      });
+      if (result.verified && onVerified) {
+        onVerified();
+      }
+    } catch {
+      setLastCheck({
+        verified: false,
+        reason: 'challenge_unavailable',
+      });
     }
   };
 
   if (isVerified) {
     return (
       <div className="flex items-center gap-2 text-sm">
-        <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800">
+        <Badge variant="outline" className="border-0 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400">
           <Check className="w-3 h-3 mr-1" />
           Verificado
         </Badge>
@@ -53,15 +61,16 @@ export function DnsVerificationStatus({
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3">
-        <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800">
+        <Badge variant="outline" className="border-0 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">
           <Clock className="w-3 h-3 mr-1" />
           Aguardando verificação
         </Badge>
         <Button
           variant="outline"
           size="sm"
+          className="border-0 bg-[var(--app-surface-soft)] shadow-none hover:bg-[var(--app-surface-hover)]"
           onClick={handleVerify}
-          disabled={verifyDomain.isPending}
+          disabled={verifyDomain.isPending || !domain.trim()}
         >
           {verifyDomain.isPending ? (
             <Loader2 className="w-4 h-4 mr-1 animate-spin" />
@@ -73,13 +82,15 @@ export function DnsVerificationStatus({
       </div>
 
       {lastCheck && !lastCheck.verified && (
-        <div className="bg-destructive/5 border border-destructive/20 rounded-lg p-3 space-y-2">
+        <div className="space-y-2 rounded-[8px] bg-destructive/5 p-3">
           <div className="flex items-center gap-2 text-sm font-medium text-destructive">
             <AlertCircle className="w-4 h-4" />
             Domínio ainda não configurado
           </div>
           <p className="text-xs text-muted-foreground">
-            Verifique se o Cloudflare Worker está ativo e a rota está configurada corretamente para o domínio.
+            {lastCheck.reason === 'challenge_mismatch'
+              ? 'O domínio respondeu, mas o token não confere. Copie novamente o Worker gerado para este domínio e publique.'
+              : 'Não encontramos o token de verificação. Confira se o Worker está publicado e se a rota do domínio está ativa.'}
           </p>
           <p className="text-xs text-muted-foreground">
             Testar em{' '}
@@ -91,14 +102,11 @@ export function DnsVerificationStatus({
               dnschecker.org
             </a>
           </p>
-          {lastCheck.error && (
-            <p className="text-xs text-destructive">Erro: {lastCheck.error}</p>
-          )}
         </div>
       )}
 
       {lastCheck?.verified && (
-        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3">
+        <div className="rounded-[8px] bg-green-50 p-3 dark:bg-green-900/20">
           <div className="flex items-center gap-2 text-sm font-medium text-green-700 dark:text-green-400">
             <Check className="w-4 h-4" />
             Domínio verificado com sucesso!

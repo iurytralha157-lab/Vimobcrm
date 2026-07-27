@@ -296,6 +296,8 @@ export const publicSiteConfigSchema = z.object({
   id: uuidSchema,
   organization_id: uuidSchema,
   is_active: z.boolean(),
+  maintenance_mode: z.boolean(),
+  maintenance_message: z.string().max(500).nullable(),
   subdomain: nullableString,
   custom_domain: nullableString,
   site_title: nullableString,
@@ -356,9 +358,32 @@ const browserFileSchema = z.custom<File>(
   'Arquivo invalido',
 )
 export const siteAssetInputSchema = z.object({ file: browserFileSchema, type: siteAssetTypeSchema }).strict()
+export const siteSlugSchema = z.string()
+  .trim()
+  .toLowerCase()
+  .min(3, 'Use pelo menos 3 caracteres')
+  .max(63, 'Use no máximo 63 caracteres')
+  .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, 'Use apenas letras minúsculas, números e hífens')
+export const siteCustomDomainSchema = z.string()
+  .trim()
+  .toLowerCase()
+  .min(3, 'Informe um domínio válido')
+  .max(253, 'O domínio é muito longo')
+  .refine((value) => {
+    if (value.includes('://') || value.includes('/') || value.includes(':') || value.includes('..')) return false
+    const labels = value.split('.')
+    if (labels.length < 2 || labels.at(-1)?.match(/^\d+$/)) return false
+    return labels.every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
+  }, 'Informe somente o domínio, sem https://, caminhos ou portas')
 const organizationSiteSchema = z.object({
-  id: uuidSchema, organization_id: uuidSchema, is_active: z.boolean(), subdomain: nullableString,
-  custom_domain: nullableString, domain_verified: z.boolean(), site_theme: z.string(),
+  id: uuidSchema, organization_id: uuidSchema, is_active: z.boolean(),
+  maintenance_mode: z.boolean(), maintenance_message: z.string().max(500).nullable(),
+  subdomain: siteSlugSchema.nullable(), custom_domain: siteCustomDomainSchema.nullable(),
+  domain_verified: z.boolean(), domain_verified_at: timestampSchema.nullable(),
+  domain_verification_token: uuidSchema,
+  site_title: z.string().trim().max(180).nullable(),
+  site_description: z.string().trim().max(500).nullable(),
+  site_theme: z.string(),
   background_color: z.string(), text_color: z.string(), card_color: z.string(), created_at: timestampSchema, updated_at: timestampSchema,
 }).passthrough()
 export const organizationSiteMutationSchema = organizationSiteSchema.omit({ id: true, organization_id: true, created_at: true, updated_at: true }).partial()
@@ -377,6 +402,25 @@ export const apiSiteMenuItemListResponseSchema = apiEnvelopeSchema(z.array(siteM
 export const apiSiteSearchFilterResponseSchema = apiEnvelopeSchema(siteSearchFilterSchema)
 export const apiSiteSearchFilterListResponseSchema = apiEnvelopeSchema(z.array(siteSearchFilterSchema))
 export const apiSiteAssetResponseSchema = apiEnvelopeSchema(z.object({ url: z.string().url() }).passthrough())
+export const apiDomainVerificationResponseSchema = apiEnvelopeSchema(z.object({
+  domain: siteCustomDomainSchema,
+  verified: z.boolean(),
+  checked_at: timestampSchema,
+  reason: z.enum(['challenge_unavailable', 'challenge_mismatch']).optional(),
+}).strict())
+export const pageSpeedStrategySchema = z.enum(['desktop', 'mobile'])
+export const pageSpeedResponseSchema = z.object({
+  lighthouseResult: z.object({
+    fetchTime: timestampSchema,
+    categories: z.object({
+      performance: z.object({ score: z.number().min(0).max(1).nullable() }).passthrough(),
+    }).passthrough(),
+    audits: z.record(z.object({
+      numericValue: z.number().finite().optional(),
+      displayValue: z.string().optional(),
+    }).passthrough()).optional(),
+  }).passthrough(),
+}).passthrough()
 
 export const stageAutomationInputSchema = z.object({
   stage_id: uuidSchema.optional(), automation_type: z.string().trim().max(120).optional(), trigger_days: z.number().int().min(0).max(3_650).nullish(),

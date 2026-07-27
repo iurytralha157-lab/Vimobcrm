@@ -1,0 +1,1785 @@
+{
+    "gerado_em":  "2026-07-22",
+    "projeto_ref":  "iemalzlfnbouobyjwlwi",
+    "quantidade":  444,
+    "hash_manifesto_arquivos_sha256":  "7B37C192B184A8D1D2622FA40DF977CD05C9B49348AFD2B1FE20117CEE9F935B",
+    "observacao":  "Somente versões e nomes. O SQL bruto remoto não foi versionado porque contém tokens públicos anon legados.",
+    "migrations":  [
+                       {
+                           "versao":  "20260118165515",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260118172740",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260119153848",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260119182850",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260119183302",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260119190313",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260119190522",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260119190736",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260119193147",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260119201823",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260119202000",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260119202138",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260119205337",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260119213305",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260120001140",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260120144101",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260120144452",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260120152429",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260120152625",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260120155442",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260120160051",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260120163640",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260120170010",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260120181050",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260120181209",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260120181332",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260120181430",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260120191230",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260120204446",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260120214120",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260121024210",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260121024814",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260121095214",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260121121223",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260121172359",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260121203711",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260121204128",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260122031338",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260122031502",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260122031717",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260122031932",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260122032101",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260122032152",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260122032559",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260122032738",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260122033540",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260122034052",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260122131558",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260122133502",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260122134453",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260122135659",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260122140352",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260122233048",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260123030936",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260123032728",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260123035903",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260123040106",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260123132746",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260123134858",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260123142422",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260123144720",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260123150526",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260123155912",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260123165933",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260123173307",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260123200013",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260123212941",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260124131033",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260126033520",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260126034606",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260126042447",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260126162545",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260126163420",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260126164326",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260126180928",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260127025547",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260127025857",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260127030230",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260127033204",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260127180831",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260127183424",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260127184338",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260127185848",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260127200920",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260127201155",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260127203216",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260127220844",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260127230201",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260128130747",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260128142428",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260128144516",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260128145948",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260128150745",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260128151229",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260128152949",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260128154232",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260128155108",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260128161233",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260129041600",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260129043834",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260129044154",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260129133901",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260129161806",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260129162837",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260129181820",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260129190704",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260129192343",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260129193219",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260130222912",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260131010947",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260131014917",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260131190855",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260131191956",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260202191806",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260203160627",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260203161941",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260203162124",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260203164831",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260203171232",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260203171709",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260203224602",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260203230459",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260204045725",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260204051649",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260204053649",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260204141728",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260204142559",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260204161701",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260204161825",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260204211539",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260205014557",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260205020550",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260205023022",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260205023053",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260205023128",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260205035355",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260205163645",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260205195557",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260205233128",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260206013409",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260206180833",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260206193624",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260206205806",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260206231216",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260207163713",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260207172258",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260207174722",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260207174959",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260207175242",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260207180032",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260207180943",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260207181439",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260207181756",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260207190901",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260207191059",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208061901",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208061954",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208155125",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208160316",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208161820",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208162355",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208162824",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208163420",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208204945",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208213931",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208220156",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208220441",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208220754",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208221452",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208222038",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208222321",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208223333",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208224756",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260208225700",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260213050943",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260214031500",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260216212143",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260217020726",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260217145242",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260217161651",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260217220629",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260217221239",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260217222136",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260217224209",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260218010600",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260218014233",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260219211911",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260219222744",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260220115946",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260220122833",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260223130926",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260223172156",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260223173740",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260223210633",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260224033100",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260225173407",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260227140614",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260228054143",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260305192541",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260305212356",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260305213406",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260307174739",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260307175548",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260308215524",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260314093703",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260314150239",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260316020114",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260316020152",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260316123044",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260316123641",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260316145335",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260319142913",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260319143749",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260319145123",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260322223526",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260323034826",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260323072511",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260323072604",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260324041531",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260325123705",
+                           "nome":  ""
+                       },
+                       {
+                           "versao":  "20260530220614",
+                           "nome":  "add_whatsapp_reaction_metadata"
+                       },
+                       {
+                           "versao":  "20260531110531",
+                           "nome":  "add_creci_to_onboarding_and_organizations"
+                       },
+                       {
+                           "versao":  "20260531111039",
+                           "nome":  "add_whatsapp_limit_to_subscription_plans"
+                       },
+                       {
+                           "versao":  "20260531171516",
+                           "nome":  "add_trial_enabled_to_subscription_plans"
+                       },
+                       {
+                           "versao":  "20260601121840",
+                           "nome":  "lead_attachment_dedup"
+                       },
+                       {
+                           "versao":  "20260601122917",
+                           "nome":  "harden_lead_phone_dedup"
+                       },
+                       {
+                           "versao":  "20260601123203",
+                           "nome":  "lead_meta_campaign_tracking_indexes"
+                       },
+                       {
+                           "versao":  "20260601123331",
+                           "nome":  "harden_lead_visibility_policies"
+                       },
+                       {
+                           "versao":  "20260601134822",
+                           "nome":  "merge_lid_whatsapp_conversations"
+                       },
+                       {
+                           "versao":  "20260601135000",
+                           "nome":  "noop_check_not_applicable"
+                       },
+                       {
+                           "versao":  "20260601151625",
+                           "nome":  "harden_financial_commission_rules"
+                       },
+                       {
+                           "versao":  "20260602223707",
+                           "nome":  "property_address_visibility"
+                       },
+                       {
+                           "versao":  "20260603023044",
+                           "nome":  "meta_forms_wizard_and_distribution"
+                       },
+                       {
+                           "versao":  "20260603041345",
+                           "nome":  "add_round_robins_created_by"
+                       },
+                       {
+                           "versao":  "20260603053842",
+                           "nome":  "harden_whatsapp_lead_history_rls"
+                       },
+                       {
+                           "versao":  "20260603111425",
+                           "nome":  "preserve_whatsapp_messages_on_session_delete"
+                       },
+                       {
+                           "versao":  "20260603111522",
+                           "nome":  "preserve_whatsapp_conversations_on_session_delete"
+                       },
+                       {
+                           "versao":  "20260603154402",
+                           "nome":  "whatsapp_session_delete_and_limit_override"
+                       },
+                       {
+                           "versao":  "20260603154508",
+                           "nome":  "backfill_plenus_obra_whatsapp_unlimited"
+                       },
+                       {
+                           "versao":  "20260604022413",
+                           "nome":  "notify_new_lead_whatsapp_responsible"
+                       },
+                       {
+                           "versao":  "20260604061402",
+                           "nome":  "disable_legacy_whatsapp_lead_notification"
+                       },
+                       {
+                           "versao":  "20260604062316",
+                           "nome":  "disable_legacy_whatsapp_lead_notification"
+                       },
+                       {
+                           "versao":  "20260604063358",
+                           "nome":  "rebind_whatsapp_conversation_session"
+                       },
+                       {
+                           "versao":  "20260604064648",
+                           "nome":  "edge_rate_limits"
+                       },
+                       {
+                           "versao":  "20260604064827",
+                           "nome":  "ai_jenny_control_plane"
+                       },
+                       {
+                           "versao":  "20260604162742",
+                           "nome":  "schedule_event_recurrence"
+                       },
+                       {
+                           "versao":  "20260605123655",
+                           "nome":  "schedule_event_visibility"
+                       },
+                       {
+                           "versao":  "20260606125419",
+                           "nome":  "add_team_status_logo_creator"
+                       },
+                       {
+                           "versao":  "20260606144530",
+                           "nome":  "allow_management_permissions_for_teams"
+                       },
+                       {
+                           "versao":  "20260606163141",
+                           "nome":  "respect_user_availability_for_distribution"
+                       },
+                       {
+                           "versao":  "20260606163356",
+                           "nome":  "align_default_availability_with_ui"
+                       },
+                       {
+                           "versao":  "20260606163519",
+                           "nome":  "fix_availability_helper_ambiguity"
+                       },
+                       {
+                           "versao":  "20260611102229",
+                           "nome":  "harden_whatsapp_conversation_identity"
+                       },
+                       {
+                           "versao":  "20260611111234",
+                           "nome":  "remove_lead_phone_from_notifications"
+                       },
+                       {
+                           "versao":  "20260611134444",
+                           "nome":  "disable_lead_whatsapp_appointment_reminders"
+                       },
+                       {
+                           "versao":  "20260611143904",
+                           "nome":  "harden_dashboard_and_property_activities"
+                       },
+                       {
+                           "versao":  "20260611144224",
+                           "nome":  "fix_activity_gamification_for_org_activities"
+                       },
+                       {
+                           "versao":  "20260611151656",
+                           "nome":  "optimize_dashboard_user_filters"
+                       },
+                       {
+                           "versao":  "20260611164629",
+                           "nome":  "harden_schedule_visibility_and_access"
+                       },
+                       {
+                           "versao":  "20260611185119",
+                           "nome":  "mask_schedule_busy_owner_metadata"
+                       },
+                       {
+                           "versao":  "20260611185442",
+                           "nome":  "restore_operational_request_tables"
+                       },
+                       {
+                           "versao":  "20260611202253",
+                           "nome":  "harden_crm_management_scope_constraints"
+                       },
+                       {
+                           "versao":  "20260611202532",
+                           "nome":  "harden_notification_rls_and_indexes"
+                       },
+                       {
+                           "versao":  "20260611202538",
+                           "nome":  "harden_automation_database_foundation"
+                       },
+                       {
+                           "versao":  "20260611202609",
+                           "nome":  "harden_gamification_arena_rls"
+                       },
+                       {
+                           "versao":  "20260611202620",
+                           "nome":  "harden_notification_trigger_function_access"
+                       },
+                       {
+                           "versao":  "20260611202708",
+                           "nome":  "tighten_automation_execution_and_media_policies"
+                       },
+                       {
+                           "versao":  "20260611203300",
+                           "nome":  "harden_meta_integration_database_foundation"
+                       },
+                       {
+                           "versao":  "20260611203345",
+                           "nome":  "tighten_meta_public_grants"
+                       },
+                       {
+                           "versao":  "20260611203351",
+                           "nome":  "harden_pipeline_sla_foundation"
+                       },
+                       {
+                           "versao":  "20260611203428",
+                           "nome":  "add_safe_pipeline_stage_and_distribution_rpcs"
+                       },
+                       {
+                           "versao":  "20260611203439",
+                           "nome":  "harden_lead_distribution_queues"
+                       },
+                       {
+                           "versao":  "20260611203515",
+                           "nome":  "restrict_lead_distribution_rpc_grants"
+                       },
+                       {
+                           "versao":  "20260611203547",
+                           "nome":  "harden_pipeline_sla_and_stage_automation_rls"
+                       },
+                       {
+                           "versao":  "20260611203607",
+                           "nome":  "restrict_lead_intake_trigger_rpc"
+                       },
+                       {
+                           "versao":  "20260611203636",
+                           "nome":  "add_stage_operational_configs_rls_policies"
+                       },
+                       {
+                           "versao":  "20260611203711",
+                           "nome":  "tighten_pipeline_rpc_execute_grants"
+                       },
+                       {
+                           "versao":  "20260611203716",
+                           "nome":  "index_lead_distribution_queues"
+                       },
+                       {
+                           "versao":  "20260611203939",
+                           "nome":  "constrain_pipeline_sla_settings_and_round_robin_return"
+                       },
+                       {
+                           "versao":  "20260611204322",
+                           "nome":  "tighten_notification_own_org_scope"
+                       },
+                       {
+                           "versao":  "20260611204423",
+                           "nome":  "tighten_automation_permission_policies"
+                       },
+                       {
+                           "versao":  "20260611204441",
+                           "nome":  "allow_safe_pipeline_move_ordering"
+                       },
+                       {
+                           "versao":  "20260611204449",
+                           "nome":  "tighten_gamification_participants_rls"
+                       },
+                       {
+                           "versao":  "20260611204914",
+                           "nome":  "restrict_meta_integration_token_column_access"
+                       },
+                       {
+                           "versao":  "20260611205624",
+                           "nome":  "fix_move_lead_stage_leader_reference"
+                       },
+                       {
+                           "versao":  "20260611210046",
+                           "nome":  "fix_move_lead_stage_user_table"
+                       },
+                       {
+                           "versao":  "20260611210313",
+                           "nome":  "fix_move_lead_stage_permission_helper"
+                       },
+                       {
+                           "versao":  "20260612022850",
+                           "nome":  "fix_manual_lead_notification_channels"
+                       },
+                       {
+                           "versao":  "20260612024034",
+                           "nome":  "improve_new_lead_whatsapp_template"
+                       },
+                       {
+                           "versao":  "20260612024646",
+                           "nome":  "standardize_notification_templates_with_icons"
+                       },
+                       {
+                           "versao":  "20260612084456",
+                           "nome":  "route_lead_notifications_through_edge_function"
+                       },
+                       {
+                           "versao":  "20260612091231",
+                           "nome":  "extend_new_lead_notification_dedupe_window"
+                       },
+                       {
+                           "versao":  "20260612100254",
+                           "nome":  "jhenny_lead_memory_state"
+                       },
+                       {
+                           "versao":  "20260612121349",
+                           "nome":  "fix_reorder_stages_unique_positions"
+                       },
+                       {
+                           "versao":  "20260612125301",
+                           "nome":  "allow_org_admin_ai_settings"
+                       },
+                       {
+                           "versao":  "20260619113611",
+                           "nome":  "harden_deal_status_timestamps"
+                       },
+                       {
+                           "versao":  "20260619114239",
+                           "nome":  "add_duplicate_lead_phone_lookup"
+                       },
+                       {
+                           "versao":  "20260619123504",
+                           "nome":  "track_whatsapp_message_received_at"
+                       },
+                       {
+                           "versao":  "20260619131945",
+                           "nome":  "fix_whatsapp_conversation_insert_returning_rls"
+                       },
+                       {
+                           "versao":  "20260623005812",
+                           "nome":  "add_user_theme_preference"
+                       },
+                       {
+                           "versao":  "20260623141143",
+                           "nome":  "allow_multi_org_user_visibility"
+                       },
+                       {
+                           "versao":  "20260623150112",
+                           "nome":  "allow_active_member_organization_select"
+                       },
+                       {
+                           "versao":  "20260624211317",
+                           "nome":  "add_meta_oauth_flows"
+                       },
+                       {
+                           "versao":  "20260625124319",
+                           "nome":  "fix_gamification_mission_rls"
+                       },
+                       {
+                           "versao":  "20260629140349",
+                           "nome":  "align_properties_canonical_columns"
+                       },
+                       {
+                           "versao":  "20260629154035",
+                           "nome":  "align_users_profile_columns"
+                       },
+                       {
+                           "versao":  "20260630124205",
+                           "nome":  "autonomous_onboarding_legal_and_plans"
+                       },
+                       {
+                           "versao":  "20260630140137",
+                           "nome":  "harden_whatsapp_message_context"
+                       },
+                       {
+                           "versao":  "20260630191117",
+                           "nome":  "fix_lead_transfer_notifications_without_db_jwt"
+                       },
+                       {
+                           "versao":  "20260630191559",
+                           "nome":  "fix_push_trigger_public_jwt_fallback"
+                       },
+                       {
+                           "versao":  "20260701182236",
+                           "nome":  "align_notifications_backend_contract"
+                       },
+                       {
+                           "versao":  "20260702082905",
+                           "nome":  "align_lead_entry_events_contract"
+                       },
+                       {
+                           "versao":  "20260704210340",
+                           "nome":  "lead_redistribution_jobs"
+                       },
+                       {
+                           "versao":  "20260708001014",
+                           "nome":  "resolve_whatsapp_lead_by_phone"
+                       },
+                       {
+                           "versao":  "20260708001019",
+                           "nome":  "backfill_round_robin_member_organization_id"
+                       },
+                       {
+                           "versao":  "20260708001026",
+                           "nome":  "backfill_teams_missing_columns"
+                       },
+                       {
+                           "versao":  "20260708001034",
+                           "nome":  "align_webhook_lead_entry_events"
+                       },
+                       {
+                           "versao":  "20260708001111",
+                           "nome":  "ai_control_center"
+                       },
+                       {
+                           "versao":  "20260708001124",
+                           "nome":  "align_properties_teams_permissions"
+                       },
+                       {
+                           "versao":  "20260708001203",
+                           "nome":  "property_status_history_and_private_media"
+                       },
+                       {
+                           "versao":  "20260708001237",
+                           "nome":  "whatsapp_owner_only_privacy"
+                       },
+                       {
+                           "versao":  "20260708001244",
+                           "nome":  "optimize_whatsapp_conversations_list"
+                       },
+                       {
+                           "versao":  "20260708001319",
+                           "nome":  "allow_reserved_property_status"
+                       },
+                       {
+                           "versao":  "20260708023935",
+                           "nome":  "dedupe_round_robin_members_unique"
+                       },
+                       {
+                           "versao":  "20260708132035",
+                           "nome":  "align_whatsapp_conversations_webhook_schema"
+                       },
+                       {
+                           "versao":  "20260708132215",
+                           "nome":  "align_whatsapp_messages_webhook_schema"
+                       },
+                       {
+                           "versao":  "20260709052623",
+                           "nome":  "align_whatsapp_conversations_webhook_schema"
+                       },
+                       {
+                           "versao":  "20260709052636",
+                           "nome":  "align_whatsapp_messages_webhook_schema"
+                       },
+                       {
+                           "versao":  "20260709052656",
+                           "nome":  "backfill_whatsapp_group_conversation_names"
+                       },
+                       {
+                           "versao":  "20260710065420",
+                           "nome":  "repair_whatsapp_outbound_contact_identity"
+                       },
+                       {
+                           "versao":  "20260710173356",
+                           "nome":  "add_missing_created_at_compat_columns"
+                       },
+                       {
+                           "versao":  "20260710173655",
+                           "nome":  "meta_webhook_events_payload_compat"
+                       },
+                       {
+                           "versao":  "20260710174422",
+                           "nome":  "enable_pg_trgm_for_lead_phone_search"
+                       },
+                       {
+                           "versao":  "20260710174732",
+                           "nome":  "lead_timeline_event_at_compat"
+                       },
+                       {
+                           "versao":  "20260710175220",
+                           "nome":  "grant_anon_execute_vimob_users_share_active_org"
+                       },
+                       {
+                           "versao":  "20260710175618",
+                           "nome":  "set_round_robin_member_organization_id_trigger"
+                       },
+                       {
+                           "versao":  "20260710175859",
+                           "nome":  "upsert_whatsapp_webhook_lead_rpc"
+                       },
+                       {
+                           "versao":  "20260710180111",
+                           "nome":  "remove_heavy_whatsapp_tables_from_realtime"
+                       },
+                       {
+                           "versao":  "20260710180325",
+                           "nome":  "fix_upsert_whatsapp_webhook_lead_without_whatsapp_column"
+                       },
+                       {
+                           "versao":  "20260710183253",
+                           "nome":  "p0_timeout_hardening"
+                       },
+                       {
+                           "versao":  "20260711232113",
+                           "nome":  "harden_multi_organization_isolation"
+                       },
+                       {
+                           "versao":  "20260711232228",
+                           "nome":  "fix_api_key_digest_pgcrypto_resolution"
+                       },
+                       {
+                           "versao":  "20260712004617",
+                           "nome":  "round_robin_team_members_as_queue_entries"
+                       },
+                       {
+                           "versao":  "20260712004619",
+                           "nome":  "backend_owned_notification_outbox_cleanup"
+                       },
+                       {
+                           "versao":  "20260712004622",
+                           "nome":  "fix_whatsapp_webhook_source_session_type"
+                       },
+                       {
+                           "versao":  "20260712004624",
+                           "nome":  "harden_remaining_organization_tables"
+                       },
+                       {
+                           "versao":  "20260712033433",
+                           "nome":  "harden_security_definer_execution"
+                       },
+                       {
+                           "versao":  "20260712033912",
+                           "nome":  "optimize_rls_and_hot_foreign_keys"
+                       },
+                       {
+                           "versao":  "20260712053854",
+                           "nome":  "guard_commission_for_unassigned_won_leads"
+                       },
+                       {
+                           "versao":  "20260712175619",
+                           "nome":  "harden_exposed_tracking_and_onboarding_policies"
+                       },
+                       {
+                           "versao":  "20260712175818",
+                           "nome":  "fix_public_tracking_policy_helper"
+                       },
+                       {
+                           "versao":  "20260712182918",
+                           "nome":  "consolidate_exact_duplicate_policies"
+                       },
+                       {
+                           "versao":  "20260712183311",
+                           "nome":  "consolidate_low_risk_permissive_policies"
+                       },
+                       {
+                           "versao":  "20260712183827",
+                           "nome":  "canonicalize_financial_rls"
+                       },
+                       {
+                           "versao":  "20260712185438",
+                           "nome":  "consolidate_service_domain_policies"
+                       },
+                       {
+                           "versao":  "20260712185757",
+                           "nome":  "consolidate_invitation_report_policies"
+                       },
+                       {
+                           "versao":  "20260712190206",
+                           "nome":  "harden_construction_child_rls"
+                       },
+                       {
+                           "versao":  "20260712190213",
+                           "nome":  "enforce_one_notification_session_per_organization"
+                       },
+                       {
+                           "versao":  "20260712195000",
+                           "nome":  "prepare_legacy_gamification_events"
+                       },
+                       {
+                           "versao":  "20260712196000",
+                           "nome":  "retire_legacy_gamification_ranking_trigger"
+                       },
+                       {
+                           "versao":  "20260712197000",
+                           "nome":  "repair_legacy_gamification_season_references"
+                       },
+                       {
+                           "versao":  "20260712200000",
+                           "nome":  "gamification_canonical_engine"
+                       },
+                       {
+                           "versao":  "20260712200500",
+                           "nome":  "repair_legacy_automation_conversation_references"
+                       },
+                       {
+                           "versao":  "20260712201000",
+                           "nome":  "automation_runtime_hardening"
+                       },
+                       {
+                           "versao":  "20260712210000",
+                           "nome":  "prepare_attention_stage_operational_config"
+                       },
+                       {
+                           "versao":  "20260712215000",
+                           "nome":  "prepare_attention_stage_automation_config"
+                       },
+                       {
+                           "versao":  "20260712220000",
+                           "nome":  "lead_attention_cadence_engine"
+                       },
+                       {
+                           "versao":  "20260712221000",
+                           "nome":  "lead_attention_security_indexes"
+                       },
+                       {
+                           "versao":  "20260712222000",
+                           "nome":  "lead_attention_round_robin_indexes"
+                       },
+                       {
+                           "versao":  "20260712231000",
+                           "nome":  "harden_lead_intake_execution"
+                       },
+                       {
+                           "versao":  "20260712235830",
+                           "nome":  "whatsapp_online_indexes_precheck"
+                       },
+                       {
+                           "versao":  "20260712235840",
+                           "nome":  "whatsapp_client_idempotency_online_index"
+                       },
+                       {
+                           "versao":  "20260712235845",
+                           "nome":  "whatsapp_client_idempotency_index_verify"
+                       },
+                       {
+                           "versao":  "20260712235850",
+                           "nome":  "whatsapp_history_timeline_online_index"
+                       },
+                       {
+                           "versao":  "20260712235855",
+                           "nome":  "whatsapp_timeline_index_verify"
+                       },
+                       {
+                           "versao":  "20260712235900",
+                           "nome":  "whatsapp_durable_delivery_foundation"
+                       },
+                       {
+                           "versao":  "20260713000400",
+                           "nome":  "whatsapp_realtime_private_predeploy"
+                       },
+                       {
+                           "versao":  "20260713000450",
+                           "nome":  "whatsapp_strict_meta_lead_creation_guard"
+                       },
+                       {
+                           "versao":  "20260713000460",
+                           "nome":  "whatsapp_session_lead_unique_precheck"
+                       },
+                       {
+                           "versao":  "20260713000465",
+                           "nome":  "whatsapp_session_lead_unique_online_index"
+                       },
+                       {
+                           "versao":  "20260713000470",
+                           "nome":  "whatsapp_session_lead_unique_verify"
+                       },
+                       {
+                           "versao":  "20260713000475",
+                           "nome":  "drop_global_whatsapp_lead_unique_online"
+                       },
+                       {
+                           "versao":  "20260713000480",
+                           "nome":  "whatsapp_session_lead_unique_final_verify"
+                       },
+                       {
+                           "versao":  "20260713000490",
+                           "nome":  "whatsapp_automation_canonical_outbox"
+                       },
+                       {
+                           "versao":  "20260713000495",
+                           "nome":  "whatsapp_remove_obsolete_session_aliases"
+                       },
+                       {
+                           "versao":  "20260713000496",
+                           "nome":  "whatsapp_outbox_provider_idempotency_guard"
+                       },
+                       {
+                           "versao":  "20260713042119",
+                           "nome":  "whatsapp_provider_message_id_guard_scope"
+                       },
+                       {
+                           "versao":  "20260713045449",
+                           "nome":  "whatsapp_message_context_immutability"
+                       },
+                       {
+                           "versao":  "20260713223156",
+                           "nome":  "sanitize_whatsapp_message_metadata_raw"
+                       },
+                       {
+                           "versao":  "20260713231835",
+                           "nome":  "harden_whatsapp_storage_for_3k"
+                       },
+                       {
+                           "versao":  "20260715044902",
+                           "nome":  "harden_property_code_uniqueness"
+                       },
+                       {
+                           "versao":  "20260716152020",
+                           "nome":  "add_nullable_lead_team_id"
+                       },
+                       {
+                           "versao":  "20260716153114",
+                           "nome":  "restore_whatsapp_rls_helper_grants"
+                       },
+                       {
+                           "versao":  "20260716153133",
+                           "nome":  "add_nullable_lead_team_id"
+                       },
+                       {
+                           "versao":  "20260716153543",
+                           "nome":  "unify_user_permission_overrides"
+                       },
+                       {
+                           "versao":  "20260716160035",
+                           "nome":  "default_all_users_to_light_theme"
+                       },
+                       {
+                           "versao":  "20260717154202",
+                           "nome":  "grupo_olx_portal_integration"
+                       },
+                       {
+                           "versao":  "20260717154341",
+                           "nome":  "harden_grupo_olx_portal_performance"
+                       },
+                       {
+                           "versao":  "20260717205434",
+                           "nome":  "add_public_site_tracking_context_columns"
+                       },
+                       {
+                           "versao":  "20260718190932",
+                           "nome":  "harden_system_settings_access"
+                       },
+                       {
+                           "versao":  "20260718192917",
+                           "nome":  "harden_private_media_storage"
+                       },
+                       {
+                           "versao":  "20260718194033",
+                           "nome":  "replace_legacy_storage_access_helper"
+                       },
+                       {
+                           "versao":  "20260719040806",
+                           "nome":  "fix_whatsapp_webhook_source_session_uuid"
+                       },
+                       {
+                           "versao":  "20260719171444",
+                           "nome":  "fix_automation_whatsapp_lead_phone"
+                       },
+                       {
+                           "versao":  "20260719171807",
+                           "nome":  "fix_automation_whatsapp_conversation_archive_state"
+                       },
+                       {
+                           "versao":  "20260719172113",
+                           "nome":  "fix_automation_whatsapp_conversation_conflict_key"
+                       },
+                       {
+                           "versao":  "20260719173844",
+                           "nome":  "retire_legacy_record_automation_whatsapp_message"
+                       },
+                       {
+                           "versao":  "20260719175439",
+                           "nome":  "retire_unused_telephony_metrics_rpc"
+                       },
+                       {
+                           "versao":  "20260719180430",
+                           "nome":  "retire_unused_telephony_ranking_rpc"
+                       },
+                       {
+                           "versao":  "20260719181633",
+                           "nome":  "retire_legacy_sync_user_level_and_xp_rpc"
+                       },
+                       {
+                           "versao":  "20260719190205",
+                           "nome":  "retire_legacy_process_gamification_event_graph"
+                       },
+                       {
+                           "versao":  "20260719191918",
+                           "nome":  "retire_legacy_admin_dashboard_overview_rpc"
+                       },
+                       {
+                           "versao":  "20260719192907",
+                           "nome":  "retire_legacy_database_stats_admin_rpc"
+                       },
+                       {
+                           "versao":  "20260719220006",
+                           "nome":  "retire_legacy_accept_invite_rpc"
+                       },
+                       {
+                           "versao":  "20260719222208",
+                           "nome":  "retire_legacy_admin_dashboard_timeseries_rpc"
+                       },
+                       {
+                           "versao":  "20260719225409",
+                           "nome":  "restrict_legacy_whatsapp_lead_helper_execution"
+                       },
+                       {
+                           "versao":  "20260719230930",
+                           "nome":  "retire_legacy_visual_automation_tag_http_trigger"
+                       },
+                       {
+                           "versao":  "20260719232549",
+                           "nome":  "secure_vista_scheduled_sync"
+                       },
+                       {
+                           "versao":  "20260719234726",
+                           "nome":  "secure_vista_integration_credentials"
+                       },
+                       {
+                           "versao":  "20260720001320",
+                           "nome":  "secure_imoview_scheduled_sync"
+                       },
+                       {
+                           "versao":  "20260720001329",
+                           "nome":  "secure_imoview_integration_credentials"
+                       },
+                       {
+                           "versao":  "20260720002354",
+                           "nome":  "move_rls_helpers_to_private_schema"
+                       },
+                       {
+                           "versao":  "20260720002516",
+                           "nome":  "harden_default_deny_tables"
+                       },
+                       {
+                           "versao":  "20260720002644",
+                           "nome":  "disable_invalid_vista_integrations"
+                       },
+                       {
+                           "versao":  "20260720003004",
+                           "nome":  "disable_rejected_imoview_integrations"
+                       },
+                       {
+                           "versao":  "20260720004157",
+                           "nome":  "harden_users_client_mutations"
+                       },
+                       {
+                           "versao":  "20260720011358",
+                           "nome":  "drop_duplicate_indexes"
+                       },
+                       {
+                           "versao":  "20260720011830",
+                           "nome":  "harden_public_site_tracking_and_lead_intake"
+                       },
+                       {
+                           "versao":  "20260720011837",
+                           "nome":  "ignore_operational_audit_columns"
+                       },
+                       {
+                           "versao":  "20260720012248",
+                           "nome":  "audit_presence_foundation"
+                       },
+                       {
+                           "versao":  "20260720012253",
+                           "nome":  "fix_handle_lead_intake_super_admin_schema"
+                       },
+                       {
+                           "versao":  "20260720012255",
+                           "nome":  "optimize_schedule_reminder_worker"
+                       },
+                       {
+                           "versao":  "20260720012850",
+                           "nome":  "index_public_site_foreign_keys"
+                       },
+                       {
+                           "versao":  "20260720013325",
+                           "nome":  "consolidate_permissive_policies"
+                       },
+                       {
+                           "versao":  "20260720155944",
+                           "nome":  "track_invitation_resends"
+                       },
+                       {
+                           "versao":  "20260720161221",
+                           "nome":  "prevent_duplicate_pending_invitations"
+                       },
+                       {
+                           "versao":  "20260720233852",
+                           "nome":  "fix_round_robin_whatsapp_session_uuid"
+                       },
+                       {
+                           "versao":  "20260721000613",
+                           "nome":  "automation_conversational_handoff"
+                       },
+                       {
+                           "versao":  "20260721224141",
+                           "nome":  "operational_excellence_redistribution_cadence_push"
+                       },
+                       {
+                           "versao":  "20260721224229",
+                           "nome":  "automation_assign_user_command"
+                       },
+                       {
+                           "versao":  "20260721224753",
+                           "nome":  "operational_excellence_fk_indexes"
+                       },
+                       {
+                           "versao":  "20260721225741",
+                           "nome":  "cadence_historical_rollout_guard"
+                       },
+                       {
+                           "versao":  "20260721231059",
+                           "nome":  "cadence_default_obligations"
+                       },
+                       {
+                           "versao":  "20260722092604",
+                           "nome":  "optimize_dashboard_appointment_count"
+                       }
+                   ]
+}

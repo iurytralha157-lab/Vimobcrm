@@ -1,30 +1,19 @@
-'use client'
+"use client";
 
-import { ReactNode } from 'react'
-import { QueryProvider } from './query-provider'
+import { ReactNode } from "react";
 import { AuthProviderWrapper } from './auth-provider-wrapper'
 import { ThemeProviderWrapper } from './theme-provider'
 import { TelemetryProvider } from './telemetry-provider'
 import { Toaster } from 'sonner'
-import { LanguageProvider } from '@/contexts/LanguageContext'
-import { SidebarProvider } from '@/contexts/SidebarContext'
-import { UserThemeSync } from './user-theme-sync'
-import { BackendRealtimeBus } from '@/contexts/BackendRealtimeBus'
 
 export function RootProvider({ children }: { children: ReactNode }) {
   return (
     <ThemeProviderWrapper>
       <AuthProviderWrapper>
-        <QueryProvider>
-          <BackendRealtimeBus />
-          <TelemetryProvider />
-          <UserThemeSync />
-          <LanguageProvider>
-            <SidebarProvider>{children}</SidebarProvider>
-          </LanguageProvider>
-          <Toaster />
-        </QueryProvider>
+        {children}
+        <TelemetryProvider />
+        <Toaster />
       </AuthProviderWrapper>
     </ThemeProviderWrapper>
-  )
+  );
 }

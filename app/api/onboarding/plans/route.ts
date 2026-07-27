@@ -28,7 +28,9 @@ export async function GET() {
       headers: {
         Accept: 'application/json',
       },
-      cache: 'no-store',
+      next: {
+        revalidate: 300,
+      },
     })
     const payload = (await response.json().catch(() => null)) as PlansEnvelope | PublicPlan[] | null
     const plans = Array.isArray(payload) ? payload : payload?.data

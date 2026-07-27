@@ -1,4 +1,5 @@
 const SITE_ORIGIN = "https://app.vimobcrm.com.br";
+const DOMAIN_VERIFICATION_TOKEN = "__VIMOB_DOMAIN_VERIFICATION_TOKEN__";
 const HTML_CACHE_SECONDS = 300;
 const STALE_SECONDS = 86400;
 
@@ -7,6 +8,10 @@ function isHtmlRequest(request) {
 
   const accept = request.headers.get("accept") || "";
   return accept.includes("text/html") || accept.includes("*/*");
+}
+
+function isVerificationRequest(request) {
+  return new URL(request.url).pathname === "/.well-known/vimob-domain-verification";
 }
 
 function buildOriginRequest(request) {
@@ -37,7 +42,7 @@ function withPublicCacheHeaders(response) {
   headers.delete("set-cookie");
   headers.set(
     "Cache-Control",
-    `public, max-age=60, s-maxage=${HTML_CACHE_SECONDS}, stale-while-revalidate=${STALE_SECONDS}, stale-if-error=${STALE_SECONDS}`,
+    "public, max-age=60, s-maxage=" + HTML_CACHE_SECONDS + ", stale-while-revalidate=" + STALE_SECONDS + ", stale-if-error=" + STALE_SECONDS,
   );
   headers.set("X-Vimob-Public-Proxy", "cloudflare-worker");
 
@@ -61,6 +66,15 @@ async function fetchAndCache(request, cacheKey, cache) {
 
 const publicSiteWorker = {
   async fetch(request, env, ctx) {
+    if (isVerificationRequest(request)) {
+      return new Response(DOMAIN_VERIFICATION_TOKEN, {
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
     const cache = caches.default;
     const cacheable = isHtmlRequest(request);
     const cacheKey = cacheable ? new Request(request.url, { headers: request.headers }) : null;

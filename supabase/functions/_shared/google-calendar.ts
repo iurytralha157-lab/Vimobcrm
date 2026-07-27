@@ -1,11 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createClient } from "npm:@supabase/supabase-js@2";
+import {
+  buildGoogleEventAttendees,
+  buildGoogleEventDescription,
+  buildGoogleEventSummary,
+} from "./google-calendar-event.ts";
 
 export type JsonRecord = Record<string, any>;
 
 export const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-goog-channel-id, x-goog-channel-token, x-goog-resource-id, x-goog-resource-state",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-goog-channel-id, x-goog-channel-token, x-goog-resource-id, x-goog-resource-state, x-vimob-cron-secret",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
@@ -15,10 +20,9 @@ const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
 const GOOGLE_SCOPES = [
   "openid",
   "email",
-  "profile",
-  "https://www.googleapis.com/auth/calendar.events",
-  "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+  "https://www.googleapis.com/auth/calendar.events.owned",
 ];
+const GOOGLE_EVENT_TYPES = new Set(["call", "email", "meeting", "task", "message", "visit"]);
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -109,8 +113,34 @@ function yyyyMmDd(value: string) {
   return new Date(value).toISOString().slice(0, 10);
 }
 
+function nextYyyyMmDd(value: string) {
+  const date = new Date(`${yyyyMmDd(value)}T12:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function limitedText(value: unknown, maxLength: number, fallback: string | null = null) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text ? text.slice(0, maxLength) : fallback;
+}
+
 function normalizeCalendarId(value: string | null | undefined) {
   return value?.trim() || "primary";
+}
+
+function safeReturnUrl(value: unknown) {
+  const fallback = getGoogleOAuthConfig().postConnectRedirectUrl;
+  if (!value) return fallback || null;
+
+  try {
+    const candidate = new URL(String(value));
+    if (!fallback) return null;
+
+    const allowed = new URL(fallback);
+    return candidate.origin === allowed.origin ? candidate.toString() : fallback;
+  } catch {
+    return fallback || null;
+  }
 }
 
 export function getGoogleOAuthConfig() {
@@ -133,7 +163,18 @@ export async function authenticateUser(req: Request) {
   return data.user;
 }
 
-export async function getUserProfile(userId: string) {
+export async function authenticateCron(req: Request) {
+  const cronSecret = req.headers.get("x-vimob-cron-secret") || "";
+  if (!cronSecret) return false;
+
+  const { data, error } = await supabase.rpc("google_calendar_verify_cron_secret", {
+    p_secret: cronSecret,
+  });
+  if (error) throw error;
+  return data === true;
+}
+
+export async function getUserProfile(userId: string, requestedOrganizationId?: string | null) {
   const { data, error } = await supabase
     .from("users")
     .select("id, organization_id, email, name, role")
@@ -141,23 +182,55 @@ export async function getUserProfile(userId: string) {
     .maybeSingle();
 
   if (error) throw error;
-  if (!data?.organization_id) throw new Error("Usuario sem organizacao ativa.");
-  return data as JsonRecord;
+  if (!data) throw new Error("Usuario sem perfil.");
+
+  const organizationId = requestedOrganizationId || data.organization_id;
+  if (!organizationId) throw new Error("Usuario sem organizacao ativa.");
+
+  if (organizationId !== data.organization_id) {
+    const { data: membership, error: membershipError } = await supabase
+      .from("organization_members")
+      .select("id")
+      .eq("organization_id", organizationId)
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (membershipError) throw membershipError;
+    if (!membership) throw new Error("Sem acesso a organizacao informada.");
+  }
+
+  return { ...data, organization_id: organizationId } as JsonRecord;
 }
 
 export async function canManageScheduleEvent(event: JsonRecord, userId: string) {
   if (event.user_id === userId) return true;
 
-  const { data, error } = await supabase
-    .from("organization_members")
-    .select("role")
-    .eq("organization_id", event.organization_id)
-    .eq("user_id", userId)
-    .eq("is_active", true)
-    .maybeSingle();
+  const [
+    { data: assignee, error: assigneeError },
+    { data: membership, error: membershipError },
+  ] = await Promise.all([
+    supabase
+      .from("schedule_event_assignees")
+      .select("event_id")
+      .eq("organization_id", event.organization_id)
+      .eq("event_id", event.id)
+      .eq("user_id", userId)
+      .maybeSingle(),
+    supabase
+      .from("organization_members")
+      .select("role")
+      .eq("organization_id", event.organization_id)
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .maybeSingle(),
+  ]);
 
-  if (error) throw error;
-  return ["owner", "admin", "manager"].includes(String(data?.role || "").toLowerCase());
+  if (assigneeError) throw assigneeError;
+  if (membershipError) throw membershipError;
+  if (assignee) return true;
+
+  return ["owner", "admin", "manager"].includes(String(membership?.role || "").toLowerCase());
 }
 
 export async function createOAuthState(params: {
@@ -172,7 +245,7 @@ export async function createOAuthState(params: {
     state_hash: stateHash,
     organization_id: params.organizationId,
     user_id: params.userId,
-    return_url: params.returnUrl || null,
+    return_url: safeReturnUrl(params.returnUrl),
     expires_at: addSeconds(10 * 60),
   });
 
@@ -184,20 +257,15 @@ export async function consumeOAuthState(rawState: string) {
   const stateHash = await sha256Hex(rawState);
   const { data, error } = await supabase
     .from("google_calendar_oauth_states")
-    .select("*")
+    .update({ consumed_at: new Date().toISOString() })
     .eq("state_hash", stateHash)
     .is("consumed_at", null)
     .gt("expires_at", new Date().toISOString())
+    .select("*")
     .maybeSingle();
 
   if (error) throw error;
   if (!data) throw new Error("Estado OAuth invalido ou expirado.");
-
-  const { error: updateError } = await supabase
-    .from("google_calendar_oauth_states")
-    .update({ consumed_at: new Date().toISOString() })
-    .eq("state_hash", stateHash);
-  if (updateError) throw updateError;
 
   return data as JsonRecord;
 }
@@ -246,27 +314,6 @@ export async function fetchGoogleUserInfo(accessToken: string) {
   return data as JsonRecord;
 }
 
-async function createVaultSecret(secret: string, name: string, description: string) {
-  const { data, error } = await supabase.schema("vault").rpc("create_secret", {
-    new_secret: secret,
-    new_name: name,
-    new_description: description,
-  });
-  if (error) throw error;
-  return String(data);
-}
-
-async function updateVaultSecret(secretId: string, secret: string, name: string, description: string) {
-  const { error } = await supabase.schema("vault").rpc("update_secret", {
-    secret_id: secretId,
-    new_secret: secret,
-    new_name: name,
-    new_description: description,
-  });
-  if (error) throw error;
-  return secretId;
-}
-
 export async function saveTokenSecret(params: {
   existingSecretRef?: string | null;
   userId: string;
@@ -277,26 +324,26 @@ export async function saveTokenSecret(params: {
   const description = "Vimob CRM Google Calendar OAuth token";
   const secret = JSON.stringify(params.token);
 
-  if (params.existingSecretRef) {
-    return updateVaultSecret(params.existingSecretRef, secret, name, description);
-  }
-
-  return createVaultSecret(secret, name, description);
+  const { data, error } = await supabase.rpc("google_calendar_save_token_secret", {
+    p_existing_secret_ref: params.existingSecretRef || null,
+    p_secret: secret,
+    p_name: name,
+    p_description: description,
+  });
+  if (error) throw error;
+  return String(data);
 }
 
 export async function readTokenSecret(secretRef: string) {
-  const { data, error } = await supabase
-    .schema("vault")
-    .from("decrypted_secrets")
-    .select("decrypted_secret")
-    .eq("id", secretRef)
-    .maybeSingle();
+  const { data, error } = await supabase.rpc("google_calendar_get_token_secret", {
+    p_secret_ref: secretRef,
+  });
 
   if (error) throw error;
-  if (!data?.decrypted_secret) throw new Error("Token Google nao encontrado no Vault.");
+  if (!data) throw new Error("Token Google nao encontrado no Vault.");
 
   try {
-    return JSON.parse(data.decrypted_secret) as JsonRecord;
+    return JSON.parse(String(data)) as JsonRecord;
   } catch {
     throw new Error("Token Google invalido no Vault.");
   }
@@ -354,11 +401,10 @@ export async function upsertConnectionFromOAuth(params: {
     last_error: null,
   };
 
-  const { data, error } = await supabase
-    .from("google_calendar_tokens")
-    .upsert(row, { onConflict: "organization_id,user_id,account_email" })
-    .select("*")
-    .single();
+  const query = existing
+    ? supabase.from("google_calendar_tokens").update(row).eq("id", existing.id)
+    : supabase.from("google_calendar_tokens").insert(row);
+  const { data, error } = await query.select("*").single();
 
   if (error) throw error;
   return data as JsonRecord;
@@ -376,11 +422,16 @@ export async function getConnectionById(connectionId: string) {
   return data as JsonRecord;
 }
 
-export async function getConnectionForUser(userId: string, options: { requireSyncEnabled?: boolean } = {}) {
+export async function getConnectionForUser(
+  userId: string,
+  organizationId: string,
+  options: { requireSyncEnabled?: boolean } = {},
+) {
   const query = supabase
     .from("google_calendar_tokens")
     .select("*")
     .eq("user_id", userId)
+    .eq("organization_id", organizationId)
     .is("disconnected_at", null)
     .order("created_at", { ascending: false })
     .limit(1);
@@ -490,14 +541,85 @@ async function googleJson(connection: JsonRecord, path: string, init: RequestIni
   return data as JsonRecord;
 }
 
-function scheduleEventToGoogle(event: JsonRecord) {
+async function getLinkedLead(event: JsonRecord) {
+  if (!event.lead_id) return null;
+
+  const { data, error } = await supabase
+    .from("leads")
+    .select("id, name")
+    .eq("organization_id", event.organization_id)
+    .eq("id", event.lead_id)
+    .maybeSingle();
+  if (error) throw error;
+  return data as JsonRecord | null;
+}
+
+async function getLinkedProperty(event: JsonRecord) {
+  if (!event.property_id) return null;
+
+  const { data, error } = await supabase
+    .from("properties")
+    .select("id, title, code")
+    .eq("organization_id", event.organization_id)
+    .eq("id", event.property_id)
+    .maybeSingle();
+  if (error) throw error;
+  return data as JsonRecord | null;
+}
+
+async function getConnectedAssigneeEmails(event: JsonRecord) {
+  const { data: assignees, error: assigneesError } = await supabase
+    .from("schedule_event_assignees")
+    .select("user_id")
+    .eq("organization_id", event.organization_id)
+    .eq("event_id", event.id);
+  if (assigneesError) throw assigneesError;
+
+  const assigneeIds = Array.from(new Set(
+    (assignees || [])
+      .map((assignee) => assignee.user_id)
+      .filter((userId) => userId && userId !== event.user_id),
+  ));
+  if (assigneeIds.length === 0) return [];
+
+  const { data: connections, error: connectionsError } = await supabase
+    .from("google_calendar_tokens")
+    .select("user_id, account_email")
+    .eq("organization_id", event.organization_id)
+    .eq("sync_enabled", true)
+    .is("disconnected_at", null)
+    .in("user_id", assigneeIds);
+  if (connectionsError) throw connectionsError;
+
+  return (connections || []).map((connection) => connection.account_email);
+}
+
+async function getOutboundEventContext(event: JsonRecord) {
+  const [lead, property, attendeeEmails] = await Promise.all([
+    getLinkedLead(event),
+    getLinkedProperty(event),
+    getConnectedAssigneeEmails(event),
+  ]);
+
+  return {
+    event: { ...event, lead, property },
+    attendeeEmails,
+  };
+}
+
+function scheduleEventToGoogle(
+  event: JsonRecord,
+  attendeeEmails: unknown[],
+  organizerEmail?: unknown,
+) {
   const isAllDay = Boolean(event.is_all_day);
   const body: JsonRecord = {
-    summary: event.title,
-    description: event.description || undefined,
+    summary: buildGoogleEventSummary(event),
+    description: buildGoogleEventDescription(event),
     location: event.location || undefined,
     status: event.status === "cancelled" || event.status === "canceled" ? "cancelled" : "confirmed",
-    visibility: event.visibility === "private" ? "private" : undefined,
+    visibility: event.visibility === "private" ? "private" : "default",
+    attendees: buildGoogleEventAttendees(attendeeEmails, [organizerEmail]),
     extendedProperties: {
       private: {
         vimob_event_id: event.id,
@@ -510,7 +632,9 @@ function scheduleEventToGoogle(event: JsonRecord) {
 
   if (isAllDay) {
     body.start = { date: yyyyMmDd(event.start_time) };
-    body.end = { date: yyyyMmDd(event.end_time) };
+    // Google treats all-day event ends as exclusive; Vimob stores the final
+    // included day.
+    body.end = { date: nextYyyyMmDd(event.end_time) };
   } else {
     body.start = { dateTime: event.start_time, timeZone: "America/Sao_Paulo" };
     body.end = { dateTime: event.end_time, timeZone: "America/Sao_Paulo" };
@@ -539,13 +663,15 @@ function googleEventToSchedule(connection: JsonRecord, googleEvent: JsonRecord) 
   return {
     organization_id: connection.organization_id,
     user_id: connection.user_id,
-    title: googleEvent.summary || "Evento Google Calendar",
-    description: googleEvent.description || null,
-    event_type: privateProps.vimob_event_type || "meeting",
+    title: limitedText(googleEvent.summary, 180, "Evento Google Agenda"),
+    description: limitedText(googleEvent.description, 2000),
+    event_type: GOOGLE_EVENT_TYPES.has(privateProps.vimob_event_type)
+      ? privateProps.vimob_event_type
+      : "meeting",
     start_time: startTime || new Date().toISOString(),
     end_time: endTime || startTime || new Date().toISOString(),
     is_all_day: isAllDay,
-    location: googleEvent.location || null,
+    location: limitedText(googleEvent.location, 500),
     status: googleEvent.status === "cancelled" ? "cancelled" : "scheduled",
     visibility: googleEvent.visibility === "private" ? "private" : "default",
     reminder_minutes: null,
@@ -631,7 +757,7 @@ export async function pushScheduleEventToGoogle(eventId: string, actorUserId?: s
     throw new Error("Sem permissao para sincronizar este evento.");
   }
 
-  const connection = await getConnectionForUser(event.user_id);
+  const connection = await getConnectionForUser(event.user_id, event.organization_id);
   if (!connection) {
     await supabase.from("schedule_events").update({ google_sync_status: "not_connected" }).eq("id", event.id);
     return { skipped: true, reason: "NO_CONNECTION" };
@@ -645,13 +771,18 @@ export async function pushScheduleEventToGoogle(eventId: string, actorUserId?: s
     .eq("schedule_event_id", event.id)
     .maybeSingle();
 
-  const body = scheduleEventToGoogle(event);
+  const outboundContext = await getOutboundEventContext(event);
+  const body = scheduleEventToGoogle(
+    outboundContext.event,
+    outboundContext.attendeeEmails,
+    connection.account_email,
+  );
   const googleEvent = link?.google_event_id
-    ? await googleJson(connection, `/calendars/${calendarId}/events/${encodeURIComponent(link.google_event_id)}`, {
+    ? await googleJson(connection, `/calendars/${calendarId}/events/${encodeURIComponent(link.google_event_id)}?sendUpdates=all`, {
       method: "PATCH",
       body: JSON.stringify(body),
     })
-    : await googleJson(connection, `/calendars/${calendarId}/events`, {
+    : await googleJson(connection, `/calendars/${calendarId}/events?sendUpdates=all`, {
       method: "POST",
       body: JSON.stringify(body),
     });
@@ -675,6 +806,9 @@ export async function pushScheduleEventToGoogle(eventId: string, actorUserId?: s
 
 export async function deleteScheduleEventFromGoogle(eventId: string, actorUserId?: string | null) {
   const { data: event } = await supabase.from("schedule_events").select("*").eq("id", eventId).maybeSingle();
+  if (!event && actorUserId) {
+    throw new Error("Evento da agenda nao encontrado.");
+  }
   if (event && actorUserId && !(await canManageScheduleEvent(event, actorUserId))) {
     throw new Error("Sem permissao para remover este evento do Google.");
   }
@@ -721,7 +855,9 @@ async function upsertGoogleEventIntoSchedule(connection: JsonRecord, googleEvent
           google_sync_status: "synced",
           google_last_synced_at: new Date().toISOString(),
         })
-        .eq("id", link.schedule_event_id);
+        .eq("id", link.schedule_event_id)
+        .eq("organization_id", connection.organization_id)
+        .eq("user_id", connection.user_id);
     }
     await upsertEventLink({ connection, scheduleEventId: link?.schedule_event_id || null, googleEvent, origin: "google" });
     return { cancelled: true };
@@ -737,6 +873,8 @@ async function upsertGoogleEventIntoSchedule(connection: JsonRecord, googleEvent
       .from("schedule_events")
       .update(scheduleRow)
       .eq("id", targetEventId)
+      .eq("organization_id", connection.organization_id)
+      .eq("user_id", connection.user_id)
       .select("*")
       .maybeSingle();
     if (error) throw error;
@@ -765,6 +903,11 @@ export async function syncConnectionFromGoogle(connectionInput: JsonRecord, full
   let processed = 0;
 
   try {
+    await supabase
+      .from("google_calendar_tokens")
+      .update({ sync_status: "syncing", last_error: null })
+      .eq("id", connection.id);
+
     do {
       const url = new URL(`${GOOGLE_CALENDAR_BASE_URL}/calendars/${calendarId}/events`);
       url.searchParams.set("showDeleted", "true");
@@ -822,6 +965,20 @@ export async function ensureGoogleWatch(connection: JsonRecord) {
   if (!webhookUrl) return { skipped: true, reason: "NO_WEBHOOK_URL" };
 
   const calendarId = normalizeCalendarId(connection.calendar_id);
+  const reusableAfter = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const { data: activeChannels, error: activeChannelsError } = await supabase
+    .from("google_calendar_channels")
+    .select("*")
+    .eq("connection_id", connection.id)
+    .is("stopped_at", null)
+    .order("expires_at", { ascending: false });
+  if (activeChannelsError) throw activeChannelsError;
+
+  const reusableChannel = (activeChannels || []).find((channel) => channel.expires_at > reusableAfter);
+  if (reusableChannel) {
+    return { channel_id: reusableChannel.channel_id, reused: true };
+  }
+
   const channelId = crypto.randomUUID();
   const channelToken = randomToken(32);
   const expirationMs = Date.now() + (6 * 24 * 60 * 60 * 1000);
@@ -861,6 +1018,17 @@ export async function ensureGoogleWatch(connection: JsonRecord) {
     })
     .eq("id", connection.id);
 
+  for (const oldChannel of activeChannels || []) {
+    await googleFetch(connection, "/channels/stop", {
+      method: "POST",
+      body: JSON.stringify({ id: oldChannel.channel_id, resourceId: oldChannel.resource_id }),
+    }).catch(() => null);
+    await supabase
+      .from("google_calendar_channels")
+      .update({ stopped_at: new Date().toISOString() })
+      .eq("id", oldChannel.id);
+  }
+
   return { channel_id: channelId };
 }
 
@@ -885,6 +1053,19 @@ export async function enqueueSyncJob(params: {
     .select("*")
     .single();
 
+  if (error?.code === "23505" && params.action === "pull_incremental" && params.connectionId) {
+    const { data: existing, error: existingError } = await supabase
+      .from("google_calendar_sync_jobs")
+      .select("*")
+      .eq("connection_id", params.connectionId)
+      .eq("action", "pull_incremental")
+      .in("status", ["queued", "running", "failed"])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (existing) return existing as JsonRecord;
+  }
   if (error) throw error;
   return data as JsonRecord;
 }
@@ -906,29 +1087,20 @@ export async function processSyncJob(job: JsonRecord) {
 }
 
 export async function runDueJobs(limit = 10) {
-  const { data: jobs, error } = await supabase
-    .from("google_calendar_sync_jobs")
-    .select("*")
-    .in("status", ["queued", "failed"])
-    .lte("next_run_at", new Date().toISOString())
-    .lt("attempts", 5)
-    .order("created_at", { ascending: true })
-    .limit(limit);
+  const { data: jobs, error } = await supabase.rpc("google_calendar_claim_sync_jobs", {
+    p_limit: Math.max(1, Math.min(Number(limit) || 10, 100)),
+    p_worker: `google-calendar-sync-${crypto.randomUUID()}`,
+  });
 
   if (error) throw error;
   const results = [];
 
   for (const job of jobs || []) {
-    await supabase
-      .from("google_calendar_sync_jobs")
-      .update({ status: "running", locked_at: new Date().toISOString(), locked_by: "google-calendar-sync" })
-      .eq("id", job.id);
-
     try {
       const result = await processSyncJob(job);
       await supabase
         .from("google_calendar_sync_jobs")
-        .update({ status: "succeeded", last_error: null })
+        .update({ status: "succeeded", locked_at: null, locked_by: null, last_error: null })
         .eq("id", job.id);
       results.push({ id: job.id, ok: true, result });
     } catch (error) {
@@ -938,6 +1110,8 @@ export async function runDueJobs(limit = 10) {
         .update({
           status: attempts >= Number(job.max_attempts || 5) ? "dead" : "failed",
           attempts,
+          locked_at: null,
+          locked_by: null,
           last_error: errorMessage(error),
           next_run_at: addSeconds(Math.min(3600, 60 * attempts)),
         })
@@ -1001,13 +1175,8 @@ export async function disconnectConnection(connection: JsonRecord) {
       .eq("id", channel.id);
   }
 
-  await supabase
-    .from("google_calendar_tokens")
-    .update({
-      sync_enabled: false,
-      sync_status: "disconnected",
-      disconnected_at: new Date().toISOString(),
-      last_error: null,
-    })
-    .eq("id", connection.id);
+  const { error } = await supabase.rpc("google_calendar_disconnect_connection", {
+    p_connection_id: connection.id,
+  });
+  if (error) throw error;
 }

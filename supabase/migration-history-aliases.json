@@ -1,0 +1,297 @@
+{
+  "generated_at": "2026-07-22",
+  "project_ref": "iemalzlfnbouobyjwlwi",
+  "warning": "Aliases baseados somente em metadados. Nomes iguais não provam que o SQL seja idêntico byte a byte. Não repare o histórico de produção sem validar em homologação.",
+  "aliases": [
+    {
+      "name": "align_properties_canonical_columns",
+      "local_version": "20260629140137",
+      "remote_versions": [
+        "20260629140349"
+      ]
+    },
+    {
+      "name": "align_users_profile_columns",
+      "local_version": "20260629154002",
+      "remote_versions": [
+        "20260629154035"
+      ]
+    },
+    {
+      "name": "align_notifications_backend_contract",
+      "local_version": "20260701182158",
+      "remote_versions": [
+        "20260701182236"
+      ]
+    },
+    {
+      "name": "align_lead_entry_events_contract",
+      "local_version": "20260702072602",
+      "remote_versions": [
+        "20260702082905"
+      ]
+    },
+    {
+      "name": "lead_redistribution_jobs",
+      "local_version": "20260704204842",
+      "remote_versions": [
+        "20260704210340"
+      ]
+    },
+    {
+      "name": "resolve_whatsapp_lead_by_phone",
+      "local_version": "20260705182135",
+      "remote_versions": [
+        "20260708001014"
+      ]
+    },
+    {
+      "name": "backfill_round_robin_member_organization_id",
+      "local_version": "20260706140447",
+      "remote_versions": [
+        "20260708001019"
+      ]
+    },
+    {
+      "name": "backfill_teams_missing_columns",
+      "local_version": "20260706152300",
+      "remote_versions": [
+        "20260708001026"
+      ]
+    },
+    {
+      "name": "align_webhook_lead_entry_events",
+      "local_version": "20260706195208",
+      "remote_versions": [
+        "20260708001034"
+      ]
+    },
+    {
+      "name": "ai_control_center",
+      "local_version": "20260707011313",
+      "remote_versions": [
+        "20260708001111"
+      ]
+    },
+    {
+      "name": "align_properties_teams_permissions",
+      "local_version": "20260707123000",
+      "remote_versions": [
+        "20260708001124"
+      ]
+    },
+    {
+      "name": "property_status_history_and_private_media",
+      "local_version": "20260707185257",
+      "remote_versions": [
+        "20260708001203"
+      ]
+    },
+    {
+      "name": "whatsapp_owner_only_privacy",
+      "local_version": "20260707200640",
+      "remote_versions": [
+        "20260708001237"
+      ]
+    },
+    {
+      "name": "optimize_whatsapp_conversations_list",
+      "local_version": "20260707215710",
+      "remote_versions": [
+        "20260708001244"
+      ]
+    },
+    {
+      "name": "allow_reserved_property_status",
+      "local_version": "20260707225017",
+      "remote_versions": [
+        "20260708001319"
+      ]
+    },
+    {
+      "name": "align_whatsapp_conversations_webhook_schema",
+      "local_version": "20260708121000",
+      "remote_versions": [
+        "20260708132035",
+        "20260709052623"
+      ]
+    },
+    {
+      "name": "align_whatsapp_messages_webhook_schema",
+      "local_version": "20260708121500",
+      "remote_versions": [
+        "20260708132215",
+        "20260709052636"
+      ]
+    },
+    {
+      "name": "backfill_whatsapp_group_conversation_names",
+      "local_version": "20260709044000",
+      "remote_versions": [
+        "20260709052656"
+      ]
+    },
+    {
+      "name": "round_robin_team_members_as_queue_entries",
+      "local_version": "20260711210343",
+      "remote_versions": [
+        "20260712004617"
+      ]
+    },
+    {
+      "name": "backend_owned_notification_outbox_cleanup",
+      "local_version": "20260711220022",
+      "remote_versions": [
+        "20260712004619"
+      ]
+    },
+    {
+      "name": "harden_multi_organization_isolation",
+      "local_version": "20260711230251",
+      "remote_versions": [
+        "20260711232113"
+      ]
+    },
+    {
+      "name": "fix_api_key_digest_pgcrypto_resolution",
+      "local_version": "20260711232159",
+      "remote_versions": [
+        "20260711232228"
+      ]
+    },
+    {
+      "name": "fix_whatsapp_webhook_source_session_type",
+      "local_version": "20260711233500",
+      "remote_versions": [
+        "20260712004622"
+      ]
+    },
+    {
+      "name": "harden_remaining_organization_tables",
+      "local_version": "20260712004507",
+      "remote_versions": [
+        "20260712004624"
+      ]
+    },
+    {
+      "name": "guard_commission_for_unassigned_won_leads",
+      "local_version": "20260712053759",
+      "remote_versions": [
+        "20260712053854"
+      ]
+    },
+    {
+      "name": "harden_security_definer_execution",
+      "local_version": "20260712183000",
+      "remote_versions": [
+        "20260712033433"
+      ]
+    },
+    {
+      "name": "enforce_one_notification_session_per_organization",
+      "local_version": "20260712185846",
+      "remote_versions": [
+        "20260712190213"
+      ]
+    },
+    {
+      "name": "optimize_rls_and_hot_foreign_keys",
+      "local_version": "20260712190000",
+      "remote_versions": [
+        "20260712033912"
+      ]
+    },
+    {
+      "name": "harden_exposed_tracking_and_onboarding_policies",
+      "local_version": "20260712223000",
+      "remote_versions": [
+        "20260712175619"
+      ]
+    },
+    {
+      "name": "fix_public_tracking_policy_helper",
+      "local_version": "20260712223500",
+      "remote_versions": [
+        "20260712175818"
+      ]
+    },
+    {
+      "name": "consolidate_exact_duplicate_policies",
+      "local_version": "20260712224000",
+      "remote_versions": [
+        "20260712182918"
+      ]
+    },
+    {
+      "name": "consolidate_low_risk_permissive_policies",
+      "local_version": "20260712224500",
+      "remote_versions": [
+        "20260712183311"
+      ]
+    },
+    {
+      "name": "canonicalize_financial_rls",
+      "local_version": "20260712225000",
+      "remote_versions": [
+        "20260712183827"
+      ]
+    },
+    {
+      "name": "consolidate_service_domain_policies",
+      "local_version": "20260712225500",
+      "remote_versions": [
+        "20260712185438"
+      ]
+    },
+    {
+      "name": "consolidate_invitation_report_policies",
+      "local_version": "20260712230000",
+      "remote_versions": [
+        "20260712185757"
+      ]
+    },
+    {
+      "name": "harden_construction_child_rls",
+      "local_version": "20260712230500",
+      "remote_versions": [
+        "20260712190206"
+      ]
+    },
+    {
+      "name": "whatsapp_provider_message_id_guard_scope",
+      "local_version": "20260713000505",
+      "remote_versions": [
+        "20260713042119"
+      ]
+    },
+    {
+      "name": "restore_whatsapp_rls_helper_grants",
+      "local_version": "20260715145517",
+      "remote_versions": [
+        "20260716153114"
+      ]
+    },
+    {
+      "name": "add_nullable_lead_team_id",
+      "local_version": "20260715225431",
+      "remote_versions": [
+        "20260716152020",
+        "20260716153133"
+      ]
+    },
+    {
+      "name": "unify_user_permission_overrides",
+      "local_version": "20260715225432",
+      "remote_versions": [
+        "20260716153543"
+      ]
+    },
+    {
+      "name": "fix_round_robin_whatsapp_session_uuid",
+      "local_version": "20260720204000",
+      "remote_versions": [
+        "20260720233852"
+      ]
+    }
+  ]
+}

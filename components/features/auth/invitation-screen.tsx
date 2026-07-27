@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -11,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useInvitationByToken } from "@/hooks/use-invitation-by-token";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
+import { AuthLogo } from "./auth-logo";
 
 type AcceptResult = {
   success: boolean;
@@ -21,20 +21,6 @@ type AcceptResult = {
   organizationName: string;
   message?: string;
 };
-
-function VimobLogo() {
-  return (
-    <Image
-      src="/images/logo-white.png"
-      alt="Vimob"
-      width={1228}
-      height={429}
-      priority
-      className="mx-auto"
-      style={{ width: "138px", height: "auto" }}
-    />
-  );
-}
 
 export function InvitationScreen({ token }: { token: string }) {
   const router = useRouter();
@@ -126,7 +112,7 @@ export function InvitationScreen({ token }: { token: string }) {
       const { error } = await authAPI.login(email, password);
       if (error) {
         setStatusMessage("Convite aceito. Entre com sua nova senha para acessar.");
-        router.replace(`/login?email=${encodeURIComponent(email)}`);
+        router.replace("/login");
         return;
       }
 
@@ -160,27 +146,10 @@ export function InvitationScreen({ token }: { token: string }) {
   }
 
   return (
-    <div className="auth-page auth-page-dark relative h-dvh max-h-dvh w-full overflow-hidden font-sans">
-      <div className="absolute inset-0 z-0 h-full w-full" aria-hidden="true">
-        <div className="relative h-full w-full">
-          <Image
-            src="/images/login-hero.webp"
-            alt=""
-            fill
-            priority
-            unoptimized
-            className="object-cover object-[63%_center] brightness-[0.55] md:object-[68%_center] md:brightness-[0.82]"
-            sizes="100vw"
-          />
-        </div>
-      </div>
-      <div className="auth-hero-overlay absolute inset-0 z-[1] h-full w-full" aria-hidden="true" />
-      <div className="auth-hero-vignette absolute inset-0 z-[2] h-full w-full" aria-hidden="true" />
-
-      <main className="relative z-10 flex h-full w-full items-center justify-center px-6 py-10">
-        <section className="w-full max-w-sm">
+    <div className="w-full max-w-sm">
           <header className="mb-5 text-center">
-            <VimobLogo />
+            <AuthLogo width={138} />
+            <h1 className="sr-only">Aceitar convite do Vimob CRM</h1>
             <p className="mt-4 text-sm font-extralight tracking-wide text-white/60">
               Aceite o convite para acessar o Vimob CRM
             </p>
@@ -188,24 +157,32 @@ export function InvitationScreen({ token }: { token: string }) {
 
           <div className="rounded-[8px] bg-black/24 p-4 backdrop-blur-sm">
             {isLoading ? (
-              <div className="flex h-72 items-center justify-center">
+              <div
+                className="flex h-72 items-center justify-center"
+                role="status"
+                aria-label="Carregando convite"
+              >
                 <Loader2 className="h-5 w-5 animate-spin text-white/60" />
               </div>
             ) : !invitation ? (
               <div className="space-y-4 py-8 text-center">
-                <h1 className="text-xl font-extralight text-white">Convite expirado</h1>
+                <h2 className="text-xl font-extralight text-white">Convite expirado</h2>
                 <p className="text-sm font-extralight leading-6 text-white/60">
                   Solicite um novo convite ao administrador da organização.
                 </p>
                 <Link
                   href="/login"
-                  className="inline-flex h-11 items-center justify-center rounded-[6px] bg-[#FF4529] px-5 text-xs uppercase tracking-[0.08em] text-white"
+                  className="auth-primary-action inline-flex h-11 items-center justify-center rounded-[6px] px-5 text-xs uppercase tracking-[0.08em] transition-colors"
                 >
                   Ir para login
                 </Link>
               </div>
             ) : (
-              <form onSubmit={handleAcceptNewAccount} className="space-y-4">
+              <form
+                onSubmit={handleAcceptNewAccount}
+                className="space-y-4"
+                aria-busy={isSubmitting}
+              >
                 <div className="rounded-[6px] bg-white/[0.08] p-3 text-sm font-extralight text-white/70">
                   <p className="text-white">Convite para {organizationName}</p>
                   <p className="mt-1 text-white/55">{email}</p>
@@ -232,7 +209,7 @@ export function InvitationScreen({ token }: { token: string }) {
                       type="button"
                       onClick={loggedEmailMatches ? handleAcceptExistingAccount : handleLoginForInvitation}
                       disabled={isSubmitting || checkingSession}
-                      className="h-12 w-full rounded-[6px] bg-[#FF4529] text-[12px] font-extralight uppercase tracking-[0.08em] text-white transition-opacity hover:opacity-90 disabled:opacity-55"
+                      className="auth-primary-action h-12 w-full rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] transition-colors disabled:opacity-55"
                     >
                       {isSubmitting ? "Verificando..." : loggedEmailMatches ? "Aceitar convite" : "Entrar para aceitar"}
                     </button>
@@ -240,40 +217,75 @@ export function InvitationScreen({ token }: { token: string }) {
                 ) : (
                   <>
                     <div className="space-y-2">
-                      <label className="block text-sm font-extralight text-white">Nome completo</label>
+                      <label htmlFor="invitation-name" className="block text-sm font-extralight text-white">
+                        Nome completo
+                      </label>
                       <input
+                        id="invitation-name"
+                        name="name"
+                        type="text"
+                        autoComplete="name"
+                        required
                         value={name}
                         onChange={(event) => setName(event.target.value)}
+                        aria-invalid={Boolean(errorMessage)}
+                        aria-describedby={errorMessage ? "invitation-form-message" : undefined}
                         className="h-12 w-full rounded-[6px] border border-transparent bg-[#121212] px-4 text-sm font-extralight text-white outline-none placeholder:text-white/30"
                         placeholder="Seu nome"
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="block text-sm font-extralight text-white">WhatsApp</label>
+                      <label htmlFor="invitation-whatsapp" className="block text-sm font-extralight text-white">
+                        WhatsApp
+                      </label>
                       <input
+                        id="invitation-whatsapp"
+                        name="whatsapp"
+                        type="tel"
+                        inputMode="tel"
+                        autoComplete="tel"
                         value={whatsapp}
                         onChange={(event) => setWhatsapp(event.target.value)}
+                        aria-describedby={errorMessage ? "invitation-form-message" : undefined}
                         className="h-12 w-full rounded-[6px] border border-transparent bg-[#121212] px-4 text-sm font-extralight text-white outline-none placeholder:text-white/30"
                         placeholder="+55 (00) 00000-0000"
                       />
                     </div>
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div className="space-y-2">
-                        <label className="block text-sm font-extralight text-white">Senha</label>
+                        <label htmlFor="invitation-password" className="block text-sm font-extralight text-white">
+                          Senha
+                        </label>
                         <input
+                          id="invitation-password"
+                          name="password"
                           type="password"
+                          autoComplete="new-password"
+                          minLength={8}
+                          required
                           value={password}
                           onChange={(event) => setPassword(event.target.value)}
+                          aria-invalid={Boolean(errorMessage)}
+                          aria-describedby={errorMessage ? "invitation-form-message" : undefined}
                           className="h-12 w-full rounded-[6px] border border-transparent bg-[#121212] px-4 text-sm font-extralight text-white outline-none placeholder:text-white/30"
                           placeholder="Min. 8 caracteres"
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className="block text-sm font-extralight text-white">Confirmar</label>
+                        <label htmlFor="invitation-password-confirm" className="block text-sm font-extralight text-white">
+                          Confirmar
+                        </label>
                         <input
+                          id="invitation-password-confirm"
+                          name="passwordConfirm"
                           type="password"
+                          autoComplete="new-password"
+                          minLength={8}
+                          required
                           value={passwordConfirm}
                           onChange={(event) => setPasswordConfirm(event.target.value)}
+                          aria-invalid={Boolean(errorMessage)}
+                          aria-describedby={errorMessage ? "invitation-form-message" : undefined}
                           className="h-12 w-full rounded-[6px] border border-transparent bg-[#121212] px-4 text-sm font-extralight text-white outline-none placeholder:text-white/30"
                           placeholder="Repita a senha"
                         />
@@ -283,6 +295,8 @@ export function InvitationScreen({ token }: { token: string }) {
                     <div className="space-y-2 pt-1">
                       <label className="flex cursor-pointer items-start gap-3 text-xs font-extralight leading-5 text-white/68">
                         <input
+                          id="invitation-terms"
+                          name="termsAccepted"
                           type="checkbox"
                           checked={termsAccepted}
                           onChange={(event) => setTermsAccepted(event.target.checked)}
@@ -294,6 +308,8 @@ export function InvitationScreen({ token }: { token: string }) {
                       </label>
                       <label className="flex cursor-pointer items-start gap-3 text-xs font-extralight leading-5 text-white/68">
                         <input
+                          id="invitation-privacy"
+                          name="privacyAccepted"
                           type="checkbox"
                           checked={privacyAccepted}
                           onChange={(event) => setPrivacyAccepted(event.target.checked)}
@@ -308,7 +324,7 @@ export function InvitationScreen({ token }: { token: string }) {
                     <button
                       type="submit"
                       disabled={isSubmitting}
-                      className="h-12 w-full rounded-[6px] bg-[#FF4529] text-[12px] font-extralight uppercase tracking-[0.08em] text-white transition-opacity hover:opacity-90 disabled:opacity-55"
+                      className="auth-primary-action h-12 w-full rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] transition-colors disabled:opacity-55"
                     >
                       {isSubmitting ? "Finalizando..." : "Aceitar convite"}
                     </button>
@@ -316,19 +332,18 @@ export function InvitationScreen({ token }: { token: string }) {
                 )}
 
                 <p
+                  id="invitation-form-message"
                   className={cn(
                     "min-h-5 text-center text-sm font-extralight leading-5",
                     errorMessage ? "text-[#FF4529]" : "text-white/60",
                   )}
-                  aria-live="polite"
+                  role={errorMessage ? "alert" : "status"}
                 >
                   {errorMessage || statusMessage}
                 </p>
               </form>
             )}
           </div>
-        </section>
-      </main>
     </div>
   );
 }

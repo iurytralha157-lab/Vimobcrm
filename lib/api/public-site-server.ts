@@ -24,6 +24,8 @@ export interface PublicSiteConfig {
   organization_id: string;
   organization_name?: string | null;
   is_active: boolean;
+  maintenance_mode: boolean;
+  maintenance_message: string | null;
   subdomain: string | null;
   custom_domain: string | null;
   domain_verified?: boolean | null;

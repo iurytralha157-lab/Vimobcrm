@@ -53,6 +53,7 @@ Regras do Worker:
 
 - Enviar todas as requisicoes para `https://app.vimobcrm.com.br`.
 - Preservar o dominio do cliente com `X-Forwarded-Host`.
+- Responder `/.well-known/vimob-domain-verification` com o token exclusivo gerado para o site.
 - Cachear apenas HTML de `GET`/`HEAD`.
 - Servir HTML em cache se a origem falhar.
 - Nao cachear formularios, tracking, contatos ou qualquer chamada `POST`.
@@ -60,6 +61,21 @@ Regras do Worker:
 Para testar, use sempre o dominio real configurado na rota do Cloudflare. O endereco `.workers.dev` nao representa o dominio do cliente e pode nao carregar o site correto.
 
 O codigo base do Worker fica em `deploy/cloudflare-public-site-worker.js` e tambem aparece pronto para copiar dentro da configuracao de site do CRM.
+
+## Verificacao do dominio
+
+O dominio proprio so participa da resolucao publica depois de `domain_verified = true`.
+Ao salvar ou trocar `custom_domain`, a API:
+
+1. remove a verificacao anterior;
+2. gera um novo `domain_verification_token`;
+3. entrega um Worker com esse token no painel;
+4. confirma a posse em `POST /v1/site/domain/verify`, lendo o desafio no dominio real;
+5. marca o dominio como verificado apenas quando o valor confere.
+
+A verificacao bloqueia enderecos privados, loopback e link-local antes de fazer a
+requisicao externa. O token e uma prova publica de controle do dominio, nao uma
+credencial do Cloudflare.
 
 ## Resiliencia
 

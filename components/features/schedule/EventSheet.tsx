@@ -60,10 +60,26 @@ const recurrenceOptions = [
   { value: "yearly", label: "Anual" },
 ] as const;
 
-const visibilityOptions: { value: ScheduleEventVisibility; label: string }[] = [
-  { value: "default", label: "Padrão" },
-  { value: "public", label: "Público" },
-  { value: "private", label: "Particular" },
+const visibilityOptions: {
+  value: ScheduleEventVisibility;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: "default",
+    label: "Padrão",
+    description: "Quem não participa vê somente que o horário está ocupado.",
+  },
+  {
+    value: "public",
+    label: "Público",
+    description: "Quem tem acesso à agenda vê os detalhes permitidos.",
+  },
+  {
+    value: "private",
+    label: "Privado",
+    description: "Somente responsáveis e administradores veem o evento.",
+  },
 ];
 
 type RecurrenceRule = (typeof recurrenceOptions)[number]["value"];
@@ -693,29 +709,36 @@ export function EventSheet({
         </AgendaRow>
 
           <AgendaRow dataTour="agenda-event-visibility" icon={<Lock size={18} />} label="Visibilidade" inline>
-            {locked ? (
-              <FieldPill className="h-9 px-3 text-xs">
-                {visibilityOptions.find((option) => option.value === visibility)?.label || "Padrão"}
-              </FieldPill>
-            ) : (
-              <div className="inline-flex h-9 rounded-[8px] bg-[var(--app-surface-soft)] p-1">
-                {visibilityOptions.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setVisibility(option.value)}
-                    className={cn(
-                      "rounded-md px-3 text-xs font-semibold transition",
-                      visibility === option.value
-                        ? "bg-primary text-primary-foreground"
-                        : "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="flex flex-col items-start gap-1.5">
+              {locked ? (
+                <FieldPill className="h-9 px-3 text-xs">
+                  {visibilityOptions.find((option) => option.value === visibility)?.label || "Padrão"}
+                </FieldPill>
+              ) : (
+                <div className="inline-flex h-9 rounded-[8px] bg-[var(--app-surface-soft)] p-1">
+                  {visibilityOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setVisibility(option.value)}
+                      title={option.description}
+                      aria-label={`${option.label}: ${option.description}`}
+                      className={cn(
+                        "rounded-md px-3 text-xs font-semibold transition",
+                        visibility === option.value
+                          ? "bg-primary text-primary-foreground"
+                          : "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs leading-4 text-[var(--app-text-tertiary)]">
+                {visibilityOptions.find((option) => option.value === visibility)?.description}
+              </p>
+            </div>
           </AgendaRow>
 
           <AgendaRow icon={<User size={18} />} label="Lead/cliente" inline>

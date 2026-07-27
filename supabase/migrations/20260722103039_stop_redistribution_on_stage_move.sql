@@ -1,3 +1,5 @@
+begin;
+
 set local lock_timeout = '5s';
 set local statement_timeout = '300s';
 
@@ -65,3 +67,5 @@ where l.organization_id = j.organization_id
   and l.id = j.lead_id
   and j.status in ('pending', 'warning_sent')
   and l.stage_entered_at > j.enrolled_at;
+
+commit;

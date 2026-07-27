@@ -45,7 +45,7 @@ async function invokeGoogleCalendar<T>(body: Record<string, unknown>) {
   }
 
   const data = await integrationsAPI.invokeFunction<GoogleCalendarFunctionResponse<T>>("google-calendar-oauth", body);
-  if (!data?.success) throw new Error(data?.error || "Falha na integracao Google Calendar");
+  if (!data?.success) throw new Error(data?.error || "Falha na integracao Google Agenda");
   return data;
 }
 
@@ -53,7 +53,7 @@ export function useGoogleCalendarStatus(options: { enabled?: boolean } = {}) {
   const { profile } = useAuth();
 
   return useQuery({
-    queryKey: ["google-calendar-status", profile?.id],
+    queryKey: ["google-calendar-status", profile?.organization_id, profile?.id],
     queryFn: async () => {
       if (!profile?.id) return null;
       if (!FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION) return null;
@@ -81,8 +81,8 @@ export function useConnectGoogleCalendar() {
       window.location.href = data.auth_url;
     },
     onError: (error) => {
-      console.error("Error connecting Google Calendar:", error);
-      toast.error(`Erro ao conectar Google Calendar: ${getErrorMessage(error)}`);
+      console.error("Error connecting Google Agenda:", error);
+      toast.error(`Erro ao conectar Google Agenda: ${getErrorMessage(error)}`);
     },
   });
 }
@@ -99,10 +99,10 @@ export function useDisconnectGoogleCalendar() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["google-calendar-status"] });
-      toast.success("Google Calendar desconectado");
+      toast.success("Google Agenda desconectada");
     },
     onError: (error) => {
-      console.error("Error disconnecting Google Calendar:", error);
+      console.error("Error disconnecting Google Agenda:", error);
       toast.error(`Erro ao desconectar: ${getErrorMessage(error)}`);
     },
   });
@@ -123,7 +123,7 @@ export function useToggleGoogleCalendarSync() {
       toast.success("Sincronização atualizada");
     },
     onError: (error) => {
-      console.error("Error toggling Google Calendar sync:", error);
+      console.error("Error toggling Google Agenda sync:", error);
       toast.error(`Erro ao atualizar sincronizacao: ${getErrorMessage(error)}`);
     },
   });
@@ -141,10 +141,10 @@ export function useSyncGoogleCalendarNow() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["google-calendar-status"] });
       queryClient.invalidateQueries({ queryKey: ["schedule-events"] });
-      toast.success("Google Calendar sincronizado");
+      toast.success("Google Agenda sincronizada");
     },
     onError: (error) => {
-      console.error("Error syncing Google Calendar:", error);
+      console.error("Error syncing Google Agenda:", error);
       toast.error(`Erro ao sincronizar: ${getErrorMessage(error)}`);
     },
   });

@@ -12,35 +12,111 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
-func addLeadMetaFilterCondition(args *[]any, conditions *[]string, leadAlias string, metaAlias string, leadColumns []string, idColumn string, nameColumn string, value string) {
+type leadAttributionFilter struct {
+	Campaign     string
+	AdSet        string
+	Ad           string
+	OccurredFrom any
+	OccurredTo   any
+	DateCast     string
+}
+
+func normalizedLeadAttributionValue(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || value == "all" {
-		return
+		return ""
+	}
+	return value
+}
+
+// addLeadAttributionFilterCondition keeps one CRM contact per person while
+// matching the exact historical entry that carried the selected attribution.
+// The current lead/lead_meta projection remains as a compatibility fallback for
+// old rows that predate entry-event enrichment.
+func addLeadAttributionFilterCondition(args *[]any, conditions *[]string, leadAlias string, metaAlias string, filter leadAttributionFilter) bool {
+	filter.Campaign = normalizedLeadAttributionValue(filter.Campaign)
+	filter.AdSet = normalizedLeadAttributionValue(filter.AdSet)
+	filter.Ad = normalizedLeadAttributionValue(filter.Ad)
+	if filter.Campaign == "" && filter.AdSet == "" && filter.Ad == "" {
+		return false
 	}
 
-	*args = append(*args, value)
-	index := len(*args)
+	eventConditions := []string{
+		"entry.organization_id = $1::uuid",
+		fmt.Sprintf("entry.lead_id = %s.id", leadAlias),
+		"entry.is_countable = true",
+	}
+	legacyConditions := []string{}
 
-	directConditions := []string{}
-	for _, column := range leadColumns {
-		column = strings.TrimSpace(column)
-		if column == "" {
-			continue
+	addValue := func(value string, eventColumns []string, leadColumns []string, metaColumns []string) {
+		if value == "" {
+			return
 		}
-		directConditions = append(directConditions, fmt.Sprintf("%s.%s = $%d", leadAlias, column, index))
-	}
-	directSQL := strings.Join(directConditions, " or ")
-	if directSQL != "" {
-		directSQL += " or "
+		*args = append(*args, value)
+		index := len(*args)
+
+		eventMatches := make([]string, 0, len(eventColumns))
+		for _, column := range eventColumns {
+			eventMatches = append(eventMatches, fmt.Sprintf("entry.%s = $%d", column, index))
+		}
+		eventConditions = append(eventConditions, "("+strings.Join(eventMatches, " or ")+")")
+
+		legacyMatches := make([]string, 0, len(leadColumns)+1)
+		for _, column := range leadColumns {
+			legacyMatches = append(legacyMatches, fmt.Sprintf("%s.%s = $%d", leadAlias, column, index))
+		}
+		metaMatches := make([]string, 0, len(metaColumns))
+		for _, column := range metaColumns {
+			metaMatches = append(metaMatches, fmt.Sprintf("%s.%s = $%d", metaAlias, column, index))
+		}
+		legacyMatches = append(legacyMatches, fmt.Sprintf(`exists (
+			select 1
+			from public.lead_meta %s
+			where %s.organization_id = $1::uuid
+			  and %s.lead_id = %s.id
+			  and (%s)
+		)`, metaAlias, metaAlias, metaAlias, leadAlias, strings.Join(metaMatches, " or ")))
+		legacyConditions = append(legacyConditions, "("+strings.Join(legacyMatches, " or ")+")")
 	}
 
-	*conditions = append(*conditions, fmt.Sprintf(`(%sexists (
-		select 1
-		from public.lead_meta %s
-		where %s.organization_id = $1::uuid
-		  and %s.lead_id = %s.id
-		  and (%s.%s = $%d or %s.%s = $%d)
-	))`, directSQL, metaAlias, metaAlias, metaAlias, leadAlias, metaAlias, idColumn, index, metaAlias, nameColumn, index))
+	addValue(filter.Campaign,
+		[]string{"campaign_id", "campaign_name", "utm_campaign"},
+		[]string{"meta_campaign_id", "utm_campaign"},
+		[]string{"campaign_id", "campaign_name"},
+	)
+	addValue(filter.AdSet,
+		[]string{"adset_id", "adset_name"},
+		[]string{"meta_adset_id"},
+		[]string{"adset_id", "adset_name"},
+	)
+	addValue(filter.Ad,
+		[]string{"ad_id", "ad_name"},
+		[]string{"meta_ad_id"},
+		[]string{"ad_id", "ad_name"},
+	)
+
+	addDate := func(value any, operator string) {
+		if value == nil {
+			return
+		}
+		*args = append(*args, value)
+		index := len(*args)
+		placeholder := fmt.Sprintf("$%d%s", index, filter.DateCast)
+		eventConditions = append(eventConditions, "entry.occurred_at "+operator+" "+placeholder)
+		legacyConditions = append(legacyConditions, leadAlias+".created_at "+operator+" "+placeholder)
+	}
+	addDate(filter.OccurredFrom, ">=")
+	addDate(filter.OccurredTo, "<=")
+
+	*conditions = append(*conditions, fmt.Sprintf(`(
+		exists (
+			select 1
+			from public.lead_entry_events entry
+			where %s
+		)
+		or (%s)
+	)`, strings.Join(eventConditions, " and "), strings.Join(legacyConditions, " and ")))
+	return true
 }
 
 func (repo Repository) GetPipelineBoard(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) ([]PipelineBoardStage, error) {
@@ -192,16 +268,34 @@ func (repo Repository) CountPipelineStageLeads(ctx context.Context, tenantContex
 func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) (LeadMetaFilters, error) {
 	where, args, err := buildPipelineLeadWhere(tenantContext, PipelineBoardFilter{
 		PipelineID: filter.PipelineID,
-		DateFrom:   filter.DateFrom,
-		DateTo:     filter.DateTo,
 	})
 	if err != nil {
 		return LeadMetaFilters{}, err
 	}
 
+	entryDateConditions := []string{}
+	if filter.DateFrom != nil {
+		args = append(args, *filter.DateFrom)
+		entryDateConditions = append(entryDateConditions, fmt.Sprintf("lee.occurred_at >= $%d", len(args)))
+	}
+	if filter.DateTo != nil {
+		args = append(args, *filter.DateTo)
+		entryDateConditions = append(entryDateConditions, fmt.Sprintf("lee.occurred_at <= $%d", len(args)))
+	}
+	entryJoinConditions := []string{
+		"lee.organization_id = l.organization_id",
+		"lee.lead_id = l.id",
+		"lee.is_countable = true",
+	}
+	entryJoinConditions = append(entryJoinConditions, entryDateConditions...)
+	if len(entryDateConditions) > 0 {
+		where = append(where, "lee.id is not null")
+	}
+
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
 			coalesce(
+				nullif(lee.campaign_name, ''),
 				nullif(lm.campaign_name, ''),
 				nullif(l.utm_campaign, ''),
 				nullif(lm.raw_payload->>'campaign_name', ''),
@@ -212,18 +306,19 @@ func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext te
 				nullif(lm.payload#>>'{campaign,name}', ''),
 				nullif(mci.campaign_name, '')
 			),
-			coalesce(nullif(lm.campaign_id, ''), nullif(l.meta_campaign_id, ''), nullif(lm.campaign_name, ''), nullif(l.utm_campaign, '')),
-			coalesce(nullif(lm.adset_name, ''), nullif(l.meta_adset_id, '')),
-			coalesce(nullif(lm.adset_id, ''), nullif(l.meta_adset_id, ''), nullif(lm.adset_name, '')),
-			coalesce(nullif(lm.ad_name, ''), nullif(l.meta_ad_id, '')),
-			coalesce(nullif(lm.ad_id, ''), nullif(l.meta_ad_id, ''), nullif(lm.ad_name, ''))
+			coalesce(nullif(lee.campaign_id, ''), nullif(lm.campaign_id, ''), nullif(l.meta_campaign_id, ''), nullif(lee.campaign_name, ''), nullif(lm.campaign_name, ''), nullif(l.utm_campaign, '')),
+			coalesce(nullif(lee.adset_name, ''), nullif(lm.adset_name, ''), nullif(l.meta_adset_id, '')),
+			coalesce(nullif(lee.adset_id, ''), nullif(lm.adset_id, ''), nullif(l.meta_adset_id, ''), nullif(lee.adset_name, ''), nullif(lm.adset_name, '')),
+			coalesce(nullif(lee.ad_name, ''), nullif(lm.ad_name, ''), nullif(l.meta_ad_id, '')),
+			coalesce(nullif(lee.ad_id, ''), nullif(lm.ad_id, ''), nullif(l.meta_ad_id, ''), nullif(lee.ad_name, ''), nullif(lm.ad_name, ''))
 		from public.leads l
+		left join public.lead_entry_events lee on `+strings.Join(entryJoinConditions, " and ")+`
 		left join public.lead_meta lm on lm.lead_id = l.id and lm.organization_id = l.organization_id
 		left join lateral (
 			select max(nullif(mi.campaign_name, '')) as campaign_name
 			from public.meta_campaign_insights mi
 			where mi.organization_id = l.organization_id
-			  and mi.campaign_id = coalesce(nullif(lm.campaign_id, ''), nullif(l.meta_campaign_id, ''))
+			  and mi.campaign_id = coalesce(nullif(lee.campaign_id, ''), nullif(lm.campaign_id, ''), nullif(l.meta_campaign_id, ''))
 		) mci on true
 		where `+strings.Join(where, " and ")+`
 	`, args...)
@@ -660,14 +755,6 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 		add("l.deal_status = $%d", filter.FilterDealStatus)
 	}
 	hasSearch := strings.TrimSpace(filter.Search) != ""
-	if !hasSearch {
-		if filter.DateFrom != nil {
-			add("l.created_at >= $%d", *filter.DateFrom)
-		}
-		if filter.DateTo != nil {
-			add("l.created_at <= $%d", *filter.DateTo)
-		}
-	}
 	if filter.FilterSource != "" && filter.FilterSource != "all" {
 		add("l.source = $%d", filter.FilterSource)
 	}
@@ -691,12 +778,29 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 		)`, tagID)
 	}
 
-	addMetaCondition := func(leadColumns []string, idColumn string, nameColumn string, value string) {
-		addLeadMetaFilterCondition(&args, &where, "l", "lm", leadColumns, idColumn, nameColumn, value)
+	var occurredFrom any
+	var occurredTo any
+	if !hasSearch && filter.DateFrom != nil {
+		occurredFrom = *filter.DateFrom
 	}
-	addMetaCondition([]string{"meta_campaign_id", "utm_campaign"}, "campaign_id", "campaign_name", filter.FilterCampaign)
-	addMetaCondition([]string{"meta_adset_id"}, "adset_id", "adset_name", filter.FilterAdSet)
-	addMetaCondition([]string{"meta_ad_id"}, "ad_id", "ad_name", filter.FilterAd)
+	if !hasSearch && filter.DateTo != nil {
+		occurredTo = *filter.DateTo
+	}
+	hasAttributionFilter := addLeadAttributionFilterCondition(&args, &where, "l", "lm", leadAttributionFilter{
+		Campaign:     filter.FilterCampaign,
+		AdSet:        filter.FilterAdSet,
+		Ad:           filter.FilterAd,
+		OccurredFrom: occurredFrom,
+		OccurredTo:   occurredTo,
+	})
+	if !hasSearch && !hasAttributionFilter {
+		if filter.DateFrom != nil {
+			add("l.created_at >= $%d", *filter.DateFrom)
+		}
+		if filter.DateTo != nil {
+			add("l.created_at <= $%d", *filter.DateTo)
+		}
+	}
 
 	return where, args, nil
 }

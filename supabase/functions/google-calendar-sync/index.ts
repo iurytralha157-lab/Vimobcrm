@@ -1,4 +1,5 @@
 import {
+  authenticateCron,
   authenticateUser,
   enqueueSyncJob,
   ensureGoogleWatch,
@@ -17,17 +18,16 @@ import {
   deleteScheduleEventFromGoogle,
 } from "../_shared/google-calendar.ts";
 
-async function authenticateServiceOrUser(req: Request) {
+async function authenticateServiceOrUser(req: Request, organizationId?: string | null) {
   const authHeader = req.headers.get("Authorization") || "";
   const bearer = authHeader.replace(/^Bearer\s+/i, "").trim();
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-  const cronSecret = Deno.env.get("GOOGLE_CALENDAR_CRON_SECRET") || "";
 
   if (serviceKey && bearer === serviceKey) return { service: true, user: null, profile: null };
-  if (cronSecret && bearer === cronSecret) return { service: true, user: null, profile: null };
+  if (await authenticateCron(req)) return { service: true, user: null, profile: null };
 
   const user = await authenticateUser(req);
-  const profile = await getUserProfile(user.id);
+  const profile = await getUserProfile(user.id, organizationId);
   return { service: false, user, profile };
 }
 
@@ -42,10 +42,10 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const action = body.action || "run_due_jobs";
-    const auth = await authenticateServiceOrUser(req);
+    const auth = await authenticateServiceOrUser(req, body.organization_id || body.organizationId || null);
 
     if (action === "run_due_jobs") {
-      if (!auth.service && !auth.profile) return jsonResponse({ success: false, error: "Unauthorized" }, 401);
+      if (!auth.service) return jsonResponse({ success: false, error: "Apenas backend pode processar a fila." }, 403);
       return jsonResponse({ success: true, ...(await runDueJobs(Number(body.limit || 10))) });
     }
 
@@ -58,11 +58,17 @@ Deno.serve(async (req) => {
       const connection = body.connection_id
         ? await getConnectionById(body.connection_id)
         : auth.profile
-          ? await getConnectionForUser(auth.profile.id)
+          ? await getConnectionForUser(auth.profile.id, auth.profile.organization_id)
           : null;
 
       if (!connection) return jsonResponse({ success: false, error: "Conexao Google nao encontrada." }, 404);
-      if (!auth.service && connection.user_id !== auth.profile?.id) {
+      if (
+        !auth.service
+        && (
+          connection.user_id !== auth.profile?.id
+          || connection.organization_id !== auth.profile?.organization_id
+        )
+      ) {
         return jsonResponse({ success: false, error: "Forbidden" }, 403);
       }
 
@@ -75,6 +81,15 @@ Deno.serve(async (req) => {
       if (!auth.profile) return jsonResponse({ success: false, error: "Unauthorized" }, 401);
       if (!body.event_id) return jsonResponse({ success: false, error: "event_id obrigatorio." }, 400);
 
+      const { data: event } = await supabase
+        .from("schedule_events")
+        .select("organization_id")
+        .eq("id", body.event_id)
+        .maybeSingle();
+      if (!event || event.organization_id !== auth.profile.organization_id) {
+        return jsonResponse({ success: false, error: "Evento nao encontrado." }, 404);
+      }
+
       const result = await pushScheduleEventToGoogle(body.event_id, auth.profile.id);
       return jsonResponse({ success: true, result });
     }
@@ -82,6 +97,15 @@ Deno.serve(async (req) => {
     if (action === "push_delete") {
       if (!auth.profile) return jsonResponse({ success: false, error: "Unauthorized" }, 401);
       if (!body.event_id) return jsonResponse({ success: false, error: "event_id obrigatorio." }, 400);
+
+      const { data: event } = await supabase
+        .from("schedule_events")
+        .select("organization_id")
+        .eq("id", body.event_id)
+        .maybeSingle();
+      if (!event || event.organization_id !== auth.profile.organization_id) {
+        return jsonResponse({ success: false, error: "Evento nao encontrado." }, 404);
+      }
 
       const result = await deleteScheduleEventFromGoogle(body.event_id, auth.profile.id);
       return jsonResponse({ success: true, result });
@@ -97,7 +121,9 @@ Deno.serve(async (req) => {
         .eq("id", body.event_id)
         .maybeSingle();
       if (error) throw error;
-      if (!event) return jsonResponse({ success: false, error: "Evento nao encontrado." }, 404);
+      if (!event || event.organization_id !== auth.profile.organization_id) {
+        return jsonResponse({ success: false, error: "Evento nao encontrado." }, 404);
+      }
 
       const job = await enqueueSyncJob({
         organizationId: event.organization_id,

@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
-import { FEATURES } from '@/config/constants'
-import { integrationsAPI } from '@/lib/api'
+import {
+  syncScheduleEventWithGoogle,
+  type GoogleCalendarSyncAction,
+} from '@/lib/api/google-calendar'
 import { getFriendlyErrorMessage } from '@/lib/error-handler'
 import {
   scheduleAPI,
@@ -41,13 +43,9 @@ function invalidateScheduleCaches(queryClient: ReturnType<typeof useQueryClient>
   }
 }
 
-type GoogleCalendarSyncAction = 'push_upsert' | 'push_delete'
-
 async function syncGoogleCalendarEvent(action: GoogleCalendarSyncAction, eventId: string, organizationId?: string | null) {
-  if (!FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION) return
-
   try {
-    await integrationsAPI.invokeFunction('google-calendar-sync', { action, event_id: eventId }, organizationId)
+    await syncScheduleEventWithGoogle(action, eventId, organizationId)
   } catch (error) {
     console.warn('Google Calendar schedule sync skipped:', error)
   }

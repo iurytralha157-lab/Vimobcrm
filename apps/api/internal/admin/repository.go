@@ -24,38 +24,50 @@ import (
 )
 
 type ExternalConfig struct {
-	ProjectURL   string
-	APIKey       string
-	ResendAPIKey string
-	FromEmail    string
-	ReplyTo      string
-	SupportEmail string
-	AppURL       string
+	ProjectURL        string
+	APIKey            string
+	ResendAPIKey      string
+	FromEmail         string
+	ReplyTo           string
+	SupportEmail      string
+	AppURL            string
+	EvolutionGoURL    string
+	EvolutionGoAPIKey string
+	AsaasURL          string
+	AsaasAPIKey       string
 }
 
 type Repository struct {
-	db           *dbpkg.Postgres
-	projectURL   string
-	apiKey       string
-	resendAPIKey string
-	fromEmail    string
-	replyTo      string
-	supportEmail string
-	appURL       string
-	httpClient   *http.Client
+	db                *dbpkg.Postgres
+	projectURL        string
+	apiKey            string
+	resendAPIKey      string
+	fromEmail         string
+	replyTo           string
+	supportEmail      string
+	appURL            string
+	evolutionGoURL    string
+	evolutionGoAPIKey string
+	asaasURL          string
+	asaasAPIKey       string
+	httpClient        *http.Client
 }
 
 func NewRepository(db *dbpkg.Postgres, externalConfig ExternalConfig) Repository {
 	return Repository{
-		db:           db,
-		projectURL:   strings.TrimRight(strings.TrimSpace(externalConfig.ProjectURL), "/"),
-		apiKey:       strings.TrimSpace(externalConfig.APIKey),
-		resendAPIKey: strings.TrimSpace(externalConfig.ResendAPIKey),
-		fromEmail:    cleanEmailHeader(firstNonEmpty(externalConfig.FromEmail, "Vimob CRM <naoresponde@vimobcrm.com.br>")),
-		replyTo:      cleanEmailHeader(firstNonEmpty(externalConfig.ReplyTo, "contato@vimobcrm.com.br")),
-		supportEmail: cleanEmailHeader(firstNonEmpty(externalConfig.SupportEmail, "contato@vimobcrm.com.br")),
-		appURL:       strings.TrimRight(firstNonEmpty(externalConfig.AppURL, "https://app.vimobcrm.com.br"), "/"),
-		httpClient:   &http.Client{Timeout: 30 * time.Second},
+		db:                db,
+		projectURL:        strings.TrimRight(strings.TrimSpace(externalConfig.ProjectURL), "/"),
+		apiKey:            strings.TrimSpace(externalConfig.APIKey),
+		resendAPIKey:      strings.TrimSpace(externalConfig.ResendAPIKey),
+		fromEmail:         cleanEmailHeader(firstNonEmpty(externalConfig.FromEmail, "Vimob CRM <naoresponde@vimobcrm.com.br>")),
+		replyTo:           cleanEmailHeader(firstNonEmpty(externalConfig.ReplyTo, "contato@vimobcrm.com.br")),
+		supportEmail:      cleanEmailHeader(firstNonEmpty(externalConfig.SupportEmail, "contato@vimobcrm.com.br")),
+		appURL:            strings.TrimRight(firstNonEmpty(externalConfig.AppURL, "https://app.vimobcrm.com.br"), "/"),
+		evolutionGoURL:    strings.TrimRight(strings.TrimSpace(externalConfig.EvolutionGoURL), "/"),
+		evolutionGoAPIKey: strings.TrimSpace(externalConfig.EvolutionGoAPIKey),
+		asaasURL:          strings.TrimRight(strings.TrimSpace(externalConfig.AsaasURL), "/"),
+		asaasAPIKey:       strings.TrimSpace(externalConfig.AsaasAPIKey),
+		httpClient:        &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -74,6 +86,8 @@ func (repo Repository) ListOrganizations(ctx context.Context, tenantContext tena
 		select jsonb_build_object(
 			'id', o.id::text,
 			'name', o.name,
+			'email', o.email,
+			'cnpj', o.cnpj,
 			'logo_url', o.logo_url,
 			'is_active', o.is_active,
 			'subscription_status', o.subscription_status,
@@ -83,7 +97,7 @@ func (repo Repository) ListOrganizations(ctx context.Context, tenantContext tena
 			'admin_notes', o.admin_notes,
 			'created_at', o.created_at,
 			'last_access_at', o.last_access_at,
-			'user_count', (select count(*) from public.organization_members om where om.organization_id = o.id and om.is_active = true),
+			'user_count', (select count(*) from public.users u where u.organization_id = o.id),
 			'lead_count', (select count(*) from public.leads l where l.organization_id = o.id),
 			'automation_count', (select count(*) from public.automations a where a.organization_id = o.id),
 			'mrr', coalesce(o.subscription_value, 0),
@@ -91,6 +105,7 @@ func (repo Repository) ListOrganizations(ctx context.Context, tenantContext tena
 			'days_trial_left', case when o.trial_ends_at is null then 0 else floor(extract(epoch from (o.trial_ends_at - now())) / 86400)::int end,
 			'overdue_amount', 0,
 			'plan_id', o.plan_id::text,
+			'plan_name', p.name,
 			'subscription_value', o.subscription_value,
 			'billing_day', o.billing_day,
 			'next_billing_date', o.next_billing_date,
@@ -100,6 +115,7 @@ func (repo Repository) ListOrganizations(ctx context.Context, tenantContext tena
 			'max_whatsapp_sessions_override', o.max_whatsapp_sessions_override
 		)
 		from public.organizations o
+		left join public.admin_subscription_plans p on p.id = o.plan_id
 		where ($1 = '' or `+searchtext.AnySQL([]string{"o.name", "o.email", "o.cnpj"}, "$1")+`)
 		  and ($2 = 'all' or o.subscription_status = $2)
 		  and ($3 = 'all' or o.segment = $3)
@@ -1323,24 +1339,6 @@ func (repo Repository) UpdateOrganizationAccess(ctx context.Context, tenantConte
 		}); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func (repo Repository) DeleteOrganization(ctx context.Context, tenantContext tenant.Context, organizationID string) error {
-	if !tenantContext.IsSuperAdmin {
-		return tenant.ErrOrganizationAccessDenied
-	}
-	organizationID, ok := normalizeUUID(organizationID)
-	if !ok {
-		return ErrInvalidInput
-	}
-	tag, err := repo.db.Pool().Exec(ctx, `update public.organizations set is_active = false, updated_at = now() where id = $1::uuid`, organizationID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
 	}
 	return nil
 }

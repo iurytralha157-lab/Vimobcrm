@@ -26,6 +26,8 @@ export function mapSiteDataToConfig(data: PublicSiteConfig, orgName: string): Pu
   return {
     id: data.id,
     is_active: data.is_active ?? true,
+    maintenance_mode: data.maintenance_mode ?? false,
+    maintenance_message: data.maintenance_message || null,
     subdomain: data.subdomain,
     custom_domain: data.custom_domain,
     site_title: data.site_title || 'Site Imobiliário',

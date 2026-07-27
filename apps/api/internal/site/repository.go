@@ -147,13 +147,30 @@ func (repo Repository) UpdateSite(ctx context.Context, tenantContext tenant.Cont
 
 	args := []any{tenantContext.OrganizationID}
 	assignments := []string{}
+	customDomainPlaceholder := ""
 	for _, field := range siteFieldOrder {
 		value, ok := values[field]
 		if !ok {
 			continue
 		}
 		args = append(args, value)
-		assignments = append(assignments, fmt.Sprintf("%s = %s", field, sitePlaceholder(field, len(args))))
+		placeholder := sitePlaceholder(field, len(args))
+		assignments = append(assignments, fmt.Sprintf("%s = %s", field, placeholder))
+		if field == "custom_domain" {
+			customDomainPlaceholder = placeholder
+		}
+	}
+	if customDomainPlaceholder != "" {
+		sameDomain := fmt.Sprintf(
+			"lower(coalesce(custom_domain, '')) = lower(coalesce(%s::text, ''))",
+			customDomainPlaceholder,
+		)
+		assignments = append(
+			assignments,
+			fmt.Sprintf("domain_verified = case when %s then domain_verified else false end", sameDomain),
+			fmt.Sprintf("domain_verified_at = case when %s then domain_verified_at else null end", sameDomain),
+			fmt.Sprintf("domain_verification_token = case when %s then domain_verification_token else gen_random_uuid() end", sameDomain),
+		)
 	}
 	assignments = append(assignments, "updated_at = now()")
 
@@ -163,6 +180,33 @@ func (repo Repository) UpdateSite(ctx context.Context, tenantContext tenant.Cont
 		where organization_id = $1::uuid
 		returning `+siteReturningColumns(),
 		args...,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OrganizationSite{}, ErrSiteNotFound
+	}
+	return site, err
+}
+
+func (repo Repository) MarkDomainVerified(ctx context.Context, tenantContext tenant.Context, domain string) (OrganizationSite, error) {
+	if !canManageSite(tenantContext) {
+		return OrganizationSite{}, tenant.ErrOrganizationAccessDenied
+	}
+
+	domain = normalizePublicDomain(domain)
+	if domain == "" {
+		return OrganizationSite{}, ErrInvalidInput
+	}
+
+	site, err := scanSite(repo.db.Pool().QueryRow(ctx, `
+		update public.organization_sites
+		set domain_verified = true,
+		    domain_verified_at = now(),
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and lower(coalesce(custom_domain, '')) = lower($2)
+		returning `+siteReturningColumns(),
+		tenantContext.OrganizationID,
+		domain,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return OrganizationSite{}, ErrSiteNotFound
@@ -474,15 +518,24 @@ func (repo Repository) ResolvePublicSite(ctx context.Context, domain string) (ma
 	}
 
 	item, err := repo.queryJSONObject(ctx, `
-		select to_jsonb(s) || jsonb_build_object('organization_name', o.name)
+		select (to_jsonb(s) - 'domain_verification_token') || jsonb_build_object('organization_name', o.name)
 		from public.organization_sites s
 		join public.organizations o on o.id = s.organization_id
 		where s.is_active = true
 		  and o.is_active = true
 		  and (
-		    lower(coalesce(s.custom_domain, '')) = lower($1)
-		    or lower(coalesce(s.subdomain, '')) = lower($1)
-		    or lower(coalesce(s.subdomain, '')) = lower($2)
+		    (
+		      position('.' in $1) > 0
+		      and s.domain_verified = true
+		      and lower(coalesce(s.custom_domain, '')) = lower($1)
+		    )
+		    or (
+		      position('.' in $1) = 0
+		      and (
+		        lower(coalesce(s.subdomain, '')) = lower($1)
+		        or lower(coalesce(s.subdomain, '')) = lower($2)
+		      )
+		    )
 		  )
 		limit 1
 	`, domain, subdomain)
@@ -835,13 +888,64 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 	if reentry {
 		if _, err := tx.Exec(ctx, `
 			insert into public.lead_entry_events (
-				organization_id, lead_id, source, entry_type, property_id, utm_source, utm_medium, utm_campaign, metadata
-			) values ($1::uuid, $2::uuid, 'site', 'reentry', $3::uuid, $4, $5, $6,
-				jsonb_build_object('session_id', $7, 'landing_page', $8, 'referrer', $9))
-		`, organizationID, leadID, propertyID, optionalText(request.UTMSource), optionalText(request.UTMMedium), optionalText(request.UTMCampaign), optionalText(request.SessionID), optionalText(request.LandingPage), optionalText(request.Referrer)); err != nil {
+				organization_id, lead_id, source, provider, provider_event_id,
+				occurred_at, is_countable, source_detail, entry_type, property_id,
+				campaign_name, utm_source, utm_medium, utm_campaign, utm_content,
+				utm_term, metadata
+			) values (
+				$1::uuid, $2::uuid, 'site', 'site', $3, now(), true,
+				'public_site', 'reentry', $4::uuid, $5, $6, $7, $5, $8, $9,
+				jsonb_build_object(
+					'submission_id', $3,
+					'session_id', $10,
+					'landing_page', $11,
+					'referrer', $12,
+					'gclid', $13,
+					'fbclid', $14
+				)
+			)
+			on conflict (organization_id, provider, provider_event_id)
+				where provider_event_id is not null and is_countable = true
+			do nothing
+		`, organizationID, leadID, submissionID, propertyID, optionalText(request.UTMCampaign), optionalText(request.UTMSource), optionalText(request.UTMMedium), optionalText(request.UTMContent), optionalText(request.UTMTerm), optionalText(request.SessionID), optionalText(request.LandingPage), optionalText(request.Referrer), optionalText(request.GCLID), optionalText(request.FBCLID)); err != nil {
 			return nil, err
 		}
-
+	} else {
+		if _, err := tx.Exec(ctx, `
+			update public.lead_entry_events
+			set source = 'site',
+			    provider = 'site',
+			    provider_event_id = $3,
+			    occurred_at = created_at,
+			    is_countable = true,
+			    source_detail = 'public_site',
+			    property_id = coalesce($4::uuid, property_id),
+			    campaign_name = coalesce($5, campaign_name),
+			    utm_source = coalesce($6, utm_source),
+			    utm_medium = coalesce($7, utm_medium),
+			    utm_campaign = coalesce($5, utm_campaign),
+			    utm_content = coalesce($8, utm_content),
+			    utm_term = coalesce($9, utm_term),
+			    metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+			      'submission_id', $3,
+			      'session_id', $10,
+			      'landing_page', $11,
+			      'referrer', $12,
+			      'gclid', $13,
+			      'fbclid', $14
+			    )
+			where id = (
+				select initial.id
+				from public.lead_entry_events initial
+				where initial.organization_id = $1::uuid
+				  and initial.lead_id = $2::uuid
+				  and initial.entry_type = 'initial'
+				order by initial.created_at, initial.id
+				limit 1
+			)
+		`, organizationID, leadID, submissionID, propertyID, optionalText(request.UTMCampaign), optionalText(request.UTMSource), optionalText(request.UTMMedium), optionalText(request.UTMContent), optionalText(request.UTMTerm), optionalText(request.SessionID), optionalText(request.LandingPage), optionalText(request.Referrer), optionalText(request.GCLID), optionalText(request.FBCLID)); err != nil {
+			return nil, err
+		}
 	}
 
 	var assigned bool
@@ -1715,10 +1819,10 @@ func reorderItems(ctx context.Context, exec execer, organizationID string, table
 
 var siteFieldOrder = []string{
 	"is_active",
+	"maintenance_mode",
+	"maintenance_message",
 	"subdomain",
 	"custom_domain",
-	"domain_verified",
-	"domain_verified_at",
 	"site_title",
 	"site_description",
 	"logo_url",
@@ -1772,10 +1876,10 @@ var siteFieldOrder = []string{
 
 var siteFieldKinds = map[string]string{
 	"is_active":           "bool",
-	"subdomain":           "text",
-	"custom_domain":       "text",
-	"domain_verified":     "bool",
-	"domain_verified_at":  "text",
+	"maintenance_mode":    "bool",
+	"maintenance_message": "text_500",
+	"subdomain":           "slug",
+	"custom_domain":       "domain",
 	"site_title":          "text",
 	"site_description":    "text",
 	"logo_url":            "text",
@@ -1859,6 +1963,45 @@ func sanitizeFieldValue(kind string, value any) (any, error) {
 			return nil, nil
 		}
 		return text, nil
+	case "text_500":
+		text, ok := value.(string)
+		if !ok {
+			return nil, ErrInvalidInput
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return nil, nil
+		}
+		if len([]rune(text)) > 500 {
+			return nil, ErrInvalidInput
+		}
+		return text, nil
+	case "slug":
+		text, ok := value.(string)
+		if !ok {
+			return nil, ErrInvalidInput
+		}
+		text = strings.ToLower(strings.TrimSpace(text))
+		if text == "" {
+			return nil, nil
+		}
+		if len(text) < 3 || len(text) > 63 || !domainLabelPattern.MatchString(text) {
+			return nil, ErrInvalidInput
+		}
+		return text, nil
+	case "domain":
+		text, ok := value.(string)
+		if !ok {
+			return nil, ErrInvalidInput
+		}
+		text = strings.ToLower(strings.TrimSpace(text))
+		if text == "" {
+			return nil, nil
+		}
+		if !isValidPublicDomain(text) {
+			return nil, ErrInvalidInput
+		}
+		return text, nil
 	case "text_required":
 		text, ok := value.(string)
 		if !ok {
@@ -1917,10 +2060,13 @@ func siteReturningColumns() string {
 		id::text,
 		organization_id::text,
 		is_active,
+		maintenance_mode,
+		maintenance_message,
 		subdomain,
 		custom_domain,
 		domain_verified,
 		domain_verified_at::text,
+		domain_verification_token::text,
 		site_title,
 		site_description,
 		logo_url,
@@ -1976,7 +2122,7 @@ func siteReturningColumns() string {
 
 func scanSite(row siteScanner) (OrganizationSite, error) {
 	var item OrganizationSite
-	var subdomain, customDomain, domainVerifiedAt, siteTitle, siteDescription pgtype.Text
+	var maintenanceMessage, subdomain, customDomain, domainVerifiedAt, siteTitle, siteDescription pgtype.Text
 	var logoURL, faviconURL, primaryColor, secondaryColor, accentColor pgtype.Text
 	var whatsapp, phone, email, address, city, state pgtype.Text
 	var instagram, facebook, youtube, linkedin pgtype.Text
@@ -1993,10 +2139,13 @@ func scanSite(row siteScanner) (OrganizationSite, error) {
 		&item.ID,
 		&item.OrganizationID,
 		&item.IsActive,
+		&item.MaintenanceMode,
+		&maintenanceMessage,
 		&subdomain,
 		&customDomain,
 		&item.DomainVerified,
 		&domainVerifiedAt,
+		&item.DomainVerificationToken,
 		&siteTitle,
 		&siteDescription,
 		&logoURL,
@@ -2053,6 +2202,7 @@ func scanSite(row siteScanner) (OrganizationSite, error) {
 		return OrganizationSite{}, err
 	}
 
+	item.MaintenanceMessage = textPointer(maintenanceMessage)
 	item.Subdomain = textPointer(subdomain)
 	item.CustomDomain = textPointer(customDomain)
 	item.DomainVerifiedAt = textPointer(domainVerifiedAt)

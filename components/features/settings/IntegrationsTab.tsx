@@ -124,13 +124,14 @@ export function IntegrationsTab({
   const { data: whatsappSessions = [] } = useWhatsAppSessions({ enabled: canManageWhatsApp });
   const { data: vistaIntegration } = useVistaIntegration({ enabled: canManageIntegrations });
   const { data: imoviewIntegration } = useImoviewIntegration({ enabled: canManageIntegrations });
-  const { data: googleCalendarStatus } = useGoogleCalendarStatus({ enabled: canManageIntegrations });
+  const { data: googleCalendarStatus } = useGoogleCalendarStatus();
   const { data: grupoOLXIntegration } = useGrupoOLXIntegration({ enabled: canManageIntegrations && hasPortalsModule });
   const whatsappQuota = whatsappSessions.meta;
   const hasWhatsAppAccess = hasWhatsAppModule || whatsappQuota?.maxSessions !== undefined;
   const isIntegrationEnabled = useCallback((key: IntegrationKey) => {
     if (key === "whatsapp") return canManageWhatsApp && hasWhatsAppAccess;
     if (key === "ai") return canManageAI && hasAIModule;
+    if (key === "google-calendar") return true;
     if (!canManageIntegrations) return false;
     if (key === "webhooks") return hasWebhooksModule;
     if (key === "api") return hasAPIModule;

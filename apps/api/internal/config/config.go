@@ -31,6 +31,7 @@ type Config struct {
 	WhatsApp    WhatsAppConfig
 	EvolutionGo EvolutionGoConfig
 	Meta        MetaConfig
+	Asaas       AsaasConfig
 }
 
 type HTTPConfig struct {
@@ -70,6 +71,11 @@ type MetaConfig struct {
 	WebhookVerifyToken string
 	GraphVersion       string
 	GraphBaseURL       string
+}
+
+type AsaasConfig struct {
+	APIURL string
+	APIKey string
 }
 
 type EmailConfig struct {
@@ -215,6 +221,10 @@ func Load() (Config, error) {
 			BackendWebhookURL:        strings.TrimRight(getEnv("EVOLUTION_GO_BACKEND_WEBHOOK_URL", ""), "/"),
 			WebhookProcessorMode:     strings.ToLower(getEnv("WHATSAPP_WEBHOOK_PROCESSOR_MODE", "edge")),
 			WebhookRolloutSessionIDs: parseCSV(getEnv("WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS", "")),
+		},
+		Asaas: AsaasConfig{
+			APIURL: strings.TrimRight(getEnv("ASAAS_BASE_URL", "https://api.asaas.com/v3"), "/"),
+			APIKey: os.Getenv("ASAAS_API_KEY"),
 		},
 		Meta: MetaConfig{
 			AppSecret:          os.Getenv("META_APP_SECRET"),

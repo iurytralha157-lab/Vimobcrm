@@ -1,11 +1,61 @@
 package site
 
 import (
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 )
+
+func TestDomainVerificationRejectsInternalDestinations(t *testing.T) {
+	for _, value := range []string{"127.0.0.1", "10.0.0.10", "169.254.169.254", "100.64.0.1", "::1"} {
+		if isAllowedVerificationIP(net.ParseIP(value)) {
+			t.Fatalf("verification must reject internal address %s", value)
+		}
+	}
+}
+
+func TestDomainVerificationAcceptsValidPublicDomain(t *testing.T) {
+	for _, value := range []string{"imobiliaria.com.br", "www.exemplo.com", "xn--imobiliria-73a.com.br"} {
+		if !isValidPublicDomain(value) {
+			t.Fatalf("expected valid public domain: %s", value)
+		}
+	}
+}
+
+func TestDomainVerificationRejectsUnsafeHostnames(t *testing.T) {
+	for _, value := range []string{"localhost", "https://example.com", "example.com:443", "-example.com", "127.0.0.1"} {
+		if isValidPublicDomain(value) {
+			t.Fatalf("expected invalid verification hostname: %s", value)
+		}
+	}
+}
+
+func TestSanitizeSitePayloadValidatesPublicAddress(t *testing.T) {
+	payload, err := sanitizeSitePayload(map[string]any{
+		"subdomain":     " Imobiliaria-Centro ",
+		"custom_domain": " WWW.Exemplo.com.br ",
+	})
+	if err != nil {
+		t.Fatalf("expected valid site address: %v", err)
+	}
+	if payload["subdomain"] != "imobiliaria-centro" || payload["custom_domain"] != "www.exemplo.com.br" {
+		t.Fatalf("site address was not normalized: %#v", payload)
+	}
+
+	for _, input := range []map[string]any{
+		{"subdomain": "ab"},
+		{"subdomain": "-imobiliaria"},
+		{"custom_domain": "https://exemplo.com"},
+		{"custom_domain": "localhost"},
+		{"custom_domain": "127.0.0.1"},
+	} {
+		if _, err := sanitizeSitePayload(input); err == nil {
+			t.Fatalf("expected invalid site address to be rejected: %#v", input)
+		}
+	}
+}
 
 func TestEnrichTrackingLocationFromInfrastructureHeaders(t *testing.T) {
 	request := PublicTrackingRequest{}

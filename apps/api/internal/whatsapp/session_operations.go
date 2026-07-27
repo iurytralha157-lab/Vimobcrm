@@ -403,6 +403,10 @@ func (repo Repository) markSessionDisconnected(ctx context.Context, organization
 }
 
 func (repo Repository) ToggleNotificationSession(ctx context.Context, tenantContext tenant.Context, sessionID string, enabled bool) error {
+	if !canManageNotificationSender(tenantContext) {
+		return tenant.ErrOrganizationAccessDenied
+	}
+
 	sessionID, ok := normalizeUUID(sessionID)
 	if !ok {
 		return ErrSessionNotFound
@@ -449,6 +453,10 @@ func (repo Repository) ToggleNotificationSession(ctx context.Context, tenantCont
 		return ErrSessionNotFound
 	}
 	return tx.Commit(ctx)
+}
+
+func canManageNotificationSender(tenantContext tenant.Context) bool {
+	return tenantContext.HasRole("owner", "admin")
 }
 
 func (repo Repository) ToggleAutoReplySession(ctx context.Context, tenantContext tenant.Context, sessionID string, input ToggleAutoReplyRequest) error {

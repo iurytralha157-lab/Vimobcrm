@@ -40,6 +40,11 @@ coverage.out
 supabase/.temp/
 supabase/.branches/
 
+# production audit artifacts
+# Keep only sanitized summaries under docs/audits/.
+/EVID-PROD-*.png
+/relatorio-auditoria-producao-*.md
+
 # debug
 npm-debug.log*
 yarn-debug.log*

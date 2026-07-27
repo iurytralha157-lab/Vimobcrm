@@ -71,3 +71,16 @@ func TestSchedulePropertyVisibilityRequiresPropertyPermission(t *testing.T) {
 		t.Fatal("property_view should grant catalog visibility under the unified permission catalog")
 	}
 }
+
+func TestScheduleVisibilityMasksDefaultForNonParticipants(t *testing.T) {
+	query := scheduleEventsQuery("true")
+	if !strings.Contains(query, "(base.visibility = 'default' and not base.is_participant and not base.is_manager) as is_masked") {
+		t.Fatal("default events should expose only busy time to non-participants")
+	}
+	if strings.Contains(query, "(base.visibility = 'public' and not base.is_participant and not base.is_manager) as is_masked") {
+		t.Fatal("public events should expose their permitted details")
+	}
+	if !strings.Contains(query, "where base.visibility <> 'private'") {
+		t.Fatal("private events should remain hidden from non-participants")
+	}
+}

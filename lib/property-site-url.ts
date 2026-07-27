@@ -1,4 +1,5 @@
 import type { PropertySiteInfo } from '@/lib/api/property-support'
+import { getPublicAppUrl } from '@/config/constants'
 
 function cleanDomain(value?: string | null) {
   return String(value || '')
@@ -23,7 +24,7 @@ export function buildPropertySiteUrl(code?: string | null, siteInfo?: PropertySi
 
   const subdomain = cleanSlug(siteInfo?.subdomain)
   if (subdomain) {
-    return `https://vimob.vettercompany.com.br/sites/${subdomain}/imovel/${propertyCode}`
+    return getPublicAppUrl(`/sites/${subdomain}/imovel/${propertyCode}`)
   }
 
   return null

@@ -10,15 +10,16 @@ function getErrorMessage(error: unknown) {
 }
 
 export function useOrganizationSite() {
-  const { organization } = useAuth()
+  const { organization, profile } = useAuth()
+  const organizationId = organization?.id || profile?.organization_id
 
   return useQuery({
-    queryKey: ['organization-site', organization?.id],
+    queryKey: ['organization-site', organizationId],
     queryFn: async () => {
-      if (!organization?.id) return null
-      return siteAPI.getSite(organization.id)
+      if (!organizationId) return null
+      return siteAPI.getSite(organizationId)
     },
-    enabled: !!organization?.id,
+    enabled: !!organizationId,
   })
 }
 
