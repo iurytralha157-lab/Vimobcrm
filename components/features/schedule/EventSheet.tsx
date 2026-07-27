@@ -428,7 +428,7 @@ export function EventSheet({
         data-tour="agenda-event-sheet"
         side="right"
         overlayClassName="bg-black/35"
-        className="!h-auto !w-[calc(100vw-24px)] !max-w-[560px] flex max-h-[78vh] flex-col overflow-hidden rounded-[12px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none backdrop-blur-xl [&>button.absolute.right-4.top-4]:hidden sm:inset-y-auto sm:right-auto sm:left-1/2 sm:top-1/2 sm:!w-[min(560px,calc(100vw-40px))] sm:!-translate-x-1/2 sm:!-translate-y-1/2 sm:!max-w-[560px]"
+        className="!h-[100dvh] !w-full !max-w-none flex !max-h-[100dvh] flex-col overflow-hidden rounded-none border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none backdrop-blur-xl [&>button.absolute.right-4.top-4]:hidden sm:inset-y-auto sm:right-auto sm:left-1/2 sm:top-1/2 sm:!h-auto sm:!max-h-[78vh] sm:!w-[min(560px,calc(100vw-40px))] sm:!-translate-x-1/2 sm:!-translate-y-1/2 sm:!max-w-[560px] sm:rounded-[12px]"
         onEscapeKeyDown={(event) => event.preventDefault()}
         onInteractOutside={(event) => {
           const target = event.target as HTMLElement | null;
@@ -441,27 +441,29 @@ export function EventSheet({
           <SheetTitle>{isExisting ? "Detalhes da atividade" : "Nova atividade"}</SheetTitle>
         </SheetHeader>
 
-        <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-6 pb-1 pt-4 sm:grid-cols-[minmax(0,1fr)_158px_auto] sm:px-8">
-          {locked ? (
-            <h2 className={cn("min-h-9 px-4 py-2 text-sm font-medium leading-tight", agendaFieldClass)}>{title || "Sem titulo"}</h2>
-          ) : (
-            <Input
-              data-tour="agenda-event-title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Adicionar titulo"
-              className={cn("h-9 px-4 text-sm font-medium", agendaFieldClass)}
-            />
-          )}
+        <div className="grid shrink-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 border-b border-[var(--app-border)] px-4 pb-3 pt-3 sm:grid-cols-[minmax(0,1fr)_158px_auto] sm:border-b-0 sm:px-8 sm:pb-1 sm:pt-4">
+          <div className="col-start-2 row-start-1 min-w-0 sm:col-start-1">
+            {locked ? (
+              <h2 className={cn("min-h-10 px-4 py-2.5 text-sm font-medium leading-tight sm:min-h-9 sm:py-2", agendaFieldClass)}>{title || "Sem titulo"}</h2>
+            ) : (
+              <Input
+                data-tour="agenda-event-title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Adicionar titulo"
+                className={cn("h-10 px-4 text-sm font-medium sm:h-9", agendaFieldClass)}
+              />
+            )}
+          </div>
           <div className="col-span-2 min-w-0 sm:col-span-1">
             {locked ? (
-              <FieldPill className="h-9 w-full justify-center px-3 text-xs">
+              <FieldPill className="h-10 w-full justify-center px-3 text-xs sm:h-9">
                 <TypeIcon className="h-3.5 w-3.5" />
                 {typeConf.label}
               </FieldPill>
             ) : (
               <Select value={selectedType} onValueChange={(value: EventType) => setSelectedType(value)}>
-                <SelectTrigger data-tour="agenda-event-type" className={cn("h-9 w-full px-3 text-xs font-semibold leading-none [&>span]:!flex [&>span]:items-center [&>span]:gap-2 [&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:text-[var(--app-text-tertiary)]", agendaControlClass)}>
+                <SelectTrigger data-tour="agenda-event-type" className={cn("h-10 w-full px-3 text-xs font-semibold leading-none sm:h-9 [&>span]:!flex [&>span]:items-center [&>span]:gap-2 [&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:text-[var(--app-text-tertiary)]", agendaControlClass)}>
                   <span className="min-w-0">
                     <TypeIcon className="h-3.5 w-3.5 shrink-0 text-[var(--app-text-tertiary)]" />
                     <span className="truncate">{typeConf.label}</span>
@@ -483,14 +485,14 @@ export function EventSheet({
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            className="row-start-1 shrink-0 rounded-[6px] p-1.5 text-[var(--app-text-tertiary)] transition hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] sm:col-start-3"
+            className="col-start-1 row-start-1 shrink-0 rounded-[6px] p-2 text-[var(--app-text-tertiary)] transition hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] sm:col-start-3 sm:p-1.5"
             aria-label="Fechar"
           >
             <X size={22} strokeWidth={1.7} />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:px-8">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:px-8 sm:pb-2 sm:pt-0">
           <div className="hidden">
             {locked ? (
               <h2 className="border-b border-primary/70 pb-2 text-[22px] font-normal leading-tight">{title || "Sem título"}</h2>
@@ -569,13 +571,13 @@ export function EventSheet({
                 {date ? format(date, "EEEE, dd 'de' MMMM", { locale: ptBR }) : "-"} · {time} - {endTimePreview || "-"}
               </div>
             ) : (
-              <div className="space-y-1">
-                <div className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_76px_12px_76px]">
+              <div className="space-y-2 sm:space-y-1">
+                <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_76px_12px_76px] sm:items-center">
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        className="min-h-10 rounded-none bg-transparent px-0 text-left text-base font-medium leading-tight text-[var(--app-text-secondary)] transition hover:text-primary focus-visible:text-primary active:text-primary"
+                        className="col-span-2 min-h-10 rounded-none bg-transparent px-0 text-left text-base font-medium leading-tight text-[var(--app-text-secondary)] transition hover:text-primary focus-visible:text-primary active:text-primary sm:col-span-1"
                       >
                         {date ? format(date, "EEEE, dd 'de' MMMM", { locale: ptBR }) : "Selecionar data"}
                       </button>
@@ -584,9 +586,15 @@ export function EventSheet({
                       <Calendar mode="single" selected={date} onSelect={setDate} locale={ptBR} />
                     </PopoverContent>
                   </Popover>
-                  <TimePicker value={time} onChange={setTime} disabled={isAllDay} />
+                  <div className="min-w-0 space-y-1 sm:space-y-0">
+                    <span className="text-[11px] font-medium text-[var(--app-text-tertiary)] sm:sr-only">Início</span>
+                    <TimePicker value={time} onChange={setTime} disabled={isAllDay} />
+                  </div>
                   <span className="hidden text-center text-[var(--app-text-tertiary)] sm:block">-</span>
-                  <TimePicker value={endTimePreview || time} onChange={handleEndTimeChange} disabled={isAllDay} />
+                  <div className="min-w-0 space-y-1 sm:space-y-0">
+                    <span className="text-[11px] font-medium text-[var(--app-text-tertiary)] sm:sr-only">Fim</span>
+                    <TimePicker value={endTimePreview || time} onChange={handleEndTimeChange} disabled={isAllDay} />
+                  </div>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3 pl-0.5 text-xs text-[var(--app-text-tertiary)]">
@@ -620,7 +628,7 @@ export function EventSheet({
           </AgendaRow>
 
           <AgendaRow dataTour="agenda-event-assignees" icon={<Users size={18} />} label="Responsáveis" inline>
-            <div className="flex min-h-10 flex-wrap items-center gap-2">
+            <div className="flex min-h-10 w-full flex-wrap items-center gap-2">
               {isMasked ? (
                 <span className="text-sm text-[var(--app-text-tertiary)]">Informacao privada</span>
               ) : allAssignees.length > 0 ? (
@@ -687,7 +695,7 @@ export function EventSheet({
               )}
               {!locked && assignableTeams.length > 0 && (
                 <Select value={selectedTeamId} onValueChange={(teamId) => void handleTeamSelect(teamId)}>
-                  <SelectTrigger className={cn("h-8 w-[132px] px-3 text-xs", agendaControlClass)}>
+                  <SelectTrigger className={cn("h-9 min-w-[132px] flex-1 px-3 text-xs sm:h-8 sm:flex-none", agendaControlClass)}>
                     <SelectValue placeholder="Equipe" />
                   </SelectTrigger>
                   <SelectContent className={agendaPopoverClass}>
@@ -709,13 +717,13 @@ export function EventSheet({
         </AgendaRow>
 
           <AgendaRow dataTour="agenda-event-visibility" icon={<Lock size={18} />} label="Visibilidade" inline>
-            <div className="flex flex-col items-start gap-1.5">
+            <div className="flex w-full flex-col items-start gap-1.5">
               {locked ? (
                 <FieldPill className="h-9 px-3 text-xs">
                   {visibilityOptions.find((option) => option.value === visibility)?.label || "Padrão"}
                 </FieldPill>
               ) : (
-                <div className="inline-flex h-9 rounded-[8px] bg-[var(--app-surface-soft)] p-1">
+                <div className="grid h-10 w-full grid-cols-3 rounded-[8px] bg-[var(--app-surface-soft)] p-1 sm:inline-flex sm:h-9 sm:w-auto">
                   {visibilityOptions.map((option) => (
                     <button
                       key={option.value}
@@ -724,7 +732,7 @@ export function EventSheet({
                       title={option.description}
                       aria-label={`${option.label}: ${option.description}`}
                       className={cn(
-                        "rounded-md px-3 text-xs font-semibold transition",
+                        "min-w-0 rounded-md px-2 text-xs font-semibold transition sm:px-3",
                         visibility === option.value
                           ? "bg-primary text-primary-foreground"
                           : "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
@@ -765,7 +773,7 @@ export function EventSheet({
                     Buscar por nome, tel...
                   </button>
                 </PopoverTrigger>
-                <PopoverContent className={cn("w-[360px] p-0", agendaPopoverClass)} align="start">
+                <PopoverContent className={cn("w-[min(360px,calc(100vw-32px))] p-0", agendaPopoverClass)} align="start">
                   <Command shouldFilter={false} className="bg-transparent [&_[cmdk-input-wrapper]]:border-b-0">
                     <CommandInput placeholder="Buscar por nome, telefone ou e-mail..." value={leadSearch} onValueChange={setLeadSearch} />
                     <CommandList>
@@ -837,7 +845,7 @@ export function EventSheet({
             )}
           </AgendaRow>}
 
-          <AgendaRow dataTour="agenda-event-notes" icon={<MessageSquare size={19} />}>
+          <AgendaRow dataTour="agenda-event-notes" icon={<MessageSquare size={19} />} label="Observações">
             {locked ? (
               <p className="text-sm text-[var(--app-text-secondary)]">{description || (isMasked ? "Informacao privada" : "Sem descrição")}</p>
             ) : (
@@ -846,7 +854,7 @@ export function EventSheet({
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Adicione observações"
                 rows={4}
-                className={cn("min-h-[132px] resize-none px-4 py-3 text-sm", agendaFieldClass)}
+                className={cn("min-h-[112px] resize-none px-4 py-3 text-sm sm:min-h-[132px]", agendaFieldClass)}
               />
             )}
           </AgendaRow>
@@ -916,7 +924,7 @@ export function EventSheet({
           )}
         </div>
 
-        <div className="flex shrink-0 items-center justify-between gap-3 px-5 py-4">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[var(--app-border)] px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 sm:border-t-0 sm:px-5 sm:py-4">
           {canManageSchedule && isExisting && !isMasked ? (
             <AlertDialog>
               <AlertDialogTrigger asChild>
@@ -939,7 +947,7 @@ export function EventSheet({
             <span />
           )}
 
-          <div className="ml-auto flex flex-1 flex-wrap items-center justify-end gap-2">
+          <div className="ml-auto flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
             {canManageSchedule && isExisting && !isMasked && !isCompleted && (
               <Button variant="ghost" size="sm" onClick={handleMarkDone} disabled={isLoading} className="gap-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white">
                 <CheckCircle size={13} /> Concluir
@@ -950,14 +958,14 @@ export function EventSheet({
                 <Clock size={13} /> Reabrir
               </Button>
             )}
-            <Button variant="ghost" size="sm" onClick={() => (canManageSchedule && isExisting && !isMasked && !isCompleted ? setIsEditing((value) => !value) : onOpenChange(false))} disabled={isLoading} className={cn("rounded-[8px] border-0 font-semibold shadow-none", !locked ? "order-1 h-11 flex-[3] bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]" : "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground")}>
+            <Button variant="ghost" size="sm" onClick={() => (canManageSchedule && isExisting && !isMasked && !isCompleted ? setIsEditing((value) => !value) : onOpenChange(false))} disabled={isLoading} className={cn("min-w-0 rounded-[8px] border-0 font-semibold shadow-none", !locked ? "order-1 h-11 flex-[3] bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]" : "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground")}>
               {canManageSchedule && isExisting && !isMasked && !isEditing ? "Editar" : "Fechar"}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => (isExisting ? setIsEditing(true) : onOpenChange(false))} disabled={isLoading || isCompleted} className="hidden">
               Mais opções
             </Button>
             {!locked && (
-              <Button size="sm" onClick={handleSubmit} disabled={!canSubmit || isLoading} className="order-2 h-11 flex-[7] rounded-[8px] border-0 bg-primary px-7 text-sm font-semibold text-primary-foreground shadow-none hover:bg-primary/90">
+              <Button size="sm" onClick={handleSubmit} disabled={!canSubmit || isLoading} className="order-2 h-11 min-w-0 flex-[7] rounded-[8px] border-0 bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-none hover:bg-primary/90 sm:px-7">
                 {isLoading ? "Salvando..." : isExisting ? "Salvar" : "Adicionar"}
               </Button>
             )}
@@ -994,16 +1002,16 @@ function AgendaRow({
 }) {
   if (inline) {
     return (
-      <div data-tour={dataTour} className={cn("grid grid-cols-[28px_104px_minmax(0,1fr)] items-center gap-2 py-1.5 sm:grid-cols-[30px_124px_minmax(0,1fr)]", className)}>
-        <div className="flex justify-center text-[var(--app-text-tertiary)]">{icon}</div>
+      <div data-tour={dataTour} className={cn("grid grid-cols-[24px_minmax(0,1fr)] items-start gap-x-3 gap-y-1 py-2 sm:grid-cols-[30px_124px_minmax(0,1fr)] sm:items-center sm:gap-2 sm:py-1.5", className)}>
+        <div className="flex justify-center pt-0.5 text-[var(--app-text-tertiary)] sm:pt-0">{icon}</div>
         <div className="min-w-0 text-sm font-medium text-[var(--app-text-secondary)]">{label}</div>
-        <div className="min-w-0">{children}</div>
+        <div className="col-start-2 min-w-0 sm:col-start-3 sm:row-start-1">{children}</div>
       </div>
     );
   }
 
   return (
-    <div data-tour={dataTour} className={cn("grid grid-cols-[30px_1fr] gap-3", align === "center" ? "items-center py-1.5" : "items-start py-2", className)}>
+    <div data-tour={dataTour} className={cn("grid grid-cols-[24px_minmax(0,1fr)] gap-3 sm:grid-cols-[30px_minmax(0,1fr)]", align === "center" ? "items-center py-1.5" : "items-start py-2", className)}>
       <div className={cn("flex justify-center text-[var(--app-text-tertiary)]", align === "start" && "pt-2")}>{icon}</div>
       <div className="min-w-0">
         {label && <div className="mb-1.5 text-sm font-medium text-[var(--app-text-secondary)]">{label}</div>}
@@ -1036,7 +1044,7 @@ function TimePicker({
         <button
           type="button"
           disabled={disabled}
-          className="inline-flex h-10 min-w-[76px] items-center justify-center rounded-[8px] border-0 bg-[var(--app-surface-soft)] px-3 text-sm font-semibold text-[var(--app-text-primary)] shadow-none transition hover:bg-[var(--app-surface-hover)] disabled:opacity-50"
+          className="inline-flex h-10 w-full min-w-[76px] items-center justify-center rounded-[8px] border-0 bg-[var(--app-surface-soft)] px-3 text-sm font-semibold text-[var(--app-text-primary)] shadow-none transition hover:bg-[var(--app-surface-hover)] disabled:opacity-50 sm:w-auto"
         >
           {value || "--:--"}
         </button>
