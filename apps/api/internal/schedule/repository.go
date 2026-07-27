@@ -65,8 +65,8 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	}
 	where := []string{
 		"se.organization_id = $1::uuid",
-		scheduleEventScopeSQL("$2", "$3"),
-		scheduleEventLeadVisibilitySQL(
+		scheduleEventListScopeSQL("$2", "$3"),
+		scheduleEventListLeadVisibilitySQL(
 			"$3",
 			"$2",
 			"$4",
@@ -127,6 +127,27 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	}
 
 	return events, nil
+}
+
+func scheduleEventListScopeSQL(userIDPlaceholder string, canManagePlaceholder string) string {
+	return `(
+		se.visibility in ('default', 'public')
+		or ` + scheduleEventScopeSQL(userIDPlaceholder, canManagePlaceholder) + `
+	)`
+}
+
+func scheduleEventListLeadVisibilitySQL(canViewAllSchedulePlaceholder string, participantUserIDPlaceholder string, canViewAllLeadsPlaceholder string, leadUserIDPlaceholder string, canViewTeamPlaceholder string, canViewOwn bool) string {
+	return `(
+		se.visibility in ('default', 'public')
+		or ` + scheduleEventLeadVisibilitySQL(
+		canViewAllSchedulePlaceholder,
+		participantUserIDPlaceholder,
+		canViewAllLeadsPlaceholder,
+		leadUserIDPlaceholder,
+		canViewTeamPlaceholder,
+		canViewOwn,
+	) + `
+	)`
 }
 
 func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, eventID string) (Event, error) {
@@ -1099,12 +1120,18 @@ func (repo Repository) canViewEvent(ctx context.Context, tx pgx.Tx, tenantContex
 	if participant {
 		return true, nil
 	}
-	canViewLead, err := repo.canAccessEventLead(ctx, tx, tenantContext, snapshot.LeadID)
-	if err != nil || !canViewLead {
-		return canViewLead, err
+	if snapshot.Visibility == "public" {
+		return true, nil
 	}
 	if snapshot.Visibility == "private" {
 		return false, nil
+	}
+	if snapshot.Visibility == "default" {
+		return repo.isEventInScheduleActorScope(ctx, tx, tenantContext, snapshot.ID)
+	}
+	canViewLead, err := repo.canAccessEventLead(ctx, tx, tenantContext, snapshot.LeadID)
+	if err != nil || !canViewLead {
+		return canViewLead, err
 	}
 
 	return repo.isEventInScheduleScope(ctx, tx, tenantContext, snapshot.ID)
@@ -1171,6 +1198,20 @@ func (repo Repository) isEventInScheduleScope(ctx context.Context, tx pgx.Tx, te
 	)+`
 		)
 	`, tenantContext.OrganizationID, eventID, tenantContext.UserID, canViewAllLeads(tenantContext), tenantContext.UserID, tenantContext.HasPermission(permissions.LeadViewTeam)).Scan(&exists)
+	return exists, err
+}
+
+func (repo Repository) isEventInScheduleActorScope(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, eventID string) (bool, error) {
+	var exists bool
+	err := tx.QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.schedule_events se
+			where se.organization_id = $1::uuid
+			  and se.id = $2::uuid
+			  and `+scheduleEventScopeSQL("$3", "false")+`
+		)
+	`, tenantContext.OrganizationID, eventID, tenantContext.UserID).Scan(&exists)
 	return exists, err
 }
 
@@ -1418,7 +1459,8 @@ func scheduleEventsQuery(whereClause string) string {
 					'[]'::jsonb
 				)::text as assignee_user_ids_json,
 				coalesce(bool_or(se.user_id = $2::uuid or sea.user_id = $2::uuid), false) as is_participant,
-				$3::boolean as is_manager
+				$3::boolean as is_manager,
+				` + scheduleEventTeamLeaderScopeSQL("$2") + ` as is_team_leader
 			from public.schedule_events se
 			left join public.schedule_event_assignees sea
 			  on sea.organization_id = se.organization_id
@@ -1429,7 +1471,12 @@ func scheduleEventsQuery(whereClause string) string {
 		visible as (
 			select
 				base.*,
-				(base.visibility = 'default' and not base.is_participant and not base.is_manager) as is_masked
+				(
+					base.visibility = 'default'
+					and not base.is_participant
+					and not base.is_manager
+					and not base.is_team_leader
+				) as is_masked
 			from base
 			where base.visibility <> 'private'
 			   or base.is_participant
@@ -1494,7 +1541,12 @@ func scheduleEventScopeSQL(userIDPlaceholder string, canManagePlaceholder string
 			  and scope_self.event_id = se.id
 			  and scope_self.user_id = ` + userIDPlaceholder + `::uuid
 		)
-		or exists (
+		or ` + scheduleEventTeamLeaderScopeSQL(userIDPlaceholder) + `
+	)`
+}
+
+func scheduleEventTeamLeaderScopeSQL(userIDPlaceholder string) string {
+	return `exists (
 			select 1
 			from public.team_members leader
 			join public.team_members member
@@ -1515,8 +1567,7 @@ func scheduleEventScopeSQL(userIDPlaceholder string, canManagePlaceholder string
 					    and scope_team.user_id = member.user_id
 				  )
 			  )
-		)
-	)`
+		)`
 }
 
 func leadScheduleVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, canViewTeamPlaceholder string, canViewOwn bool) string {

@@ -74,7 +74,7 @@ func TestSchedulePropertyVisibilityRequiresPropertyPermission(t *testing.T) {
 
 func TestScheduleVisibilityMasksDefaultForNonParticipants(t *testing.T) {
 	query := scheduleEventsQuery("true")
-	if !strings.Contains(query, "(base.visibility = 'default' and not base.is_participant and not base.is_manager) as is_masked") {
+	if !strings.Contains(query, "and not base.is_team_leader") {
 		t.Fatal("default events should expose only busy time to non-participants")
 	}
 	if strings.Contains(query, "(base.visibility = 'public' and not base.is_participant and not base.is_manager) as is_masked") {
@@ -82,5 +82,38 @@ func TestScheduleVisibilityMasksDefaultForNonParticipants(t *testing.T) {
 	}
 	if !strings.Contains(query, "where base.visibility <> 'private'") {
 		t.Fatal("private events should remain hidden from non-participants")
+	}
+}
+
+func TestScheduleDefaultVisibilityIsOrganizationWide(t *testing.T) {
+	scope := scheduleEventListScopeSQL("$2", "$3")
+	if !strings.Contains(scope, "se.visibility in ('default', 'public')") {
+		t.Fatal("default and public events should be listed for every organization user with schedule access")
+	}
+	if !strings.Contains(scope, scheduleEventScopeSQL("$2", "$3")) {
+		t.Fatal("private events should keep the regular schedule scope")
+	}
+
+	leadScope := scheduleEventListLeadVisibilitySQL("$3", "$2", "$4", "$5", "$6", true)
+	if !strings.Contains(leadScope, "se.visibility in ('default', 'public')") {
+		t.Fatal("organization-wide default and public events must not depend on lead access")
+	}
+	if !strings.Contains(leadScope, scheduleEventLeadVisibilitySQL("$3", "$2", "$4", "$5", "$6", true)) {
+		t.Fatal("private events should keep the regular lead visibility rules")
+	}
+}
+
+func TestScheduleTeamLeaderSeesDefaultDetailsButNotPrivateEvents(t *testing.T) {
+	query := scheduleEventsQuery("true")
+	leaderScope := scheduleEventTeamLeaderScopeSQL("$2")
+
+	if !strings.Contains(query, leaderScope+" as is_team_leader") {
+		t.Fatal("schedule query should identify leaders for the event owner's or assignee's team")
+	}
+	if !strings.Contains(query, "and not base.is_team_leader") {
+		t.Fatal("team leaders should receive default event details instead of a masked busy block")
+	}
+	if strings.Contains(query, "or base.is_team_leader") {
+		t.Fatal("team leadership alone must not expose private events")
 	}
 }
