@@ -1490,6 +1490,87 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 		t.Fatal("expired processed webhook inbox row still exists after cleanup")
 	}
 
+	var deadMessageInboxID, deadReceiptInboxID, deadMessageStatusInboxID, deadMessageAckInboxID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_webhook_inbox (
+			organization_id, session_id, event_key, event_type, payload,
+			status, attempts, dead_lettered_at, expires_at
+		) values (
+			$1::uuid, $2::uuid, $3, 'message', '{}'::jsonb,
+			'dead', 12, now() - interval '25 hours', now() - interval '1 second'
+		)
+		returning id::text
+	`, organizationID, sessionID, "dead-message-"+suffix).Scan(&deadMessageInboxID); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_webhook_inbox (
+			organization_id, session_id, event_key, event_type, payload,
+			status, attempts, dead_lettered_at, expires_at
+		) values (
+			$1::uuid, $2::uuid, $3, 'receipt', '{}'::jsonb,
+			'dead', 12, now() - interval '25 hours', now() - interval '1 second'
+		)
+		returning id::text
+	`, organizationID, sessionID, "dead-receipt-"+suffix).Scan(&deadReceiptInboxID); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_webhook_inbox (
+			organization_id, session_id, event_key, event_type, payload,
+			status, attempts, dead_lettered_at, expires_at
+		) values (
+			$1::uuid, $2::uuid, $3, 'messages.status', '{}'::jsonb,
+			'dead', 12, now() - interval '25 hours', now() - interval '1 second'
+		)
+		returning id::text
+	`, organizationID, sessionID, "dead-message-status-"+suffix).Scan(&deadMessageStatusInboxID); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_webhook_inbox (
+			organization_id, session_id, event_key, event_type, payload,
+			status, attempts, dead_lettered_at, expires_at
+		) values (
+			$1::uuid, $2::uuid, $3, 'message_ack', '{}'::jsonb,
+			'dead', 12, now() - interval '25 hours', now() - interval '1 second'
+		)
+		returning id::text
+	`, organizationID, sessionID, "dead-message-ack-"+suffix).Scan(&deadMessageAckInboxID); err != nil {
+		t.Fatal(err)
+	}
+	deletedInboxRows, err = repo.CleanupExpiredWebhookInbox(ctx, 100)
+	if err != nil {
+		t.Fatalf("CleanupExpiredWebhookInbox() dead-letter error: %v", err)
+	}
+	if deletedInboxRows != 3 {
+		t.Fatalf("CleanupExpiredWebhookInbox() deleted %d dead rows, want receipt/status/ack", deletedInboxRows)
+	}
+	var deadMessageExists, deadReceiptExists, deadMessageStatusExists, deadMessageAckExists bool
+	if err := postgres.Pool().QueryRow(ctx, `
+		select
+			exists(select 1 from public.whatsapp_webhook_inbox where id = $1::uuid),
+			exists(select 1 from public.whatsapp_webhook_inbox where id = $2::uuid),
+			exists(select 1 from public.whatsapp_webhook_inbox where id = $3::uuid),
+			exists(select 1 from public.whatsapp_webhook_inbox where id = $4::uuid)
+	`, deadMessageInboxID, deadReceiptInboxID, deadMessageStatusInboxID, deadMessageAckInboxID).Scan(
+		&deadMessageExists,
+		&deadReceiptExists,
+		&deadMessageStatusExists,
+		&deadMessageAckExists,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !deadMessageExists || deadReceiptExists || deadMessageStatusExists || deadMessageAckExists {
+		t.Fatalf(
+			"dead cleanup preservation = message:%v receipt:%v message_status:%v message_ack:%v, want true/false/false/false",
+			deadMessageExists,
+			deadReceiptExists,
+			deadMessageStatusExists,
+			deadMessageAckExists,
+		)
+	}
+
 	cleanupSuccessID := "cleanup-success-" + suffix
 	cleanupFailureID := "cleanup-failure-" + suffix
 	if _, err := postgres.Pool().Exec(ctx, `

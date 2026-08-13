@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -16,6 +18,9 @@ import (
 
 var whatsappWebhookWorkerID = "vimob-api-evolution-webhook-" + randomHex(8)
 var whatsappWebhookWorkerWake = make(chan struct{}, 1)
+
+var evolutionWebhookMessageMarkers = []string{"message"}
+var evolutionWebhookStatusMarkers = []string{"receipt", "ack", "status"}
 
 func wakeWhatsAppWebhookWorker() {
 	select {
@@ -47,7 +52,7 @@ func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logg
 
 	go func() {
 		pollTicker := time.NewTicker(config.WebhookWorkerInterval)
-		cleanupTicker := time.NewTicker(time.Hour)
+		cleanupTicker := time.NewTicker(time.Minute)
 		defer pollTicker.Stop()
 		defer cleanupTicker.Stop()
 		for {
@@ -55,15 +60,15 @@ func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logg
 			case <-ctx.Done():
 				return
 			case <-cleanupTicker.C:
-				if _, err := handler.repo.CleanupExpiredWebhookInbox(ctx, 1000); err != nil && !errors.Is(err, context.Canceled) {
+				if _, err := handler.repo.CleanupExpiredWebhookInbox(ctx, 10000); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("whatsapp webhook inbox cleanup failed", "error", err)
 				}
 			case <-pollTicker.C:
-				if err := handler.repo.ProcessWebhookInboxWithBatch(ctx, config.WebhookWorkerBatch); err != nil && !errors.Is(err, context.Canceled) {
+				if err := handler.repo.processWebhookInboxWithBatchAndConcurrency(ctx, config.WebhookWorkerBatch, config.WebhookWorkerConcurrency); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("whatsapp webhook inbox worker failed", "error", err)
 				}
 			case <-whatsappWebhookWorkerWake:
-				if err := handler.repo.ProcessWebhookInboxWithBatch(ctx, config.WebhookWorkerBatch); err != nil && !errors.Is(err, context.Canceled) {
+				if err := handler.repo.processWebhookInboxWithBatchAndConcurrency(ctx, config.WebhookWorkerBatch, config.WebhookWorkerConcurrency); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("whatsapp webhook inbox worker failed", "error", err)
 				}
 			}
@@ -79,8 +84,19 @@ func (repo Repository) CleanupExpiredWebhookInbox(ctx context.Context, limit int
 		with expired as (
 			select id
 			from public.whatsapp_webhook_inbox
-			where status in ('processed', 'dead')
-			  and expires_at < now()
+			where expires_at < now()
+			  and (
+			    status = 'processed'
+			    or (
+			      status = 'dead'
+			      and not (
+			        strpos(lower(btrim(event_type)), 'message') > 0
+			        and strpos(lower(btrim(event_type)), 'receipt') = 0
+			        and strpos(lower(btrim(event_type)), 'ack') = 0
+			        and strpos(lower(btrim(event_type)), 'status') = 0
+			      )
+			    )
+			  )
 			order by expires_at, id
 			limit $1
 			for update skip locked
@@ -100,30 +116,109 @@ func (repo Repository) ProcessWebhookInbox(ctx context.Context) error {
 }
 
 func (repo Repository) ProcessWebhookInboxWithBatch(ctx context.Context, batch int) error {
+	return repo.processWebhookInboxWithBatchAndConcurrency(ctx, batch, defaultWhatsAppWebhookWorkerConcurrency)
+}
+
+func (repo Repository) processWebhookInboxWithBatchAndConcurrency(ctx context.Context, batch int, concurrency int) error {
 	items, err := repo.claimEvolutionWebhooksWithBatch(ctx, batch)
 	if err != nil {
 		return err
 	}
-	for _, item := range items {
-		leaseOwned, renewErr := repo.renewEvolutionWebhookLease(ctx, item.ID)
-		if renewErr != nil {
-			return renewErr
-		}
-		if !leaseOwned {
-			continue
-		}
-		err := repo.dispatchEvolutionWebhook(ctx, item)
-		if err == nil {
-			if markErr := repo.markEvolutionWebhookProcessed(ctx, item.ID); markErr != nil {
-				return markErr
-			}
-			continue
-		}
-		if markErr := repo.markEvolutionWebhookFailed(ctx, item, err); markErr != nil {
-			return markErr
-		}
+	return drainEvolutionWebhookBatch(ctx, items, normalizeWebhookWorkerConcurrency(concurrency), repo.processClaimedEvolutionWebhook)
+}
+
+func (repo Repository) processClaimedEvolutionWebhook(ctx context.Context, item pendingEvolutionWebhook) error {
+	leaseOwned, err := repo.renewEvolutionWebhookLease(ctx, item.ID)
+	if err != nil || !leaseOwned {
+		return err
 	}
-	return nil
+	if err := repo.dispatchEvolutionWebhook(ctx, item); err != nil {
+		return repo.markEvolutionWebhookFailed(ctx, item, err)
+	}
+	return repo.markEvolutionWebhookProcessed(ctx, item)
+}
+
+type evolutionWebhookSessionBatch struct {
+	items []pendingEvolutionWebhook
+}
+
+func groupEvolutionWebhookBatchBySession(items []pendingEvolutionWebhook) []evolutionWebhookSessionBatch {
+	groups := make([]evolutionWebhookSessionBatch, 0, len(items))
+	groupIndex := make(map[string]int, len(items))
+	for _, item := range items {
+		index, exists := groupIndex[item.SessionID]
+		if !exists {
+			index = len(groups)
+			groupIndex[item.SessionID] = index
+			groups = append(groups, evolutionWebhookSessionBatch{})
+		}
+		groups[index].items = append(groups[index].items, item)
+	}
+	return groups
+}
+
+func drainEvolutionWebhookBatch(
+	ctx context.Context,
+	items []pendingEvolutionWebhook,
+	concurrency int,
+	process func(context.Context, pendingEvolutionWebhook) error,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	groups := groupEvolutionWebhookBatchBySession(items)
+	concurrency = normalizeWebhookWorkerConcurrency(concurrency)
+	if concurrency > len(groups) {
+		concurrency = len(groups)
+	}
+
+	workCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	jobs := make(chan evolutionWebhookSessionBatch, len(groups))
+	for _, group := range groups {
+		jobs <- group
+	}
+	close(jobs)
+
+	var workers sync.WaitGroup
+	var firstError error
+	var firstErrorOnce sync.Once
+	for worker := 0; worker < concurrency; worker++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for {
+				select {
+				case <-workCtx.Done():
+					return
+				case group, ok := <-jobs:
+					if !ok {
+						return
+					}
+					for _, item := range group.items {
+						if err := workCtx.Err(); err != nil {
+							return
+						}
+						if err := process(workCtx, item); err != nil {
+							firstErrorOnce.Do(func() {
+								firstError = err
+								cancel()
+							})
+							return
+						}
+					}
+				}
+			}
+		}()
+	}
+	workers.Wait()
+	if firstError != nil {
+		return firstError
+	}
+	return ctx.Err()
 }
 
 func (repo Repository) renewEvolutionWebhookLease(ctx context.Context, id string) (bool, error) {
@@ -156,35 +251,51 @@ func (repo Repository) claimEvolutionWebhooksWithBatch(ctx context.Context, batc
 	}
 
 	rows, err := tx.Query(ctx, `
-		with candidates as (
+		with candidates as materialized (
 			select wi.id
 			from public.whatsapp_webhook_inbox wi
 			where wi.status in ('pending', 'retry')
 			  and wi.attempts < wi.max_attempts
 			  and wi.next_attempt_at <= now()
-			order by wi.created_at asc
+			order by wi.next_attempt_at, wi.created_at, wi.id
 			limit $1
 			for update skip locked
+		),
+		claimed as (
+			update public.whatsapp_webhook_inbox wi
+			set status = 'processing',
+			    attempts = wi.attempts + 1,
+			    locked_at = now(),
+			    locked_by = $2,
+			    updated_at = now()
+			from candidates c, public.whatsapp_sessions ws
+			where wi.id = c.id
+			  and ws.id = wi.session_id
+			returning
+				wi.id,
+				wi.organization_id,
+				wi.session_id,
+				wi.provider_instance_id,
+				wi.event_type,
+				wi.payload,
+				wi.attempts,
+				wi.max_attempts,
+				wi.next_attempt_at,
+				wi.created_at
 		)
-		update public.whatsapp_webhook_inbox wi
-		set status = 'processing',
-		    attempts = wi.attempts + 1,
-		    locked_at = now(),
-		    locked_by = $2,
-		    updated_at = now()
-		from candidates c, public.whatsapp_sessions ws
-		where wi.id = c.id
-		  and ws.id = wi.session_id
-		returning
-			wi.id::text,
-			wi.organization_id::text,
-			wi.session_id::text,
-			coalesce(wi.provider_instance_id, ws.instance_id, ws.instance_name, ''),
-			wi.event_type,
+		select
+			id::text,
+			organization_id::text,
+			session_id::text,
+			coalesce(claimed.provider_instance_id, ws.instance_id, ws.instance_name, ''),
+			claimed.event_type,
 			coalesce(ws.advanced_settings->>'webhook_token', ''),
-			wi.payload::text,
-			wi.attempts,
-			wi.max_attempts
+			claimed.payload::text,
+			claimed.attempts,
+			claimed.max_attempts
+		from claimed
+		join public.whatsapp_sessions ws on ws.id = claimed.session_id
+		order by claimed.next_attempt_at, claimed.created_at, claimed.id
 	`, batch, whatsappWebhookWorkerID)
 	if err != nil {
 		return nil, err
@@ -252,11 +363,13 @@ func (repo Repository) forwardEvolutionWebhook(ctx context.Context, item pending
 	return nil
 }
 
-func (repo Repository) markEvolutionWebhookProcessed(ctx context.Context, id string) error {
+func (repo Repository) markEvolutionWebhookProcessed(ctx context.Context, item pendingEvolutionWebhook) error {
+	retentionSeconds := int64(evolutionWebhookProcessedRetention(item.EventType) / time.Second)
 	_, err := repo.db.Pool().Exec(ctx, `
 		update public.whatsapp_webhook_inbox
 		set status = 'processed',
 		    processed_at = now(),
+		    expires_at = now() + ($3 * interval '1 second'),
 		    locked_at = null,
 		    locked_by = null,
 		    last_error = null,
@@ -264,8 +377,28 @@ func (repo Repository) markEvolutionWebhookProcessed(ctx context.Context, id str
 		where id = $1::uuid
 		  and status = 'processing'
 		  and locked_by = $2
-	`, id, whatsappWebhookWorkerID)
+	`, item.ID, whatsappWebhookWorkerID, retentionSeconds)
 	return err
+}
+
+func evolutionWebhookProcessedRetention(eventType string) time.Duration {
+	if evolutionWebhookContainsMarker(eventType, evolutionWebhookStatusMarkers) {
+		return 6 * time.Hour
+	}
+	if evolutionWebhookContainsMarker(eventType, evolutionWebhookMessageMarkers) {
+		return 24 * time.Hour
+	}
+	return time.Hour
+}
+
+func evolutionWebhookContainsMarker(eventType string, markers []string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(eventType))
+	for _, marker := range markers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (repo Repository) markEvolutionWebhookFailed(ctx context.Context, item pendingEvolutionWebhook, cause error) error {

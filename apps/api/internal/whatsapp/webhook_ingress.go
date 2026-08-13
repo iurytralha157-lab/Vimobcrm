@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -30,6 +31,7 @@ type evolutionWebhookEnvelope struct {
 	WebhookHeaderTokens []string
 	EventKey            string
 	Payload             []byte
+	ReceivedAt          time.Time
 }
 
 type evolutionWebhookReceipt struct {
@@ -38,6 +40,7 @@ type evolutionWebhookReceipt struct {
 	EventType string `json:"eventType"`
 	Status    string `json:"status"`
 	Duplicate bool   `json:"duplicate"`
+	Inline    bool   `json:"inline,omitempty"`
 }
 
 type evolutionWebhookSession struct {
@@ -122,6 +125,7 @@ func parseEvolutionWebhookEnvelope(query url.Values, headers http.Header, body [
 		))),
 		WebhookHeaderTokens: suppliedEvolutionWebhookHeaderTokens(headers),
 		Payload:             append([]byte(nil), body...),
+		ReceivedAt:          time.Now().UTC(),
 	}
 
 	if envelope.SessionID == "" {
@@ -160,6 +164,24 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	if eventKey == "" {
 		eventKey = evolutionWebhookEventKey(session.ID, envelope.Payload)
 	}
+	envelope.EventKey = eventKey
+	inlineState, err := evolutionWebhookInlineSessionState(envelope)
+	if err != nil {
+		return evolutionWebhookReceipt{}, err
+	}
+	if inlineState.Handled {
+		if err := repo.applyEvolutionWebhookSessionState(ctx, session, inlineState); err != nil {
+			return evolutionWebhookReceipt{}, err
+		}
+		return evolutionWebhookReceipt{
+			ID:        eventKey,
+			SessionID: session.ID,
+			EventType: envelope.EventType,
+			Status:    "processed",
+			Inline:    true,
+		}, nil
+	}
+
 	var receipt evolutionWebhookReceipt
 	err = repo.db.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_webhook_inbox (
@@ -207,6 +229,206 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 		return evolutionWebhookReceipt{}, err
 	}
 	return receipt, nil
+}
+
+const (
+	evolutionWebhookStateRankQRCode   = 1
+	evolutionWebhookStateRankTerminal = 2
+)
+
+type evolutionWebhookSessionState struct {
+	Handled           bool
+	QRCode            string
+	Status            string
+	ConnectionError   string
+	PhoneNumber       string
+	ProfileName       string
+	OccurredAt        time.Time
+	ProviderTimestamp bool
+	Rank              int
+	EventKey          string
+}
+
+func evolutionWebhookInlineSessionState(envelope evolutionWebhookEnvelope) (evolutionWebhookSessionState, error) {
+	payload, err := decodeNativeEvolutionPayload(envelope.Payload)
+	if err != nil {
+		return evolutionWebhookSessionState{}, err
+	}
+	event := nativeEvolutionEventName(payload, envelope.EventType)
+	compactEvent := strings.NewReplacer(".", "", "_", "", "-", "", " ", "").Replace(strings.ToLower(event))
+	isSessionEvent := strings.Contains(compactEvent, "connection") ||
+		strings.Contains(compactEvent, "instance") ||
+		strings.Contains(compactEvent, "session") ||
+		compactEvent == "connected" ||
+		compactEvent == "disconnected" ||
+		compactEvent == "loggedout" ||
+		compactEvent == "pairsuccess"
+
+	connectionStatus, connectionRecognized, connectionError := nativeEvolutionConnectionStatus(payload, event)
+	if !connectionRecognized {
+		switch compactEvent {
+		case "connected", "pairsuccess":
+			connectionStatus, connectionRecognized = "connected", true
+		case "disconnected", "loggedout":
+			connectionStatus, connectionRecognized = "disconnected", true
+		}
+	}
+	eventAt, providerTimestamp := evolutionWebhookEventOccurredAt(payload, envelope.ReceivedAt)
+
+	qrCode := nativeEvolutionQRCode(payload)
+	isQRCodeEvent := strings.Contains(compactEvent, "qr") ||
+		(isSessionEvent && connectionRecognized && connectionStatus == "qr_ready")
+	if isQRCodeEvent && strings.TrimSpace(qrCode) != "" {
+		return evolutionWebhookSessionState{
+			Handled:           true,
+			QRCode:            qrCode,
+			Status:            "qr_ready",
+			OccurredAt:        eventAt,
+			ProviderTimestamp: providerTimestamp,
+			Rank:              evolutionWebhookStateRankQRCode,
+			EventKey:          envelope.EventKey,
+		}, nil
+	}
+	if isSessionEvent && connectionRecognized && connectionStatus != "" && connectionStatus != "qr_ready" {
+		// Terminal state retries without a provider timestamp cannot be ordered
+		// safely against newer connection events. Keep them in the durable inbox,
+		// where event_key deduplication and FIFO processing preserve causality.
+		if !providerTimestamp {
+			return evolutionWebhookSessionState{}, nil
+		}
+		data := nativeFirstMap(payload, "data", "Data")
+		jid := firstNonEmpty(
+			firstString(data, "jid", "JID", "phone", "Phone", "user.id"),
+			firstString(payload, "jid", "JID", "phone", "Phone", "user.id"),
+		)
+		phoneNumber := ""
+		if phone, valid := phoneFromIdentityValue(jid); valid {
+			phoneNumber = phone
+		}
+		return evolutionWebhookSessionState{
+			Handled:         true,
+			Status:          connectionStatus,
+			ConnectionError: connectionError,
+			PhoneNumber:     phoneNumber,
+			ProfileName: firstNonEmpty(
+				firstString(data, "pushName", "name", "profileName"),
+				firstString(payload, "pushName", "name", "profileName"),
+			),
+			OccurredAt:        eventAt,
+			ProviderTimestamp: providerTimestamp,
+			Rank:              evolutionWebhookStateRankTerminal,
+			EventKey:          envelope.EventKey,
+		}, nil
+	}
+	return evolutionWebhookSessionState{}, nil
+}
+
+func evolutionWebhookEventOccurredAt(payload map[string]any, receivedAt time.Time) (time.Time, bool) {
+	if receivedAt.IsZero() {
+		receivedAt = time.Now().UTC()
+	} else {
+		receivedAt = receivedAt.UTC()
+	}
+	providerTime := nativeTimestamp(nativeFirstValue(
+		payload,
+		"date_time", "dateTime", "event_time", "eventTime", "event_timestamp", "eventTimestamp", "timestamp", "Timestamp",
+		"data.date_time", "data.dateTime", "data.event_time", "data.eventTime", "data.event_timestamp", "data.eventTimestamp",
+		"Data.date_time", "Data.dateTime", "Data.event_time", "Data.eventTime", "Data.event_timestamp", "Data.eventTimestamp",
+	))
+	// A future provider clock must not pin the session state indefinitely.
+	if providerTime.IsZero() || providerTime.After(receivedAt.Add(5*time.Minute)) {
+		return receivedAt, false
+	}
+	return providerTime.UTC(), true
+}
+
+func evolutionWebhookSessionStateNewer(candidate evolutionWebhookSessionState, current evolutionWebhookSessionState) bool {
+	if !candidate.OccurredAt.Equal(current.OccurredAt) {
+		return candidate.OccurredAt.After(current.OccurredAt)
+	}
+	if candidate.Rank != current.Rank {
+		return candidate.Rank > current.Rank
+	}
+	return candidate.EventKey > current.EventKey
+}
+
+func (repo Repository) applyEvolutionWebhookSessionState(ctx context.Context, session evolutionWebhookSession, state evolutionWebhookSessionState) error {
+	eventMillis := state.OccurredAt.UTC().UnixMilli()
+	if state.QRCode != "" {
+		_, err := repo.db.Pool().Exec(ctx, `
+		update public.whatsapp_sessions
+		set status = 'qr_ready',
+		    qr_code = $3,
+		    advanced_settings = coalesce(advanced_settings, '{}'::jsonb) || jsonb_build_object(
+		      'qr_code', $3,
+		      'qr_updated_at', to_timestamp($4::double precision / 1000.0),
+		      'webhook_state_event_at_ms', $4::bigint,
+		      'webhook_state_event_rank', $5::integer,
+		      'webhook_state_event_key', $6,
+		      'webhook_state_has_provider_timestamp', $7::boolean
+		    ),
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and provider = 'evolution_go'
+		  and coalesce(is_active, true) = true
+		  and coalesce(status, '') <> 'deleted'
+		  and coalesce(status, '') <> 'connected'
+		  and (
+		    case
+		      when coalesce(advanced_settings->>'webhook_state_event_at_ms', '') ~ '^[0-9]{1,19}$'
+		        then (advanced_settings->>'webhook_state_event_at_ms')::bigint
+		      else 0::bigint
+		    end,
+		    case
+		      when coalesce(advanced_settings->>'webhook_state_event_rank', '') ~ '^[0-9]{1,3}$'
+		        then (advanced_settings->>'webhook_state_event_rank')::integer
+		      else 0::integer
+		    end,
+		    coalesce(advanced_settings->>'webhook_state_event_key', '')
+		  ) < ($4::bigint, $5::integer, $6::text)
+	`, session.OrganizationID, session.ID, state.QRCode, eventMillis, state.Rank, state.EventKey, state.ProviderTimestamp)
+		return err
+	}
+
+	if state.Status == "" {
+		return nil
+	}
+	_, err := repo.db.Pool().Exec(ctx, `
+		update public.whatsapp_sessions
+		set status = $3,
+		    qr_code = null,
+		    phone_number = case when $3 = 'connected' then coalesce(nullif($4, ''), phone_number) else phone_number end,
+		    profile_name = case when $3 = 'connected' then coalesce(nullif($5, ''), profile_name) else profile_name end,
+		    last_connected_at = case when $3 = 'connected' then now() else last_connected_at end,
+		    last_error = nullif($6, ''),
+		    advanced_settings = (coalesce(advanced_settings, '{}'::jsonb) - 'qr_code' - 'qr_updated_at') || jsonb_build_object(
+		      'webhook_state_event_at_ms', $7::bigint,
+		      'webhook_state_event_rank', $8::integer,
+		      'webhook_state_event_key', $9,
+		      'webhook_state_has_provider_timestamp', $10::boolean
+		    ),
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and provider = 'evolution_go'
+		  and coalesce(is_active, true) = true
+		  and coalesce(status, '') <> 'deleted'
+		  and (
+		    case
+		      when coalesce(advanced_settings->>'webhook_state_event_at_ms', '') ~ '^[0-9]{1,19}$'
+		        then (advanced_settings->>'webhook_state_event_at_ms')::bigint
+		      else 0::bigint
+		    end,
+		    case
+		      when coalesce(advanced_settings->>'webhook_state_event_rank', '') ~ '^[0-9]{1,3}$'
+		        then (advanced_settings->>'webhook_state_event_rank')::integer
+		      else 0::integer
+		    end,
+		    coalesce(advanced_settings->>'webhook_state_event_key', '')
+		  ) < ($7::bigint, $8::integer, $9::text)
+	`, session.OrganizationID, session.ID, state.Status, state.PhoneNumber, state.ProfileName, state.ConnectionError, eventMillis, state.Rank, state.EventKey, state.ProviderTimestamp)
+	return err
 }
 
 func (repo Repository) evolutionWebhookSession(ctx context.Context, sessionID string) (evolutionWebhookSession, error) {

@@ -9,6 +9,8 @@ const (
 	defaultWhatsAppOutboxWorkerBatch             = 5
 	defaultWhatsAppWebhookWorkerInterval         = time.Second
 	defaultWhatsAppWebhookWorkerBatch            = 5
+	defaultWhatsAppWebhookWorkerConcurrency      = 4
+	maxWhatsAppWebhookWorkerConcurrency          = 16
 	defaultWhatsAppSessionSupervisorInitialDelay = 30 * time.Second
 	defaultWhatsAppSessionSupervisorInterval     = time.Minute
 	defaultWhatsAppSessionSupervisorBatch        = 5
@@ -25,6 +27,7 @@ type WorkerConfig struct {
 	WebhookWorkerEnabled          bool
 	WebhookWorkerInterval         time.Duration
 	WebhookWorkerBatch            int
+	WebhookWorkerConcurrency      int
 	SessionSupervisorEnabled      bool
 	SessionSupervisorInitialDelay time.Duration
 	SessionSupervisorInterval     time.Duration
@@ -43,6 +46,7 @@ func DefaultWorkerConfig() WorkerConfig {
 		WebhookWorkerEnabled:          true,
 		WebhookWorkerInterval:         defaultWhatsAppWebhookWorkerInterval,
 		WebhookWorkerBatch:            defaultWhatsAppWebhookWorkerBatch,
+		WebhookWorkerConcurrency:      defaultWhatsAppWebhookWorkerConcurrency,
 		SessionSupervisorEnabled:      true,
 		SessionSupervisorInitialDelay: defaultWhatsAppSessionSupervisorInitialDelay,
 		SessionSupervisorInterval:     defaultWhatsAppSessionSupervisorInterval,
@@ -71,6 +75,7 @@ func (config WorkerConfig) normalized() WorkerConfig {
 	if config.WebhookWorkerBatch <= 0 || config.WebhookWorkerBatch > 100 {
 		config.WebhookWorkerBatch = defaults.WebhookWorkerBatch
 	}
+	config.WebhookWorkerConcurrency = normalizeWebhookWorkerConcurrency(config.WebhookWorkerConcurrency)
 	if config.SessionSupervisorInitialDelay <= 0 {
 		config.SessionSupervisorInitialDelay = defaults.SessionSupervisorInitialDelay
 	}
@@ -82,6 +87,13 @@ func (config WorkerConfig) normalized() WorkerConfig {
 	}
 
 	return config
+}
+
+func normalizeWebhookWorkerConcurrency(value int) int {
+	if value <= 0 || value > maxWhatsAppWebhookWorkerConcurrency {
+		return defaultWhatsAppWebhookWorkerConcurrency
+	}
+	return value
 }
 
 func normalizeWorkerBatch(value int, fallback int) int {
