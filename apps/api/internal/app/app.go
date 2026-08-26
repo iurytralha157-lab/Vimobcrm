@@ -199,6 +199,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		SessionSupervisorInitialDelay: cfg.WhatsApp.SessionSupervisorInitialDelay,
 		SessionSupervisorInterval:     cfg.WhatsApp.SessionSupervisorInterval,
 		SessionSupervisorBatch:        cfg.WhatsApp.SessionSupervisorBatch,
+		SessionSupervisorRecoveryIDs:  cfg.WhatsApp.SessionSupervisorRecoveryIDs,
 	})
 	whatsappHandler.StartAIWorker(ctx, logger)
 	whatsappHandler.StartOutboxWorker(ctx, logger)

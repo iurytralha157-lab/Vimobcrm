@@ -101,8 +101,9 @@ WHATSAPP_OUTBOX_WORKER_INTERVAL=2s
 WHATSAPP_OUTBOX_WORKER_BATCH=10
 WHATSAPP_WEBHOOK_WORKER_INTERVAL=2s
 WHATSAPP_WEBHOOK_WORKER_BATCH=10
-WHATSAPP_SESSION_SUPERVISOR_INTERVAL=2m
-WHATSAPP_SESSION_SUPERVISOR_BATCH=3
+WHATSAPP_SESSION_SUPERVISOR_INTERVAL=1m
+WHATSAPP_SESSION_SUPERVISOR_BATCH=10
+WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS=
 
 META_APP_SECRET=segredo-do-app-meta
 META_WEBHOOK_VERIFY_TOKEN=token-igual-ao-configurado-no-meta-webhooks
@@ -117,6 +118,10 @@ META_GRAPH_BASE_URL=https://graph.facebook.com
 Para picos de uso, mantenha o backend com pool pequeno contra o Supabase (`DATABASE_MAX_CONNS=8`, `DATABASE_MIN_CONNS=0`) e controle a pressao dos workers de WhatsApp pelas variaveis `WHATSAPP_*_WORKER_INTERVAL` e `WHATSAPP_*_WORKER_BATCH`. Aumente throughput primeiro pelo batch; reduza intervalo apenas se o banco estiver com folga.
 
 `WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS` controla somente o processador nativo e as configuracoes avancadas do canario. Ele nao controla mais a URL do callback: criacao, recriacao e supervisor sempre usam o ingresso seguro da API. Com a lista vazia e modo `edge`, a Evolution chama a API, a API grava a fila duravel e o worker encaminha o evento para a Edge usando header. Uma lista de UUIDs libera `native_fallback`/`native` apenas para aquelas sessoes; `*` libera o processador nativo para todas.
+
+`WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS` controla mutacoes de reconexao no provider. Vazio desativa a reconexao automatica e mantem a sincronizacao de status em segundo plano; a manutencao ja existente de webhook/configuracao em sessoes conectadas continua independente. Comece com um UUID canario e monitore o PostgreSQL do Evolution Go; o supervisor aplica espera progressiva e abre o circuito depois de tres falhas. Nao use `*` enquanto a imagem implantada do Evolution Go nao tiver a correcao de ciclo de vida dos pools de reconnect validada.
+
+`DATABASE_URL` deve usar a conexao direta ou o pooler Supabase em modo sessao (porta 5432). Nao use o pooler transacional (porta 6543): a serializacao do lifecycle do WhatsApp depende de advisory locks de sessao mantidos entre as consultas da operacao.
 
 ## Canary e rollback do WhatsApp
 

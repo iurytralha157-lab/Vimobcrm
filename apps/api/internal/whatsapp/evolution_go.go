@@ -179,6 +179,8 @@ func evolutionUsesGlobalAPIKey(action string) bool {
 		"instance.create",
 		"instance.delete",
 		"instance.all",
+		"instance.info",
+		"instance.forceReconnect",
 	)
 }
 
@@ -249,14 +251,15 @@ func (client functionsClient) resolveEvolutionSession(ctx context.Context, paylo
 func (client functionsClient) evolutionInstanceKey(session evolutionSessionConfig, payload map[string]any, body map[string]any) string {
 	candidates := []any{
 		session.Settings["evolution_go_resolved_instance_key"],
-		session.InstanceName,
+		payload["instance_id"],
+		payload["instanceId"],
+		body["instanceId"],
 		session.InstanceID,
 		payload["instance_name"],
 		payload["instanceName"],
-		payload["instance_id"],
-		payload["instanceId"],
 		body["name"],
 		body["instanceName"],
+		session.InstanceName,
 	}
 
 	for _, candidate := range candidates {
@@ -376,6 +379,21 @@ func evolutionEndpointFor(action string, body map[string]any, instanceKey string
 		}, nil
 	case "instance.connect":
 		return evolutionEndpoint{Method: http.MethodPost, Path: "/instance/connect", Query: map[string]any{"instanceId": instanceKey}, Body: body}, nil
+	case "instance.reconnect":
+		return evolutionEndpoint{Method: http.MethodPost, Path: "/instance/reconnect"}, nil
+	case "instance.forceReconnect":
+		return evolutionEndpoint{
+			Method: http.MethodPost,
+			Path:   fmt.Sprintf("/instance/forcereconnect/%s", url.PathEscape(instanceKey)),
+			Body: withoutEmptyMap(map[string]any{
+				"number": body["number"],
+			}),
+		}, nil
+	case "instance.info":
+		return evolutionEndpoint{
+			Method: http.MethodGet,
+			Path:   fmt.Sprintf("/instance/info/%s", url.PathEscape(instanceKey)),
+		}, nil
 	case "instance.advancedSettings":
 		return evolutionEndpoint{
 			Method: http.MethodPut,
@@ -614,7 +632,7 @@ func normalizeEvolutionStatus(data any) string {
 	if hasLoggedIn && !loggedIn {
 		loggedOut = true
 	}
-	connected, _ := boolAtPath(data,
+	connected, hasConnected := boolAtPath(data,
 		"connected",
 		"Connected",
 		"data.connected",
@@ -625,8 +643,29 @@ func normalizeEvolutionStatus(data any) string {
 		"instance.Connected",
 	)
 
-	if (loggedIn || connected ||
-		stringIn(rawState, "open", "connected", "online", "ready", "authenticated", "logged_in", "loggedin") ||
+	if hasLoggedIn && hasConnected {
+		if loggedIn && connected {
+			return "connected"
+		}
+		if !loggedIn && connected {
+			return "qr_ready"
+		}
+		return "disconnected"
+	}
+	if hasLoggedIn {
+		if loggedIn {
+			return "connected"
+		}
+		return "disconnected"
+	}
+	if hasConnected {
+		if connected {
+			return "connected"
+		}
+		return "disconnected"
+	}
+
+	if (stringIn(rawState, "open", "connected", "online", "ready", "authenticated", "logged_in", "loggedin") ||
 		stringIn(rawStatus, "open", "connected", "online", "ready", "authenticated", "logged_in", "loggedin")) && !loggedOut {
 		return "connected"
 	}
@@ -640,7 +679,7 @@ func normalizeEvolutionStatus(data any) string {
 		return "disconnected"
 	}
 
-	return "disconnected"
+	return ""
 }
 
 func isEvolutionSendAction(action string) bool {

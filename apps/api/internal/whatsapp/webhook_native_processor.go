@@ -228,7 +228,8 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 	if err != nil {
 		return true, err
 	}
-	if qrCode != "" {
+	lifecycleUpdatesAllowed := sessionAutoReconnectEnabled(session.AdvancedSettings)
+	if qrCode != "" && lifecycleUpdatesAllowed {
 		if _, err := tx.Exec(ctx, `
 			update public.whatsapp_sessions
 			set status = 'qr_ready',
@@ -241,11 +242,14 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 			where organization_id = $1::uuid
 			  and id = $2::uuid
 			  and provider = 'evolution_go'
+			  and coalesce(is_active, true) = true
+			  and coalesce(status, '') not in ('deleted', 'disabled')
+			  and lower(coalesce(advanced_settings->>'auto_reconnect_enabled', 'true')) <> 'false'
 		`, session.OrganizationID, session.ID, qrCode); err != nil {
 			return true, err
 		}
 	}
-	if connectionRecognized {
+	if connectionRecognized && lifecycleUpdatesAllowed {
 		data := nativeFirstMap(payload, "data", "Data")
 		jid := firstNonEmpty(
 			firstString(data, "jid", "JID", "phone", "Phone", "user.id"),
@@ -262,7 +266,7 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 		)
 		if _, err := tx.Exec(ctx, `
 			update public.whatsapp_sessions
-			set status = $3,
+			set status = coalesce(nullif($3, ''), status),
 			    phone_number = case when $3 = 'connected' then coalesce(nullif($4, ''), phone_number) else phone_number end,
 			    profile_name = case when $3 = 'connected' then coalesce(nullif($5, ''), profile_name) else profile_name end,
 			    last_connected_at = case when $3 = 'connected' then now() else last_connected_at end,
@@ -271,6 +275,9 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 			where organization_id = $1::uuid
 			  and id = $2::uuid
 			  and provider = 'evolution_go'
+			  and coalesce(is_active, true) = true
+			  and coalesce(status, '') not in ('deleted', 'disabled')
+			  and lower(coalesce(advanced_settings->>'auto_reconnect_enabled', 'true')) <> 'false'
 		`, session.OrganizationID, session.ID, connectionStatus, phoneNumber, profileName, connectionError); err != nil {
 			return true, err
 		}
@@ -2025,18 +2032,39 @@ func nativeEvolutionConnectionStatus(payload map[string]any, event string) (stri
 	connected, connectedPresent := nativeBool(nativeFirstValue(data, "connected", "Connected"))
 	errorMessage := firstString(data, "error", "message", "reason")
 
-	if (loggedInPresent && loggedIn) || (connectedPresent && connected) || state == "open" || state == "connected" {
+	if loggedInPresent && connectedPresent {
+		if loggedIn && connected {
+			return "connected", true, ""
+		}
+		if !loggedIn && connected {
+			return "qr_ready", true, ""
+		}
+		return "disconnected", true, errorMessage
+	}
+	if loggedInPresent {
+		if loggedIn {
+			return "connected", true, ""
+		}
+		return "disconnected", true, errorMessage
+	}
+	if connectedPresent {
+		if connected {
+			return "connected", true, ""
+		}
+		return "disconnected", true, errorMessage
+	}
+	if state == "open" || state == "connected" {
 		return "connected", true, ""
 	}
-	if (loggedInPresent && !loggedIn) || (connectedPresent && !connected) || strings.Contains(event, "logout") ||
+	if state == "qr" || state == "qrcode" || state == "qr_ready" || state == "pairing" || state == "connecting" || nativeEvolutionQRCode(payload) != "" {
+		return "qr_ready", true, ""
+	}
+	if strings.Contains(event, "logout") ||
 		state == "close" || state == "closed" || state == "disconnected" || state == "offline" || state == "logged_out" {
 		return "disconnected", true, errorMessage
 	}
 	if state == "error" || state == "failed" || state == "failure" {
-		return "error", true, firstNonEmpty(errorMessage, "Falha na conexao")
-	}
-	if state == "qr" || state == "qrcode" || nativeEvolutionQRCode(payload) != "" {
-		return "qr_ready", true, ""
+		return "", true, firstNonEmpty(errorMessage, "Falha na conexao")
 	}
 	return "", false, ""
 }

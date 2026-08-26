@@ -87,6 +87,16 @@ func TestConfigValidateRejectsInvalidWebhookRolloutSessionID(t *testing.T) {
 	}
 }
 
+func TestConfigValidateRejectsInvalidWhatsAppRecoverySessionID(t *testing.T) {
+	cfg := validConfigForWebhookRolloutTest()
+	cfg.WhatsApp.SessionSupervisorRecoveryIDs = []string{"not-a-session"}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS") {
+		t.Fatalf("expected recovery allowlist validation error, got %v", err)
+	}
+}
+
 func TestConfigValidateRequiresBackendURLForWebhookRollout(t *testing.T) {
 	cfg := validConfigForWebhookRolloutTest()
 	cfg.EvolutionGo.BackendWebhookURL = ""

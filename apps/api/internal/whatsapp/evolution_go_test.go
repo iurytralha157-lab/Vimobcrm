@@ -200,3 +200,65 @@ func TestEvolutionMediaDownloadActionsAreFixedAndSizeLimited(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeEvolutionStatusUsesTransportAndLoginState(t *testing.T) {
+	tests := []struct {
+		name string
+		data map[string]any
+		want string
+	}{
+		{name: "socket and login active", data: map[string]any{"Connected": true, "LoggedIn": true}, want: "connected"},
+		{name: "socket awaiting qr", data: map[string]any{"Connected": true, "LoggedIn": false}, want: "qr_ready"},
+		{name: "paired session temporarily offline", data: map[string]any{"Connected": false, "LoggedIn": true}, want: "disconnected"},
+		{name: "logged out", data: map[string]any{"Connected": false, "LoggedIn": false}, want: "disconnected"},
+		{name: "webhook open state", data: map[string]any{"status": "open"}, want: "connected"},
+		{name: "unknown payload", data: map[string]any{"message": "success"}, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeEvolutionStatus(tt.data); got != tt.want {
+				t.Fatalf("normalizeEvolutionStatus(%#v) = %q, want %q", tt.data, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEvolutionRecoveryEndpointsUseCorrectAuthenticationScope(t *testing.T) {
+	info, err := evolutionEndpointFor("instance.info", nil, "instance/id")
+	if err != nil {
+		t.Fatalf("info endpoint: %v", err)
+	}
+	if info.Method != http.MethodGet || info.Path != "/instance/info/"+url.PathEscape("instance/id") {
+		t.Fatalf("unexpected info endpoint %#v", info)
+	}
+	if !evolutionUsesGlobalAPIKey("instance.info") {
+		t.Fatal("instance info must use the backend-only global API key")
+	}
+
+	reconnect, err := evolutionEndpointFor("instance.reconnect", nil, "instance-id")
+	if err != nil {
+		t.Fatalf("reconnect endpoint: %v", err)
+	}
+	if reconnect.Method != http.MethodPost || reconnect.Path != "/instance/reconnect" {
+		t.Fatalf("unexpected reconnect endpoint %#v", reconnect)
+	}
+	if evolutionUsesGlobalAPIKey("instance.reconnect") {
+		t.Fatal("regular reconnect must use the session token")
+	}
+
+	force, err := evolutionEndpointFor("instance.forceReconnect", map[string]any{"number": "5511999999999"}, "instance/id")
+	if err != nil {
+		t.Fatalf("force reconnect endpoint: %v", err)
+	}
+	if force.Method != http.MethodPost || force.Path != "/instance/forcereconnect/"+url.PathEscape("instance/id") {
+		t.Fatalf("unexpected force reconnect endpoint %#v", force)
+	}
+	if !evolutionUsesGlobalAPIKey("instance.forceReconnect") {
+		t.Fatal("force reconnect must use the backend-only global API key")
+	}
+	body, ok := force.Body.(map[string]any)
+	if !ok || body["number"] != "5511999999999" {
+		t.Fatalf("unexpected force reconnect body %#v", force.Body)
+	}
+}
