@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseEvolutionWebhookEnvelopeUsesScopedSessionAndHeaderToken(t *testing.T) {
@@ -183,6 +184,134 @@ func TestEvolutionWebhookEventKeyIsSessionScopedAndDeterministic(t *testing.T) {
 	}
 	if first == otherSession {
 		t.Fatal("event key must be scoped by session")
+	}
+}
+
+func TestEvolutionWebhookInlineSessionStateKeepsRealQRCodeOutOfInbox(t *testing.T) {
+	envelope := evolutionWebhookEnvelope{
+		EventType:  "qrcode.updated",
+		EventKey:   "qr-event",
+		Payload:    []byte(`{"event":"qrcode.updated","date_time":"2026-08-12T12:00:00Z","data":{"qrcode":"data:image/png;base64,qr-value"}}`),
+		ReceivedAt: time.Date(2026, 8, 12, 12, 0, 1, 0, time.UTC),
+	}
+	state, err := evolutionWebhookInlineSessionState(envelope)
+	if err != nil {
+		t.Fatalf("evolutionWebhookInlineSessionState() returned error: %v", err)
+	}
+	if !state.Handled || state.QRCode != "data:image/png;base64,qr-value" || state.Status != "qr_ready" {
+		t.Fatalf("inline QR state = %#v", state)
+	}
+	if !state.ProviderTimestamp || state.Rank != evolutionWebhookStateRankQRCode || state.EventKey != "qr-event" {
+		t.Fatalf("inline QR version = %#v", state)
+	}
+}
+
+func TestEvolutionWebhookInlineSessionStateDoesNotDropEmptyQRCodeEvent(t *testing.T) {
+	envelope := evolutionWebhookEnvelope{
+		EventType: "qrcode.updated",
+		Payload:   []byte(`{"event":"qrcode.updated","data":{}}`),
+	}
+	state, err := evolutionWebhookInlineSessionState(envelope)
+	if err != nil {
+		t.Fatalf("evolutionWebhookInlineSessionState() returned error: %v", err)
+	}
+	if state.Handled || state.QRCode != "" || state.Status != "" {
+		t.Fatalf("empty QR event must remain durable, got %#v", state)
+	}
+}
+
+func TestEvolutionWebhookInlineSessionStateAppliesTerminalConnectionStateImmediately(t *testing.T) {
+	for _, fixture := range []struct {
+		event      string
+		payload    string
+		wantStatus string
+	}{
+		{event: "connection.update", payload: `{"event":"connection.update","date_time":"2026-08-12T12:00:00Z","data":{"state":"connected"}}`, wantStatus: "connected"},
+		{event: "connection.update", payload: `{"event":"connection.update","date_time":"2026-08-12T12:00:00Z","data":{"state":"disconnected"}}`, wantStatus: "disconnected"},
+		{event: "connected", payload: `{"event":"connected","date_time":"2026-08-12T12:00:00Z","data":{}}`, wantStatus: "connected"},
+		{event: "disconnected", payload: `{"event":"disconnected","date_time":"2026-08-12T12:00:00Z","data":{}}`, wantStatus: "disconnected"},
+		{event: "loggedout", payload: `{"event":"loggedout","date_time":"2026-08-12T12:00:00Z","data":{}}`, wantStatus: "disconnected"},
+		{event: "pairsuccess", payload: `{"event":"pairsuccess","date_time":"2026-08-12T12:00:00Z","data":{}}`, wantStatus: "connected"},
+	} {
+		t.Run(fixture.event+fixture.payload, func(t *testing.T) {
+			envelope := evolutionWebhookEnvelope{
+				EventType: fixture.event,
+				Payload:   []byte(fixture.payload),
+			}
+			state, err := evolutionWebhookInlineSessionState(envelope)
+			if err != nil {
+				t.Fatalf("evolutionWebhookInlineSessionState() returned error: %v", err)
+			}
+			if !state.Handled || state.QRCode != "" || state.Status != fixture.wantStatus || state.Rank != evolutionWebhookStateRankTerminal {
+				t.Fatalf("terminal connection state = %#v", state)
+			}
+		})
+	}
+}
+
+func TestEvolutionWebhookInlineSessionStateKeepsUnversionedTerminalStateDurable(t *testing.T) {
+	envelope := evolutionWebhookEnvelope{
+		EventType:  "connection.update",
+		EventKey:   "unversioned-connected",
+		Payload:    []byte(`{"event":"connection.update","data":{"state":"connected"}}`),
+		ReceivedAt: time.Date(2026, 8, 12, 12, 0, 1, 0, time.UTC),
+	}
+	state, err := evolutionWebhookInlineSessionState(envelope)
+	if err != nil {
+		t.Fatalf("evolutionWebhookInlineSessionState() returned error: %v", err)
+	}
+	if state.Handled || state.Status != "" || state.QRCode != "" {
+		t.Fatalf("unversioned terminal event must remain durable, got %#v", state)
+	}
+}
+
+func TestEvolutionWebhookInlineSessionStateDoesNotTreatMessageStateAsConnection(t *testing.T) {
+	envelope := evolutionWebhookEnvelope{
+		EventType: "message",
+		Payload:   []byte(`{"event":"message","data":{"state":"connected","message":{"conversation":"hello"}}}`),
+	}
+	state, err := evolutionWebhookInlineSessionState(envelope)
+	if err != nil {
+		t.Fatalf("evolutionWebhookInlineSessionState() returned error: %v", err)
+	}
+	if state.Handled || state.QRCode != "" || state.Status != "" {
+		t.Fatalf("message state must remain durable and must not clear QR: %#v", state)
+	}
+}
+
+func TestEvolutionWebhookSessionStateVersionRejectsOlderQRCode(t *testing.T) {
+	qrState, err := evolutionWebhookInlineSessionState(evolutionWebhookEnvelope{
+		EventType:  "qrcode.updated",
+		EventKey:   "qr",
+		Payload:    []byte(`{"event":"qrcode.updated","date_time":"2026-08-12T12:00:00Z","data":{"qrcode":"qr-value"}}`),
+		ReceivedAt: time.Date(2026, 8, 12, 12, 0, 2, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("QR state returned error: %v", err)
+	}
+	connectedState, err := evolutionWebhookInlineSessionState(evolutionWebhookEnvelope{
+		EventType:  "connection.update",
+		EventKey:   "connected",
+		Payload:    []byte(`{"event":"connection.update","date_time":"2026-08-12T12:00:01Z","data":{"state":"connected"}}`),
+		ReceivedAt: time.Date(2026, 8, 12, 12, 0, 2, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("connected state returned error: %v", err)
+	}
+	if !evolutionWebhookSessionStateNewer(connectedState, qrState) {
+		t.Fatal("newer terminal state must supersede QR")
+	}
+	if evolutionWebhookSessionStateNewer(qrState, connectedState) {
+		t.Fatal("older QR must not supersede terminal state")
+	}
+}
+
+func TestEvolutionWebhookSessionStateTerminalWinsTimestampTie(t *testing.T) {
+	at := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	qrState := evolutionWebhookSessionState{OccurredAt: at, Rank: evolutionWebhookStateRankQRCode, EventKey: "z"}
+	terminalState := evolutionWebhookSessionState{OccurredAt: at, Rank: evolutionWebhookStateRankTerminal, EventKey: "a"}
+	if !evolutionWebhookSessionStateNewer(terminalState, qrState) {
+		t.Fatal("terminal state must win a provider timestamp tie")
 	}
 }
 

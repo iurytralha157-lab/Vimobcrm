@@ -2,6 +2,7 @@
 // Evolution Go webhook for the Vimob WhatsApp module.
 // All writes are scoped by a resolved whatsapp_sessions.id before touching CRM data.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { hasVerifiedMetaAdLeadCreationContext } from "./lead-creation-context.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1231,31 +1232,21 @@ function whatsappAttribution(message: ReturnType<typeof normalizeMessage>) {
 }
 
 async function hasVerifiedWhatsAppLeadCreationContext(organizationId: string, message: ReturnType<typeof normalizeMessage>) {
-  const referral = message?.referral;
-  if (!referral) return false;
-  const explicitSourceType = cleanText(referral.explicit_source_type)?.toLowerCase() || "";
-  const sourceId = cleanText(referral.source_id) || "";
-  if (explicitSourceType !== "ad" || !/^\d{5,40}$/.test(sourceId)) return false;
-
-  const [{ data: insight, error: insightError }, { data: creative, error: creativeError }] = await Promise.all([
-    supabase
+  return await hasVerifiedMetaAdLeadCreationContext(
+    organizationId,
+    message?.referral,
+    async (verifiedOrganizationId, sourceId) => {
+      const { data: insight, error } = await supabase
       .from("meta_campaign_insights")
       .select("id")
-      .eq("organization_id", organizationId)
+      .eq("organization_id", verifiedOrganizationId)
       .eq("ad_id", sourceId)
       .limit(1)
-      .maybeSingle(),
-    supabase
-      .from("meta_creative_assets")
-      .select("id")
-      .eq("organization_id", organizationId)
-      .eq("ad_id", sourceId)
-      .limit(1)
-      .maybeSingle(),
-  ]);
-  if (insightError) throw insightError;
-  if (creativeError) throw creativeError;
-  return Boolean(insight?.id || creative?.id);
+      .maybeSingle();
+      if (error) throw error;
+      return Boolean(insight?.id);
+    },
+  );
 }
 
 function ruleMatches(rule: JsonRecord, message: ReturnType<typeof normalizeMessage>) {
