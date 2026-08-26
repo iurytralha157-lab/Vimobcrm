@@ -1302,12 +1302,16 @@ async function findInboundRule(session: JsonRecord, message: ReturnType<typeof n
   )) || null;
 }
 
-async function isManagedWhatsAppMessageDistributionRule(rule: JsonRecord | null, organizationId: string) {
+async function isManagedWhatsAppMessageDistributionRule(
+  rule: JsonRecord | null,
+  organizationId: string,
+  sessionId: string,
+) {
   const ruleId = optionalUuid(rule?.id);
   const targetRoundRobinId = optionalUuid(rule?.target_round_robin_id);
-  if (!ruleId || !targetRoundRobinId) return false;
+  const boundSessionId = optionalUuid(rule?.session_id);
+  if (!ruleId || !targetRoundRobinId || !boundSessionId || boundSessionId !== sessionId) return false;
   const hasManagedMirrorShape = Number(rule?.priority) <= -1_000_000_000
-    && !rule?.session_id
     && normalizeText(rule?.name).startsWith("Distribuição: ")
     && normalizeText(rule?.match_type).toLowerCase() === "contains"
     && normalizeText(rule?.match_field || "message").toLowerCase() === "message";
@@ -1459,7 +1463,12 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
     };
   }
 
-  if (!(await hasVerifiedWhatsAppLeadCreationContext(session.organization_id, message))) {
+  const managedMessageDistribution = await isManagedWhatsAppMessageDistributionRule(
+    rule,
+    session.organization_id,
+    session.id,
+  );
+  if (!managedMessageDistribution && !(await hasVerifiedWhatsAppLeadCreationContext(session.organization_id, message))) {
     console.debug("[evolution-go-webhook] plain WhatsApp conversation stored without lead auto-creation", {
       session_id: session.id,
       organization_id: session.organization_id,
@@ -1469,7 +1478,6 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
     return null;
   }
 
-  const managedMessageDistribution = await isManagedWhatsAppMessageDistributionRule(rule, session.organization_id);
   const targetUserId = managedMessageDistribution ? null : optionalUuid(rule?.target_user_id);
   const targetPipelineId = managedMessageDistribution ? null : optionalUuid(rule?.target_pipeline_id);
   const targetStageId = managedMessageDistribution ? null : optionalUuid(rule?.target_stage_id);
@@ -2549,6 +2557,8 @@ async function handleMessages(
     if (message.messageType === "reaction" && !message.reactionToMessageId) {
       throw new Error("Evolution reaction is missing its target message");
     }
+    const messageIdentity = whatsappIdentityForMessage(message);
+    const diagnosticRemoteJid = messageIdentity.remoteJid || message.remoteJid;
     let ownedClaim: OwnedEvolutionMessageClaim | null = null;
     if (authorization.contract !== "internal_worker_lease") {
       const deliveryClaim = await claimEvolutionMessageDelivery(supabase, {
@@ -2627,9 +2637,29 @@ async function handleMessages(
 
       let rule: JsonRecord | null = null;
       let lead: JsonRecord | null = null;
-      if (!message.fromMe && !message.isGroup) {
-        rule = await findInboundRule(session, message);
-        lead = await ensureLead(session, message, rule);
+      const isReactionEvent = message.messageType === "reaction";
+      if (!message.fromMe && !message.isGroup && !isReactionEvent) {
+        try {
+          rule = await findInboundRule(session, message);
+        } catch (error) {
+          console.warn("[evolution-go-webhook] inbound rule lookup failed; durable delivery will retry", {
+            session_id: session.id,
+            remote_jid: diagnosticRemoteJid,
+            error: redactLogText(error),
+          });
+          throw error;
+        }
+
+        try {
+          lead = await ensureLead(session, message, rule);
+        } catch (error) {
+          console.warn("[evolution-go-webhook] lead resolution failed; durable delivery will retry", {
+            session_id: session.id,
+            remote_jid: diagnosticRemoteJid,
+            error: redactLogText(error),
+          });
+          throw error;
+        }
       }
 
       const conversation = await ensureConversation(session, message, lead);
@@ -2964,8 +2994,17 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: "Webhook session binding failed" }, status);
     }
 
-    if (resolved.session.is_active === false || resolved.session.status === "deleted") {
-      return json({ ok: false, error: "Webhook session is inactive" }, 409);
+    const resolvedSessionStatus = normalizeText(resolved.session.status).trim().toLowerCase();
+    if (
+      resolved.session.is_active === false
+      || ["deleted", "disabled"].includes(resolvedSessionStatus)
+    ) {
+      return json({
+        ok: true,
+        ignored: true,
+        reason: "INACTIVE_SESSION",
+        session_id: resolved.session.id,
+      });
     }
 
     const qrUpdated = event.includes("qr") || extractQr(payload) ? await handleQr(resolved.session, payload) : false;

@@ -48,7 +48,7 @@ func (queryer *stateRecordingQueryer) QueryRow(_ context.Context, query string, 
 type validWhatsAppMessageDistributionRow struct{}
 
 func (validWhatsAppMessageDistributionRow) Scan(dest ...any) error {
-	if len(dest) != 10 {
+	if len(dest) != 11 {
 		return fmt.Errorf("unexpected destination count: %d", len(dest))
 	}
 	*dest[0].(*bool) = true
@@ -59,8 +59,9 @@ func (validWhatsAppMessageDistributionRow) Scan(dest ...any) error {
 	*dest[5].(*bool) = true
 	*dest[6].(*int) = 0
 	*dest[7].(*int) = 0
-	*dest[8].(*int) = 1
+	*dest[8].(*int) = 0
 	*dest[9].(*int) = 1
+	*dest[10].(*int) = 1
 	return nil
 }
 
@@ -80,6 +81,8 @@ func TestSyncWhatsAppInboundRulesUsesNativeRuntimeContract(t *testing.T) {
 	upsert := queryer.execs[1]
 	for _, fragment := range []string{
 		"insert into public.whatsapp_inbound_rules",
+		"whatsapp_session.id",
+		"round_robin_rule.match->>$4",
 		"'contains'",
 		"'message'",
 		"target_round_robin_id",
@@ -92,7 +95,7 @@ func TestSyncWhatsAppInboundRulesUsesNativeRuntimeContract(t *testing.T) {
 			t.Errorf("upsert query does not contain %q", fragment)
 		}
 	}
-	wantArgs := []any{organizationID, roundRobinID, whatsappMessageContainsConditionType}
+	wantArgs := []any{organizationID, roundRobinID, whatsappMessageContainsConditionType, whatsappSessionMatchKey}
 	if fmt.Sprint(upsert.args) != fmt.Sprint(wantArgs) {
 		t.Fatalf("unexpected upsert args: %#v", upsert.args)
 	}
@@ -100,6 +103,7 @@ func TestSyncWhatsAppInboundRulesUsesNativeRuntimeContract(t *testing.T) {
 	priorities := queryer.execs[2]
 	for _, fragment := range []string{
 		"row_number() over",
+		"partition by inbound_rule.session_id",
 		"char_length(inbound_rule.match_value) desc",
 		"round_robin_rule.id = inbound_rule.id",
 		"set priority = -1000000000 - ranked_managed_rules.managed_rank::int",
@@ -186,6 +190,19 @@ func TestValidateWhatsAppMessageDistributionState(t *testing.T) {
 				ActiveDirectMemberCount: 1,
 				EligibleUserCount:       1,
 			},
+		},
+		{
+			name: "missing WhatsApp connection is rejected",
+			state: whatsappMessageDistributionState{
+				QueueActive:             true,
+				Strategy:                "simple",
+				IgnoreAvailability:      true,
+				HasActiveRule:           true,
+				InvalidSessionRuleCount: 1,
+				ActiveDirectMemberCount: 1,
+				EligibleUserCount:       1,
+			},
+			wantError: "valid active connection",
 		},
 		{
 			name: "weighted strategy is rejected",
@@ -348,6 +365,20 @@ func TestWhatsAppMessageConditionRejectsOverlappingKeywords(t *testing.T) {
 	}
 }
 
+func TestWhatsAppMessageConditionConflictIsScopedBySession(t *testing.T) {
+	const firstSession = "11111111-1111-1111-1111-111111111111"
+	const secondSession = "22222222-2222-2222-2222-222222222222"
+	if !conditionScopesConflict(whatsappMessageContainsConditionType, firstSession, firstSession) {
+		t.Fatal("the same session must conflict")
+	}
+	if conditionScopesConflict(whatsappMessageContainsConditionType, firstSession, secondSession) {
+		t.Fatal("different sessions must not conflict")
+	}
+	if !conditionScopesConflict(whatsappMessageContainsConditionType, "", secondSession) {
+		t.Fatal("legacy wildcard sessions must conflict with every session")
+	}
+}
+
 func TestWhatsAppMessageDistributionStateQueryMatchesCanonicalRuntime(t *testing.T) {
 	queryer := &stateRecordingQueryer{}
 	organizationID := "11111111-1111-1111-1111-111111111111"
@@ -365,6 +396,8 @@ func TestWhatsAppMessageDistributionStateQueryMatchesCanonicalRuntime(t *testing
 	for _, fragment := range []string{
 		"round_robin.settings->>'enable_redistribution'",
 		"btrim(coalesce(nullif(rule.match_value, ''), rule.conditions->>'match_value', '')) <> ''",
+		"left join public.whatsapp_sessions session",
+		"rule.match->>$4",
 		"coalesce(nullif(rule.match_type, ''), rule.conditions->>'match_type', rule.name, '') <> $3",
 		"join public.users user_account",
 		"coalesce(user_account.is_active, false) = true",
@@ -386,7 +419,7 @@ func TestWhatsAppMessageDistributionStateQueryMatchesCanonicalRuntime(t *testing
 		t.Error("eligible user joins must belong to EligibleUserCount after the direct member count")
 	}
 
-	wantArgs := []any{organizationID, roundRobinID, whatsappMessageContainsConditionType}
+	wantArgs := []any{organizationID, roundRobinID, whatsappMessageContainsConditionType, whatsappSessionMatchKey}
 	if fmt.Sprint(queryer.args) != fmt.Sprint(wantArgs) {
 		t.Fatalf("unexpected state query args: %#v", queryer.args)
 	}

@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(9);
+select plan(13);
 
 select is(
   public.whatsapp_webhook_has_lead_creation_context('{}'::jsonb),
@@ -47,6 +47,40 @@ select is(
   ),
   true,
   'an explicit Meta ad with a numeric id passes the database shape guard'
+);
+
+select is(
+  public.whatsapp_webhook_has_lead_creation_context(
+    '{"managed_whatsapp_message_distribution":true,"matched_rule_id":"44444444-4444-4444-4444-444444444444","whatsapp_session_id":"22222222-2222-2222-2222-222222222222","target_round_robin_id":"33333333-3333-3333-3333-333333333333"}'::jsonb
+  ),
+  false,
+  'a managed marker without an exact persisted rule and session fails closed'
+);
+
+select is(
+  public.whatsapp_webhook_has_lead_creation_context(
+    '{"managed_whatsapp_message_distribution":true,"matched_rule_id":"44444444-4444-4444-4444-444444444444","whatsapp_session_id":"22222222-2222-2222-2222-222222222222","target_round_robin_id":"33333333-3333-3333-3333-333333333333","whatsapp_attribution":{"ad_id":"123456789012345","source_referral":{"explicit_source_type":"ad","source_id":"123456789012345"}}}'::jsonb
+  ),
+  false,
+  'a Meta ad shape cannot bypass an invalid managed rule and session marker'
+);
+
+select ok(
+  position(
+    'whatsapp_session.id = managed_context.session_id'
+    in pg_get_functiondef(
+      'public.whatsapp_webhook_has_lead_creation_context(jsonb)'::regprocedure
+    )
+  ) > 0,
+  'the managed creation guard binds metadata to the exact WhatsApp session'
+);
+
+select ok(
+  position(
+    'whatsapp_webhook_has_lead_creation_context'
+    in pg_get_functiondef('public.handle_routed_lead_intake(uuid)'::regprocedure)
+  ) > 0,
+  'managed lead intake revalidates the exact session context before distribution'
 );
 
 select ok(

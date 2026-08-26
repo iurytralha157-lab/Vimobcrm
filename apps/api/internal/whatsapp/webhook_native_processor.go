@@ -301,7 +301,7 @@ func (repo Repository) prepareNativeEvolutionMedia(ctx context.Context, item pen
 			  where organization_id = $1::uuid and id = $2::uuid
 			    and provider = 'evolution_go'
 			    and coalesce(is_active, true) = true
-			    and coalesce(status, '') <> 'deleted'
+			    and lower(btrim(coalesce(status, ''))) not in ('deleted', 'disabled')
 			)
 		`, item.OrganizationID, item.SessionID).Scan(&scoped); err != nil {
 			return true, err
@@ -781,7 +781,7 @@ func loadNativeEvolutionSession(ctx context.Context, tx pgx.Tx, item pendingEvol
 		  and id = $2::uuid
 		  and provider = 'evolution_go'
 		  and coalesce(is_active, true) = true
-		  and coalesce(status, '') <> 'deleted'
+		  and lower(btrim(coalesce(status, ''))) not in ('deleted', 'disabled')
 		for share
 	`, item.OrganizationID, item.SessionID).Scan(
 		&session.ID,
@@ -835,8 +835,8 @@ func ensureNativeEvolutionConversation(ctx context.Context, tx pgx.Tx, session n
 		if err != nil {
 			return nativeEvolutionConversation{}, err
 		}
-		if lead.ID == "" && !message.FromMe && message.HasCampaignSignal {
-			lead, err = createVerifiedNativeCampaignLead(ctx, tx, session, message, rule)
+		if lead.ID == "" && !message.FromMe && (message.HasCampaignSignal || rule.ManagedMessageDistribution) {
+			lead, err = createAuthorizedNativeLead(ctx, tx, session, message, rule)
 			if err != nil {
 				return nativeEvolutionConversation{}, err
 			}
@@ -1348,15 +1348,19 @@ func findSingleNativeEvolutionLead(ctx context.Context, tx pgx.Tx, organizationI
 	return matches[0], nil
 }
 
-func createVerifiedNativeCampaignLead(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession, message nativeEvolutionMessage, rule nativeInboundRule) (nativeEvolutionLead, error) {
+func createAuthorizedNativeLead(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession, message nativeEvolutionMessage, rule nativeInboundRule) (nativeEvolutionLead, error) {
 	sourceType := strings.ToLower(strings.TrimSpace(message.CampaignSourceType))
 	sourceID := strings.TrimSpace(message.CampaignSourceID)
-	if sourceType != "ad" || !nativeMetaAdIDPattern.MatchString(sourceID) || message.ContactPhone == "" {
+	if message.ContactPhone == "" {
 		return nativeEvolutionLead{}, nil
 	}
 
-	var imported bool
-	if err := tx.QueryRow(ctx, `
+	if !rule.ManagedMessageDistribution {
+		if sourceType != "ad" || !nativeMetaAdIDPattern.MatchString(sourceID) {
+			return nativeEvolutionLead{}, nil
+		}
+		var imported bool
+		if err := tx.QueryRow(ctx, `
 		select
 		  exists (
 		    select 1 from public.meta_campaign_insights insight
@@ -1366,11 +1370,12 @@ func createVerifiedNativeCampaignLead(ctx context.Context, tx pgx.Tx, session na
 		    select 1 from public.meta_creative_assets creative
 		    where creative.organization_id = $1::uuid and creative.ad_id = $2
 		  )
-	`, session.OrganizationID, sourceID).Scan(&imported); err != nil {
-		return nativeEvolutionLead{}, err
-	}
-	if !imported {
-		return nativeEvolutionLead{}, nil
+		`, session.OrganizationID, sourceID).Scan(&imported); err != nil {
+			return nativeEvolutionLead{}, err
+		}
+		if !imported {
+			return nativeEvolutionLead{}, nil
+		}
 	}
 	propertyID, err := resolveNativeCampaignProperty(ctx, tx, session.OrganizationID, message.CampaignPropertyCode)
 	if err != nil {
@@ -1382,26 +1387,8 @@ func createVerifiedNativeCampaignLead(ctx context.Context, tx pgx.Tx, session na
 		return nativeEvolutionLead{}, err
 	}
 	createdBy := firstNonEmpty(session.OwnerUserID, session.CreatedBy, assignment.UserID)
-	attribution := map[string]any{
-		"source":        "whatsapp",
-		"source_type":   "whatsapp_click_to_message",
-		"platform":      "meta",
-		"ad_id":         sourceID,
-		"source_id":     sourceID,
-		"source_url":    message.CampaignSourceURL,
-		"ctwa_clid":     message.CampaignCTWAClid,
-		"ad_name":       message.CampaignHeadline,
-		"property_code": message.CampaignPropertyCode,
-		"source_referral": map[string]any{
-			"explicit_source_type": sourceType,
-			"source_id":            sourceID,
-			"source_url":           message.CampaignSourceURL,
-			"ctwa_clid":            message.CampaignCTWAClid,
-			"headline":             message.CampaignHeadline,
-		},
-	}
 	targetRoundRobinID := nativeTargetRoundRobinID(rule, assignment)
-	metadataValues := map[string]any{
+	metadataPayload := map[string]any{
 		"source":                                "whatsapp",
 		"whatsapp_session_id":                   session.ID,
 		"remote_jid":                            message.RemoteJID,
@@ -1409,12 +1396,35 @@ func createVerifiedNativeCampaignLead(ctx context.Context, tx pgx.Tx, session na
 		"managed_whatsapp_message_distribution": rule.ManagedMessageDistribution,
 		"target_team_id":                        assignment.TeamID,
 		"target_round_robin_id":                 targetRoundRobinID,
-		"whatsapp_attribution":                  attribution,
+	}
+	if sourceType == "ad" && nativeMetaAdIDPattern.MatchString(sourceID) {
+		metadataPayload["whatsapp_attribution"] = map[string]any{
+			"source":        "whatsapp",
+			"source_type":   "whatsapp_click_to_message",
+			"platform":      "meta",
+			"ad_id":         sourceID,
+			"source_id":     sourceID,
+			"source_url":    message.CampaignSourceURL,
+			"ctwa_clid":     message.CampaignCTWAClid,
+			"ad_name":       message.CampaignHeadline,
+			"property_code": message.CampaignPropertyCode,
+			"source_referral": map[string]any{
+				"explicit_source_type": sourceType,
+				"source_id":            sourceID,
+				"source_url":           message.CampaignSourceURL,
+				"ctwa_clid":            message.CampaignCTWAClid,
+				"headline":             message.CampaignHeadline,
+			},
+		}
 	}
 	if !rule.ManagedMessageDistribution {
-		metadataValues["distribution_deferred"] = true
+		metadataPayload["distribution_deferred"] = true
 	}
-	metadata := jsonb(metadataValues)
+	metadata := jsonb(metadataPayload)
+	sourceDetailFallback := "WhatsApp"
+	if !rule.ManagedMessageDistribution {
+		sourceDetailFallback = "WhatsApp Meta Ads"
+	}
 
 	var lead nativeEvolutionLead
 	err = tx.QueryRow(ctx, `
@@ -1442,7 +1452,7 @@ func createVerifiedNativeCampaignLead(ctx context.Context, tx pgx.Tx, session na
 		  p_metadata => $9::jsonb
 		)
 	`, session.OrganizationID, firstNonEmpty(message.ContactName, message.ContactPhone), message.ContactPhone,
-		firstNonEmpty(rule.CampaignLabel, message.CampaignHeadline, rule.SourceLabel, "WhatsApp Meta Ads"), session.ID, message.Content,
+		firstNonEmpty(rule.CampaignLabel, message.CampaignHeadline, rule.SourceLabel, sourceDetailFallback), session.ID, message.Content,
 		assignment.UserID, message.SentAt, metadata, assignment.PipelineID, assignment.StageID, createdBy,
 		message.CampaignPropertyCode, propertyID).Scan(
 		&lead.ID,
@@ -1452,6 +1462,9 @@ func createVerifiedNativeCampaignLead(ctx context.Context, tx pgx.Tx, session na
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The database guard is intentionally a second fail-closed layer.
+		if rule.ManagedMessageDistribution {
+			return nativeEvolutionLead{}, errors.New("managed WhatsApp lead creation context was rejected")
+		}
 		return nativeEvolutionLead{}, nil
 	}
 	if err != nil {

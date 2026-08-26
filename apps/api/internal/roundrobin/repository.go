@@ -44,7 +44,10 @@ type roundRobinState struct {
 	Metadata   map[string]any
 }
 
-const whatsappMessageContainsConditionType = "whatsapp_message_contains"
+const (
+	whatsappMessageContainsConditionType = "whatsapp_message_contains"
+	whatsappSessionMatchKey              = "whatsapp_session_id"
+)
 
 type whatsappMessageDistributionState struct {
 	QueueActive             bool
@@ -53,6 +56,7 @@ type whatsappMessageDistributionState struct {
 	RequireCheckIn          bool
 	IgnoreAvailability      bool
 	HasActiveRule           bool
+	InvalidSessionRuleCount int
 	ActiveOtherRuleCount    int
 	ActiveTeamCount         int
 	ActiveDirectMemberCount int
@@ -70,6 +74,9 @@ func validateWhatsAppMessageDistributionState(state whatsappMessageDistributionS
 	}
 	if strategy != "simple" {
 		return fmt.Errorf("%w: active WhatsApp message distribution requires the simple strategy", ErrInvalidInput)
+	}
+	if state.InvalidSessionRuleCount > 0 {
+		return fmt.Errorf("%w: active WhatsApp message distribution requires a valid active connection", ErrInvalidInput)
 	}
 	if state.EnableRedistribution {
 		return fmt.Errorf("%w: active WhatsApp message distribution does not support automatic redistribution", ErrInvalidInput)
@@ -105,6 +112,52 @@ var uniqueConditionTypes = map[string]struct{}{
 
 func NewRepository(db *dbpkg.Postgres) Repository {
 	return Repository{db: db}
+}
+
+func (repo Repository) ListWhatsAppSessionOptions(ctx context.Context, tenantContext tenant.Context) ([]WhatsAppSessionOption, error) {
+	rows, err := repo.db.Pool().Query(ctx, `
+		select
+		  session.id::text,
+		  coalesce(session.instance_name, ''),
+		  coalesce(session.display_name, ''),
+		  coalesce(session.phone_number, ''),
+		  coalesce(session.status, ''),
+		  coalesce(session.provider, ''),
+		  coalesce(session.is_active, true)
+		from public.whatsapp_sessions session
+		where session.organization_id = $1::uuid
+		  and session.provider = 'evolution_go'
+		  and lower(btrim(coalesce(session.status, ''))) <> 'deleted'
+		order by
+		  coalesce(session.is_active, true) desc,
+		  lower(coalesce(nullif(session.display_name, ''), nullif(session.phone_number, ''), session.instance_name, '')) asc,
+		  session.id asc
+	`, tenantContext.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := []WhatsAppSessionOption{}
+	for rows.Next() {
+		var item WhatsAppSessionOption
+		if err := rows.Scan(
+			&item.ID,
+			&item.InstanceName,
+			&item.DisplayName,
+			&item.PhoneNumber,
+			&item.Status,
+			&item.Provider,
+			&item.IsActive,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) ([]RoundRobin, error) {
@@ -1388,6 +1441,27 @@ func (repo Repository) validateWhatsAppMessageDistribution(ctx context.Context, 
 			(
 				select count(*)::int
 				from public.round_robin_rules rule
+				left join public.whatsapp_sessions session
+				  on session.organization_id = rule.organization_id
+				 and session.id = case
+				   when btrim(coalesce(rule.match->>$4, rule.conditions->'match'->>$4, ''))
+				     ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+				   then btrim(coalesce(rule.match->>$4, rule.conditions->'match'->>$4, ''))::uuid
+				   else null
+				 end
+				 and session.provider = 'evolution_go'
+				 and coalesce(session.is_active, true) = true
+				 and lower(btrim(coalesce(session.status, ''))) not in ('deleted', 'disabled')
+				where rule.organization_id = round_robin.organization_id
+				  and rule.round_robin_id = round_robin.id
+				  and coalesce(rule.is_active, true) = true
+				  and coalesce(nullif(rule.match_type, ''), rule.conditions->>'match_type', rule.name, '') = $3
+				  and btrim(coalesce(nullif(rule.match_value, ''), rule.conditions->>'match_value', '')) <> ''
+				  and session.id is null
+			),
+			(
+				select count(*)::int
+				from public.round_robin_rules rule
 				where rule.organization_id = round_robin.organization_id
 				  and rule.round_robin_id = round_robin.id
 				  and coalesce(rule.is_active, true) = true
@@ -1442,13 +1516,14 @@ func (repo Repository) validateWhatsAppMessageDistribution(ctx context.Context, 
 		from public.round_robins round_robin
 		where round_robin.organization_id = $1::uuid
 		  and round_robin.id = $2::uuid
-	`, organizationID, roundRobinID, whatsappMessageContainsConditionType).Scan(
+	`, organizationID, roundRobinID, whatsappMessageContainsConditionType, whatsappSessionMatchKey).Scan(
 		&state.QueueActive,
 		&state.Strategy,
 		&state.EnableRedistribution,
 		&state.RequireCheckIn,
 		&state.IgnoreAvailability,
 		&state.HasActiveRule,
+		&state.InvalidSessionRuleCount,
 		&state.ActiveOtherRuleCount,
 		&state.ActiveTeamCount,
 		&state.ActiveDirectMemberCount,
@@ -1591,8 +1666,29 @@ func (repo Repository) syncWhatsAppInboundRules(ctx context.Context, q queryer, 
 		  and (
 		    coalesce(nullif(round_robin_rule.match_type, ''), round_robin_rule.conditions->>'match_type', round_robin_rule.name, '') <> $3
 		    or btrim(coalesce(nullif(round_robin_rule.match_value, ''), round_robin_rule.conditions->>'match_value', '')) = ''
+		    or not exists (
+		      select 1
+		      from public.whatsapp_sessions session
+		      where session.organization_id = round_robin_rule.organization_id
+		        and session.id = case
+		          when btrim(coalesce(
+		            round_robin_rule.match->>$4,
+		            round_robin_rule.conditions->'match'->>$4,
+		            ''
+		          )) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+		          then btrim(coalesce(
+		            round_robin_rule.match->>$4,
+		            round_robin_rule.conditions->'match'->>$4,
+		            ''
+		          ))::uuid
+		          else null
+		        end
+		        and session.provider = 'evolution_go'
+		        and coalesce(session.is_active, true) = true
+		        and lower(btrim(coalesce(session.status, ''))) not in ('deleted', 'disabled')
+		    )
 		  )
-	`, organizationID, roundRobinID, whatsappMessageContainsConditionType); err != nil {
+	`, organizationID, roundRobinID, whatsappMessageContainsConditionType, whatsappSessionMatchKey); err != nil {
 		return err
 	}
 
@@ -1618,7 +1714,7 @@ func (repo Repository) syncWhatsAppInboundRules(ctx context.Context, q queryer, 
 		select
 		  round_robin_rule.id,
 		  round_robin.organization_id,
-		  null,
+		  whatsapp_session.id,
 		  'Distribuição: ' || round_robin.name,
 		  -2000000000,
 		  coalesce(round_robin.is_active, true) and coalesce(round_robin_rule.is_active, true),
@@ -1636,6 +1732,24 @@ func (repo Repository) syncWhatsAppInboundRules(ctx context.Context, q queryer, 
 		join public.round_robins round_robin
 		  on round_robin.organization_id = round_robin_rule.organization_id
 		 and round_robin.id = round_robin_rule.round_robin_id
+		join public.whatsapp_sessions whatsapp_session
+		  on whatsapp_session.organization_id = round_robin_rule.organization_id
+		 and whatsapp_session.id = case
+		   when btrim(coalesce(
+		     round_robin_rule.match->>$4,
+		     round_robin_rule.conditions->'match'->>$4,
+		     ''
+		   )) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+		   then btrim(coalesce(
+		     round_robin_rule.match->>$4,
+		     round_robin_rule.conditions->'match'->>$4,
+		     ''
+		   ))::uuid
+		   else null
+		 end
+		 and whatsapp_session.provider = 'evolution_go'
+		 and coalesce(whatsapp_session.is_active, true) = true
+		 and lower(btrim(coalesce(whatsapp_session.status, ''))) not in ('deleted', 'disabled')
 		where round_robin_rule.organization_id = $1::uuid
 		  and round_robin_rule.round_robin_id = $2::uuid
 		  and coalesce(nullif(round_robin_rule.match_type, ''), round_robin_rule.conditions->>'match_type', round_robin_rule.name, '') = $3
@@ -1657,7 +1771,7 @@ func (repo Repository) syncWhatsAppInboundRules(ctx context.Context, q queryer, 
 		  campaign_label = excluded.campaign_label,
 		  updated_at = now()
 		where whatsapp_inbound_rules.organization_id = excluded.organization_id
-	`, organizationID, roundRobinID, whatsappMessageContainsConditionType); err != nil {
+	`, organizationID, roundRobinID, whatsappMessageContainsConditionType, whatsappSessionMatchKey); err != nil {
 		return err
 	}
 
@@ -1670,6 +1784,7 @@ func (repo Repository) syncWhatsAppInboundRules(ctx context.Context, q queryer, 
 			select
 			  inbound_rule.id,
 			  row_number() over (
+			    partition by inbound_rule.session_id
 			    order by
 			      char_length(inbound_rule.match_value) desc,
 			      lower(inbound_rule.match_value) asc,
@@ -1975,14 +2090,26 @@ func (repo Repository) validateUser(ctx context.Context, q queryer, organization
 	return nil
 }
 
+type conditionConflictValue struct {
+	Value     string
+	SessionID string
+}
+
 func (repo Repository) checkConditionConflicts(ctx context.Context, q queryer, organizationID string, excludeRoundRobinID *string, rules []ruleInput) error {
-	wanted := map[string][]string{}
+	wanted := map[string][]conditionConflictValue{}
 	for _, rule := range rules {
 		if _, ok := uniqueConditionTypes[rule.MatchType]; !ok || !rule.IsActive {
 			continue
 		}
+		sessionID := ""
+		if rule.MatchType == whatsappMessageContainsConditionType {
+			sessionID, _ = whatsappSessionIDFromMatch(rule.Match)
+		}
 		for _, value := range uniqueConditionValues(rule.MatchType, rule.MatchValue) {
-			wanted[rule.MatchType] = append(wanted[rule.MatchType], value)
+			wanted[rule.MatchType] = append(wanted[rule.MatchType], conditionConflictValue{
+				Value:     value,
+				SessionID: sessionID,
+			})
 		}
 	}
 	if len(wanted) == 0 {
@@ -2023,15 +2150,29 @@ func (repo Repository) checkConditionConflicts(ctx context.Context, q queryer, o
 			continue
 		}
 		matchValue, _ := payload["match_value"].(string)
+		existingSessionID := ""
+		if matchType == whatsappMessageContainsConditionType {
+			existingSessionID, _ = whatsappSessionIDFromMatch(objectFromObject(payload, "match"))
+		}
 		for _, value := range uniqueConditionValues(matchType, matchValue) {
 			for _, wantedValue := range wanted[matchType] {
-				if conditionValuesConflict(matchType, wantedValue, value) {
+				if conditionScopesConflict(matchType, wantedValue.SessionID, existingSessionID) &&
+					conditionValuesConflict(matchType, wantedValue.Value, value) {
 					return ConditionConflictError{QueueName: queueName}
 				}
 			}
 		}
 	}
 	return rows.Err()
+}
+
+func conditionScopesConflict(matchType string, leftSessionID string, rightSessionID string) bool {
+	if matchType != whatsappMessageContainsConditionType {
+		return true
+	}
+	// Legacy rules without a connection were wildcard rules. Keep treating
+	// them as conflicting with every connection until they are edited.
+	return leftSessionID == "" || rightSessionID == "" || leftSessionID == rightSessionID
 }
 
 func conditionValuesConflict(matchType string, left string, right string) bool {

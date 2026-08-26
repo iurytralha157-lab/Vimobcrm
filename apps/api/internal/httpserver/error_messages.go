@@ -59,7 +59,7 @@ func userFacingErrorMessage(code string, original string, status int) string {
 		return strings.TrimSpace(original)
 	}
 	if code == "invalid_round_robin_input" && strings.Contains(strings.ToLower(original), "whatsapp message distribution") {
-		return "Para ativar a campanha do WhatsApp, use uma fila dedicada com distribuição sequencial, adicione os corretores individualmente, desative o check-in e a redistribuição automática, e ative “Ignorar agenda nesta fila”."
+		return "Para ativar a campanha do WhatsApp, escolha uma conexão válida, use uma fila dedicada com distribuição sequencial, adicione os corretores individualmente, desative o check-in e a redistribuição automática, e ative “Ignorar escala dos corretores”."
 	}
 	if code == "invalid_lead_input" && strings.Contains(strings.ToLower(original), "managed whatsapp message distribution") {
 		return "Este lead pertence a uma campanha do WhatsApp e não pode usar a redistribuição genérica. Você ainda pode transferi-lo manualmente para outro corretor."

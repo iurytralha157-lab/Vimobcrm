@@ -7,6 +7,7 @@ import {
   apiRoundRobinResponseSchema,
   apiRoundRobinRuleListResponseSchema,
   apiRoundRobinRuleResponseSchema,
+  apiRoundRobinWhatsAppSessionOptionListResponseSchema,
   createRoundRobinInputSchema,
   createRoundRobinRuleInputSchema,
   parseDomainInput,
@@ -98,10 +99,31 @@ type APIItemResponse<T> = {
   data: T
 }
 
+type APIRoundRobinWhatsAppSessionOption = {
+  id: string
+  instanceName: string
+  displayName?: string
+  phoneNumber?: string
+  status: string
+  provider: 'evolution_go'
+  isActive: boolean
+}
+
+export type RoundRobinWhatsAppSessionOption = {
+  id: string
+  instance_name: string
+  display_name: string | null
+  phone_number: string | null
+  status: string
+  provider: 'evolution_go'
+  is_active: boolean
+}
+
 type QueueConditionInput = {
   id?: string
   type: string
   values: string[]
+  sessionId?: string
 }
 
 type QueueMemberInput = {
@@ -151,6 +173,28 @@ export type LegacyRoundRobinMember = Omit<RoundRobinMemberRow, 'organization_id'
 }
 
 export const roundRobinsAPI = {
+  async getWhatsAppSessionOptions(organizationId?: string) {
+    const response = await vimobAPIRequest<APIListResponse<APIRoundRobinWhatsAppSessionOption>>(
+      '/v1/round-robin-whatsapp-sessions',
+      { organizationId },
+    )
+    validateDomainResponse(
+      apiRoundRobinWhatsAppSessionOptionListResponseSchema,
+      response,
+      'round-robin.whatsapp-sessions.list',
+    )
+
+    return response.data.map((session): RoundRobinWhatsAppSessionOption => ({
+      id: session.id,
+      instance_name: session.instanceName,
+      display_name: session.displayName || null,
+      phone_number: session.phoneNumber || null,
+      status: session.status,
+      provider: session.provider,
+      is_active: session.isActive,
+    }))
+  },
+
   async getRoundRobins(organizationId?: string) {
     const response = await vimobAPIRequest<APIListResponse<APIRoundRobin>>('/v1/round-robins', {
       organizationId,

@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import {
   useRoundRobins,
+  useRoundRobinWhatsAppSessions,
   useUpdateRoundRobin,
   useDeleteRoundRobin,
   RoundRobin as RoundRobinType,
@@ -39,7 +40,6 @@ import { useProperties } from "@/hooks/use-properties";
 import { useMetaIntegrations } from "@/hooks/use-meta-integration";
 import { useMetaFormConfigs } from "@/hooks/use-meta-forms";
 import { useWebhooks } from "@/hooks/use-webhooks";
-import { useWhatsAppSessions } from "@/hooks/use-whatsapp-sessions";
 import {
   useCreateQueueAdvanced,
   useUpdateQueueAdvanced,
@@ -104,6 +104,12 @@ const getPropertyLabel = (
   );
 };
 
+const getWhatsAppSessionIdFromMatch = (match: unknown) => {
+  if (!match || typeof match !== 'object' || Array.isArray(match)) return '';
+  const sessionId = (match as Record<string, unknown>).whatsapp_session_id;
+  return typeof sessionId === 'string' ? sessionId.trim() : '';
+};
+
 const EMPTY_ROUND_ROBINS: RoundRobinType[] = [];
 const EMPTY_LIST: never[] = [];
 
@@ -116,7 +122,7 @@ export function DistributionTab() {
   const { data: tags = EMPTY_LIST } = useTags();
   const { data: properties = EMPTY_LIST } = useProperties();
   const { data: webhooks = EMPTY_LIST } = useWebhooks();
-  const { data: whatsappSessions = EMPTY_LIST } = useWhatsAppSessions();
+  const { data: whatsappSessions = EMPTY_LIST } = useRoundRobinWhatsAppSessions();
   const { data: metaIntegrations = EMPTY_LIST } = useMetaIntegrations();
   const activeMetaIntegration = metaIntegrations.find((i) => i.is_connected);
   const { data: metaFormConfigs = EMPTY_LIST } = useMetaFormConfigs(
@@ -294,7 +300,14 @@ export function DistributionTab() {
     }
 
     if (rule.match_type === "whatsapp_message_contains") {
-      return `Campanha de WhatsApp: mensagem contém "${rule.match_value || "Configurado"}"`;
+      const sessionId = getWhatsAppSessionIdFromMatch(rule.match);
+      const session = whatsappSessions.find((item) => item.id === sessionId);
+      const sessionLabel =
+        session?.display_name ||
+        session?.phone_number ||
+        session?.instance_name ||
+        "Conexão indisponível";
+      return `Campanha de WhatsApp (${sessionLabel}): mensagem contém "${rule.match_value || "Configurado"}"`;
     }
 
     return `${matchTypeLabels[rule.match_type] || rule.match_type}: ${rule.match_value || "Configurado"}`;

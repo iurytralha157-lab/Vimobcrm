@@ -273,6 +273,20 @@ const roundRobinMemberInputSchema = z.object({
   teamId: uuidSchema.optional(),
   weight: z.number().int().min(1).max(1_000).optional(),
 }).strict()
+const roundRobinConditionInputSchema = z.object({
+  id: z.string().trim().max(200).optional(),
+  type: z.string().trim().min(1).max(80),
+  values: z.array(z.string().trim().max(180)).max(100),
+  sessionId: uuidSchema.optional(),
+}).strict().superRefine((condition, context) => {
+  if (condition.type === 'whatsapp_message_contains' && !condition.sessionId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['sessionId'],
+      message: 'Selecione a conexão do WhatsApp para esta campanha',
+    })
+  }
+})
 const roundRobinShape = {
   name: z.string().trim().min(2).max(120).optional(),
   strategy: z.enum(['simple', 'weighted']).optional(),
@@ -281,11 +295,7 @@ const roundRobinShape = {
   isActive: z.boolean().nullish(),
   settings: z.record(z.unknown()).optional(),
   reentryBehavior: z.enum(['redistribute', 'keep_assignee']).optional(),
-  conditions: z.array(z.object({
-    id: z.string().trim().max(200).optional(),
-    type: z.string().trim().min(1).max(80),
-    values: z.array(z.string().trim().max(180)).max(100),
-  }).strict()).optional(),
+  conditions: z.array(roundRobinConditionInputSchema).optional(),
   rules: z.array(roundRobinRuleInputSchema).max(200).optional(),
   members: z.array(roundRobinMemberInputSchema).max(500).optional(),
 }
@@ -347,8 +357,20 @@ export const apiRoundRobinSchema = z.object({
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
 }).passthrough()
+export const apiRoundRobinWhatsAppSessionOptionSchema = z.object({
+  id: uuidSchema,
+  instanceName: z.string(),
+  displayName: z.string().optional(),
+  phoneNumber: z.string().optional(),
+  status: z.string(),
+  provider: z.literal('evolution_go'),
+  isActive: z.boolean(),
+}).strict()
 export const apiRoundRobinListResponseSchema = apiEnvelopeSchema(z.array(apiRoundRobinSchema))
 export const apiRoundRobinResponseSchema = apiEnvelopeSchema(apiRoundRobinSchema)
+export const apiRoundRobinWhatsAppSessionOptionListResponseSchema = apiEnvelopeSchema(
+  z.array(apiRoundRobinWhatsAppSessionOptionSchema),
+)
 export const apiRoundRobinRuleListResponseSchema = apiEnvelopeSchema(z.array(apiRoundRobinRuleSchema))
 export const apiRoundRobinRuleResponseSchema = apiEnvelopeSchema(apiRoundRobinRuleSchema)
 export const apiRoundRobinMemberListResponseSchema = apiEnvelopeSchema(z.array(apiRoundRobinMemberSchema))

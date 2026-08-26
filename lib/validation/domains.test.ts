@@ -972,6 +972,31 @@ test("suporte de CRM valida filtros, disponibilidade e distribuicao", () => {
     }).success,
     false,
   );
+  assert.equal(
+    createRoundRobinInputSchema.safeParse({
+      name: "Campanha WhatsApp",
+      conditions: [
+        {
+          type: "whatsapp_message_contains",
+          values: ["quero conhecer"],
+        },
+      ],
+    }).success,
+    false,
+  );
+  assert.equal(
+    createRoundRobinInputSchema.safeParse({
+      name: "Campanha WhatsApp",
+      conditions: [
+        {
+          type: "whatsapp_message_contains",
+          values: ["quero conhecer"],
+          sessionId: ID,
+        },
+      ],
+    }).success,
+    true,
+  );
 
   const completeWeek = Array.from({ length: 7 }, (_, day) => ({
     day_of_week: day,
