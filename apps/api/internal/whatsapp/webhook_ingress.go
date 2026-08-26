@@ -51,6 +51,11 @@ type evolutionWebhookSession struct {
 	Active         bool
 }
 
+func evolutionWebhookSessionInactive(session evolutionWebhookSession) bool {
+	status := strings.ToLower(strings.TrimSpace(session.Status))
+	return !session.Active || status == "deleted" || status == "disabled"
+}
+
 func (repo Repository) AuthorizeEvolutionWebhookRoute(ctx context.Context, query url.Values, headers http.Header) error {
 	if hasEvolutionWebhookQueryCredential(query) {
 		return errWebhookUnauthorized
@@ -149,7 +154,7 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	if err != nil {
 		return evolutionWebhookReceipt{}, err
 	}
-	if !session.Active || strings.EqualFold(session.Status, "deleted") {
+	if evolutionWebhookSessionInactive(session) {
 		return evolutionWebhookReceipt{}, ErrSessionNotFound
 	}
 	if err := authorizeEvolutionWebhookEnvelopeSession(session, envelope); err != nil {
@@ -331,7 +336,7 @@ func optionalEvolutionWebhookTokensMatch(expected string, candidates []string) b
 }
 
 func authorizeEvolutionWebhookRouteSession(session evolutionWebhookSession, envelope evolutionWebhookEnvelope) error {
-	if !session.Active || strings.EqualFold(session.Status, "deleted") {
+	if evolutionWebhookSessionInactive(session) {
 		return errWebhookUnauthorized
 	}
 	if !optionalEvolutionWebhookTokensMatch(session.WebhookToken, envelope.WebhookHeaderTokens) {
@@ -347,7 +352,7 @@ func authorizeEvolutionWebhookRouteSession(session evolutionWebhookSession, enve
 }
 
 func authorizeEvolutionWebhookEnvelopeSession(session evolutionWebhookSession, envelope evolutionWebhookEnvelope) error {
-	if !session.Active || strings.EqualFold(session.Status, "deleted") {
+	if evolutionWebhookSessionInactive(session) {
 		return errWebhookUnauthorized
 	}
 	if !optionalEvolutionWebhookTokensMatch(session.WebhookToken, envelope.WebhookHeaderTokens) {

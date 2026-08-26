@@ -2,12 +2,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { roundRobinsAPI } from '@/lib/api/round-robins';
 import type { Json } from '@/integrations/supabase/types';
+import { useWhatsAppQueryScope } from '@/hooks/use-whatsapp-query-scope';
 
 export interface RoundRobinRule {
   id: string;
   round_robin_id: string;
   match_type: string;
   match_value: string;
+  match?: Json | null;
 }
 
 export interface RoundRobinMember {
@@ -41,6 +43,7 @@ export interface RoundRobin {
     redistribution_max_attempts?: number;
     preserve_position?: boolean;
     require_checkin?: boolean;
+    ignore_availability?: boolean;
     reentry_behavior?: 'redistribute' | 'keep_assignee';
     schedule?: Array<{
       day: number;
@@ -62,6 +65,26 @@ export function useRoundRobins() {
     queryFn: async () => {
       return roundRobinsAPI.getRoundRobins() as Promise<RoundRobin[]>;
     },
+  });
+}
+
+export function useRoundRobinWhatsAppSessions() {
+  const scope = useWhatsAppQueryScope();
+
+  return useQuery({
+    queryKey: [
+      'round-robin-whatsapp-sessions',
+      scope.organizationId ?? 'none',
+      scope.userId ?? 'none',
+      scope.accessScope,
+    ],
+    queryFn: () => roundRobinsAPI.getWhatsAppSessionOptions(scope.organizationId ?? undefined),
+    enabled: !!scope.organizationId && !!scope.userId,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    refetchOnMount: 'always',
+    refetchOnReconnect: true,
   });
 }
 

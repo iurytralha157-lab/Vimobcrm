@@ -47,42 +47,44 @@ type nativeLeadAssignment struct {
 	RoundRobinPosition int
 }
 
+const nativeInboundRulesQuery = `
+	select
+	  id::text,
+	  coalesce(match_type, 'all'),
+	  coalesce(match_field, 'message'),
+	  coalesce(match_value, ''),
+	  coalesce(source_label, ''),
+	  coalesce(campaign_label, ''),
+	  coalesce(target_user_id::text, ''),
+	  coalesce(target_team_id::text, ''),
+	  coalesce(target_pipeline_id::text, ''),
+	  coalesce(target_stage_id::text, ''),
+	  coalesce(target_round_robin_id::text, ''),
+	  coalesce(session_id = $2::uuid, false) and (
+	  exists (
+	    select 1
+	    from public.round_robin_rules managed_rule
+	    where managed_rule.organization_id = whatsapp_inbound_rules.organization_id
+	      and managed_rule.id = whatsapp_inbound_rules.id
+	      and managed_rule.round_robin_id = whatsapp_inbound_rules.target_round_robin_id
+	      and coalesce(nullif(managed_rule.match_type, ''), managed_rule.conditions->>'match_type', managed_rule.name, '') = 'whatsapp_message_contains'
+	  ) or (
+	    priority <= -1000000000
+	    and name like 'Distribuição: %'
+	    and coalesce(match_type, '') = 'contains'
+	    and coalesce(match_field, 'message') = 'message'
+	    and target_round_robin_id is not null
+	  )),
+	  '{}'::jsonb::text
+	from public.whatsapp_inbound_rules
+	where organization_id = $1::uuid
+	  and coalesce(is_active, true) = true
+	  and (session_id is null or session_id = $2::uuid)
+	order by priority desc, created_at asc, id asc
+`
+
 func findNativeInboundRule(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession, message nativeEvolutionMessage) (nativeInboundRule, error) {
-	rows, err := tx.Query(ctx, `
-		select
-		  id::text,
-		  coalesce(match_type, 'all'),
-		  coalesce(match_field, 'message'),
-		  coalesce(match_value, ''),
-		  coalesce(source_label, ''),
-		  coalesce(campaign_label, ''),
-		  coalesce(target_user_id::text, ''),
-		  coalesce(target_team_id::text, ''),
-		  coalesce(target_pipeline_id::text, ''),
-		  coalesce(target_stage_id::text, ''),
-		  coalesce(target_round_robin_id::text, ''),
-		  exists (
-		    select 1
-		    from public.round_robin_rules managed_rule
-		    where managed_rule.organization_id = whatsapp_inbound_rules.organization_id
-		      and managed_rule.id = whatsapp_inbound_rules.id
-		      and managed_rule.round_robin_id = whatsapp_inbound_rules.target_round_robin_id
-		      and coalesce(nullif(managed_rule.match_type, ''), managed_rule.conditions->>'match_type', managed_rule.name, '') = 'whatsapp_message_contains'
-		  ) or (
-		    priority <= -1000000000
-		    and session_id is null
-		    and name like 'Distribuição: %'
-		    and coalesce(match_type, '') = 'contains'
-		    and coalesce(match_field, 'message') = 'message'
-		    and target_round_robin_id is not null
-		  ),
-		  '{}'::jsonb::text
-		from public.whatsapp_inbound_rules
-		where organization_id = $1::uuid
-		  and coalesce(is_active, true) = true
-		  and (session_id is null or session_id = $2::uuid)
-		order by priority desc, created_at asc, id asc
-	`, session.OrganizationID, session.ID)
+	rows, err := tx.Query(ctx, nativeInboundRulesQuery, session.OrganizationID, session.ID)
 	if err != nil {
 		return nativeInboundRule{}, err
 	}

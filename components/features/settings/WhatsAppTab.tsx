@@ -145,6 +145,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
         setQrDialogOpen(false);
         setQrCode(null);
         queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
+        queryClient.invalidateQueries({ queryKey: ["round-robin-whatsapp-sessions"] });
         clearInterval(pollInterval);
       }
     }, 5000);
@@ -258,6 +259,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
       if (lastQr) {
         setQrCode(lastQr);
         queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
+        queryClient.invalidateQueries({ queryKey: ["round-robin-whatsapp-sessions"] });
         return "ready";
       } else {
         const description = lastError
@@ -336,6 +338,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
         toast({ title: "Desconectado", description: "Essa conexão ainda não está online.", variant: "destructive" });
       }
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["round-robin-whatsapp-sessions"] });
     } catch (error) {
       console.warn("WhatsApp verification failed:", getErrorMessage(error, "Não foi possível verificar a conexão."));
       toast({ title: "Erro", description: "Não foi possível verificar a conexão.", variant: "destructive" });

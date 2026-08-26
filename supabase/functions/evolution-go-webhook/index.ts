@@ -1312,12 +1312,16 @@ async function findInboundRule(session: JsonRecord, message: ReturnType<typeof n
   )) || null;
 }
 
-async function isManagedWhatsAppMessageDistributionRule(rule: JsonRecord | null, organizationId: string) {
+async function isManagedWhatsAppMessageDistributionRule(
+  rule: JsonRecord | null,
+  organizationId: string,
+  sessionId: string,
+) {
   const ruleId = optionalUuid(rule?.id);
   const targetRoundRobinId = optionalUuid(rule?.target_round_robin_id);
-  if (!ruleId || !targetRoundRobinId) return false;
+  const boundSessionId = optionalUuid(rule?.session_id);
+  if (!ruleId || !targetRoundRobinId || !boundSessionId || boundSessionId !== sessionId) return false;
   const hasManagedMirrorShape = Number(rule?.priority) <= -1_000_000_000
-    && !rule?.session_id
     && normalizeText(rule?.name).startsWith("Distribuição: ")
     && normalizeText(rule?.match_type).toLowerCase() === "contains"
     && normalizeText(rule?.match_field || "message").toLowerCase() === "message";
@@ -1443,7 +1447,12 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
     return { ...existing, ...update, is_new_lead: false };
   }
 
-  if (!(await hasVerifiedWhatsAppLeadCreationContext(session.organization_id, message))) {
+  const managedMessageDistribution = await isManagedWhatsAppMessageDistributionRule(
+    rule,
+    session.organization_id,
+    session.id,
+  );
+  if (!managedMessageDistribution && !(await hasVerifiedWhatsAppLeadCreationContext(session.organization_id, message))) {
     console.debug("[evolution-go-webhook] plain WhatsApp conversation stored without lead auto-creation", {
       session_id: session.id,
       organization_id: session.organization_id,
@@ -1453,7 +1462,6 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
     return null;
   }
 
-  const managedMessageDistribution = await isManagedWhatsAppMessageDistributionRule(rule, session.organization_id);
   const roundRobinAssignee = managedMessageDistribution
     ? null
     : await resolveRoundRobinAssignee(rule, session.organization_id);
@@ -2324,21 +2332,23 @@ async function handleMessages(session: JsonRecord, payload: any) {
       try {
         rule = await findInboundRule(session, message);
       } catch (error) {
-        console.warn("[evolution-go-webhook] inbound rule lookup failed; message will still be stored", {
+        console.warn("[evolution-go-webhook] inbound rule lookup failed; durable delivery will retry", {
           session_id: session.id,
           remote_jid: diagnosticRemoteJid,
           error: redactLogText(error),
         });
+        throw error;
       }
 
       try {
         lead = await ensureLead(session, message, rule);
       } catch (error) {
-        console.warn("[evolution-go-webhook] lead resolution failed; message will still be stored", {
+        console.warn("[evolution-go-webhook] lead resolution failed; durable delivery will retry", {
           session_id: session.id,
           remote_jid: diagnosticRemoteJid,
           error: redactLogText(error),
         });
+        throw error;
       }
     }
 
@@ -2649,7 +2659,11 @@ Deno.serve(async (req) => {
       return json({ ok: true, ignored: true, reason: "BLOCKED_SESSION_INSTANCE_MISMATCH", signals: resolved.signals });
     }
 
-    if (resolved.session.is_active === false || resolved.session.status === "deleted") {
+    const resolvedSessionStatus = normalizeText(resolved.session.status).trim().toLowerCase();
+    if (
+      resolved.session.is_active === false
+      || ["deleted", "disabled"].includes(resolvedSessionStatus)
+    ) {
       return json({
         ok: true,
         ignored: true,

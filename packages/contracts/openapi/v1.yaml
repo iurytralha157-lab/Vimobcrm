@@ -1505,6 +1505,26 @@ paths:
       responses:
         "200":
           description: Pipeline round-robin updated.
+  /v1/round-robin-whatsapp-sessions:
+    get:
+      summary: List organization WhatsApp connections available to distribution rules
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Lightweight WhatsApp connection list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RoundRobinWhatsAppSessionOption"
+        "403":
+          $ref: "#/components/responses/APIError"
   /v1/round-robins:
     get:
       summary: List round-robin queues
@@ -2410,6 +2430,27 @@ components:
         updatedAt:
           type: string
           format: date-time
+    RoundRobinWhatsAppSessionOption:
+      type: object
+      additionalProperties: false
+      required: [id, instanceName, status, provider, isActive]
+      properties:
+        id:
+          type: string
+          format: uuid
+        instanceName:
+          type: string
+        displayName:
+          type: string
+        phoneNumber:
+          type: string
+        status:
+          type: string
+        provider:
+          type: string
+          enum: [evolution_go]
+        isActive:
+          type: boolean
     RoundRobinRule:
       type: object
       required: [id, roundRobinId, matchType, matchValue, priority, isActive]
@@ -2493,6 +2534,9 @@ components:
                 type: array
                 items:
                   type: string
+              sessionId:
+                type: string
+                format: uuid
         members:
           type: array
           items:

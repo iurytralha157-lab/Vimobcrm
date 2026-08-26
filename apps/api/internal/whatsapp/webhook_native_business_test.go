@@ -1,6 +1,7 @@
 package whatsapp
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -30,5 +31,14 @@ func TestManagedWhatsAppDistributionPreservesDatabaseQueueTarget(t *testing.T) {
 	assignment := nativeLeadAssignment{RoundRobinID: "runtime-queue"}
 	if got := nativeTargetRoundRobinID(rule, assignment); got != "managed-queue" {
 		t.Fatalf("nativeTargetRoundRobinID() = %q, want managed queue", got)
+	}
+}
+
+func TestManagedWhatsAppDistributionFailsClosedForLegacyWildcardSession(t *testing.T) {
+	if !strings.Contains(nativeInboundRulesQuery, "coalesce(session_id = $2::uuid, false) and (") {
+		t.Fatal("managed WhatsApp distribution must treat a legacy NULL session as false")
+	}
+	if !strings.Contains(nativeInboundRulesQuery, "and (session_id is null or session_id = $2::uuid)") {
+		t.Fatal("legacy wildcard rules must remain readable for their existing non-managed behavior")
 	}
 }

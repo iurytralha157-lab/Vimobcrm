@@ -25,6 +25,7 @@ import {
   addRoundRobinMemberInputSchema,
   availabilityInputSchema,
   contactListQuerySchema,
+  createRoundRobinInputSchema,
   dispatchNotificationInputSchema,
 } from './crm-support'
 import {
@@ -505,6 +506,14 @@ test('suporte de CRM valida filtros, disponibilidade e distribuicao', () => {
   }).success, false)
   assert.equal(addRoundRobinMemberInputSchema.safeParse({ weight: 1 }).success, false)
   assert.equal(addRoundRobinMemberInputSchema.safeParse({ userId: ID, weight: 0 }).success, false)
+  assert.equal(createRoundRobinInputSchema.safeParse({
+    name: 'Campanha WhatsApp',
+    conditions: [{ type: 'whatsapp_message_contains', values: ['quero conhecer'] }],
+  }).success, false)
+  assert.equal(createRoundRobinInputSchema.safeParse({
+    name: 'Campanha WhatsApp',
+    conditions: [{ type: 'whatsapp_message_contains', values: ['quero conhecer'], sessionId: ID }],
+  }).success, true)
 })
 
 test('notificacao exige organizacao e canais conhecidos', () => {

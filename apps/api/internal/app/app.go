@@ -687,6 +687,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("POST /v1/pipelines/{id}/round-robin", withPermission(permissions.PipelineManage, http.HandlerFunc(pipelinesHandler.SetDefaultRoundRobin)))
 	mux.Handle("PATCH /v1/stages/{id}", withPermission(permissions.PipelineManage, http.HandlerFunc(pipelinesHandler.UpdateStage)))
 	mux.Handle("DELETE /v1/stages/{id}", withPermission(permissions.PipelineManage, http.HandlerFunc(pipelinesHandler.DeleteStage)))
+	mux.Handle("GET /v1/round-robin-whatsapp-sessions", withPermission(permissions.DistributionManage, http.HandlerFunc(roundRobinHandler.ListWhatsAppSessionOptions)))
 	mux.Handle("GET /v1/round-robins", withPermission(permissions.DistributionManage, http.HandlerFunc(roundRobinHandler.List)))
 	mux.Handle("POST /v1/round-robins", withPermission(permissions.DistributionManage, http.HandlerFunc(roundRobinHandler.Create)))
 	mux.Handle("PATCH /v1/round-robins/{id}", withPermission(permissions.DistributionManage, http.HandlerFunc(roundRobinHandler.Update)))

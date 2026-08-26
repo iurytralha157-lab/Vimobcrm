@@ -13,6 +13,7 @@ interface RuleCondition {
   id: string;
   type: 'source' | 'webhook' | 'whatsapp_session' | 'meta_form' | 'website_category' | 'campaign_contains' | 'whatsapp_message_contains' | 'tag' | 'city' | 'interest_property';
   values: string[];
+  sessionId?: string;
 }
 
 interface QueueMember {

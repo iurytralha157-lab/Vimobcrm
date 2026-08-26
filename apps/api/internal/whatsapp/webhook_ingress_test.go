@@ -66,6 +66,15 @@ func TestEvolutionWebhookRouteAllowsMissingLegacyTokenButRejectsWrongOrConflicti
 	}
 }
 
+func TestEvolutionWebhookSessionInactiveRejectsDisabledStatus(t *testing.T) {
+	if !evolutionWebhookSessionInactive(evolutionWebhookSession{Active: true, Status: " DISABLED "}) {
+		t.Fatal("disabled WhatsApp sessions must reject webhook processing")
+	}
+	if evolutionWebhookSessionInactive(evolutionWebhookSession{Active: true, Status: "connected"}) {
+		t.Fatal("an active connected WhatsApp session must remain eligible")
+	}
+}
+
 func TestEvolutionWebhookRejectsEveryQueryCredential(t *testing.T) {
 	for _, credential := range []string{"webhook_token", "apikey", "token", "Webhook_Token", "APIKEY", "ToKeN"} {
 		t.Run(credential, func(t *testing.T) {

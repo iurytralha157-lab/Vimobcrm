@@ -58,7 +58,7 @@ import { useOrganizationUsers } from '@/hooks/use-users';
 import { useTags } from '@/hooks/use-tags';
 import { useProperties } from '@/hooks/use-properties';
 import { useWebhooks } from '@/hooks/use-webhooks';
-import { useWhatsAppSessions } from '@/hooks/use-whatsapp-sessions';
+import { useRoundRobinWhatsAppSessions } from '@/hooks/use-round-robins';
 import { useMetaFormConfigs } from '@/hooks/use-meta-forms';
 import { useMetaIntegrations } from '@/hooks/use-meta-integration';
 import { cn } from '@/lib/utils';
@@ -98,6 +98,7 @@ interface RuleCondition {
   id: string;
   type: 'source' | 'webhook' | 'whatsapp_session' | 'meta_form' | 'website_category' | 'campaign_contains' | 'whatsapp_message_contains' | 'tag' | 'city' | 'interest_property';
   values: string[];
+  sessionId?: string;
 }
 
 type RuleConditionType = RuleCondition['type'];
@@ -127,6 +128,7 @@ interface ExistingQueueRule {
   id: string;
   match_type?: string | null;
   match_value?: string | null;
+  match?: unknown;
 }
 
 interface ExistingQueueMember {
@@ -197,6 +199,12 @@ function isQueueStrategy(value: unknown): value is QueueStrategy {
 
 function isRuleConditionType(value: unknown): value is RuleConditionType {
   return typeof value === 'string' && CONDITION_TYPES.some((condition) => condition.value === value);
+}
+
+function whatsappSessionIdFromMatch(match: unknown): string {
+  if (!match || typeof match !== 'object' || Array.isArray(match)) return '';
+  const sessionId = (match as Record<string, unknown>).whatsapp_session_id;
+  return typeof sessionId === 'string' ? sessionId.trim() : '';
 }
 
 function conditionOptionBadgeClass(selected: boolean) {
@@ -324,7 +332,7 @@ export function DistributionQueueEditor({
   const { data: tags = [] } = useTags();
   const { data: properties = [] } = useProperties();
   const { data: webhooks = [] } = useWebhooks();
-  const { data: whatsappSessions = [] } = useWhatsAppSessions();
+  const { data: whatsappSessions = [] } = useRoundRobinWhatsAppSessions();
   const { data: metaIntegrations = [] } = useMetaIntegrations();
   const activeMetaIntegration = metaIntegrations.find(i => i.is_connected);
   const { data: metaFormConfigs = [] } = useMetaFormConfigs(activeMetaIntegration?.id);
@@ -363,6 +371,14 @@ export function DistributionQueueEditor({
   );
   const activeWhatsAppSessions = useMemo(
     () => whatsappSessions.filter((session) => session.is_active),
+    [whatsappSessions]
+  );
+  const campaignWhatsAppSessions = useMemo(
+    () => whatsappSessions.filter((session) => (
+      session.is_active
+      && !['disabled', 'deleted'].includes(session.status.trim().toLowerCase())
+      && (!session.provider || session.provider === 'evolution_go')
+    )),
     [whatsappSessions]
   );
 
@@ -432,13 +448,16 @@ export function DistributionQueueEditor({
       const existingConditions: RuleCondition[] = (queue.rules || []).map((rule) => {
         const matchType = isRuleConditionType(rule.match_type) ? rule.match_type : 'source';
         const matchValueStr = rule.match_value || '';
+        const sessionId = matchType === 'whatsapp_message_contains'
+          ? whatsappSessionIdFromMatch(rule.match)
+          : undefined;
         let values: string[] = [];
         if (matchValueStr) {
           values = matchType === 'whatsapp_message_contains'
             ? [matchValueStr.trim()].filter(Boolean)
             : matchValueStr.split(',').map((v: string) => v.trim()).filter(Boolean);
         }
-        return { id: rule.id, type: matchType, values };
+        return { id: rule.id, type: matchType, values, sessionId };
       });
 
       const membersMap = new Map<string, QueueMember>();
@@ -670,6 +689,26 @@ export function DistributionQueueEditor({
       condition.type === 'whatsapp_message_contains'
       && condition.values.some(value => value.trim())
     );
+    const configuredWhatsAppMessageConditions = formData.conditions.filter(condition =>
+      condition.type === 'whatsapp_message_contains'
+      && condition.values.some(value => value.trim())
+    );
+    if (configuredWhatsAppMessageConditions.some(condition => !condition.sessionId?.trim())) {
+      toast.error('Selecione a conexão do WhatsApp para cada campanha configurada.');
+      return;
+    }
+    const invalidWhatsAppSession = configuredWhatsAppMessageConditions.find(condition => {
+      const selectedSession = whatsappSessions.find(session => session.id === condition.sessionId);
+      return !selectedSession || (
+        !selectedSession.is_active
+        || ['disabled', 'deleted'].includes(selectedSession.status.trim().toLowerCase())
+        || (selectedSession.provider !== undefined && selectedSession.provider !== 'evolution_go')
+      );
+    });
+    if (invalidWhatsAppSession) {
+      toast.error('Selecione uma conexão do WhatsApp ativa para esta campanha.');
+      return;
+    }
     const hasConfiguredNonWhatsAppCondition = formData.conditions.some(condition =>
       condition.type !== 'whatsapp_message_contains'
       && condition.values.some(value => value.trim())
@@ -700,12 +739,13 @@ export function DistributionQueueEditor({
         return;
       }
       if (!formData.settings.ignore_availability) {
-        toast.error('Ative “Ignorar agenda nesta fila” para distribuir a campanha do WhatsApp.');
+        toast.error('Ative “Ignorar escala dos corretores” para distribuir a campanha do WhatsApp.');
         return;
       }
     }
     const hasValidCriteria = formData.conditions.some(condition =>
       condition.values.some(value => value.trim())
+      && (condition.type !== 'whatsapp_message_contains' || Boolean(condition.sessionId?.trim()))
     );
     if (!hasValidCriteria) {
       toast.error('Adicione pelo menos um criterio de entrada para salvar a fila');
@@ -737,6 +777,9 @@ export function DistributionQueueEditor({
       .map((condition) => ({
         ...condition,
         values: condition.values.map((value) => value.trim()).filter(Boolean),
+        sessionId: condition.type === 'whatsapp_message_contains'
+          ? condition.sessionId?.trim()
+          : undefined,
       }))
       .filter((condition) => condition.values.length > 0);
     const sanitizedHasWhatsAppMessageCondition = sanitizedConditions.some(
@@ -896,9 +939,53 @@ export function DistributionQueueEditor({
             onChange={e => updateCondition(condition.id, { values: [e.target.value] })}
           />
         );
-      case 'whatsapp_message_contains':
+      case 'whatsapp_message_contains': {
+        const selectedSession = whatsappSessions.find(session => session.id === condition.sessionId);
+        const selectableSession = campaignWhatsAppSessions.find(session => session.id === condition.sessionId);
+        const selectedSessionUnavailable = Boolean(condition.sessionId && !selectableSession);
+        const selectedSessionLabel = selectedSession
+          ? selectedSession.display_name || selectedSession.phone_number || selectedSession.instance_name
+          : 'Conexão salva indisponível';
+        const selectedSessionConnected = selectedSession?.status.trim().toLowerCase() === 'connected';
+
         return (
-          <div className="space-y-2">
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor={`whatsapp-session-${condition.id}`}>Conexão WhatsApp *</Label>
+              <Select
+                value={condition.sessionId || ''}
+                onValueChange={(sessionId) => updateCondition(condition.id, { sessionId })}
+                disabled={campaignWhatsAppSessions.length === 0 && !condition.sessionId}
+              >
+                <SelectTrigger
+                  id={`whatsapp-session-${condition.id}`}
+                  className={!condition.sessionId ? 'border-destructive' : ''}
+                >
+                  <SelectValue placeholder="Selecione uma conexão..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {selectedSessionUnavailable && condition.sessionId && (
+                    <SelectItem value={condition.sessionId} disabled>
+                      {selectedSessionLabel} (indisponível)
+                    </SelectItem>
+                  )}
+                  {campaignWhatsAppSessions.map(session => (
+                    <SelectItem key={session.id} value={session.id}>
+                      {session.display_name || session.phone_number || session.instance_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {campaignWhatsAppSessions.length === 0 && !condition.sessionId && (
+                <p className="text-xs text-destructive">
+                  Nenhuma conexão do WhatsApp ativa está disponível para esta conta.
+                </p>
+              )}
+              {!condition.sessionId && campaignWhatsAppSessions.length > 0 && (
+                <p className="text-xs text-destructive">Selecione a conexão que receberá esta campanha.</p>
+              )}
+            </div>
+
             <Label htmlFor={`whatsapp-message-${condition.id}`}>Mensagem contém</Label>
             <Input
               id={`whatsapp-message-${condition.id}`}
@@ -907,11 +994,30 @@ export function DistributionQueueEditor({
               value={condition.values[0] || ''}
               onChange={e => updateCondition(condition.id, { values: [e.target.value] })}
             />
-            <p className="text-xs text-muted-foreground">
-              Nesta fila, adicione os corretores individualmente e use distribuição sequencial.
-            </p>
+            {selectedSessionUnavailable ? (
+              <p className="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                A conexão salva não está disponível nesta conta. Ela foi preservada; selecione outra para validar o funcionamento.
+              </p>
+            ) : condition.sessionId ? (
+              <p className={cn(
+                'rounded-md px-3 py-2 text-xs',
+                selectedSessionConnected
+                  ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                  : 'bg-amber-500/10 text-amber-700 dark:text-amber-300',
+              )}>
+                {selectedSessionConnected
+                  ? 'Quando esta conexão receber uma mensagem com esse trecho de um contato ainda não cadastrado, o CRM cria o lead automaticamente e o envia para esta fila.'
+                  : 'Esta conexão não está conectada. Reconecte-a para receber a mensagem, criar o lead e fazer a distribuição automaticamente.'}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Selecione a conexão que receberá a mensagem e criará o lead automaticamente.
+              </p>
+            )}
+            <p className="text-xs text-muted-foreground">Nesta fila, adicione os corretores individualmente e use distribuição sequencial.</p>
           </div>
         );
+      }
       case 'tag':
         return (
           <div className="flex flex-wrap gap-1">
@@ -963,6 +1069,7 @@ export function DistributionQueueEditor({
 
   const hasValidCriteria = formData.conditions.some(condition =>
     condition.values.some(value => value.trim())
+    && (condition.type !== 'whatsapp_message_contains' || Boolean(condition.sessionId?.trim()))
   );
   const hasRequiredMembers = !formData.is_active || formData.members.length > 0;
   const canSave = !!formData.name.trim() && !!formData.target_pipeline_id && !!formData.target_stage_id && hasValidCriteria && hasRequiredMembers && !saving;
@@ -1126,7 +1233,7 @@ export function DistributionQueueEditor({
                                   return;
                                 }
                               }
-                              updateCondition(condition.id, { type: value, values: [] });
+                              updateCondition(condition.id, { type: value, values: [], sessionId: undefined });
                             }
                           }}
                         >
@@ -1149,9 +1256,9 @@ export function DistributionQueueEditor({
                   {hasWhatsAppMessageCondition && (
                     <div className="flex items-start justify-between gap-4 rounded-lg bg-[var(--app-surface-soft)] p-3">
                       <div className="space-y-1">
-                        <Label htmlFor="distribution-ignore-availability">Ignorar agenda nesta fila *</Label>
+                        <Label htmlFor="distribution-ignore-availability">Ignorar escala dos corretores *</Label>
                         <p className="text-xs text-muted-foreground">
-                          Obrigatório para campanhas do WhatsApp. Afeta todos os critérios; use uma fila dedicada a essa campanha.
+                          Obrigatório nesta campanha. A fila distribui entre os corretores ativos mesmo fora dos dias e horários definidos na escala.
                         </p>
                       </div>
                       <Switch

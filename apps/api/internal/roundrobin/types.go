@@ -77,6 +77,16 @@ type StageSummary struct {
 	Color string `json:"color,omitempty"`
 }
 
+type WhatsAppSessionOption struct {
+	ID           string `json:"id"`
+	InstanceName string `json:"instanceName"`
+	DisplayName  string `json:"displayName,omitempty"`
+	PhoneNumber  string `json:"phoneNumber,omitempty"`
+	Status       string `json:"status"`
+	Provider     string `json:"provider"`
+	IsActive     bool   `json:"isActive"`
+}
+
 type Rule struct {
 	ID           string         `json:"id"`
 	RoundRobinID string         `json:"roundRobinId"`
@@ -179,9 +189,10 @@ type UpdateMemberRequest struct {
 }
 
 type ConditionInput struct {
-	ID     string   `json:"id,omitempty"`
-	Type   string   `json:"type"`
-	Values []string `json:"values"`
+	ID        string   `json:"id,omitempty"`
+	Type      string   `json:"type"`
+	Values    []string `json:"values"`
+	SessionID string   `json:"sessionId,omitempty"`
 }
 
 type RuleInput struct {
@@ -642,11 +653,19 @@ func (condition ConditionInput) toRuleInput(index int) (ruleInput, error) {
 	if matchType == whatsappMessageContainsConditionType && len(values) > 1 {
 		return ruleInput{}, fmt.Errorf("%w: WhatsApp message condition accepts one value", ErrInvalidInput)
 	}
+	match := buildRuleMatch(matchType, values)
+	if matchType == whatsappMessageContainsConditionType && len(values) > 0 {
+		sessionID, ok := normalizeUUID(condition.SessionID)
+		if !ok {
+			return ruleInput{}, fmt.Errorf("%w: WhatsApp message condition requires a valid sessionId", ErrInvalidInput)
+		}
+		match[whatsappSessionMatchKey] = sessionID
+	}
 
 	return ruleInput{
 		MatchType:  matchType,
 		MatchValue: strings.Join(values, ","),
-		Match:      buildRuleMatch(matchType, values),
+		Match:      match,
 		Priority:   1000 - index,
 		IsActive:   true,
 	}, nil
@@ -674,6 +693,14 @@ func normalizeRuleInput(input RuleInput, index int) (ruleInput, error) {
 	match := normalizeObject(input.Match)
 	if len(match) == 0 && matchValue != "" {
 		match = buildRuleMatch(matchType, ruleMatchValues(matchType, matchValue))
+	}
+	if matchType == whatsappMessageContainsConditionType && matchValue != "" {
+		sessionID, ok := whatsappSessionIDFromMatch(match)
+		if !ok {
+			return ruleInput{}, fmt.Errorf("%w: WhatsApp message rule requires a valid whatsapp_session_id", ErrInvalidInput)
+		}
+		match["message_contains"] = matchValue
+		match[whatsappSessionMatchKey] = sessionID
 	}
 
 	return ruleInput{
@@ -799,9 +826,23 @@ func resolveRuleMatchPatch(current map[string]any, matchType string, matchValue 
 		match = matchPatch.Value
 	}
 	if (!matchPatch.Set && identityChanged) || (len(match) == 0 && matchValue != "") {
-		return buildRuleMatch(matchType, ruleMatchValues(matchType, matchValue))
+		rebuilt := buildRuleMatch(matchType, ruleMatchValues(matchType, matchValue))
+		if matchType == whatsappMessageContainsConditionType {
+			if sessionID, ok := whatsappSessionIDFromMatch(current); ok {
+				rebuilt[whatsappSessionMatchKey] = sessionID
+			}
+		}
+		return rebuilt
 	}
 	return match
+}
+
+func whatsappSessionIDFromMatch(match map[string]any) (string, bool) {
+	raw, ok := match[whatsappSessionMatchKey].(string)
+	if !ok {
+		return "", false
+	}
+	return normalizeUUID(raw)
 }
 
 func normalizeStrategy(value string) string {

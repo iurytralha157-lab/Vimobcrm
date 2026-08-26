@@ -157,6 +157,7 @@ export function useCreateWhatsAppSession() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
       queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["round-robin-whatsapp-sessions"] });
       toast({
         title: "Sessao criada",
         description: "Escaneie o QR Code para conectar",
@@ -204,6 +205,7 @@ export function useDeleteWhatsAppSession() {
       );
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
       queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["round-robin-whatsapp-sessions"] });
       toast({
         title: "Sessao excluida",
         description: "A conexão WhatsApp foi removida",
@@ -225,6 +227,7 @@ export function useDeleteWhatsAppSession() {
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
       queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["round-robin-whatsapp-sessions"] });
     },
   });
 }
@@ -340,6 +343,7 @@ export function useRecreateWhatsAppInstance() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["round-robin-whatsapp-sessions"] });
       toast({
         title: "Instancia recriada",
         description: "Escaneie o QR Code para conectar",
@@ -386,6 +390,7 @@ export function useLogoutSession() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["round-robin-whatsapp-sessions"] });
       toast({
         title: "Desconectado",
         description: "A sessao foi desconectada",
@@ -442,6 +447,7 @@ export function useQRCodePolling(session: WhatsAppSession | null) {
           setQrCode(null);
           setIsPolling(false);
           queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
+          queryClient.invalidateQueries({ queryKey: ["round-robin-whatsapp-sessions"] });
           return true;
         }
 
