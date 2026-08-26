@@ -176,6 +176,7 @@ type WhatsAppConfig struct {
 	SessionSupervisorInitialDelay time.Duration
 	SessionSupervisorInterval     time.Duration
 	SessionSupervisorBatch        int
+	SessionSupervisorRecoveryIDs  []string
 }
 
 func (cfg HTTPConfig) Addr() string {
@@ -296,7 +297,8 @@ func Load() (Config, error) {
 			SessionSupervisorEnabled:      parseBool("WHATSAPP_SESSION_SUPERVISOR_ENABLED", true),
 			SessionSupervisorInitialDelay: parseDuration("WHATSAPP_SESSION_SUPERVISOR_INITIAL_DELAY", 30*time.Second),
 			SessionSupervisorInterval:     parseDuration("WHATSAPP_SESSION_SUPERVISOR_INTERVAL", time.Minute),
-			SessionSupervisorBatch:        int(parseInt("WHATSAPP_SESSION_SUPERVISOR_BATCH", 5)),
+			SessionSupervisorBatch:        int(parseInt("WHATSAPP_SESSION_SUPERVISOR_BATCH", 10)),
+			SessionSupervisorRecoveryIDs:  parseCSV(getEnv("WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS", "")),
 		},
 		EvolutionGo: EvolutionGoConfig{
 			APIURL:                   strings.TrimRight(getEnv("EVOLUTION_GO_API_URL", ""), "/"),
@@ -518,6 +520,9 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.WhatsApp.WebhookWorkerEnabled && (cfg.WhatsApp.WebhookWorkerConcurrency < 1 || cfg.WhatsApp.WebhookWorkerConcurrency > 16) {
 		validationErrors = append(validationErrors, errors.New("WHATSAPP_WEBHOOK_WORKER_CONCURRENCY must be between 1 and 16"))
+	}
+	if err := validateSessionIDAllowlist("WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS", cfg.WhatsApp.SessionSupervisorRecoveryIDs); err != nil {
+		validationErrors = append(validationErrors, err)
 	}
 	if (strings.TrimSpace(cfg.EvolutionGo.APIURL) != "" || strings.TrimSpace(cfg.EvolutionGo.APIKey) != "" || len(cfg.EvolutionGo.WebhookRolloutSessionIDs) > 0) &&
 		strings.TrimSpace(cfg.EvolutionGo.BackendWebhookURL) == "" {
@@ -793,6 +798,10 @@ func validateEvolutionWebhookURL(name string, value string, requireHTTPS bool) e
 }
 
 func validateWebhookRolloutSessionIDs(values []string) error {
+	return validateSessionIDAllowlist("WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS", values)
+}
+
+func validateSessionIDAllowlist(name string, values []string) error {
 	if len(values) == 0 {
 		return nil
 	}
@@ -804,17 +813,17 @@ func validateWebhookRolloutSessionIDs(values []string) error {
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "*" {
-			return errors.New("WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS must be either * or a comma-separated UUID allowlist")
+			return fmt.Errorf("%s must be either * or a comma-separated UUID allowlist", name)
 		}
 
 		var uuid pgtype.UUID
 		if err := uuid.Scan(value); err != nil || !uuid.Valid {
-			return fmt.Errorf("WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS contains invalid UUID %q", value)
+			return fmt.Errorf("%s contains invalid UUID %q", name, value)
 		}
 
 		normalized := uuid.String()
 		if _, exists := seen[normalized]; exists {
-			return fmt.Errorf("WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS contains duplicate UUID %q", normalized)
+			return fmt.Errorf("%s contains duplicate UUID %q", name, normalized)
 		}
 		seen[normalized] = struct{}{}
 	}

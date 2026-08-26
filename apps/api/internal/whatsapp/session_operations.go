@@ -24,6 +24,7 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 		"webhook_token":                      webhookToken,
 		"evolution_go_resolved_instance_key": instanceName,
 		"ai_auto_reply_enabled":              false,
+		"auto_reconnect_enabled":             true,
 	}
 
 	session, err := scanSession(repo.db.Pool().QueryRow(ctx, `
@@ -126,6 +127,17 @@ func (repo Repository) DeleteSession(ctx context.Context, tenantContext tenant.C
 	if err != nil {
 		return err
 	}
+	unlock, _, err := repo.acquireWhatsAppSessionLock(ctx, session.ID, true)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	// State may have changed while an in-flight supervisor operation held the
+	// lock, so authorization and lifecycle state are read again under it.
+	session, err = repo.GetManageableSession(ctx, tenantContext, session.ID)
+	if err != nil {
+		return err
+	}
 
 	if session.Provider == "evolution_go" {
 		_, _ = repo.functions.invokeEvolution(ctx, "instance.delete", map[string]any{
@@ -143,8 +155,22 @@ func (repo Repository) GetQRCode(ctx context.Context, tenantContext tenant.Conte
 	if err != nil {
 		return QRCodeResponse{}, err
 	}
+	unlock, _, err := repo.acquireWhatsAppSessionLock(ctx, session.ID, true)
+	if err != nil {
+		return QRCodeResponse{}, err
+	}
+	defer unlock()
+	session, err = repo.GetSession(ctx, tenantContext, session.ID)
+	if err != nil {
+		return QRCodeResponse{}, err
+	}
 	if session.Provider != "evolution_go" {
 		return QRCodeResponse{}, fmt.Errorf("%w: legacy Evolution provider is disabled", ErrInvalidInput)
+	}
+	if !sessionAutoReconnectEnabled(session.AdvancedSettings) {
+		if err := repo.setSessionAutoReconnect(ctx, tenantContext.OrganizationID, session.ID, true, ""); err != nil {
+			return QRCodeResponse{}, err
+		}
 	}
 
 	result, err := repo.functions.invokeEvolution(ctx, "instance.qr", map[string]any{
@@ -188,6 +214,15 @@ func (repo Repository) GetConnectionStatus(ctx context.Context, tenantContext te
 	if err != nil {
 		return ConnectionStatusResponse{}, err
 	}
+	unlock, _, err := repo.acquireWhatsAppSessionLock(ctx, session.ID, true)
+	if err != nil {
+		return ConnectionStatusResponse{}, err
+	}
+	defer unlock()
+	session, err = repo.GetSession(ctx, tenantContext, session.ID)
+	if err != nil {
+		return ConnectionStatusResponse{}, err
+	}
 	if session.Provider != "evolution_go" {
 		return ConnectionStatusResponse{}, fmt.Errorf("%w: legacy Evolution provider is disabled", ErrInvalidInput)
 	}
@@ -197,7 +232,10 @@ func (repo Repository) GetConnectionStatus(ctx context.Context, tenantContext te
 		"instance_id": stringPtrValue(session.InstanceID),
 	})
 	if err != nil {
-		if errors.Is(err, ErrProviderFailed) {
+		if errors.Is(err, ErrProviderOutcomeUnknown) {
+			return ConnectionStatusResponse{}, err
+		}
+		if isProviderDisconnectedError(err) {
 			_ = repo.markSessionDisconnected(ctx, tenantContext.OrganizationID, session.ID)
 			return ConnectionStatusResponse{
 				Connected:        false,
@@ -209,23 +247,12 @@ func (repo Repository) GetConnectionStatus(ctx context.Context, tenantContext te
 		return ConnectionStatusResponse{}, err
 	}
 
-	if !providerResultOK(result) {
-		statusText := firstString(result, "status", "data.status")
-		message := providerErrorMessage(result, "Failed to get status")
-		_ = repo.markSessionDisconnected(ctx, tenantContext.OrganizationID, session.ID)
-		return ConnectionStatusResponse{
-			Connected:        false,
-			Status:           "disconnected",
-			State:            "close",
-			InstanceNotFound: statusText == "404" || isProviderMissingInstanceMessage(message),
-			RawResponse:      nil,
-			RawStatus:        nil,
-		}, nil
+	normalizedStatus, authoritative, instanceMissing := evolutionConnectionObservation(result)
+	if !authoritative {
+		return ConnectionStatusResponse{}, fmt.Errorf("%w: Evolution Go connection status is unavailable", ErrProviderOutcomeUnknown)
 	}
-
-	normalizedStatus := firstString(result, "normalizedStatus")
-	if normalizedStatus == "" {
-		normalizedStatus = "disconnected"
+	if err := repo.updateSessionStatusFromProvider(ctx, session, normalizedStatus, result); err != nil {
+		return ConnectionStatusResponse{}, err
 	}
 	connected := normalizedStatus == "connected"
 	state := "close"
@@ -237,34 +264,11 @@ func (repo Repository) GetConnectionStatus(ctx context.Context, tenantContext te
 
 	rawData := firstMap(result, "data.data", "data.instance", "data.session", "data", "instance", "session")
 	wuid := firstString(rawData, "jid", "Jid", "wuid", "ownerJid", "phone", "number", "user.id")
-	if connected {
-		phone, validPhone := phoneFromIdentityValue(wuid)
-		if !validPhone {
-			phone = ""
-		}
-		_, _ = repo.db.Pool().Exec(ctx, `
-			update public.whatsapp_sessions
-			set status = 'connected',
-			    phone_number = coalesce(nullif($3, ''), phone_number),
-			    last_connected_at = now(),
-			    updated_at = now()
-			where organization_id = $1::uuid
-			  and id = $2::uuid
-		`, tenantContext.OrganizationID, session.ID, phone)
-	} else if normalizedStatus == "qr_ready" || normalizedStatus == "disconnected" {
-		_, _ = repo.db.Pool().Exec(ctx, `
-			update public.whatsapp_sessions
-			set status = $3,
-			    updated_at = now()
-			where organization_id = $1::uuid
-			  and id = $2::uuid
-		`, tenantContext.OrganizationID, session.ID, normalizedStatus)
-	}
-
 	return ConnectionStatusResponse{
-		Connected: connected,
-		Status:    normalizedStatus,
-		State:     state,
+		Connected:        connected,
+		Status:           normalizedStatus,
+		State:            state,
+		InstanceNotFound: instanceMissing,
 		Instance: map[string]any{
 			"wuid": wuid,
 		},
@@ -278,11 +282,25 @@ func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant
 	if err != nil {
 		return SessionOperationResponse{}, err
 	}
+	unlock, _, err := repo.acquireWhatsAppSessionLock(ctx, session.ID, true)
+	if err != nil {
+		return SessionOperationResponse{}, err
+	}
+	defer unlock()
+	session, err = repo.GetManageableSession(ctx, tenantContext, session.ID)
+	if err != nil {
+		return SessionOperationResponse{}, err
+	}
 	if session.Provider != "evolution_go" {
 		return SessionOperationResponse{}, fmt.Errorf("%w: legacy Evolution provider is disabled", ErrInvalidInput)
 	}
 
 	settings := ensureAutoReplyDefaults(session.AdvancedSettings)
+	settings["auto_reconnect_enabled"] = true
+	delete(settings, "auto_reconnect_failure_count")
+	delete(settings, "auto_reconnect_retry_after")
+	delete(settings, "auto_reconnect_blocked_reason")
+	delete(settings, "auto_reconnect_grace_observed_at")
 	token := stringFromMap(settings, "token")
 	if token == "" {
 		token = createSecretToken()
@@ -365,8 +383,20 @@ func (repo Repository) LogoutSession(ctx context.Context, tenantContext tenant.C
 	if err != nil {
 		return nil, err
 	}
+	unlock, _, err := repo.acquireWhatsAppSessionLock(ctx, session.ID, true)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	session, err = repo.GetManageableSession(ctx, tenantContext, session.ID)
+	if err != nil {
+		return nil, err
+	}
 	if session.Provider != "evolution_go" {
 		return nil, fmt.Errorf("%w: legacy Evolution provider is disabled", ErrInvalidInput)
+	}
+	if err := repo.markSessionLoggedOut(ctx, tenantContext.OrganizationID, session.ID); err != nil {
+		return nil, err
 	}
 
 	result, err := repo.functions.invokeEvolution(ctx, "instance.logout", map[string]any{
@@ -384,10 +414,6 @@ func (repo Repository) LogoutSession(ctx context.Context, tenantContext tenant.C
 		}
 	}
 
-	if err := repo.markSessionDisconnected(ctx, tenantContext.OrganizationID, session.ID); err != nil {
-		return nil, err
-	}
-
 	return result, nil
 }
 
@@ -398,7 +424,55 @@ func (repo Repository) markSessionDisconnected(ctx context.Context, organization
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
+		  and coalesce(is_active, true) = true
+		  and coalesce(status, '') not in ('deleted', 'disabled')
 	`, organizationID, sessionID)
+	return err
+}
+
+func (repo Repository) markSessionLoggedOut(ctx context.Context, organizationID string, sessionID string) error {
+	_, err := repo.db.Pool().Exec(ctx, `
+		update public.whatsapp_sessions
+		set status = 'disconnected',
+		    advanced_settings = (
+		      coalesce(advanced_settings, '{}'::jsonb)
+		      - 'auto_reconnect_failure_count'
+		      - 'auto_reconnect_retry_after'
+		      - 'auto_reconnect_blocked_reason'
+		      - 'auto_reconnect_grace_observed_at'
+		    ) || jsonb_build_object(
+		      'auto_reconnect_enabled', false,
+		      'auto_reconnect_blocked_reason', 'user_logged_out'
+		    ),
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and coalesce(is_active, true) = true
+		  and coalesce(status, '') not in ('deleted', 'disabled')
+	`, organizationID, sessionID)
+	return err
+}
+
+func (repo Repository) setSessionAutoReconnect(ctx context.Context, organizationID string, sessionID string, enabled bool, blockedReason string) error {
+	patch := map[string]any{"auto_reconnect_enabled": enabled}
+	if strings.TrimSpace(blockedReason) != "" {
+		patch["auto_reconnect_blocked_reason"] = strings.TrimSpace(blockedReason)
+	}
+	_, err := repo.db.Pool().Exec(ctx, `
+		update public.whatsapp_sessions
+		set advanced_settings = (
+		      coalesce(advanced_settings, '{}'::jsonb)
+		      - 'auto_reconnect_failure_count'
+		      - 'auto_reconnect_retry_after'
+		      - 'auto_reconnect_blocked_reason'
+		      - 'auto_reconnect_grace_observed_at'
+		    ) || $3::jsonb,
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and coalesce(is_active, true) = true
+		  and coalesce(status, '') not in ('deleted', 'disabled')
+	`, organizationID, sessionID, jsonb(patch))
 	return err
 }
 

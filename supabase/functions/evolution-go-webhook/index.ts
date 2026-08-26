@@ -345,6 +345,14 @@ function parseBoolean(value: unknown) {
   return false;
 }
 
+function sessionAllowsLifecycleUpdates(session: JsonRecord) {
+  if (session.is_active === false) return false;
+  const status = normalizeText(session.status).trim().toLowerCase();
+  if (["deleted", "disabled"].includes(status)) return false;
+  const enabled = session.advanced_settings?.auto_reconnect_enabled;
+  return enabled !== false && normalizeText(enabled).trim().toLowerCase() !== "false";
+}
+
 function parseTimestamp(value: unknown) {
   if (!value) return new Date().toISOString();
   if (value instanceof Date) return value.toISOString();
@@ -380,16 +388,27 @@ async function stableDistributionKey(prefix: string, ...parts: string[]) {
 function normalizeStatus(data: any) {
   const target = data?.data || data || {};
   const rawState = String(firstPresent(target.state, target.State, target.connectionStatus, target.status) || "").toLowerCase();
+  const loggedInPresent = target.loggedIn !== undefined || target.LoggedIn !== undefined;
+  const connectedPresent = target.connected !== undefined || target.Connected !== undefined;
   const loggedIn = target.loggedIn === true || target.LoggedIn === true;
   const loggedOut = target.loggedIn === false || target.LoggedIn === false;
   const connected = target.connected === true || target.Connected === true;
 
-  if ((loggedIn || rawState === "open" || rawState === "connected") && !loggedOut) return "connected";
-  if (connected || rawState === "qr" || rawState === "qrcode" || extractQr(data)) return "qr_ready";
+  if (loggedInPresent && connectedPresent) {
+    if (loggedIn && connected) return "connected";
+    if (!loggedIn && connected) return "qr_ready";
+    return "disconnected";
+  }
+  if (loggedIn) return "connected";
+  if (loggedOut) return "disconnected";
+  if (connected) return "connected";
+  if (connectedPresent) return "disconnected";
+  if ((rawState === "open" || rawState === "connected") && !loggedOut) return "connected";
+  if (["qr", "qrcode", "qr_ready", "pairing", "connecting"].includes(rawState) || extractQr(data)) return "qr_ready";
   if (loggedOut || ["close", "closed", "disconnected", "disconnect", "offline", "logout", "logged_out"].includes(rawState)) {
     return "disconnected";
   }
-  return "disconnected";
+  return null;
 }
 
 function extractQr(payload: any) {
@@ -2778,9 +2797,9 @@ async function handleMessageStatus(session: JsonRecord, payload: any) {
 
 async function handleQr(session: JsonRecord, payload: any) {
   const qrcode = extractQr(payload);
-  if (!qrcode) return false;
+  if (!qrcode || !sessionAllowsLifecycleUpdates(session)) return false;
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("whatsapp_sessions")
     .update({
       status: "qr_ready",
@@ -2793,21 +2812,30 @@ async function handleQr(session: JsonRecord, payload: any) {
       updated_at: new Date().toISOString(),
     })
     .eq("organization_id", session.organization_id)
-    .eq("id", session.id);
-  if (error) throw error;
+    .eq("id", session.id)
+    .eq("provider", "evolution_go")
+    .eq("updated_at", session.updated_at)
+    .select("id")
+    .maybeSingle();
 
-  return true;
+  if (error) throw error;
+  return Boolean(data);
 }
 
 async function handleConnection(session: JsonRecord, payload: any) {
-  const normalizedStatus: string = normalizeStatus(payload);
+  if (!sessionAllowsLifecycleUpdates(session)) return null;
+  const normalizedStatus = normalizeStatus(payload);
   const raw = payload?.data || payload?.Data || payload;
+  const rawState = normalizeText(firstPresent(raw.state, raw.State, raw.connectionStatus, raw.status)).toLowerCase();
+  const isErrorState = ["error", "failed", "failure"].includes(rawState);
+  if (!normalizedStatus && !isErrorState) return null;
   const jid = firstPresent(raw.jid, raw.JID, raw.phone, raw.Phone, raw.user?.id);
   const update: JsonRecord = {
-    status: normalizedStatus,
     updated_at: new Date().toISOString(),
-    last_error: normalizedStatus === "error" ? firstPresent(raw.error, raw.message) : null,
+    last_error: isErrorState ? firstPresent(raw.error, raw.message, "Falha na conexao") : null,
   };
+
+  if (normalizedStatus) update.status = normalizedStatus;
 
   if (normalizedStatus === "connected") {
     update.last_connected_at = new Date().toISOString();
@@ -2816,13 +2844,17 @@ async function handleConnection(session: JsonRecord, payload: any) {
     update.profile_picture = firstPresent(raw.profilePicture, raw.pictureUrl, session.profile_picture);
   }
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("whatsapp_sessions")
     .update(update)
     .eq("organization_id", session.organization_id)
-    .eq("id", session.id);
+    .eq("id", session.id)
+    .eq("provider", "evolution_go")
+    .eq("updated_at", session.updated_at)
+    .select("id")
+    .maybeSingle();
   if (error) throw error;
-  return normalizedStatus;
+  return data ? normalizedStatus : null;
 }
 
 function extractNamedList(payload: any, names: string[]) {

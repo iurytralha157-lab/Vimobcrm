@@ -13,7 +13,7 @@ const (
 	maxWhatsAppWebhookWorkerConcurrency          = 16
 	defaultWhatsAppSessionSupervisorInitialDelay = 30 * time.Second
 	defaultWhatsAppSessionSupervisorInterval     = time.Minute
-	defaultWhatsAppSessionSupervisorBatch        = 5
+	defaultWhatsAppSessionSupervisorBatch        = 10
 )
 
 type WorkerConfig struct {
@@ -32,6 +32,7 @@ type WorkerConfig struct {
 	SessionSupervisorInitialDelay time.Duration
 	SessionSupervisorInterval     time.Duration
 	SessionSupervisorBatch        int
+	SessionSupervisorRecoveryIDs  []string
 }
 
 func DefaultWorkerConfig() WorkerConfig {
@@ -51,6 +52,7 @@ func DefaultWorkerConfig() WorkerConfig {
 		SessionSupervisorInitialDelay: defaultWhatsAppSessionSupervisorInitialDelay,
 		SessionSupervisorInterval:     defaultWhatsAppSessionSupervisorInterval,
 		SessionSupervisorBatch:        defaultWhatsAppSessionSupervisorBatch,
+		SessionSupervisorRecoveryIDs:  nil,
 	}
 }
 

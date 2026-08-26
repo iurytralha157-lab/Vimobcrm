@@ -128,6 +128,41 @@ func TestNativeEvolutionFixtures(t *testing.T) {
 	})
 }
 
+func TestNativeEvolutionConnectionStatusUsesTransportAndLoginState(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload map[string]any
+		want    string
+	}{
+		{name: "socket and login active", payload: map[string]any{"data": map[string]any{"Connected": true, "LoggedIn": true}}, want: "connected"},
+		{name: "socket awaiting qr", payload: map[string]any{"data": map[string]any{"Connected": true, "LoggedIn": false}}, want: "qr_ready"},
+		{name: "paired session temporarily offline", payload: map[string]any{"data": map[string]any{"Connected": false, "LoggedIn": true}}, want: "disconnected"},
+		{name: "logged out", payload: map[string]any{"data": map[string]any{"Connected": false, "LoggedIn": false}}, want: "disconnected"},
+		{name: "legacy connected-only payload", payload: map[string]any{"data": map[string]any{"Connected": true}}, want: "connected"},
+		{name: "explicit connected event state", payload: map[string]any{"data": map[string]any{"status": "open"}}, want: "connected"},
+		{name: "connecting event awaits pairing", payload: map[string]any{"data": map[string]any{"status": "connecting"}}, want: "qr_ready"},
+		{name: "pairing event awaits qr", payload: map[string]any{"data": map[string]any{"status": "pairing"}}, want: "qr_ready"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status, recognized, _ := nativeEvolutionConnectionStatus(tt.payload, "connection.update")
+			if !recognized || status != tt.want {
+				t.Fatalf("nativeEvolutionConnectionStatus() = (%q, %v), want (%q, true)", status, recognized, tt.want)
+			}
+		})
+	}
+
+	status, recognized, _ := nativeEvolutionConnectionStatus(map[string]any{"data": map[string]any{"status": "unknown"}}, "connection.update")
+	if recognized || status != "" {
+		t.Fatalf("unknown connection state must not overwrite the stored state: (%q, %v)", status, recognized)
+	}
+	status, recognized, connectionErr := nativeEvolutionConnectionStatus(map[string]any{"data": map[string]any{"status": "error", "message": "socket failed"}}, "connection.update")
+	if !recognized || status != "" || connectionErr != "socket failed" {
+		t.Fatalf("error event must preserve status and record its reason: (%q, %v, %q)", status, recognized, connectionErr)
+	}
+}
+
 func TestNativeMessageStatusIsMonotonic(t *testing.T) {
 	tests := []struct {
 		current  string
