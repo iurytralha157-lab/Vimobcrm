@@ -11,7 +11,7 @@ interface ScheduleDay {
 
 interface RuleCondition {
   id: string;
-  type: 'source' | 'webhook' | 'whatsapp_session' | 'meta_form' | 'website_category' | 'campaign_contains' | 'tag' | 'city' | 'interest_property';
+  type: 'source' | 'webhook' | 'whatsapp_session' | 'meta_form' | 'website_category' | 'campaign_contains' | 'whatsapp_message_contains' | 'tag' | 'city' | 'interest_property';
   values: string[];
 }
 
@@ -30,6 +30,7 @@ interface QueueSettings {
   redistribution_max_attempts?: number;
   preserve_position?: boolean;
   require_checkin?: boolean;
+  ignore_availability?: boolean;
   reentry_behavior?: 'redistribute' | 'keep_assignee';
 }
 

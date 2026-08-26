@@ -639,6 +639,9 @@ func (condition ConditionInput) toRuleInput(index int) (ruleInput, error) {
 			values = append(values, value)
 		}
 	}
+	if matchType == whatsappMessageContainsConditionType && len(values) > 1 {
+		return ruleInput{}, fmt.Errorf("%w: WhatsApp message condition accepts one value", ErrInvalidInput)
+	}
 
 	return ruleInput{
 		MatchType:  matchType,
@@ -670,7 +673,7 @@ func normalizeRuleInput(input RuleInput, index int) (ruleInput, error) {
 
 	match := normalizeObject(input.Match)
 	if len(match) == 0 && matchValue != "" {
-		match = buildRuleMatch(matchType, splitValues(matchValue))
+		match = buildRuleMatch(matchType, ruleMatchValues(matchType, matchValue))
 	}
 
 	return ruleInput{
@@ -755,6 +758,12 @@ func buildRuleMatch(matchType string, values []string) map[string]any {
 			value = values[0]
 		}
 		return map[string]any{"campaign_name_contains": value}
+	case whatsappMessageContainsConditionType:
+		value := ""
+		if len(values) > 0 {
+			value = values[0]
+		}
+		return map[string]any{"message_contains": value}
 	case "tag":
 		return map[string]any{"tag_in": values}
 	case "city":
@@ -768,6 +777,31 @@ func buildRuleMatch(matchType string, values []string) map[string]any {
 	default:
 		return map[string]any{}
 	}
+}
+
+func ruleMatchValues(matchType string, matchValue string) []string {
+	if matchType != whatsappMessageContainsConditionType {
+		return splitValues(matchValue)
+	}
+	value := strings.TrimSpace(matchValue)
+	if value == "" {
+		return nil
+	}
+	return []string{value}
+}
+
+func resolveRuleMatchPatch(current map[string]any, matchType string, matchValue string, matchPatch patchObject, identityChanged bool) map[string]any {
+	match := current
+	if match == nil {
+		match = map[string]any{}
+	}
+	if matchPatch.Set {
+		match = matchPatch.Value
+	}
+	if (!matchPatch.Set && identityChanged) || (len(match) == 0 && matchValue != "") {
+		return buildRuleMatch(matchType, ruleMatchValues(matchType, matchValue))
+	}
+	return match
 }
 
 func normalizeStrategy(value string) string {

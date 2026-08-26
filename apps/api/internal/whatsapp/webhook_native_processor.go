@@ -1400,13 +1400,14 @@ func createVerifiedNativeCampaignLead(ctx context.Context, tx pgx.Tx, session na
 		},
 	}
 	metadata := jsonb(map[string]any{
-		"source":                "whatsapp",
-		"whatsapp_session_id":   session.ID,
-		"remote_jid":            message.RemoteJID,
-		"matched_rule_id":       rule.ID,
-		"target_team_id":        assignment.TeamID,
-		"target_round_robin_id": assignment.RoundRobinID,
-		"whatsapp_attribution":  attribution,
+		"source":                                "whatsapp",
+		"whatsapp_session_id":                   session.ID,
+		"remote_jid":                            message.RemoteJID,
+		"matched_rule_id":                       rule.ID,
+		"managed_whatsapp_message_distribution": rule.ManagedMessageDistribution,
+		"target_team_id":                        assignment.TeamID,
+		"target_round_robin_id":                 nativeTargetRoundRobinID(rule, assignment),
+		"whatsapp_attribution":                  attribution,
 	})
 
 	var lead nativeEvolutionLead
@@ -1450,6 +1451,15 @@ func createVerifiedNativeCampaignLead(ctx context.Context, tx pgx.Tx, session na
 	if err != nil {
 		return nativeEvolutionLead{}, err
 	}
+	if rule.ManagedMessageDistribution && lead.IsNew {
+		if err := tx.QueryRow(ctx, `
+			select coalesce(assigned_user_id::text, ''), coalesce(name, '')
+			from public.leads
+			where organization_id = $1::uuid and id = $2::uuid
+		`, session.OrganizationID, lead.ID).Scan(&lead.AssignedUserID, &lead.Name); err != nil {
+			return nativeEvolutionLead{}, err
+		}
+	}
 	if lead.IsNew && assignment.RoundRobinID != "" {
 		if _, err := tx.Exec(ctx, `
 			update public.round_robins
@@ -1478,6 +1488,13 @@ func createVerifiedNativeCampaignLead(ctx context.Context, tx pgx.Tx, session na
 		}
 	}
 	return lead, nil
+}
+
+func nativeTargetRoundRobinID(rule nativeInboundRule, assignment nativeLeadAssignment) string {
+	if rule.ManagedMessageDistribution {
+		return rule.TargetRoundRobinID
+	}
+	return assignment.RoundRobinID
 }
 
 func resolveNativeCampaignProperty(ctx context.Context, tx pgx.Tx, organizationID string, rawCode string) (string, error) {

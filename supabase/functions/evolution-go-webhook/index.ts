@@ -1312,6 +1312,30 @@ async function findInboundRule(session: JsonRecord, message: ReturnType<typeof n
   )) || null;
 }
 
+async function isManagedWhatsAppMessageDistributionRule(rule: JsonRecord | null, organizationId: string) {
+  const ruleId = optionalUuid(rule?.id);
+  const targetRoundRobinId = optionalUuid(rule?.target_round_robin_id);
+  if (!ruleId || !targetRoundRobinId) return false;
+  const hasManagedMirrorShape = Number(rule?.priority) <= -1_000_000_000
+    && !rule?.session_id
+    && normalizeText(rule?.name).startsWith("Distribuição: ")
+    && normalizeText(rule?.match_type).toLowerCase() === "contains"
+    && normalizeText(rule?.match_field || "message").toLowerCase() === "message";
+
+  const { data, error } = await supabase
+    .from("round_robin_rules")
+    .select("id, match_type, conditions, name")
+    .eq("id", ruleId)
+    .eq("organization_id", organizationId)
+    .eq("round_robin_id", targetRoundRobinId)
+    .maybeSingle();
+
+  if (error) throw error;
+  const conditions = isRecord(data?.conditions) ? data.conditions : {};
+  const matchType = normalizeText(firstPresent(data?.match_type, conditions.match_type, data?.name)).trim().toLowerCase();
+  return matchType === "whatsapp_message_contains" || hasManagedMirrorShape;
+}
+
 async function resolveRoundRobinAssignee(rule: JsonRecord | null, organizationId: string) {
   const targetRoundRobinId = optionalUuid(rule?.target_round_robin_id);
   if (!targetRoundRobinId) return null;
@@ -1429,14 +1453,19 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
     return null;
   }
 
-  const roundRobinAssignee = await resolveRoundRobinAssignee(rule, session.organization_id);
-  const targetUserId = optionalUuid(rule?.target_user_id);
-  const targetPipelineId = optionalUuid(rule?.target_pipeline_id);
-  const targetStageId = optionalUuid(rule?.target_stage_id);
-  const targetTeamId = optionalUuid(rule?.target_team_id);
+  const managedMessageDistribution = await isManagedWhatsAppMessageDistributionRule(rule, session.organization_id);
+  const roundRobinAssignee = managedMessageDistribution
+    ? null
+    : await resolveRoundRobinAssignee(rule, session.organization_id);
+  const targetUserId = managedMessageDistribution ? null : optionalUuid(rule?.target_user_id);
+  const targetPipelineId = managedMessageDistribution ? null : optionalUuid(rule?.target_pipeline_id);
+  const targetStageId = managedMessageDistribution ? null : optionalUuid(rule?.target_stage_id);
+  const targetTeamId = managedMessageDistribution ? null : optionalUuid(rule?.target_team_id);
   const targetRoundRobinId = optionalUuid(rule?.target_round_robin_id);
   const ownerUserId = optionalUuid(session.owner_user_id) || optionalUuid(session.created_by);
-  const assignedUserId = targetUserId || optionalUuid(roundRobinAssignee?.userId) || ownerUserId;
+  const assignedUserId = targetUserId
+    || optionalUuid(roundRobinAssignee?.userId)
+    || (managedMessageDistribution ? null : ownerUserId);
   const sourceLabel = rule?.source_label || "WhatsApp";
 
   const { data: upsertedLead, error } = await supabase
@@ -1467,6 +1496,7 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
         whatsapp_session_id: session.id,
         remote_jid: identity.remoteJid || message.remoteJid,
         matched_rule_id: rule?.id || null,
+        managed_whatsapp_message_distribution: managedMessageDistribution,
         target_team_id: targetTeamId,
         target_round_robin_id: targetRoundRobinId,
         campaign_label: campaignLabel,
@@ -1475,7 +1505,7 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
       },
     });
 
-  const lead = Array.isArray(upsertedLead) ? upsertedLead[0] : upsertedLead;
+  let lead = Array.isArray(upsertedLead) ? upsertedLead[0] : upsertedLead;
 
   if (error) {
     if (isUniqueViolation(error, "leads_org_phone_unique")) {
@@ -1487,6 +1517,17 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
 
   if (!lead?.id) {
     throw new Error("Lead upsert did not return a lead");
+  }
+
+  if (managedMessageDistribution && lead.is_new_lead) {
+    const { data: refreshedLead, error: refreshError } = await supabase
+      .from("leads")
+      .select("*")
+      .eq("organization_id", session.organization_id)
+      .eq("id", lead.id)
+      .single();
+    if (refreshError) throw refreshError;
+    lead = { ...lead, ...refreshedLead, is_new_lead: true };
   }
 
   if (roundRobinAssignee?.roundRobinId && lead.is_new_lead) {

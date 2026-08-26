@@ -10,19 +10,33 @@ import (
 )
 
 type nativeInboundRule struct {
-	ID                 string
-	MatchType          string
-	MatchField         string
-	MatchValue         string
-	SourceLabel        string
-	CampaignLabel      string
-	TargetUserID       string
-	TargetTeamID       string
-	TargetPipelineID   string
-	TargetStageID      string
-	TargetRoundRobinID string
-	Conditions         map[string]any
+	ID                         string
+	MatchType                  string
+	MatchField                 string
+	MatchValue                 string
+	SourceLabel                string
+	CampaignLabel              string
+	TargetUserID               string
+	TargetTeamID               string
+	TargetPipelineID           string
+	TargetStageID              string
+	TargetRoundRobinID         string
+	ManagedMessageDistribution bool
+	Conditions                 map[string]any
 }
+
+const nativeLegacyRoundRobinMembersQuery = `
+	select member.user_id::text
+	from public.round_robin_members member
+	join public.users app_user
+	  on app_user.organization_id = member.organization_id
+	 and app_user.id = member.user_id
+	 and coalesce(app_user.is_active, true) = true
+	where member.organization_id = $1::uuid
+	  and member.round_robin_id = $2::uuid
+	  and coalesce(member.is_active, true) = true
+	order by member.position asc, member.created_at asc, member.id asc
+`
 
 type nativeLeadAssignment struct {
 	UserID             string
@@ -47,6 +61,21 @@ func findNativeInboundRule(ctx context.Context, tx pgx.Tx, session nativeEvoluti
 		  coalesce(target_pipeline_id::text, ''),
 		  coalesce(target_stage_id::text, ''),
 		  coalesce(target_round_robin_id::text, ''),
+		  exists (
+		    select 1
+		    from public.round_robin_rules managed_rule
+		    where managed_rule.organization_id = whatsapp_inbound_rules.organization_id
+		      and managed_rule.id = whatsapp_inbound_rules.id
+		      and managed_rule.round_robin_id = whatsapp_inbound_rules.target_round_robin_id
+		      and coalesce(nullif(managed_rule.match_type, ''), managed_rule.conditions->>'match_type', managed_rule.name, '') = 'whatsapp_message_contains'
+		  ) or (
+		    priority <= -1000000000
+		    and session_id is null
+		    and name like 'Distribuição: %'
+		    and coalesce(match_type, '') = 'contains'
+		    and coalesce(match_field, 'message') = 'message'
+		    and target_round_robin_id is not null
+		  ),
 		  '{}'::jsonb::text
 		from public.whatsapp_inbound_rules
 		where organization_id = $1::uuid
@@ -73,6 +102,7 @@ func findNativeInboundRule(ctx context.Context, tx pgx.Tx, session nativeEvoluti
 			&rule.TargetPipelineID,
 			&rule.TargetStageID,
 			&rule.TargetRoundRobinID,
+			&rule.ManagedMessageDistribution,
 			&conditions,
 		); err != nil {
 			return nativeInboundRule{}, err
@@ -146,6 +176,9 @@ func nativeInboundRuleMatches(rule nativeInboundRule, message nativeEvolutionMes
 
 func resolveNativeLeadAssignment(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession, rule nativeInboundRule) (nativeLeadAssignment, error) {
 	assignment := nativeLeadAssignment{}
+	if rule.ManagedMessageDistribution {
+		return assignment, nil
+	}
 	if rule.TargetUserID != "" {
 		valid, err := nativeOrganizationUserExists(ctx, tx, session.OrganizationID, rule.TargetUserID)
 		if err != nil {
@@ -168,18 +201,7 @@ func resolveNativeLeadAssignment(ctx context.Context, tx pgx.Tx, session nativeE
 			return nativeLeadAssignment{}, err
 		}
 		if err == nil {
-			rows, err := tx.Query(ctx, `
-				select member.user_id::text
-				from public.round_robin_members member
-				join public.users app_user
-				  on app_user.organization_id = member.organization_id
-				 and app_user.id = member.user_id
-				 and coalesce(app_user.is_active, true) = true
-				where member.organization_id = $1::uuid
-				  and member.round_robin_id = $2::uuid
-				  and coalesce(member.is_active, true) = true
-				order by member.position asc, member.created_at asc, member.id asc
-			`, session.OrganizationID, rule.TargetRoundRobinID)
+			rows, err := tx.Query(ctx, nativeLegacyRoundRobinMembersQuery, session.OrganizationID, rule.TargetRoundRobinID)
 			if err != nil {
 				return nativeLeadAssignment{}, err
 			}

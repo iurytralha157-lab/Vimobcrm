@@ -783,6 +783,9 @@ func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext
 	if !canOperateLeadSnapshot(tenantContext, current) {
 		return RoundRobinResult{}, tenant.ErrOrganizationAccessDenied
 	}
+	if isManagedWhatsAppMessageDistributionLead(current.Data) {
+		return RoundRobinResult{}, fmt.Errorf("%w: managed WhatsApp message distribution does not support generic round-robin redistribution", ErrInvalidInput)
+	}
 
 	result := RoundRobinResult{
 		Success:    true,
@@ -855,6 +858,11 @@ func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext
 	result.RoundRobinID = selection.RoundRobinID
 	result.RoundRobinUsed = true
 	return result, nil
+}
+
+func isManagedWhatsAppMessageDistributionLead(data map[string]any) bool {
+	metadata := mapFromAny(data["metadata"])
+	return truthyValue(metadata["managed_whatsapp_message_distribution"])
 }
 
 func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context, leadID string) error {

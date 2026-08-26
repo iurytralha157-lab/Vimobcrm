@@ -45,6 +45,7 @@ import { useAuth } from '@/contexts/AuthContext';
 const matchTypeLabels: Record<string, string> = {
   campaign: 'Campanha',
   campaign_contains: 'Campanha',
+  whatsapp_message_contains: 'Campanha de WhatsApp',
   tag: 'Tag',
   property: 'Imóvel',
   source: 'Fonte',
@@ -228,6 +229,10 @@ export function DistributionTab() {
     if (rule.match_type === 'whatsapp_session') {
       const session = whatsappSessions.find(s => s.id === rule.match_value);
       return `WhatsApp: ${session?.display_name || session?.phone_number || session?.instance_name || rule.match_value}`;
+    }
+
+    if (rule.match_type === 'whatsapp_message_contains') {
+      return `Campanha de WhatsApp: mensagem contém "${rule.match_value || 'Configurado'}"`;
     }
 
     return `${matchTypeLabels[rule.match_type] || rule.match_type}: ${rule.match_value || 'Configurado'}`;

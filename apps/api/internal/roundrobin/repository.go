@@ -44,10 +44,63 @@ type roundRobinState struct {
 	Metadata   map[string]any
 }
 
+const whatsappMessageContainsConditionType = "whatsapp_message_contains"
+
+type whatsappMessageDistributionState struct {
+	QueueActive             bool
+	Strategy                string
+	EnableRedistribution    bool
+	RequireCheckIn          bool
+	IgnoreAvailability      bool
+	HasActiveRule           bool
+	ActiveOtherRuleCount    int
+	ActiveTeamCount         int
+	ActiveDirectMemberCount int
+	EligibleUserCount       int
+}
+
+func validateWhatsAppMessageDistributionState(state whatsappMessageDistributionState) error {
+	if !state.QueueActive || !state.HasActiveRule {
+		return nil
+	}
+
+	strategy := strings.ToLower(strings.TrimSpace(state.Strategy))
+	if strategy == "" {
+		strategy = "simple"
+	}
+	if strategy != "simple" {
+		return fmt.Errorf("%w: active WhatsApp message distribution requires the simple strategy", ErrInvalidInput)
+	}
+	if state.EnableRedistribution {
+		return fmt.Errorf("%w: active WhatsApp message distribution does not support automatic redistribution", ErrInvalidInput)
+	}
+	if state.ActiveOtherRuleCount > 0 {
+		return fmt.Errorf("%w: active WhatsApp message distribution requires a dedicated queue without other rule types", ErrInvalidInput)
+	}
+	if state.ActiveTeamCount > 0 {
+		return fmt.Errorf("%w: active WhatsApp message distribution only supports direct user members", ErrInvalidInput)
+	}
+	if state.ActiveDirectMemberCount == 0 {
+		return fmt.Errorf("%w: active WhatsApp message distribution requires at least one active user member", ErrInvalidInput)
+	}
+	if state.EligibleUserCount != state.ActiveDirectMemberCount {
+		return fmt.Errorf("%w: active WhatsApp message distribution requires every direct member to be an active organization user", ErrInvalidInput)
+	}
+	if state.RequireCheckIn {
+		return fmt.Errorf("%w: active WhatsApp message distribution does not support required check-in", ErrInvalidInput)
+	}
+	if !state.IgnoreAvailability {
+		return fmt.Errorf("%w: active WhatsApp message distribution requires availability schedules to be explicitly ignored", ErrInvalidInput)
+	}
+
+	return nil
+}
+
 var uniqueConditionTypes = map[string]struct{}{
-	"meta_form":        {},
-	"webhook":          {},
-	"whatsapp_session": {},
+	"meta_form":                          {},
+	"webhook":                            {},
+	"whatsapp_session":                   {},
+	whatsappMessageContainsConditionType: {},
 }
 
 func NewRepository(db *dbpkg.Postgres) Repository {
@@ -308,10 +361,16 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	if err := repo.insertRules(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.Rules); err != nil {
 		return RoundRobin{}, err
 	}
+	if _, err := repo.insertMembers(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.Members); err != nil {
+		return RoundRobin{}, err
+	}
+	if err := repo.validateWhatsAppMessageDistribution(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return RoundRobin{}, err
+	}
 	if err := repo.syncMetaFormConfigLinks(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return RoundRobin{}, err
 	}
-	if _, err := repo.insertMembers(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.Members); err != nil {
+	if err := repo.syncWhatsAppInboundRules(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return RoundRobin{}, err
 	}
 	if err := repo.validateRedistributionCapacity(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.Settings); err != nil {
@@ -450,6 +509,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	}
 
 	if input.RulesSet {
+		if err := repo.deleteWhatsAppInboundRulesForRoundRobin(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+			return RoundRobin{}, err
+		}
 		if _, err := tx.Exec(ctx, `
 			delete from public.round_robin_rules
 			where organization_id = $1::uuid
@@ -458,9 +520,6 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 			return RoundRobin{}, err
 		}
 		if err := repo.insertRules(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.Rules); err != nil {
-			return RoundRobin{}, err
-		}
-		if err := repo.syncMetaFormConfigLinks(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 			return RoundRobin{}, err
 		}
 	}
@@ -476,6 +535,17 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		if _, err := repo.insertMembers(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.Members); err != nil {
 			return RoundRobin{}, err
 		}
+	}
+	if err := repo.validateWhatsAppMessageDistribution(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return RoundRobin{}, err
+	}
+	if input.RulesSet {
+		if err := repo.syncMetaFormConfigLinks(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+			return RoundRobin{}, err
+		}
+	}
+	if err := repo.syncWhatsAppInboundRules(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return RoundRobin{}, err
 	}
 	if err := repo.validateRedistributionCapacity(ctx, tx, tenantContext.OrganizationID, roundRobinID, objectFromObject(metadata, "settings")); err != nil {
 		return RoundRobin{}, err
@@ -508,6 +578,9 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 	}
 
 	if _, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return err
+	}
+	if err := repo.deleteWhatsAppInboundRulesForRoundRobin(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return err
 	}
 
@@ -571,6 +644,9 @@ func (repo Repository) CreateRule(ctx context.Context, tenantContext tenant.Cont
 	if err := repo.ensureRoundRobinMutable(ctx, tx, tenantContext, input.RoundRobinID); err != nil {
 		return Rule{}, err
 	}
+	if _, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, input.RoundRobinID); err != nil {
+		return Rule{}, err
+	}
 	if err := repo.checkConditionConflicts(ctx, tx, tenantContext.OrganizationID, &input.RoundRobinID, []ruleInput{{
 		MatchType:  input.MatchType,
 		MatchValue: input.MatchValue,
@@ -611,7 +687,13 @@ func (repo Repository) CreateRule(ctx context.Context, tenantContext tenant.Cont
 		return Rule{}, err
 	}
 
+	if err := repo.validateWhatsAppMessageDistribution(ctx, tx, tenantContext.OrganizationID, input.RoundRobinID); err != nil {
+		return Rule{}, err
+	}
 	if err := repo.syncMetaFormConfigLinks(ctx, tx, tenantContext.OrganizationID, input.RoundRobinID); err != nil {
+		return Rule{}, err
+	}
+	if err := repo.syncWhatsAppInboundRules(ctx, tx, tenantContext.OrganizationID, input.RoundRobinID); err != nil {
 		return Rule{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -638,10 +720,6 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 
 	matchType := current.MatchType
 	matchValue := current.MatchValue
-	match := current.Match
-	if match == nil {
-		match = map[string]any{}
-	}
 	if input.MatchType.Set && input.MatchType.Value != nil {
 		matchType = *input.MatchType.Value
 	}
@@ -651,11 +729,16 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 			matchValue = *input.MatchValue.Value
 		}
 	}
-	if input.Match.Set {
-		match = input.Match.Value
-	}
-	if len(match) == 0 && matchValue != "" {
-		match = buildRuleMatch(matchType, splitValues(matchValue))
+	match := resolveRuleMatchPatch(
+		current.Match,
+		matchType,
+		matchValue,
+		input.Match,
+		input.MatchType.Set || input.MatchValue.Set,
+	)
+	isActive := current.IsActive
+	if input.IsActive.Set {
+		isActive = input.IsActive.Value != nil && *input.IsActive.Value
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
@@ -670,12 +753,15 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 	if err := repo.ensureRoundRobinMutable(ctx, tx, tenantContext, current.RoundRobinID); err != nil {
 		return Rule{}, err
 	}
+	if _, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID); err != nil {
+		return Rule{}, err
+	}
 	if err := repo.checkConditionConflicts(ctx, tx, tenantContext.OrganizationID, &current.RoundRobinID, []ruleInput{{
 		MatchType:  matchType,
 		MatchValue: matchValue,
 		Match:      match,
 		Priority:   current.Priority,
-		IsActive:   current.IsActive,
+		IsActive:   isActive,
 	}}); err != nil {
 		return Rule{}, err
 	}
@@ -717,7 +803,13 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 		return Rule{}, ErrRuleNotFound
 	}
 
+	if err := repo.validateWhatsAppMessageDistribution(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID); err != nil {
+		return Rule{}, err
+	}
 	if err := repo.syncMetaFormConfigLinks(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID); err != nil {
+		return Rule{}, err
+	}
+	if err := repo.syncWhatsAppInboundRules(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID); err != nil {
 		return Rule{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -752,6 +844,9 @@ func (repo Repository) DeleteRule(ctx context.Context, tenantContext tenant.Cont
 	}
 
 	if err := repo.ensureRoundRobinMutable(ctx, tx, tenantContext, current.RoundRobinID); err != nil {
+		return err
+	}
+	if err := repo.deleteWhatsAppInboundRule(ctx, tx, tenantContext.OrganizationID, ruleID); err != nil {
 		return err
 	}
 
@@ -794,6 +889,9 @@ func (repo Repository) AddMember(ctx context.Context, tenantContext tenant.Conte
 	if err := repo.ensureRoundRobinMutable(ctx, tx, tenantContext, roundRobinID); err != nil {
 		return nil, err
 	}
+	if _, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return nil, err
+	}
 
 	items := []memberInput{{
 		Type:     input.Type,
@@ -807,6 +905,9 @@ func (repo Repository) AddMember(ctx context.Context, tenantContext tenant.Conte
 	}
 	ids, err := repo.insertMembers(ctx, tx, tenantContext.OrganizationID, roundRobinID, items)
 	if err != nil {
+		return nil, err
+	}
+	if err := repo.validateWhatsAppMessageDistribution(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return nil, err
 	}
 
@@ -844,7 +945,8 @@ func (repo Repository) UpdateMember(ctx context.Context, tenantContext tenant.Co
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return Member{}, err
 	}
-	if err := repo.ensureRoundRobinMemberMutable(ctx, tx, tenantContext, memberID); err != nil {
+	roundRobinID, err := repo.ensureRoundRobinMemberMutable(ctx, tx, tenantContext, memberID)
+	if err != nil {
 		return Member{}, err
 	}
 
@@ -875,6 +977,9 @@ func (repo Repository) UpdateMember(ctx context.Context, tenantContext tenant.Co
 	if commandTag.RowsAffected() == 0 {
 		return Member{}, ErrMemberNotFound
 	}
+	if err := repo.validateWhatsAppMessageDistribution(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return Member{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Member{}, err
 	}
@@ -900,7 +1005,8 @@ func (repo Repository) DeleteMember(ctx context.Context, tenantContext tenant.Co
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return err
 	}
-	if err := repo.ensureRoundRobinMemberMutable(ctx, tx, tenantContext, memberID); err != nil {
+	roundRobinID, err := repo.ensureRoundRobinMemberMutable(ctx, tx, tenantContext, memberID)
+	if err != nil {
 		return err
 	}
 
@@ -914,6 +1020,9 @@ func (repo Repository) DeleteMember(ctx context.Context, tenantContext tenant.Co
 	}
 	if commandTag.RowsAffected() == 0 {
 		return ErrMemberNotFound
+	}
+	if err := repo.validateWhatsAppMessageDistribution(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }
@@ -1192,6 +1301,89 @@ func (repo Repository) validateRedistributionCapacity(ctx context.Context, q que
 	return nil
 }
 
+func (repo Repository) validateWhatsAppMessageDistribution(ctx context.Context, q queryer, organizationID string, roundRobinID string) error {
+	var state whatsappMessageDistributionState
+	err := q.QueryRow(ctx, `
+		select
+			coalesce(round_robin.is_active, true),
+			coalesce(nullif(btrim(round_robin.strategy), ''), 'simple'),
+			lower(btrim(coalesce(round_robin.settings->>'enable_redistribution', 'false'))) in ('true', '1', 'yes'),
+			lower(btrim(coalesce(round_robin.settings->>'require_checkin', 'false'))) in ('true', '1', 'yes'),
+			lower(btrim(coalesce(round_robin.settings->>'ignore_availability', 'false'))) = 'true',
+			exists (
+				select 1
+				from public.round_robin_rules rule
+				where rule.organization_id = round_robin.organization_id
+				  and rule.round_robin_id = round_robin.id
+				  and coalesce(rule.is_active, true) = true
+				  and coalesce(nullif(rule.match_type, ''), rule.conditions->>'match_type', rule.name, '') = $3
+				  and btrim(coalesce(nullif(rule.match_value, ''), rule.conditions->>'match_value', '')) <> ''
+			),
+			(
+				select count(*)::int
+				from public.round_robin_rules rule
+				where rule.organization_id = round_robin.organization_id
+				  and rule.round_robin_id = round_robin.id
+				  and coalesce(rule.is_active, true) = true
+				  and coalesce(nullif(rule.match_type, ''), rule.conditions->>'match_type', rule.name, '') <> $3
+			),
+			(
+				select count(*)::int
+				from public.round_robin_members member
+				where member.organization_id = round_robin.organization_id
+				  and member.round_robin_id = round_robin.id
+				  and coalesce(member.is_active, true) = true
+				  and member.team_id is not null
+			),
+			(
+				select count(*)::int
+				from public.round_robin_members member
+				where member.organization_id = round_robin.organization_id
+				  and member.round_robin_id = round_robin.id
+				  and coalesce(member.is_active, true) = true
+				  and member.user_id is not null
+				  and member.team_id is null
+			),
+			(
+				select count(*)::int
+				from public.round_robin_members member
+				join public.users user_account
+				  on user_account.id = member.user_id
+				 and coalesce(user_account.is_active, false) = true
+				join public.organization_members organization_member
+				  on organization_member.organization_id = member.organization_id
+				 and organization_member.user_id = member.user_id
+				 and coalesce(organization_member.is_active, false) = true
+				where member.organization_id = round_robin.organization_id
+				  and member.round_robin_id = round_robin.id
+				  and coalesce(member.is_active, true) = true
+				  and member.user_id is not null
+				  and member.team_id is null
+			)
+		from public.round_robins round_robin
+		where round_robin.organization_id = $1::uuid
+		  and round_robin.id = $2::uuid
+	`, organizationID, roundRobinID, whatsappMessageContainsConditionType).Scan(
+		&state.QueueActive,
+		&state.Strategy,
+		&state.EnableRedistribution,
+		&state.RequireCheckIn,
+		&state.IgnoreAvailability,
+		&state.HasActiveRule,
+		&state.ActiveOtherRuleCount,
+		&state.ActiveTeamCount,
+		&state.ActiveDirectMemberCount,
+		&state.EligibleUserCount,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrRoundRobinNotFound
+	}
+	if err != nil {
+		return err
+	}
+	return validateWhatsAppMessageDistributionState(state)
+}
+
 func (repo Repository) ensurePipeline(ctx context.Context, q queryer, organizationID string, pipelineID string) error {
 	var exists bool
 	err := q.QueryRow(ctx, `
@@ -1282,6 +1474,142 @@ func (repo Repository) syncMetaFormConfigLinks(ctx context.Context, q queryer, o
 		where organization_id = $1::uuid
 		  and form_id = any($3::text[])
 	`, organizationID, roundRobinID, formIDs)
+	return err
+}
+
+// Managed WhatsApp rules reuse the round_robin_rules UUID in the inbound table.
+// This keeps lifecycle operations deterministic without changing the existing
+// schema, and lets manual inbound rules keep their own independent UUIDs.
+func (repo Repository) deleteWhatsAppInboundRule(ctx context.Context, q queryer, organizationID string, ruleID string) error {
+	_, err := q.Exec(ctx, `
+		delete from public.whatsapp_inbound_rules
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+	`, organizationID, ruleID)
+	return err
+}
+
+func (repo Repository) deleteWhatsAppInboundRulesForRoundRobin(ctx context.Context, q queryer, organizationID string, roundRobinID string) error {
+	_, err := q.Exec(ctx, `
+		delete from public.whatsapp_inbound_rules inbound_rule
+		using public.round_robin_rules round_robin_rule
+		where inbound_rule.organization_id = $1::uuid
+		  and round_robin_rule.organization_id = $1::uuid
+		  and round_robin_rule.round_robin_id = $2::uuid
+		  and inbound_rule.id = round_robin_rule.id
+	`, organizationID, roundRobinID)
+	return err
+}
+
+func (repo Repository) syncWhatsAppInboundRules(ctx context.Context, q queryer, organizationID string, roundRobinID string) error {
+	if _, err := q.Exec(ctx, `
+		delete from public.whatsapp_inbound_rules inbound_rule
+		using public.round_robin_rules round_robin_rule
+		where inbound_rule.organization_id = $1::uuid
+		  and round_robin_rule.organization_id = $1::uuid
+		  and round_robin_rule.round_robin_id = $2::uuid
+		  and inbound_rule.id = round_robin_rule.id
+		  and (
+		    coalesce(nullif(round_robin_rule.match_type, ''), round_robin_rule.conditions->>'match_type', round_robin_rule.name, '') <> $3
+		    or btrim(coalesce(nullif(round_robin_rule.match_value, ''), round_robin_rule.conditions->>'match_value', '')) = ''
+		  )
+	`, organizationID, roundRobinID, whatsappMessageContainsConditionType); err != nil {
+		return err
+	}
+
+	if _, err := q.Exec(ctx, `
+		insert into public.whatsapp_inbound_rules (
+		  id,
+		  organization_id,
+		  session_id,
+		  name,
+		  priority,
+		  is_active,
+		  match_type,
+		  match_value,
+		  match_field,
+		  target_round_robin_id,
+		  target_team_id,
+		  target_user_id,
+		  target_pipeline_id,
+		  target_stage_id,
+		  source_label,
+		  campaign_label
+		)
+		select
+		  round_robin_rule.id,
+		  round_robin.organization_id,
+		  null,
+		  'Distribuição: ' || round_robin.name,
+		  -2000000000,
+		  coalesce(round_robin.is_active, true) and coalesce(round_robin_rule.is_active, true),
+		  'contains',
+		  btrim(coalesce(nullif(round_robin_rule.match_value, ''), round_robin_rule.conditions->>'match_value', '')),
+		  'message',
+		  round_robin.id,
+		  null,
+		  null,
+		  coalesce(round_robin.target_pipeline_id, round_robin.pipeline_id),
+		  round_robin.target_stage_id,
+		  null,
+		  null
+		from public.round_robin_rules round_robin_rule
+		join public.round_robins round_robin
+		  on round_robin.organization_id = round_robin_rule.organization_id
+		 and round_robin.id = round_robin_rule.round_robin_id
+		where round_robin_rule.organization_id = $1::uuid
+		  and round_robin_rule.round_robin_id = $2::uuid
+		  and coalesce(nullif(round_robin_rule.match_type, ''), round_robin_rule.conditions->>'match_type', round_robin_rule.name, '') = $3
+		  and btrim(coalesce(nullif(round_robin_rule.match_value, ''), round_robin_rule.conditions->>'match_value', '')) <> ''
+		on conflict (id) do update set
+		  session_id = excluded.session_id,
+		  name = excluded.name,
+		  priority = excluded.priority,
+		  is_active = excluded.is_active,
+		  match_type = excluded.match_type,
+		  match_value = excluded.match_value,
+		  match_field = excluded.match_field,
+		  target_round_robin_id = excluded.target_round_robin_id,
+		  target_team_id = excluded.target_team_id,
+		  target_user_id = excluded.target_user_id,
+		  target_pipeline_id = excluded.target_pipeline_id,
+		  target_stage_id = excluded.target_stage_id,
+		  source_label = excluded.source_label,
+		  campaign_label = excluded.campaign_label,
+		  updated_at = now()
+		where whatsapp_inbound_rules.organization_id = excluded.organization_id
+	`, organizationID, roundRobinID, whatsappMessageContainsConditionType); err != nil {
+		return err
+	}
+
+	// Both webhook runtimes sort inbound rules by priority, but they use
+	// different tie-breakers. Keep managed rules in a reserved negative range
+	// so explicit/manual inbound rules retain precedence, and give every
+	// managed rule a deterministic unique priority within that range.
+	_, err := q.Exec(ctx, `
+		with ranked_managed_rules as (
+			select
+			  inbound_rule.id,
+			  row_number() over (
+			    order by
+			      char_length(inbound_rule.match_value) desc,
+			      lower(inbound_rule.match_value) asc,
+			      inbound_rule.id asc
+			  ) as managed_rank
+			from public.whatsapp_inbound_rules inbound_rule
+			join public.round_robin_rules round_robin_rule
+			  on round_robin_rule.organization_id = inbound_rule.organization_id
+			 and round_robin_rule.id = inbound_rule.id
+			where inbound_rule.organization_id = $1::uuid
+			  and coalesce(nullif(round_robin_rule.match_type, ''), round_robin_rule.conditions->>'match_type', round_robin_rule.name, '') = $2
+		)
+		update public.whatsapp_inbound_rules inbound_rule
+		set priority = -1000000000 - ranked_managed_rules.managed_rank::int,
+		    updated_at = now()
+		from ranked_managed_rules
+		where inbound_rule.organization_id = $1::uuid
+		  and inbound_rule.id = ranked_managed_rules.id
+	`, organizationID, whatsappMessageContainsConditionType)
 	return err
 }
 
@@ -1437,13 +1765,13 @@ func (repo Repository) validateUser(ctx context.Context, q queryer, organization
 }
 
 func (repo Repository) checkConditionConflicts(ctx context.Context, q queryer, organizationID string, excludeRoundRobinID *string, rules []ruleInput) error {
-	wanted := map[string]struct{}{}
+	wanted := map[string][]string{}
 	for _, rule := range rules {
 		if _, ok := uniqueConditionTypes[rule.MatchType]; !ok || !rule.IsActive {
 			continue
 		}
-		for _, value := range splitValues(rule.MatchValue) {
-			wanted[rule.MatchType+"::"+value] = struct{}{}
+		for _, value := range uniqueConditionValues(rule.MatchType, rule.MatchValue) {
+			wanted[rule.MatchType] = append(wanted[rule.MatchType], value)
 		}
 	}
 	if len(wanted) == 0 {
@@ -1484,13 +1812,33 @@ func (repo Repository) checkConditionConflicts(ctx context.Context, q queryer, o
 			continue
 		}
 		matchValue, _ := payload["match_value"].(string)
-		for _, value := range splitValues(matchValue) {
-			if _, exists := wanted[matchType+"::"+value]; exists {
-				return ConditionConflictError{QueueName: queueName}
+		for _, value := range uniqueConditionValues(matchType, matchValue) {
+			for _, wantedValue := range wanted[matchType] {
+				if conditionValuesConflict(matchType, wantedValue, value) {
+					return ConditionConflictError{QueueName: queueName}
+				}
 			}
 		}
 	}
 	return rows.Err()
+}
+
+func conditionValuesConflict(matchType string, left string, right string) bool {
+	if matchType == whatsappMessageContainsConditionType {
+		return strings.Contains(left, right) || strings.Contains(right, left)
+	}
+	return left == right
+}
+
+func uniqueConditionValues(matchType string, matchValue string) []string {
+	if matchType != whatsappMessageContainsConditionType {
+		return splitValues(matchValue)
+	}
+	value := strings.ToLower(strings.TrimSpace(matchValue))
+	if value == "" {
+		return nil
+	}
+	return []string{value}
 }
 
 func scanRoundRobin(row scanner) (RoundRobin, error) {
@@ -1834,7 +2182,7 @@ func (repo Repository) ensureRoundRobinMutable(ctx context.Context, q queryer, t
 	return repo.ensureRoundRobinVisible(ctx, q, tenantContext, roundRobinID)
 }
 
-func (repo Repository) ensureRoundRobinMemberMutable(ctx context.Context, q queryer, tenantContext tenant.Context, memberID string) error {
+func (repo Repository) ensureRoundRobinMemberMutable(ctx context.Context, q queryer, tenantContext tenant.Context, memberID string) (string, error) {
 	var roundRobinID string
 	err := q.QueryRow(ctx, `
 		select round_robin_id::text
@@ -1843,12 +2191,18 @@ func (repo Repository) ensureRoundRobinMemberMutable(ctx context.Context, q quer
 		  and id = $2::uuid
 	`, tenantContext.OrganizationID, memberID).Scan(&roundRobinID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrMemberNotFound
+		return "", ErrMemberNotFound
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
-	return repo.ensureRoundRobinMutable(ctx, q, tenantContext, roundRobinID)
+	if err := repo.ensureRoundRobinMutable(ctx, q, tenantContext, roundRobinID); err != nil {
+		return "", err
+	}
+	if _, err := repo.getStateForUpdate(ctx, q, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return "", err
+	}
+	return roundRobinID, nil
 }
 
 func (repo Repository) visibleRoundRobinIDSet(ctx context.Context, tenantContext tenant.Context) (map[string]bool, error) {

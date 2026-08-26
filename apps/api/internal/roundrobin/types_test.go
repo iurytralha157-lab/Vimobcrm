@@ -26,6 +26,7 @@ func TestCreateRequestValidateNormalizesConditionContracts(t *testing.T) {
 			{Type: "meta_form", Values: []string{"1748389402409199"}},
 			{Type: "website_category", Values: []string{"venda"}},
 			{Type: "campaign_contains", Values: []string{"Reserva dos Lagos"}},
+			{Type: "whatsapp_message_contains", Values: []string{"Quero conhecer"}},
 			{Type: "tag", Values: []string{"lote"}},
 			{Type: "city", Values: []string{"Jundiai"}},
 			{Type: "interest_property", Values: []string{"CA0035"}},
@@ -48,10 +49,62 @@ func TestCreateRequestValidateNormalizesConditionContracts(t *testing.T) {
 	if input.Rules[4].Match["campaign_name_contains"] != "Reserva dos Lagos" {
 		t.Fatalf("campaign_contains mismatch: %#v", input.Rules[4].Match)
 	}
-	assertMatchList(t, input.Rules[5].Match, "tag_in", []string{"lote"})
-	assertMatchList(t, input.Rules[6].Match, "city_in", []string{"Jundiai"})
-	if input.Rules[7].Match["interest_property_id"] != "CA0035" {
-		t.Fatalf("interest_property mismatch: %#v", input.Rules[7].Match)
+	if input.Rules[5].Match["message_contains"] != "Quero conhecer" {
+		t.Fatalf("whatsapp_message_contains mismatch: %#v", input.Rules[5].Match)
+	}
+	assertMatchList(t, input.Rules[6].Match, "tag_in", []string{"lote"})
+	assertMatchList(t, input.Rules[7].Match, "city_in", []string{"Jundiai"})
+	if input.Rules[8].Match["interest_property_id"] != "CA0035" {
+		t.Fatalf("interest_property mismatch: %#v", input.Rules[8].Match)
+	}
+}
+
+func TestWhatsAppMessageConditionRejectsMultipleValues(t *testing.T) {
+	_, err := (ConditionInput{
+		Type:   whatsappMessageContainsConditionType,
+		Values: []string{"casa", "apartamento"},
+	}).toRuleInput(0)
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected invalid input, got %v", err)
+	}
+}
+
+func TestWhatsAppMessageRulePreservesCommaInMatch(t *testing.T) {
+	input, err := (RuleRequest{
+		MatchType:  whatsappMessageContainsConditionType,
+		MatchValue: "Quero casa, agora",
+	}).Validate("11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatalf("RuleRequest.Validate() error = %v", err)
+	}
+	if input.Match["message_contains"] != "Quero casa, agora" {
+		t.Fatalf("message_contains mismatch: %#v", input.Match)
+	}
+}
+
+func TestResolveRuleMatchPatchRebuildsChangedWhatsAppValue(t *testing.T) {
+	match := resolveRuleMatchPatch(
+		map[string]any{"message_contains": "valor antigo"},
+		whatsappMessageContainsConditionType,
+		"Quero casa, agora",
+		patchObject{},
+		true,
+	)
+	if match["message_contains"] != "Quero casa, agora" {
+		t.Fatalf("message_contains mismatch: %#v", match)
+	}
+}
+
+func TestResolveRuleMatchPatchKeepsExplicitMatch(t *testing.T) {
+	match := resolveRuleMatchPatch(
+		map[string]any{"message_contains": "valor antigo"},
+		whatsappMessageContainsConditionType,
+		"novo matchValue",
+		patchObject{Set: true, Value: map[string]any{"message_contains": "match explícito"}},
+		true,
+	)
+	if match["message_contains"] != "match explícito" {
+		t.Fatalf("explicit match mismatch: %#v", match)
 	}
 }
 
