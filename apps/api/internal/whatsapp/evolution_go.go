@@ -77,7 +77,7 @@ func (client functionsClient) invokeEvolutionDirect(ctx context.Context, action 
 			normalizedStatus = normalizeEvolutionStatus(result.Data)
 		}
 
-		return map[string]any{
+		response := map[string]any{
 			"ok":               result.OK,
 			"status":           result.Status,
 			"data":             result.Data,
@@ -88,7 +88,11 @@ func (client functionsClient) invokeEvolutionDirect(ctx context.Context, action 
 				"instanceKey":  instanceKey,
 				"authScope":    evolutionAuthScope(action),
 			},
-		}, nil
+		}
+		if !result.OK {
+			response["error"] = evolutionErrorMessage(result.Data, result.RawText)
+		}
+		return response, nil
 	case "instance.qr":
 		result, err := client.evolutionFetch(ctx, http.MethodGet, "/instance/qr", evolutionFetchOptions{
 			Token: token,

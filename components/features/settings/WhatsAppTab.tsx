@@ -27,6 +27,7 @@ import {
   useDeleteWhatsAppSession,
   useGetQRCode,
   useGetConnectionStatus,
+  useWhatsAppLiveStatusSync,
   useLogoutSession,
   useRecreateWhatsAppInstance,
   useToggleNotificationSession,
@@ -36,6 +37,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { canManageOrganization } from "@/lib/access/organization";
+import { resolveWhatsAppSessionStatus } from "@/lib/whatsapp-query-cache";
 
 interface WhatsAppTabProps {
   embedded?: boolean;
@@ -68,7 +70,7 @@ function wait(ms: number) {
 export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
   const { profile, tenantContext, isSuperAdmin } = useAuth();
   const queryClient = useQueryClient();
-  const { data: sessions, isLoading } = useWhatsAppSessions();
+  const { data: sessions, isLoading } = useWhatsAppSessions({ live: true });
   const createSession = useCreateWhatsAppSession();
   const deleteSession = useDeleteWhatsAppSession();
   const getQRCode = useGetQRCode();
@@ -97,6 +99,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
     isSuperAdmin,
     memberRole: tenantContext?.memberRole,
   });
+  useWhatsAppLiveStatusSync(sessions);
 
   // Refs para evitar stale closures no polling
   const selectedSessionRef = useRef(selectedSession);
@@ -121,7 +124,10 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
         instanceId: session.instance_id,
       });
 
-      return status?.connected === true || status?.state === "open" || status?.status === "connected";
+      const resolvedStatus = resolveWhatsAppSessionStatus(status);
+      if (resolvedStatus === "connected") return true;
+      if (resolvedStatus === "disconnected" || resolvedStatus === "qr_ready") return false;
+      return null;
     } catch {
       return null;
     }
@@ -295,7 +301,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
         sessionId: session.id,
         instanceId: session.instance_id,
       });
-      if (data?.state === "open" || data?.connected === true) {
+      if (resolveWhatsAppSessionStatus(data) === "connected") {
         toast({ title: "Conectado!", description: "WhatsApp conectado com sucesso" });
         setQrDialogOpen(false);
         setQrCode(null);
@@ -332,13 +338,17 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
     setVerifyingSessionId(session.id);
     try {
       const connected = await checkConnection(session);
-      if (connected) {
+      if (connected === true) {
         toast({ title: "Conectado", description: "WhatsApp está online." });
-      } else {
+      } else if (connected === false) {
         toast({ title: "Desconectado", description: "Essa conexão ainda não está online.", variant: "destructive" });
+      } else {
+        toast({ title: "Não foi possível confirmar", description: "O estado anterior foi mantido. Tente novamente em alguns segundos." });
       }
-      queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
-      queryClient.invalidateQueries({ queryKey: ["round-robin-whatsapp-sessions"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] }),
+        queryClient.invalidateQueries({ queryKey: ["round-robin-whatsapp-sessions"] }),
+      ]);
     } catch (error) {
       console.warn("WhatsApp verification failed:", getErrorMessage(error, "Não foi possível verificar a conexão."));
       toast({ title: "Erro", description: "Não foi possível verificar a conexão.", variant: "destructive" });

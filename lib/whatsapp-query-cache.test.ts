@@ -11,10 +11,19 @@ import {
   matchesWhatsAppMessagesQueryKey,
   mergeWhatsAppMessagesWithLocalState,
   resolveWhatsAppConversationSessionFilter,
+  resolveWhatsAppSessionStatus,
   whatsappQueryKeys,
   whatsappInboxTopic,
   type WhatsAppQueryScope,
 } from './whatsapp-query-cache'
+
+test('normaliza apenas estados autoritativos da conexao WhatsApp', () => {
+  assert.equal(resolveWhatsAppSessionStatus({ connected: true, status: 'unknown' }), 'connected')
+  assert.equal(resolveWhatsAppSessionStatus({ connected: false, status: 'disconnected' }), 'disconnected')
+  assert.equal(resolveWhatsAppSessionStatus({ status: 'qr_ready', state: 'qr' }), 'qr_ready')
+  assert.equal(resolveWhatsAppSessionStatus({ status: 'unexpected', state: 'unknown' }), null)
+  assert.equal(resolveWhatsAppSessionStatus(undefined), null)
+})
 
 const scopeA: WhatsAppQueryScope = {
   organizationId: 'organization-a',

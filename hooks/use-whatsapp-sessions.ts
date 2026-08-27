@@ -1,10 +1,15 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { toast } from "@/hooks/use-toast";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { Json } from "@/integrations/supabase/types";
 import { whatsappAPI, type AIAutoReplySessionInput, type WhatsAppSessionQuota } from "@/lib/api/whatsapp";
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
-import { whatsappQueryKeys } from "@/lib/whatsapp-query-cache";
+import {
+  resolveWhatsAppSessionStatus,
+  whatsappQueryKeys,
+  type WhatsAppQueryScope,
+  type WhatsAppResolvedSessionStatus,
+} from "@/lib/whatsapp-query-cache";
 
 export const EVOLUTION_GO_CREATION_ENABLED = true;
 export const WHATSAPP_LEGACY_EVOLUTION_ENABLED = false;
@@ -40,6 +45,11 @@ export type WhatsAppSessionList = WhatsAppSession[] & {
   meta?: WhatsAppSessionQuota;
 };
 
+type UseWhatsAppSessionsOptions = {
+  enabled?: boolean;
+  live?: boolean;
+};
+
 export interface WhatsAppSessionAccess {
   id: string;
   session_id: string;
@@ -73,8 +83,37 @@ function removeSessionFromCache(old: WhatsAppSession[] | undefined, sessionId: s
   return old.filter((session) => session.id !== sessionId);
 }
 
-export function useWhatsAppSessions(options: { enabled?: boolean } = {}) {
+function replaceSessionStatus(
+  sessions: WhatsAppSession[] | undefined,
+  sessionId: string,
+  status: WhatsAppResolvedSessionStatus,
+) {
+  if (!Array.isArray(sessions)) return sessions;
+  const current = sessions.find((session) => session.id === sessionId);
+  if (!current || current.status === status) return sessions;
+  return sessions.map((session) => session.id === sessionId ? { ...session, status } : session);
+}
+
+function cacheSessionStatus(
+  queryClient: QueryClient,
+  scope: WhatsAppQueryScope,
+  sessionId: string,
+  status: WhatsAppResolvedSessionStatus,
+) {
+  queryClient.setQueryData<WhatsAppSessionList>(whatsappQueryKeys.sessions(scope), (current) => {
+    const next = replaceSessionStatus(current, sessionId, status) as WhatsAppSessionList | undefined;
+    if (!next || next === current) return current;
+    next.meta = current?.meta;
+    return next;
+  });
+  queryClient.setQueryData<WhatsAppSession[]>(whatsappQueryKeys.accessibleSessions(scope), (current) =>
+    replaceSessionStatus(current, sessionId, status),
+  );
+}
+
+export function useWhatsAppSessions(options: UseWhatsAppSessionsOptions = {}) {
   const scope = useWhatsAppQueryScope();
+  const live = options.live === true;
 
   return useQuery({
     queryKey: whatsappQueryKeys.sessions(scope),
@@ -86,11 +125,15 @@ export function useWhatsAppSessions(options: { enabled?: boolean } = {}) {
       return sessions;
     },
     enabled: options.enabled !== false && !!scope.organizationId && !!scope.userId,
-    refetchInterval: 60_000,
+    refetchInterval: live ? 15_000 : 60_000,
     refetchIntervalInBackground: false,
-    staleTime: 60_000,
+    staleTime: live ? 0 : 60_000,
     gcTime: 1000 * 60 * 10,
-    refetchOnReconnect: true,
+    ...(live ? {
+      refetchOnMount: "always" as const,
+      refetchOnWindowFocus: "always" as const,
+      refetchOnReconnect: "always" as const,
+    } : {}),
   });
 }
 
@@ -250,6 +293,7 @@ export function useGetQRCode() {
 
 export function useGetConnectionStatus() {
   const scope = useWhatsAppQueryScope();
+  const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: async (
@@ -261,7 +305,137 @@ export function useGetConnectionStatus() {
 
       return whatsappAPI.getConnectionStatus(arg.sessionId, scope.organizationId);
     },
+    onSuccess: (response, arg) => {
+      if (typeof arg === "string" || !arg.sessionId) return;
+      const status = resolveWhatsAppSessionStatus(response);
+      if (!status) return;
+      cacheSessionStatus(queryClient, scope, arg.sessionId, status);
+    },
   });
+}
+
+const WHATSAPP_LIVE_STATUS_COOLDOWN_MS = 30_000;
+const WHATSAPP_LIVE_STATUS_RETENTION_MS = 10 * 60_000;
+type WhatsAppConnectionStatusResponse = Awaited<ReturnType<typeof whatsappAPI.getConnectionStatus>>;
+
+const whatsappLiveStatusLastChecks = new Map<string, number>();
+const whatsappLiveStatusProbes = new Map<string, Promise<WhatsAppConnectionStatusResponse>>();
+
+function getWhatsAppLiveStatusProbe(sessionId: string, organizationId: string) {
+  const probeKey = `${organizationId}:${sessionId}`;
+  const existingProbe = whatsappLiveStatusProbes.get(probeKey);
+  if (existingProbe) return existingProbe;
+
+  const probe = whatsappAPI.getConnectionStatus(sessionId, organizationId).finally(() => {
+    if (whatsappLiveStatusProbes.get(probeKey) === probe) {
+      whatsappLiveStatusProbes.delete(probeKey);
+    }
+  });
+  whatsappLiveStatusProbes.set(probeKey, probe);
+  return probe;
+}
+
+/**
+ * Reconciles the provider once when the integration dialog opens and whenever
+ * a mobile browser restores the page. The regular 15s list polling remains a
+ * cheap database read; provider checks are deliberately not put on a timer.
+ */
+export function useWhatsAppLiveStatusSync(
+  sessions: WhatsAppSession[] | undefined,
+  options: { enabled?: boolean } = {},
+) {
+  const scope = useWhatsAppQueryScope();
+  const queryClient = useQueryClient();
+  const sessionsRef = useRef<WhatsAppSession[]>(sessions || []);
+  const isCheckingRef = useRef(false);
+  const isMountedRef = useRef(true);
+  const enabled = options.enabled !== false;
+  const sessionKey = (sessions || [])
+    .filter((session) => session.provider === "evolution_go")
+    .map((session) => session.id)
+    .sort()
+    .join(",");
+
+  useEffect(() => {
+    sessionsRef.current = sessions || [];
+  }, [sessions]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const refreshProviderStatuses = useCallback(async () => {
+    if (!enabled || !scope.organizationId || isCheckingRef.current || !isMountedRef.current) return;
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+
+    const now = Date.now();
+    for (const [probeKey, checkedAt] of whatsappLiveStatusLastChecks) {
+      if (now - checkedAt > WHATSAPP_LIVE_STATUS_RETENTION_MS) {
+        whatsappLiveStatusLastChecks.delete(probeKey);
+      }
+    }
+    const dueSessions = sessionsRef.current.filter((session) => {
+      if (session.provider !== "evolution_go" || !session.is_active) return false;
+      const probeKey = `${scope.organizationId}:${session.id}`;
+      const lastCheck = whatsappLiveStatusLastChecks.get(probeKey) || 0;
+      return now - lastCheck >= WHATSAPP_LIVE_STATUS_COOLDOWN_MS;
+    });
+    if (dueSessions.length === 0) return;
+
+    isCheckingRef.current = true;
+    try {
+      // The API serializes lifecycle probes, so keep this client-side sequence
+      // bounded as well instead of flooding the global provider lock.
+      for (const session of dueSessions) {
+        if (!isMountedRef.current) break;
+        const probeKey = `${scope.organizationId}:${session.id}`;
+        whatsappLiveStatusLastChecks.set(probeKey, Date.now());
+        try {
+          const response = await getWhatsAppLiveStatusProbe(session.id, scope.organizationId);
+          const status = resolveWhatsAppSessionStatus(response);
+          if (status) cacheSessionStatus(queryClient, scope, session.id, status);
+        } catch (error) {
+          // Unknown/transient provider outcomes must preserve the last known
+          // state. A failed probe is not proof that WhatsApp disconnected.
+          console.warn("WhatsApp live status refresh failed:", error);
+        }
+      }
+
+      if (isMountedRef.current) {
+        await queryClient.invalidateQueries({
+          queryKey: whatsappQueryKeys.sessions(scope),
+          refetchType: "active",
+        });
+      }
+    } finally {
+      isCheckingRef.current = false;
+    }
+  }, [enabled, queryClient, scope]);
+
+  useEffect(() => {
+    if (!enabled || !scope.organizationId || !sessionKey) return;
+
+    void refreshProviderStatuses();
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refreshProviderStatuses();
+    };
+    const handlePageShow = () => void refreshProviderStatuses();
+    const handleOnline = () => void refreshProviderStatuses();
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pageshow", handlePageShow);
+    window.addEventListener("online", handleOnline);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pageshow", handlePageShow);
+      window.removeEventListener("online", handleOnline);
+    };
+  }, [enabled, refreshProviderStatuses, scope.organizationId, sessionKey]);
 }
 
 export function useSetWebhook() {
@@ -388,20 +562,43 @@ export function useLogoutSession() {
 
       return result;
     },
+    onMutate: async (session) => {
+      const sessionsKey = whatsappQueryKeys.sessions(scope);
+      const accessibleSessionsKey = whatsappQueryKeys.accessibleSessions(scope);
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: sessionsKey }),
+        queryClient.cancelQueries({ queryKey: accessibleSessionsKey }),
+      ]);
+      const previousSessions = queryClient.getQueryData<WhatsAppSessionList>(sessionsKey);
+      const previousAccessibleSessions = queryClient.getQueryData<WhatsAppSession[]>(accessibleSessionsKey);
+      cacheSessionStatus(queryClient, scope, session.id, "disconnected");
+      return { previousSessions, previousAccessibleSessions };
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] });
-      queryClient.invalidateQueries({ queryKey: ["round-robin-whatsapp-sessions"] });
       toast({
         title: "Desconectado",
         description: "A sessao foi desconectada",
       });
     },
-    onError: (error: Error) => {
+    onError: (error: Error, _session, context) => {
+      if (context?.previousSessions) {
+        queryClient.setQueryData(whatsappQueryKeys.sessions(scope), context.previousSessions);
+      }
+      if (context?.previousAccessibleSessions) {
+        queryClient.setQueryData(whatsappQueryKeys.accessibleSessions(scope), context.previousAccessibleSessions);
+      }
       toast({
         title: "Erro ao desconectar sessao",
         description: error.message,
         variant: "destructive",
       });
+    },
+    onSettled: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"] }),
+        queryClient.invalidateQueries({ queryKey: ["accessible-sessions"] }),
+        queryClient.invalidateQueries({ queryKey: ["round-robin-whatsapp-sessions"] }),
+      ]);
     },
   });
 }
