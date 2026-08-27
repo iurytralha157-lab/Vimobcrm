@@ -533,10 +533,10 @@ func evolutionConnectionObservation(result map[string]any) (status string, autho
 	if !providerResultOK(result) {
 		statusCode := firstString(result, "status", "data.status")
 		message := providerErrorMessage(result, "Evolution Go status unavailable")
-		if statusCode == "404" || isProviderMissingInstanceMessage(message) {
+		if statusCode == "404" {
 			return "disconnected", true, true
 		}
-		if statusCode == "400" && isProviderDisconnectedMessage(message) {
+		if statusCode == "400" && isAuthoritativeEvolutionStatusDisconnect(message) {
 			return "disconnected", true, false
 		}
 		return "", false, false
@@ -550,6 +550,15 @@ func evolutionConnectionObservation(result map[string]any) (status string, autho
 		return normalizedStatus, true, false
 	}
 	return "", false, false
+}
+
+func isAuthoritativeEvolutionStatusDisconnect(message string) bool {
+	switch strings.ToLower(strings.TrimSpace(message)) {
+	case "client disconnected", "client is disconnected", "not connected", "disconnected", "already closed", "logged out":
+		return true
+	default:
+		return false
+	}
 }
 
 func sessionAutoReconnectEnabled(settings map[string]any) bool {

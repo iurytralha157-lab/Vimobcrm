@@ -24,6 +24,56 @@ export type WhatsAppConversationSessionFilter = {
   accessibleSessionIds?: string[]
 }
 
+export type WhatsAppResolvedSessionStatus = 'connected' | 'disconnected' | 'qr_ready'
+
+type WhatsAppConnectionStatusLike = {
+  connected?: boolean | null
+  status?: string | null
+  state?: string | null
+}
+
+const normalizeConnectionSignal = (value?: string | null) =>
+  value?.trim().toLowerCase() ?? ''
+
+/**
+ * Only applies an authoritative provider state to the UI cache. Transport
+ * errors and unfamiliar provider payloads stay unknown instead of being
+ * rendered as a false disconnect.
+ */
+export function resolveWhatsAppSessionStatus(
+  response: WhatsAppConnectionStatusLike | null | undefined,
+): WhatsAppResolvedSessionStatus | null {
+  if (!response) return null
+
+  const status = normalizeConnectionSignal(response.status)
+  const state = normalizeConnectionSignal(response.state)
+
+  if (
+    response.connected === true
+    || ['connected', 'open', 'online', 'ready'].includes(status)
+    || ['connected', 'open', 'online', 'ready'].includes(state)
+  ) {
+    return 'connected'
+  }
+
+  if (
+    ['qr', 'qrcode', 'qr_ready', 'pairing', 'connecting'].includes(status)
+    || ['qr', 'qrcode', 'qr_ready', 'pairing', 'connecting'].includes(state)
+  ) {
+    return 'qr_ready'
+  }
+
+  if (
+    response.connected === false
+    || ['close', 'closed', 'disconnected', 'disconnect', 'offline', 'logout', 'logged_out'].includes(status)
+    || ['close', 'closed', 'disconnected', 'disconnect', 'offline', 'logout', 'logged_out'].includes(state)
+  ) {
+    return 'disconnected'
+  }
+
+  return null
+}
+
 export const whatsappInboxTopic = (organizationId: string) =>
   `whatsapp:${organizationId}:inbox`
 

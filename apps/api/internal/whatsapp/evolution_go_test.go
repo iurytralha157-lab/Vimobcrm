@@ -23,6 +23,70 @@ func TestEvolutionSendTextBodyPreservesIdempotencyID(t *testing.T) {
 	}
 }
 
+func TestEvolutionStatusPreservesPlainTextDisconnectError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "client disconnected", http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	client := functionsClient{
+		evolutionGoAPIURL: server.URL,
+		evolutionGoAPIKey: "global-key",
+		httpClient:        server.Client(),
+	}
+	result, err := client.invokeEvolutionDirect(context.Background(), "instance.status", map[string]any{
+		"instance_id": "instance-1",
+		"token":       "session-token",
+	})
+	if err != nil {
+		t.Fatalf("invokeEvolutionDirect() error: %v", err)
+	}
+	if got := providerErrorMessage(result, ""); got != "client disconnected" {
+		t.Fatalf("provider error = %q, want client disconnected", got)
+	}
+	status, authoritative, missing := evolutionConnectionObservation(result)
+	if status != "disconnected" || !authoritative || missing {
+		t.Fatalf("observation = (%q, %v, %v), want (disconnected, true, false)", status, authoritative, missing)
+	}
+}
+
+func TestEvolutionStatusDoesNotTreatUnrelatedErrorsAsDisconnected(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		message    string
+	}{
+		{name: "ambiguous disconnect text", statusCode: http.StatusBadRequest, message: "client is not disconnected"},
+		{name: "proxy route not found", statusCode: http.StatusInternalServerError, message: "upstream route not found"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, tt.message, tt.statusCode)
+			}))
+			defer server.Close()
+
+			client := functionsClient{
+				evolutionGoAPIURL: server.URL,
+				evolutionGoAPIKey: "global-key",
+				httpClient:        server.Client(),
+			}
+			result, err := client.invokeEvolutionDirect(context.Background(), "instance.status", map[string]any{
+				"instance_id": "instance-1",
+				"token":       "session-token",
+			})
+			if err != nil {
+				t.Fatalf("invokeEvolutionDirect() error: %v", err)
+			}
+			status, authoritative, missing := evolutionConnectionObservation(result)
+			if status != "" || authoritative || missing {
+				t.Fatalf("observation = (%q, %v, %v), want unknown", status, authoritative, missing)
+			}
+		})
+	}
+}
+
 func TestEvolutionSendMediaBodyKeepsURLAndBase64Separate(t *testing.T) {
 	body := evolutionSendMediaBody(map[string]any{
 		"number":       "5511999999999",
