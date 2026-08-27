@@ -366,10 +366,23 @@ export const apiRoundRobinWhatsAppSessionOptionSchema = z.object({
   provider: z.literal('evolution_go'),
   isActive: z.boolean(),
 }).strict()
+export const apiRoundRobinMetaFormOptionSchema = z.object({
+  configId: uuidSchema,
+  formId: z.string().trim().min(1),
+  formName: z.string().optional(),
+  pageId: z.string().trim().min(1).optional(),
+  pageName: z.string().optional(),
+  roundRobinId: uuidSchema.optional(),
+  isActive: z.boolean(),
+  integrationConnected: z.boolean(),
+}).strict()
 export const apiRoundRobinListResponseSchema = apiEnvelopeSchema(z.array(apiRoundRobinSchema))
 export const apiRoundRobinResponseSchema = apiEnvelopeSchema(apiRoundRobinSchema)
 export const apiRoundRobinWhatsAppSessionOptionListResponseSchema = apiEnvelopeSchema(
   z.array(apiRoundRobinWhatsAppSessionOptionSchema),
+)
+export const apiRoundRobinMetaFormOptionListResponseSchema = apiEnvelopeSchema(
+  z.array(apiRoundRobinMetaFormOptionSchema),
 )
 export const apiRoundRobinRuleListResponseSchema = apiEnvelopeSchema(z.array(apiRoundRobinRuleSchema))
 export const apiRoundRobinRuleResponseSchema = apiEnvelopeSchema(apiRoundRobinRuleSchema)

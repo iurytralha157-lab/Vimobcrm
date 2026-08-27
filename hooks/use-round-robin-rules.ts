@@ -111,6 +111,7 @@ export function useCreateRoundRobinRule() {
         queryKey: roundRobinRulesQueryKey(organizationId, variables.round_robin_id),
       });
       queryClient.invalidateQueries({ queryKey: allRoundRobinRulesQueryKey(organizationId) });
+      queryClient.invalidateQueries({ queryKey: ['round-robin-meta-forms', organizationId] });
       queryClient.invalidateQueries({ queryKey: roundRobinsQueryKey(organizationId) });
       toast.success('Regra criada com sucesso!');
     },
@@ -144,6 +145,7 @@ export function useUpdateRoundRobinRule() {
         queryKey: roundRobinRulesQueryKey(organizationId, variables.round_robin_id),
       });
       queryClient.invalidateQueries({ queryKey: allRoundRobinRulesQueryKey(organizationId) });
+      queryClient.invalidateQueries({ queryKey: ['round-robin-meta-forms', organizationId] });
       queryClient.invalidateQueries({ queryKey: roundRobinsQueryKey(organizationId) });
       toast.success('Regra atualizada!');
     },
@@ -167,6 +169,7 @@ export function useDeleteRoundRobinRule() {
         queryKey: roundRobinRulesQueryKey(organizationId, roundRobinId),
       });
       queryClient.invalidateQueries({ queryKey: allRoundRobinRulesQueryKey(organizationId) });
+      queryClient.invalidateQueries({ queryKey: ['round-robin-meta-forms', organizationId] });
       queryClient.invalidateQueries({ queryKey: roundRobinsQueryKey(organizationId) });
       toast.success('Regra excluida!');
     },

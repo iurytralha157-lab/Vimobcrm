@@ -3072,6 +3072,26 @@ paths:
                       $ref: "#/components/schemas/RoundRobinWhatsAppSessionOption"
         "403":
           $ref: "#/components/responses/APIError"
+  /v1/round-robin-meta-forms:
+    get:
+      summary: List configured Meta forms available to distribution rules
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Lightweight configured Meta form list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RoundRobinMetaFormOption"
+        "403":
+          $ref: "#/components/responses/APIError"
   /v1/round-robins:
     get:
       summary: List round-robin queues
@@ -8893,6 +8913,29 @@ components:
           type: string
           enum: [evolution_go]
         isActive:
+          type: boolean
+    RoundRobinMetaFormOption:
+      type: object
+      additionalProperties: false
+      required: [configId, formId, isActive, integrationConnected]
+      properties:
+        configId:
+          type: string
+          format: uuid
+        formId:
+          type: string
+        formName:
+          type: string
+        pageId:
+          type: string
+        pageName:
+          type: string
+        roundRobinId:
+          type: string
+          format: uuid
+        isActive:
+          type: boolean
+        integrationConnected:
           type: boolean
     RoundRobinRule:
       type: object

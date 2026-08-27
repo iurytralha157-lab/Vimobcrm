@@ -1,11 +1,10 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useMemo } from "react";
 import { PropertyPickerDialog } from "@/components/features/properties/PropertyPickerDialog";
 import { createClientId } from "@/lib/client-id";
 import { Button } from "@/components/ui/button";
@@ -59,9 +58,10 @@ import { useTags } from "@/hooks/use-tags";
 import { useProperties } from "@/hooks/use-properties";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useWebhooks } from "@/hooks/use-webhooks";
-import { useRoundRobinWhatsAppSessions } from "@/hooks/use-round-robins";
-import { useMetaFormConfigs } from "@/hooks/use-meta-forms";
-import { useMetaIntegrations } from "@/hooks/use-meta-integration";
+import {
+  useRoundRobinMetaForms,
+  useRoundRobinWhatsAppSessions,
+} from "@/hooks/use-round-robins";
 import { cn } from "@/lib/utils";
 import {
   activeTeamsForUser,
@@ -217,6 +217,11 @@ function isRuleConditionType(value: unknown): value is RuleConditionType {
     typeof value === "string" &&
     CONDITION_TYPES.some((condition) => condition.value === value)
   );
+}
+
+function normalizeRuleConditionType(value: unknown): RuleConditionType {
+  if (value === 'form') return 'meta_form';
+  return isRuleConditionType(value) ? value : 'source';
 }
 
 function whatsappSessionIdFromMatch(match: unknown): string {
@@ -425,11 +430,12 @@ export function DistributionQueueEditor({
   );
   const { data: webhooks = [] } = useWebhooks();
   const { data: whatsappSessions = [] } = useRoundRobinWhatsAppSessions();
-  const { data: metaIntegrations = [] } = useMetaIntegrations();
-  const activeMetaIntegration = metaIntegrations.find((i) => i.is_connected);
-  const { data: metaFormConfigs = [] } = useMetaFormConfigs(
-    activeMetaIntegration?.id,
-  );
+  const {
+    data: metaFormConfigs = [],
+    isLoading: metaFormsLoading,
+    isFetching: metaFormsFetching,
+    isError: metaFormsError,
+  } = useRoundRobinMetaForms();
   const hasTeamRestriction = Array.isArray(allowedTeamIds);
   const hasUserRestriction = Array.isArray(allowedUserIds);
   const hasPipelineRestriction = Array.isArray(allowedPipelineIds);
@@ -588,9 +594,7 @@ export function DistributionQueueEditor({
     if (queue) {
       const existingConditions: RuleCondition[] = (queue.rules || []).map(
         (rule) => {
-          const matchType = isRuleConditionType(rule.match_type)
-            ? rule.match_type
-            : "source";
+          const matchType = normalizeRuleConditionType(rule.match_type);
           const matchValueStr = rule.match_value || "";
           const sessionId =
             matchType === "whatsapp_message_contains"
@@ -1062,14 +1066,36 @@ export function DistributionQueueEditor({
       }
     }
     const sanitizedConditions = formData.conditions
-      .map((condition) => ({
-        ...condition,
-        values: condition.values.map((value) => value.trim()).filter(Boolean),
-        sessionId: condition.type === 'whatsapp_message_contains'
-          ? condition.sessionId?.trim()
-          : undefined,
-      }))
+      .map((condition) => {
+        const trimmedValues = condition.values.map((value) => value.trim()).filter(Boolean);
+        const values = condition.type === 'meta_form'
+          ? Array.from(new Set(trimmedValues.map((value) => (
+              metaFormConfigs.find(form => form.config_id === value)?.form_id || value
+            ))))
+          : trimmedValues;
+        return {
+          ...condition,
+          values,
+          sessionId: condition.type === 'whatsapp_message_contains'
+            ? condition.sessionId?.trim()
+            : undefined,
+        };
+      })
       .filter((condition) => condition.values.length > 0);
+    const selectedMetaFormIds = new Set(
+      sanitizedConditions
+        .filter(condition => condition.type === 'meta_form')
+        .flatMap(condition => condition.values),
+    );
+    const conflictingMetaForm = metaFormConfigs.find(form => (
+      (selectedMetaFormIds.has(form.form_id) || selectedMetaFormIds.has(form.config_id))
+      && Boolean(form.round_robin_id)
+      && form.round_robin_id !== queue?.id
+    ));
+    if (conflictingMetaForm) {
+      toast.error(`O formulário "${conflictingMetaForm.form_name || conflictingMetaForm.form_id}" já está vinculado a outra fila.`);
+      return;
+    }
     const sanitizedHasWhatsAppMessageCondition = sanitizedConditions.some(
       (condition) => condition.type === "whatsapp_message_contains",
     );
@@ -1185,39 +1211,155 @@ export function DistributionQueueEditor({
             </div>
           </div>
         );
-      case "meta_form":
+      case "meta_form": {
+        const knownFormIds = new Set(
+          metaFormConfigs.flatMap((form) => [form.form_id, form.config_id]),
+        );
+        const unavailableFormIds = condition.values.filter(
+          (formId) => !knownFormIds.has(formId),
+        );
+        const visibleMetaForms = metaFormConfigs.filter(
+          (form) =>
+            (form.is_active && form.integration_connected) ||
+            condition.values.includes(form.form_id) ||
+            condition.values.includes(form.config_id) ||
+            form.round_robin_id === queue?.id,
+        );
+
         return (
           <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">Formularios Meta:</p>
+            <p className="text-xs text-muted-foreground">Formulários Meta:</p>
             <div className="flex flex-wrap gap-1">
-              {metaFormConfigs.length === 0 && (
-                <span className="rounded-md bg-[var(--app-surface)] px-2 py-1 text-xs text-muted-foreground">
-                  Nenhum formulário Meta integrado.
+              {metaFormsLoading &&
+                visibleMetaForms.length === 0 &&
+                unavailableFormIds.length === 0 && (
+                  <span className="rounded-md bg-[var(--app-surface)] px-2 py-1 text-xs text-muted-foreground">
+                    Carregando formulários Meta...
+                  </span>
+                )}
+              {metaFormsError && (
+                <span className="rounded-md bg-destructive/10 px-2 py-1 text-xs text-destructive">
+                  Não foi possível carregar os formulários Meta.
                 </span>
               )}
-              {metaFormConfigs.map((form) => (
+              {!metaFormsLoading &&
+                !metaFormsError &&
+                visibleMetaForms.length === 0 &&
+                unavailableFormIds.length === 0 && (
+                  <span className="rounded-md bg-[var(--app-surface)] px-2 py-1 text-xs text-muted-foreground">
+                    Nenhum formulário Meta ativo configurado nesta organização.
+                  </span>
+                )}
+              {visibleMetaForms.map((form) => {
+                const formValues = [form.form_id, form.config_id];
+                const selected = condition.values.some((value) =>
+                  formValues.includes(value),
+                );
+                const linkedToCurrentQueue =
+                  Boolean(queue?.id) && form.round_robin_id === queue?.id;
+                const linkedToAnotherQueue =
+                  Boolean(form.round_robin_id) && !linkedToCurrentQueue;
+                const available = form.is_active && form.integration_connected;
+                const canToggle =
+                  selected ||
+                  (!metaFormsFetching &&
+                    !metaFormsError &&
+                    available &&
+                    !linkedToAnotherQueue);
+                const statusLabel = linkedToAnotherQueue
+                  ? "Outra fila"
+                  : !form.is_active
+                    ? "Inativo"
+                    : !form.integration_connected
+                      ? "Desconectado"
+                      : linkedToCurrentQueue
+                        ? "Nesta fila"
+                        : null;
+                const toggleForm = () => {
+                  if (!canToggle) return;
+                  const newValues = selected
+                    ? condition.values.filter(
+                        (value) => !formValues.includes(value),
+                      )
+                    : [...condition.values, form.form_id];
+                  updateCondition(condition.id, { values: newValues });
+                };
+
+                return (
+                  <Badge
+                    key={form.form_id}
+                    variant="outline"
+                    role="button"
+                    aria-pressed={selected}
+                    aria-disabled={!canToggle}
+                    tabIndex={canToggle ? 0 : -1}
+                    title={
+                      linkedToAnotherQueue
+                        ? "Este formulário já está vinculado a outra fila."
+                        : undefined
+                    }
+                    className={cn(
+                      conditionOptionBadgeClass(selected),
+                      "gap-1",
+                      !canToggle &&
+                        "!cursor-not-allowed opacity-60 hover:bg-[var(--app-surface-solid)]",
+                    )}
+                    onClick={toggleForm}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        toggleForm();
+                      }
+                    }}
+                  >
+                    {form.form_name || form.form_id}
+                    <span className="font-normal opacity-70">
+                      · {form.page_name || form.page_id || "Página Meta"}
+                    </span>
+                    {statusLabel && (
+                      <span className="rounded bg-black/10 px-1 text-[10px] font-normal">
+                        {statusLabel}
+                      </span>
+                    )}
+                  </Badge>
+                );
+              })}
+              {unavailableFormIds.map((formId) => (
                 <Badge
-                  key={form.form_id}
+                  key={formId}
                   variant="outline"
-                  className={cn(
-                    conditionOptionBadgeClass(
-                      condition.values.includes(form.form_id),
-                    ),
-                    "gap-1",
-                  )}
-                  onClick={() => {
-                    const newValues = condition.values.includes(form.form_id)
-                      ? condition.values.filter((v) => v !== form.form_id)
-                      : [...condition.values, form.form_id];
-                    updateCondition(condition.id, { values: newValues });
+                  role="button"
+                  aria-pressed={true}
+                  tabIndex={0}
+                  className={cn(conditionOptionBadgeClass(true), "gap-1")}
+                  onClick={() =>
+                    updateCondition(condition.id, {
+                      values: condition.values.filter(
+                        (value) => value !== formId,
+                      ),
+                    })
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      updateCondition(condition.id, {
+                        values: condition.values.filter(
+                          (value) => value !== formId,
+                        ),
+                      });
+                    }
                   }}
                 >
-                  {form.form_name || form.form_id}
+                  {formId}
+                  <span className="rounded bg-black/10 px-1 text-[10px] font-normal">
+                    Indisponível
+                  </span>
                 </Badge>
               ))}
             </div>
           </div>
         );
+      }
       case "website_category":
         return (
           <div className="flex flex-wrap gap-1">

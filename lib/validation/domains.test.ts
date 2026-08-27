@@ -45,6 +45,7 @@ import {
 } from "./settings";
 import {
   addRoundRobinMemberInputSchema,
+  apiRoundRobinMetaFormOptionListResponseSchema,
   availabilityInputSchema,
   bulkAvailabilityInputSchema,
   contactListQuerySchema,
@@ -100,6 +101,31 @@ const dashboardOpenAPISource = readFileSync(
   "packages/contracts/openapi/v1.yaml",
   "utf8",
 );
+
+test('opções de formulário Meta da distribuição aceitam somente o contrato mínimo', () => {
+  assert.equal(apiRoundRobinMetaFormOptionListResponseSchema.safeParse({
+    data: [{
+      configId: ID,
+      formId: '1748389402409199',
+      formName: 'Gambino Guarulhos',
+      pageId: '104245329422343',
+      pageName: 'Gambino Facilita Apartamentos',
+      roundRobinId: ID,
+      isActive: true,
+      integrationConnected: true,
+    }],
+  }).success, true)
+
+  assert.equal(apiRoundRobinMetaFormOptionListResponseSchema.safeParse({
+    data: [{
+      configId: ID,
+      formId: '1748389402409199',
+      isActive: true,
+      integrationConnected: true,
+      accessToken: 'não deve atravessar esta fronteira',
+    }],
+  }).success, false)
+})
 
 const validAutomationFlow = {
   nodes: [

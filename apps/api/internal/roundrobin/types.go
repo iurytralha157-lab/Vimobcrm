@@ -87,6 +87,17 @@ type WhatsAppSessionOption struct {
 	IsActive     bool   `json:"isActive"`
 }
 
+type MetaFormOption struct {
+	ConfigID             string `json:"configId"`
+	FormID               string `json:"formId"`
+	FormName             string `json:"formName,omitempty"`
+	PageID               string `json:"pageId,omitempty"`
+	PageName             string `json:"pageName,omitempty"`
+	RoundRobinID         string `json:"roundRobinId,omitempty"`
+	IsActive             bool   `json:"isActive"`
+	IntegrationConnected bool   `json:"integrationConnected"`
+}
+
 type Rule struct {
 	ID           string         `json:"id"`
 	RoundRobinID string         `json:"roundRobinId"`

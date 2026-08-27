@@ -96,6 +96,7 @@ export function useCreateQueueAdvanced() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['round-robins', organizationId] });
       queryClient.invalidateQueries({ queryKey: ['round-robin-rules', organizationId] });
+      queryClient.invalidateQueries({ queryKey: ['round-robin-meta-forms', organizationId] });
       toast.success('Fila de distribuicao criada!');
     },
     onError: (error) => {
@@ -117,6 +118,7 @@ export function useUpdateQueueAdvanced() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['round-robins', organizationId] });
       queryClient.invalidateQueries({ queryKey: ['round-robin-rules', organizationId] });
+      queryClient.invalidateQueries({ queryKey: ['round-robin-meta-forms', organizationId] });
       toast.success('Fila atualizada!');
     },
     onError: (error) => {

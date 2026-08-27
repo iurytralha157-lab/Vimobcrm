@@ -106,6 +106,24 @@ export function useRoundRobinWhatsAppSessions() {
   });
 }
 
+export function useRoundRobinMetaForms() {
+  const scope = useWhatsAppQueryScope();
+
+  return useQuery({
+    queryKey: [
+      'round-robin-meta-forms',
+      scope.organizationId ?? 'none',
+      scope.userId ?? 'none',
+      scope.accessScope,
+    ],
+    queryFn: () => roundRobinsAPI.getMetaFormOptions(scope.organizationId ?? undefined),
+    enabled: !!scope.organizationId && !!scope.userId,
+    staleTime: 60_000,
+    refetchOnMount: 'always',
+    refetchOnReconnect: true,
+  });
+}
+
 export function useUpdateRoundRobin() {
   const queryClient = useQueryClient();
   const organizationId = useActiveOrganizationId();
@@ -139,6 +157,7 @@ export function useDeleteRoundRobin() {
     mutationFn: (id: string) => roundRobinsAPI.deleteRoundRobin(id, requireOrganizationId(organizationId)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: roundRobinsQueryKey(organizationId) });
+      queryClient.invalidateQueries({ queryKey: ['round-robin-meta-forms', organizationId] });
       toast.success('Roleta excluida!');
     },
     onError: (error) => {

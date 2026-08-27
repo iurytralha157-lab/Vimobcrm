@@ -282,3 +282,32 @@ test("mutacoes financeiras falham fechadas sem organizacao ativa", () => {
     6,
   );
 });
+test("distribuicao reconhece formularios Meta por uma leitura propria e limitada", () => {
+  const appSource = readFileSync(
+    resolve(process.cwd(), "apps/api/internal/app/app.go"),
+    "utf8",
+  );
+  const editorSource = readFileSync(
+    resolve(
+      process.cwd(),
+      "components/features/round-robin/DistributionQueueEditor.tsx",
+    ),
+    "utf8",
+  );
+  const tabSource = readFileSync(
+    resolve(
+      process.cwd(),
+      "components/features/crm-management/DistributionTab.tsx",
+    ),
+    "utf8",
+  );
+
+  assert.match(
+    appSource,
+    /GET \/v1\/round-robin-meta-forms[^\n]+permissions\.DistributionManage/,
+  );
+  for (const source of [editorSource, tabSource]) {
+    assert.match(source, /useRoundRobinMetaForms/);
+    assert.doesNotMatch(source, /useMetaFormConfigs|useMetaIntegrations/);
+  }
+});

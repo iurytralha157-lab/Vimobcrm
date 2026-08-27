@@ -4,6 +4,7 @@ import {
   apiRoundRobinListResponseSchema,
   apiRoundRobinMemberListResponseSchema,
   apiRoundRobinMemberResponseSchema,
+  apiRoundRobinMetaFormOptionListResponseSchema,
   apiRoundRobinResponseSchema,
   apiRoundRobinRuleListResponseSchema,
   apiRoundRobinRuleResponseSchema,
@@ -109,6 +110,17 @@ type APIRoundRobinWhatsAppSessionOption = {
   isActive: boolean
 }
 
+type APIRoundRobinMetaFormOption = {
+  configId: string
+  formId: string
+  formName?: string
+  pageId?: string
+  pageName?: string
+  roundRobinId?: string
+  isActive: boolean
+  integrationConnected: boolean
+}
+
 export type RoundRobinWhatsAppSessionOption = {
   id: string
   instance_name: string
@@ -117,6 +129,17 @@ export type RoundRobinWhatsAppSessionOption = {
   status: string
   provider: 'evolution_go'
   is_active: boolean
+}
+
+export type RoundRobinMetaFormOption = {
+  config_id: string
+  form_id: string
+  form_name: string | null
+  page_id: string | null
+  page_name: string | null
+  round_robin_id: string | null
+  is_active: boolean
+  integration_connected: boolean
 }
 
 type QueueConditionInput = {
@@ -173,6 +196,29 @@ export type LegacyRoundRobinMember = Omit<RoundRobinMemberRow, 'organization_id'
 }
 
 export const roundRobinsAPI = {
+  async getMetaFormOptions(organizationId?: string) {
+    const response = await vimobAPIRequest<APIListResponse<APIRoundRobinMetaFormOption>>(
+      '/v1/round-robin-meta-forms',
+      { organizationId },
+    )
+    validateDomainResponse(
+      apiRoundRobinMetaFormOptionListResponseSchema,
+      response,
+      'round-robin.meta-forms.list',
+    )
+
+    return response.data.map((form): RoundRobinMetaFormOption => ({
+      config_id: form.configId,
+      form_id: form.formId,
+      form_name: form.formName || null,
+      page_id: form.pageId || null,
+      page_name: form.pageName || null,
+      round_robin_id: form.roundRobinId || null,
+      is_active: form.isActive,
+      integration_connected: form.integrationConnected,
+    }))
+  },
+
   async getWhatsAppSessionOptions(organizationId?: string) {
     const response = await vimobAPIRequest<APIListResponse<APIRoundRobinWhatsAppSessionOption>>(
       '/v1/round-robin-whatsapp-sessions',

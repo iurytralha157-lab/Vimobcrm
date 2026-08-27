@@ -28,17 +28,16 @@ import {
   UsersRound,
 } from "lucide-react";
 import {
+  useDeleteRoundRobin,
+  useRoundRobinMetaForms,
   useRoundRobins,
   useRoundRobinWhatsAppSessions,
   useUpdateRoundRobin,
-  useDeleteRoundRobin,
   RoundRobin as RoundRobinType,
 } from "@/hooks/use-round-robins";
 import { useTeams } from "@/hooks/use-teams";
 import { useTags } from "@/hooks/use-tags";
 import { useProperties } from "@/hooks/use-properties";
-import { useMetaIntegrations } from "@/hooks/use-meta-integration";
-import { useMetaFormConfigs } from "@/hooks/use-meta-forms";
 import { useWebhooks } from "@/hooks/use-webhooks";
 import {
   useCreateQueueAdvanced,
@@ -123,11 +122,7 @@ export function DistributionTab() {
   const { data: properties = EMPTY_LIST } = useProperties();
   const { data: webhooks = EMPTY_LIST } = useWebhooks();
   const { data: whatsappSessions = EMPTY_LIST } = useRoundRobinWhatsAppSessions();
-  const { data: metaIntegrations = EMPTY_LIST } = useMetaIntegrations();
-  const activeMetaIntegration = metaIntegrations.find((i) => i.is_connected);
-  const { data: metaFormConfigs = EMPTY_LIST } = useMetaFormConfigs(
-    activeMetaIntegration?.id,
-  );
+  const { data: metaFormConfigs = EMPTY_LIST } = useRoundRobinMetaForms();
   const updateRoundRobin = useUpdateRoundRobin();
   const deleteRoundRobin = useDeleteRoundRobin();
   const createQueue = useCreateQueueAdvanced();
@@ -284,9 +279,12 @@ export function DistributionTab() {
 
     if (rule.match_type === "meta_form" || rule.match_type === "form") {
       const metaForm = metaFormConfigs.find(
-        (f) => f.form_id === rule.match_value || f.id === rule.match_value,
+        (form) =>
+          form.form_id === rule.match_value ||
+          form.config_id === rule.match_value,
       );
-      return `Formulário: ${metaForm?.form_name || rule.match_value}`;
+      const pageLabel = metaForm?.page_name || metaForm?.page_id;
+      return `Formulário: ${metaForm?.form_name || rule.match_value}${pageLabel ? ` · ${pageLabel}` : ""}`;
     }
 
     if (rule.match_type === "webhook") {
