@@ -34,6 +34,22 @@ func (handler Handler) ListWhatsAppSessionOptions(w http.ResponseWriter, r *http
 	httpserver.WriteJSON(w, http.StatusOK, map[string][]WhatsAppSessionOption{"data": items})
 }
 
+func (handler Handler) ListMetaFormOptions(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+
+	items, err := handler.repo.ListMetaFormOptions(r.Context(), tenantContext)
+	if err != nil {
+		writeRoundRobinError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, map[string][]MetaFormOption{"data": items})
+}
+
 func (handler Handler) List(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := tenant.FromContext(r.Context())
 	if !ok || tenantContext.OrganizationID == "" {
