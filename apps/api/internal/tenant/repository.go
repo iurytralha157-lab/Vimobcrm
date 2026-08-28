@@ -264,6 +264,7 @@ func (repo Repository) refreshCachedContext(ctx context.Context, tenantContext *
 		where om.user_id = $1::uuid
 		  and om.organization_id = $2::uuid
 		  and coalesce(om.is_active, false) = true
+		  and om.deleted_at is null
 		  and coalesce(u.is_active, false) = true
 		  and coalesce(o.is_active, true) = true
 		limit 1
@@ -498,6 +499,7 @@ func (repo Repository) getActiveMembership(ctx context.Context, userID string, o
 		  on om.user_id = u.id
 		 and om.organization_id = o.id
 		 and coalesce(om.is_active, false) = true
+		 and om.deleted_at is null
 		where u.id = $1::uuid
 		  and coalesce(u.is_active, false) = true
 		  and coalesce(o.is_active, true) = true
@@ -538,6 +540,7 @@ func (repo Repository) defaultActiveOrganizationID(ctx context.Context, userID s
 		join public.organizations o on o.id = om.organization_id
 		where om.user_id = $1::uuid
 		  and coalesce(om.is_active, false) = true
+		  and om.deleted_at is null
 		  and coalesce(u.is_active, false) = true
 		  and coalesce(o.is_active, true) = true
 		order by

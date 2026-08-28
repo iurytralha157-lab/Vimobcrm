@@ -201,6 +201,7 @@ export type VimobCoreDatabase = {
           user_id: string
           role: string
           is_active: boolean
+          deleted_at: string | null
           joined_at: string
           created_at: string
           updated_at: string
@@ -211,6 +212,7 @@ export type VimobCoreDatabase = {
           user_id: string
           role?: string
           is_active?: boolean
+          deleted_at?: string | null
           joined_at?: string
           created_at?: string
           updated_at?: string

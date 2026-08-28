@@ -387,6 +387,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	})
 	portalsHandler := portals.NewHandler(portalsRepository).WithPublicClientIPResolver(publicClientIPResolver)
 
+	withAuth := func(handler http.Handler) http.Handler {
+		return httpserver.RequireAuth(authVerifier, handler)
+	}
+
 	billingAccessAllowlist := tenant.NewBillingAccessAllowlist(
 		"GET /v1/me",
 		"GET /v1/me/profile",
@@ -409,8 +413,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		"POST /v1/help/search",
 	)
 	withAuthTenant := func(handler http.Handler) http.Handler {
-		return httpserver.RequireAuth(
-			authVerifier,
+		return withAuth(
 			tenant.Attach(
 				tenantRepository,
 				tenant.RequireBillingAccess(billingAccessAllowlist, handler),
@@ -911,7 +914,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("GET /v1/property-captors/{id}", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ShowPropertyCaptor)))
 	mux.Handle("GET /v1/property-site-info", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ShowPropertySiteInfo)))
 	mux.Handle("GET /v1/property-summaries", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListPropertySummaries)))
-	mux.Handle("GET /v1/user-organizations", withAuthTenant(http.HandlerFunc(usersHandler.ListUserOrganizations)))
+	mux.Handle("GET /v1/user-organizations", withAuth(http.HandlerFunc(usersHandler.ListUserOrganizations)))
 	mux.Handle("GET /v1/users", withOrganization(http.HandlerFunc(usersHandler.ListOrganizationUsers)))
 	mux.Handle("POST /v1/users", withPermission(permissions.UsersManage, http.HandlerFunc(usersHandler.CreateOrganizationUser)))
 	mux.Handle("PATCH /v1/users/{id}", withPermission(permissions.UsersManage, http.HandlerFunc(usersHandler.UpdateOrganizationUser)))

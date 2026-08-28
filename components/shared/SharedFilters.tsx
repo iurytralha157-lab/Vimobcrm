@@ -17,6 +17,7 @@ import { DatePreset } from "@/hooks/use-dashboard-filters";
 import { DateFilterPopover } from "@/components/ui/date-filter-popover";
 import { BRAND_COLORS } from "@/config/brand-colors";
 import { normalizeSearchText, searchTextIncludes } from "@/lib/search-text";
+import { getUserFilterLabel } from "@/lib/user-display";
 
 interface SharedFiltersProps {
   datePreset: DatePreset;
@@ -129,7 +130,10 @@ export function SharedFilters({
   const canViewTeamLeads = hasPermission("lead_view_team");
   const canUseScopeFilters = canViewAllLeads || canViewTeamLeads;
   const { data: teams = [] } = useTeams({ enabled: loadDynamicOptions && canUseScopeFilters });
-  const { data: users = [] } = useOrganizationUsers({ enabled: loadDynamicOptions && canUseScopeFilters });
+  const { data: users = [] } = useOrganizationUsers({
+    enabled: loadDynamicOptions && canUseScopeFilters,
+    scope: 'filters',
+  });
   const isMobile = useIsMobile();
   const useMobileIcons = isMobile && mobileIconOnly;
   const currentUserId = user?.id;
@@ -545,7 +549,7 @@ export function SharedFilters({
                               <User className="h-3.5 w-3.5 flex-shrink-0" />
                             </span>
                           )}
-                          <span className="truncate">{selectedUser?.name || "Todos"}</span>
+                          <span className="truncate">{selectedUser ? getUserFilterLabel(selectedUser) : "Todos"}</span>
                         </span>
                         <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
                       </Button>
@@ -607,9 +611,7 @@ export function SharedFilters({
                                     <AvatarImage src={availableUser.avatar_url || undefined} alt={availableUser.name || availableUser.email || "Corretor"} />
                                     <AvatarFallback className="text-[10px]">{getUserInitials(availableUser.name, availableUser.email)}</AvatarFallback>
                                   </Avatar>
-                                  <span className="truncate">
-                                    {availableUser.name || availableUser.email || "Usuário"}
-                                  </span>
+                                  <span className="truncate">{getUserFilterLabel(availableUser)}</span>
                                 </CommandItem>
                               ))}
                               {hiddenUsersCount > 0 && (

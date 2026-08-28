@@ -424,7 +424,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           organizationRef.current?.id || profileRef.current?.organization_id || null;
         authDebug('[AuthContext] found', count, 'active organizations');
 
-        if (count === 1) {
+        if (count === 0) {
+          authDebugWarn('[AuthContext] no active organization remains for this user');
+          localStorage.removeItem(`vimob_active_organization_${userId}`);
+          localStorage.removeItem(authSnapshotKey(userId));
+          organizationRef.current = null;
+          setOrganization(null);
+          setTenantContext(null);
+          setProfile((currentProfile) => {
+            const nextProfile = currentProfile ? { ...currentProfile, organization_id: null } : currentProfile;
+            profileRef.current = nextProfile;
+            return nextProfile;
+          });
+        } else if (count === 1) {
           const onlyOrgId = uniqueOrgs[0].organization_id;
           
           if (currentOrganizationId !== onlyOrgId) {

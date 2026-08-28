@@ -246,8 +246,7 @@ func (repo Repository) attachLeadEnrichmentsBatch(
 			  on om.user_id = u.id
 			 and om.organization_id = $1::uuid
 			where u.id in (`+uuidPlaceholders(2, userIDs)+`)
-			  and coalesce(u.is_active, false) = true
-			  and coalesce(om.is_active, false) = true
+			  and om.deleted_at is null
 		`, userArgs...).Query(func(rows pgx.Rows) error {
 			usersByID := map[string]*LeadEnrichmentUser{}
 			for rows.Next() {

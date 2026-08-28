@@ -8682,6 +8682,7 @@ export type Database = {
       organization_members: {
         Row: {
           created_at: string
+          deleted_at: string | null
           id: string
           is_active: boolean
           joined_at: string
@@ -8692,6 +8693,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          deleted_at?: string | null
           id?: string
           is_active?: boolean
           joined_at?: string
@@ -8702,6 +8704,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          deleted_at?: string | null
           id?: string
           is_active?: boolean
           joined_at?: string

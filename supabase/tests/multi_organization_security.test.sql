@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(17);
+select plan(31);
 
 insert into auth.users (
   instance_id,
@@ -253,8 +253,161 @@ select results_eq(
   array[0::bigint],
   'inactive member sees no leads'
 );
+select ok(
+  private.get_user_organization_id() is null,
+  'inactive member has no canonical organization in legacy RLS helpers'
+);
+select results_eq(
+  $$select count(*)::bigint from public.pipelines$$,
+  array[0::bigint],
+  'inactive member sees no pipelines through the Data API'
+);
+select results_eq(
+  $$select count(*)::bigint from public.organizations where id = '20000000-0000-0000-0000-000000000001'$$,
+  array[0::bigint],
+  'inactive member cannot read the organization row'
+);
+select throws_ok(
+  $$insert into public.pipelines (organization_id, name, position, is_active) values ('20000000-0000-0000-0000-000000000001', 'Blocked inactive pipeline', 99, true)$$,
+  '42501',
+  null,
+  'inactive member cannot create tenant data through the Data API'
+);
 
 reset role;
+update public.organization_members
+set is_active = true,
+    deleted_at = null,
+    updated_at = now()
+where organization_id = '20000000-0000-0000-0000-000000000001'
+  and user_id = '10000000-0000-0000-0000-000000000003';
+
+update public.whatsapp_sessions
+set owner_user_id = '10000000-0000-0000-0000-000000000003'
+where id = '60000000-0000-0000-0000-000000000001';
+
+delete from public.user_roles
+where user_id = '10000000-0000-0000-0000-000000000003';
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '10000000-0000-0000-0000-000000000003', true);
+select results_eq(
+  $$select count(*)::bigint from public.pipelines$$,
+  array[1::bigint],
+  'reactivating the membership restores organization access'
+);
+
+reset role;
+update public.organization_members
+set is_active = false,
+    deleted_at = now(),
+    updated_at = now()
+where organization_id = '20000000-0000-0000-0000-000000000001'
+  and user_id = '10000000-0000-0000-0000-000000000003';
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '10000000-0000-0000-0000-000000000003', true);
+select results_eq(
+  $$select count(*)::bigint from public.pipelines$$,
+  array[0::bigint],
+  'an explicitly deleted membership stays outside the organization'
+);
+
+reset role;
+update public.organization_members
+set is_active = true,
+    updated_at = now()
+where organization_id = '20000000-0000-0000-0000-000000000001'
+  and user_id = '10000000-0000-0000-0000-000000000003';
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '10000000-0000-0000-0000-000000000003', true);
+select ok(
+  not private.is_org_member('20000000-0000-0000-0000-000000000001'),
+  'a tombstone cannot be bypassed by setting only is_active back to true'
+);
+select results_eq(
+  $$select count(*)::bigint from public.pipelines$$,
+  array[0::bigint],
+  'a tombstoned membership remains blocked by RLS'
+);
+select ok(
+  not public.vimob_can_access_whatsapp_session('60000000-0000-0000-0000-000000000001', 'view'),
+  'a tombstoned owner cannot bypass organization access through the WhatsApp helper'
+);
+select throws_ok(
+  $$insert into public.user_roles (user_id, role) values ('10000000-0000-0000-0000-000000000003', 'super_admin')$$,
+  '42501',
+  null,
+  'authenticated users cannot self-assign super_admin to bypass tenant guards'
+);
+
+reset role;
+
+update public.organization_members
+set is_active = false,
+    deleted_at = null,
+    updated_at = now()
+where organization_id = '20000000-0000-0000-0000-000000000001'
+  and user_id = '10000000-0000-0000-0000-000000000003';
+
+insert into public.organization_members (organization_id, user_id, role, is_active, deleted_at)
+values ('20000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000003', 'user', true, null)
+on conflict (user_id, organization_id) do update
+set is_active = true,
+    deleted_at = null,
+    updated_at = now();
+
+update public.users
+set organization_id = '20000000-0000-0000-0000-000000000002',
+    is_active = true,
+    role = 'user',
+    updated_at = now()
+where id = '10000000-0000-0000-0000-000000000003';
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '10000000-0000-0000-0000-000000000003', true);
+select set_config('request.jwt.claim.role', 'authenticated', true);
+select ok(
+  not private.is_org_member('20000000-0000-0000-0000-000000000001')
+    and private.is_org_member('20000000-0000-0000-0000-000000000002'),
+  'multi-organization user keeps only the organization whose membership is active'
+);
+select results_eq(
+  $$select count(*)::bigint from public.pipelines where organization_id = '20000000-0000-0000-0000-000000000001'
+    union all
+    select count(*)::bigint from public.pipelines where organization_id = '20000000-0000-0000-0000-000000000002'$$,
+  array[0::bigint, 1::bigint],
+  'multi-organization RLS hides the suspended tenant and preserves the active tenant'
+);
+
+reset role;
+
+select results_eq(
+  $$select count(*)::bigint
+    from pg_policy policy
+    join pg_class relation on relation.oid = policy.polrelid
+    join pg_namespace namespace on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'public'
+      and relation.relname in ('automation_nodes', 'automation_connections', 'meta_messages')
+      and policy.polname = 'vimob_active_membership_guard'$$,
+  array[3::bigint],
+  'tenant child tables receive explicit active-membership guards'
+);
+select ok(
+  exists (
+    select 1
+    from pg_policy policy
+    join pg_class relation on relation.oid = policy.polrelid
+    join pg_namespace namespace on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'public'
+      and relation.relname = 'properties'
+      and policy.polname = 'vimob_active_membership_guard'
+      and (select oid from pg_roles where rolname = 'authenticated') = any(policy.polroles)
+      and not ((select oid from pg_roles where rolname = 'anon') = any(policy.polroles))
+  ),
+  'active-membership guard applies to authenticated Data API calls without restricting anon policies'
+);
 
 select throws_ok(
   $$insert into public.leads (organization_id, pipeline_id, stage_id, name) values ('20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000002', 'Cross-org lead')$$,

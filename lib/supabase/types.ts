@@ -78,10 +78,14 @@ export interface Database {
           organization_id: string
           role: string
           is_active: boolean
+          deleted_at: string | null
           joined_at: string
           updated_at: string
         }
-        Insert: Omit<Database['public']['Tables']['organization_members']['Row'], 'id' | 'joined_at' | 'updated_at'>
+        Insert: Omit<
+          Database['public']['Tables']['organization_members']['Row'],
+          'id' | 'joined_at' | 'updated_at' | 'deleted_at'
+        > & { deleted_at?: string | null }
         Update: Partial<Database['public']['Tables']['organization_members']['Row']>
       }
     }

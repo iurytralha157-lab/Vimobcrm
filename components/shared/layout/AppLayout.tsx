@@ -152,6 +152,7 @@ export function AppLayout({ children, title, belowHeader, disableMainScroll = fa
     user &&
       authInitialized &&
       !loading &&
+      (!organizationsLoaded || isInitializingOrg) &&
       (pathname?.startsWith('/dashboard') || pathname === DEFAULT_AUTHENTICATED_ROUTE),
   );
   const allowRender = !!organization || isSuperAdmin || !!impersonating || allowInitialShell;
@@ -208,9 +209,12 @@ export function AppLayout({ children, title, belowHeader, disableMainScroll = fa
     if (allowRender || loading || !authInitialized || !organizationsLoaded || isInitializingOrg) return;
 
     const hasSelectableOrganization = userOrganizations.some((org) => org.is_active);
-    if (!hasSelectableOrganization) return;
-
     const redirectTo = pathname || DEFAULT_AUTHENTICATED_ROUTE;
+    if (!hasSelectableOrganization) {
+      router.replace('/select-organization');
+      return;
+    }
+
     const params = new URLSearchParams({ redirectTo });
     router.replace(`/select-organization?${params.toString()}`);
   }, [

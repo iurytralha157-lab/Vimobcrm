@@ -65,6 +65,7 @@ import {
 } from "@/lib/access/properties";
 import { cn } from "@/lib/utils";
 import { getPropertySiteInfo } from "@/lib/api/property-support";
+import { getUserFilterLabel } from "@/lib/user-display";
 
 const formatPrice = (value: number | null, tipo: string | null) => {
   if (!value) return "Preço não informado";
@@ -125,7 +126,7 @@ export default function Properties() {
   );
   const canDeleteProperty = canDeleteProperties(propertyAccessContext);
   const canCreateProperty = canManageProperties(propertyAccessContext);
-  const { data: users = [] } = useUsers();
+  const { data: users = [] } = useUsers({ scope: "filters" });
   const { data: propertyTypes = [] } = usePropertyTypes();
   const { data: propertyOwners = [] } = usePropertyOwners();
   const { data: cities = [] } = usePropertyCities();
@@ -296,8 +297,9 @@ export default function Properties() {
               : availabilityValue === "private"
                 ? "Privado / fora do site"
                 : "Disponibilidade";
-  const responsibleLabel =
-    selectedResponsible?.name || selectedResponsible?.email || "Responsável";
+  const responsibleLabel = selectedResponsible
+    ? getUserFilterLabel(selectedResponsible)
+    : "Responsável";
   const permutaLabel =
     filters.aceita_permuta === "true"
       ? "Aceita permuta"
@@ -535,7 +537,7 @@ export default function Properties() {
                 <SelectItem value={ALL_FILTER_VALUE}>Todos</SelectItem>
                 {users.map((user) => (
                   <SelectItem key={user.id} value={user.id}>
-                    {user.name || user.email}
+                    {getUserFilterLabel(user)}
                   </SelectItem>
                 ))}
               </SelectContent>

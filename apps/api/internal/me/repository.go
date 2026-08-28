@@ -101,6 +101,7 @@ func (repo Repository) SwitchOrganization(ctx context.Context, tenantContext ten
 		set updated_at = now()
 		where user_id = $1::uuid
 		  and organization_id = $2::uuid
+		  and deleted_at is null
 	`, tenantContext.UserID, organizationID); err != nil {
 		return err
 	}
@@ -117,6 +118,7 @@ func (repo Repository) activeMemberRole(ctx context.Context, userID string, orga
 		where om.user_id = $1::uuid
 		  and om.organization_id = $2::uuid
 		  and coalesce(om.is_active, false) = true
+		  and om.deleted_at is null
 		  and coalesce(o.is_active, true) = true
 		limit 1
 	`, userID, organizationID).Scan(&role)

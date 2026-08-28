@@ -324,6 +324,7 @@ func (repo Repository) activateInvitationForUser(
 		do update set
 			role = excluded.role,
 			is_active = true,
+			deleted_at = null,
 			updated_at = now()
 	`, invitation.OrganizationID, userID, memberRole); err != nil {
 		return err

@@ -4,6 +4,14 @@ import "errors"
 
 const maxSummaryIDs = 100
 
+type OrganizationUserListScope string
+
+const (
+	OrganizationUserListActive     OrganizationUserListScope = "active"
+	OrganizationUserListManagement OrganizationUserListScope = "management"
+	OrganizationUserListFilters    OrganizationUserListScope = "filters"
+)
+
 var (
 	ErrInvalidInput           = errors.New("invalid user input")
 	ErrUserNotFound           = errors.New("user not found")

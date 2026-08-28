@@ -5,13 +5,16 @@ import { usersAPI, type CreateUserInput, type DeleteUserInput, type UpdateUserIn
 
 export type { CreateUserInput, DeleteUserImpact, DeleteUserInput, UpdateUserInput, User } from '@/lib/api/users';
 
-export function useOrganizationUsers(options?: { enabled?: boolean }) {
+export type OrganizationUsersScope = 'active' | 'management' | 'filters';
+
+export function useOrganizationUsers(options?: { enabled?: boolean; scope?: OrganizationUsersScope }) {
   const { profile, organization } = useAuth();
   const orgId = organization?.id ?? profile?.organization_id;
+  const scope = options?.scope ?? 'active';
 
   return useQuery({
-    queryKey: ['organization-users', orgId],
-    queryFn: () => usersAPI.listUsers(orgId),
+    queryKey: ['organization-users', orgId, scope],
+    queryFn: () => usersAPI.listUsers(orgId, { scope }),
     enabled: !!orgId && (options?.enabled ?? true),
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 60,
@@ -42,7 +45,7 @@ export function useCreateUser() {
   return useMutation({
     mutationFn: (input: CreateUserInput) => usersAPI.createUser(input, orgId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['organization-users'] });
+      queryClient.invalidateQueries({ queryKey: ['organization-users', orgId] });
     },
   });
 }
@@ -55,11 +58,11 @@ export function useUpdateUser() {
   return useMutation({
     mutationFn: (input: UpdateUserInput) => usersAPI.updateUser(input, orgId),
     onSuccess: (updatedUser: User) => {
-      queryClient.setQueriesData<User[]>({ queryKey: ['organization-users'] }, (current) => {
+      queryClient.setQueriesData<User[]>({ queryKey: ['organization-users', orgId] }, (current) => {
         if (!Array.isArray(current)) return current;
         return current.map((user) => (user.id === updatedUser.id ? { ...user, ...updatedUser } : user));
       });
-      queryClient.invalidateQueries({ queryKey: ['organization-users'] });
+      queryClient.invalidateQueries({ queryKey: ['organization-users', orgId] });
       toast.success('Usuário atualizado!');
     },
     onError: (error) => {
@@ -76,7 +79,7 @@ export function useDeleteUser() {
   return useMutation({
     mutationFn: (input: DeleteUserInput) => usersAPI.deleteUser(input, orgId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['organization-users'] });
+      queryClient.invalidateQueries({ queryKey: ['organization-users', orgId] });
     },
   });
 }

@@ -81,6 +81,8 @@ export type UserOrganization = {
   last_accessed_at: string | null;
 };
 
+export type OrganizationUsersScope = 'active' | 'management' | 'filters';
+
 export const usersAPI = {
   async listUserOrganizations() {
     const response = await vimobAPIRequest<Envelope<UserOrganization[]>>('/v1/user-organizations');
@@ -88,8 +90,12 @@ export const usersAPI = {
     return response.data;
   },
 
-  async listUsers(organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<User[]>>('/v1/users', {
+  async listUsers(organizationId?: string | null, options?: { scope?: OrganizationUsersScope }) {
+    const scope = options?.scope ?? 'active';
+    const query = scope === 'active'
+      ? ''
+      : `?include_inactive=${scope === 'management' ? 'true' : 'filters'}`;
+    const response = await vimobAPIRequest<Envelope<User[]>>(`/v1/users${query}`, {
       organizationId,
     });
     validateDomainResponse(apiUserListResponseSchema, response, 'users.list');

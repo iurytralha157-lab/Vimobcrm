@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -27,6 +28,11 @@ type queryRower interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
+type queryRowExecutor interface {
+	queryRower
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
 func NewRepository(db *dbpkg.Postgres, authConfig AuthAdminConfig) Repository {
 	return Repository{
 		db:        db,
@@ -34,14 +40,27 @@ func NewRepository(db *dbpkg.Postgres, authConfig AuthAdminConfig) Repository {
 	}
 }
 
-func (repo Repository) ListOrganizationUsers(ctx context.Context, tenantContext tenant.Context) ([]User, error) {
+func (repo Repository) ListOrganizationUsers(ctx context.Context, tenantContext tenant.Context, listScope OrganizationUserListScope) ([]User, error) {
+	if listScope == OrganizationUserListManagement && !canManageUsers(tenantContext) {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
+	if listScope == OrganizationUserListFilters && !canListInactiveUserFilters(tenantContext) {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
+	includeInactive := listScope != OrganizationUserListActive
+	restrictToLedUsers := listScope == OrganizationUserListFilters &&
+		!canListAllInactiveUserFilters(tenantContext)
+
 	rows, err := repo.db.Pool().Query(ctx, `
-		select distinct on (u.id)
+		select
 			u.id::text,
 			om.organization_id,
 			u.name,
 			u.email,
-			coalesce(nullif(lower(btrim(om.role)), ''), 'user'),
+			case
+			  when u.role = 'super_admin' then 'super_admin'
+			  else coalesce(nullif(lower(btrim(om.role)), ''), 'user')
+			end,
 			u.avatar_url,
 			(coalesce(u.is_active, false) and coalesce(om.is_active, false)),
 			u.whatsapp,
@@ -51,10 +70,42 @@ func (repo Repository) ListOrganizationUsers(ctx context.Context, tenantContext 
 		join public.organization_members om
 		  on om.user_id = u.id
 		 and om.organization_id = $1::uuid
-		where coalesce(u.is_active, false) = true
-		  and coalesce(om.is_active, false) = true
-		order by u.id, u.name
-	`, tenantContext.OrganizationID)
+		where om.deleted_at is null
+		  and (
+		    $2::boolean
+		    or (
+		      coalesce(u.is_active, false) = true
+		      and coalesce(om.is_active, false) = true
+		    )
+		  )
+		  and (
+		    not $3::boolean
+		    or u.id = $4::uuid
+		    or u.id::text = any($6::text[])
+		    or exists (
+		      select 1
+		      from public.team_members team_member
+		      where team_member.organization_id = $1::uuid
+		        and team_member.user_id = u.id
+		        and team_member.team_id::text = any($5::text[])
+		    )
+		    or exists (
+		      select 1
+		      from public.leads lead
+		      where lead.organization_id = $1::uuid
+		        and lead.assigned_user_id = u.id
+		        and lead.team_id::text = any($5::text[])
+		    )
+		  )
+		order by coalesce(om.is_active, false) desc, u.name asc, u.id asc
+	`,
+		tenantContext.OrganizationID,
+		includeInactive,
+		restrictToLedUsers,
+		tenantContext.UserID,
+		tenantContext.LedTeamIDs,
+		tenantContext.LedUserIDs,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -87,6 +138,7 @@ func (repo Repository) ListUserOrganizations(ctx context.Context, userID string)
 		join public.organizations o on o.id = om.organization_id
 		where om.user_id = $1::uuid
 		  and coalesce(om.is_active, false) = true
+		  and om.deleted_at is null
 		  and coalesce(u.is_active, false) = true
 		  and coalesce(o.is_active, true) = true
 		order by o.name asc, om.organization_id
@@ -160,6 +212,39 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 			return User{}, ErrInvalidInput
 		}
 	}
+	if isMembershipStatusOnlyUpdate(input) {
+		tx, err := repo.db.Pool().Begin(ctx)
+		if err != nil {
+			return User{}, err
+		}
+		defer tx.Rollback(ctx)
+		if err := lockCanonicalUserAccess(ctx, tx, userID); err != nil {
+			return User{}, err
+		}
+
+		tag, err := tx.Exec(ctx, `
+			update public.organization_members
+			set is_active = $3,
+			    updated_at = now()
+			where organization_id = $1::uuid
+			  and user_id = $2::uuid
+			  and deleted_at is null
+		`, tenantContext.OrganizationID, userID, *input.IsActive)
+		if err != nil {
+			return User{}, err
+		}
+		if tag.RowsAffected() == 0 {
+			return User{}, ErrUserNotFound
+		}
+		if err := syncCanonicalUserAccess(ctx, tx, userID, tenantContext.OrganizationID); err != nil {
+			return User{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return User{}, err
+		}
+
+		return repo.getOrganizationUser(ctx, tenantContext.OrganizationID, userID)
+	}
 
 	name := existing.Name
 	if input.Name != nil {
@@ -197,6 +282,9 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 		return User{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := lockCanonicalUserAccess(ctx, tx, userID); err != nil {
+		return User{}, err
+	}
 
 	tag, err := tx.Exec(ctx, `
 		update public.users
@@ -217,6 +305,7 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 		    from public.organization_members om
 		    where om.user_id = public.users.id
 		      and om.organization_id = $2::uuid
+		      and om.deleted_at is null
 		  )
 	`, userID, tenantContext.OrganizationID, name, input.AvatarURL, input.Whatsapp, memberRole)
 	if err != nil {
@@ -226,14 +315,22 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 		return User{}, ErrUserNotFound
 	}
 
-	if _, err = tx.Exec(ctx, `
+	memberTag, err := tx.Exec(ctx, `
 		update public.organization_members
 		set role = $3,
 		    is_active = $4,
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and user_id = $2::uuid
-	`, tenantContext.OrganizationID, userID, memberRole, isActive); err != nil {
+		  and deleted_at is null
+	`, tenantContext.OrganizationID, userID, memberRole, isActive)
+	if err != nil {
+		return User{}, err
+	}
+	if memberTag.RowsAffected() == 0 {
+		return User{}, ErrUserNotFound
+	}
+	if err := syncCanonicalUserAccess(ctx, tx, userID, tenantContext.OrganizationID); err != nil {
 		return User{}, err
 	}
 
@@ -298,6 +395,9 @@ func (repo Repository) DeleteOrganizationUser(ctx context.Context, tenantContext
 		return DeleteUserResult{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := lockCanonicalUserAccess(ctx, tx, userID); err != nil {
+		return DeleteUserResult{}, err
+	}
 
 	impact, err := repo.getDeleteUserImpact(ctx, tx, tenantContext.OrganizationID, userID)
 	if err != nil {
@@ -331,7 +431,10 @@ func (repo Repository) DeleteOrganizationUser(ctx context.Context, tenantContext
 			    cadastrado_por = $3::uuid,
 			    updated_at = now()
 			where organization_id = $1::uuid
-			  and responsible_user_id = $2::uuid
+			  and (
+			    responsible_user_id = $2::uuid
+			    or (responsible_user_id is null and created_by = $2::uuid)
+			  )
 		`, tenantContext.OrganizationID, userID, targetID); err != nil {
 			return DeleteUserResult{}, err
 		}
@@ -355,6 +458,7 @@ func (repo Repository) DeleteOrganizationUser(ctx context.Context, tenantContext
 	if _, err := tx.Exec(ctx, `
 		update public.organization_members
 		set is_active = false,
+		    deleted_at = now(),
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and user_id = $2::uuid
@@ -362,33 +466,7 @@ func (repo Repository) DeleteOrganizationUser(ctx context.Context, tenantContext
 		return DeleteUserResult{}, err
 	}
 
-	var fallbackOrganizationID pgtype.UUID
-	err = tx.QueryRow(ctx, `
-		select organization_id
-		from public.organization_members
-		where user_id = $1::uuid
-		  and organization_id <> $2::uuid
-		  and is_active = true
-		order by updated_at desc
-		limit 1
-	`, userID, tenantContext.OrganizationID).Scan(&fallbackOrganizationID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		_, err = tx.Exec(ctx, `
-			update public.users
-			set is_active = false,
-			    updated_at = now()
-			where id = $1::uuid
-		`, userID)
-	} else if err == nil {
-		_, err = tx.Exec(ctx, `
-			update public.users
-			set organization_id = $2::uuid,
-			    updated_at = now()
-			where id = $1::uuid
-			  and organization_id = $3::uuid
-		`, userID, fallbackOrganizationID.String(), tenantContext.OrganizationID)
-	}
-	if err != nil {
+	if err := syncCanonicalUserAccess(ctx, tx, userID, tenantContext.OrganizationID); err != nil {
 		return DeleteUserResult{}, err
 	}
 
@@ -413,7 +491,10 @@ func (repo Repository) getDeleteUserImpact(ctx context.Context, runner queryRowe
 				select count(*)
 				from public.properties
 				where organization_id = $1::uuid
-				  and responsible_user_id = $2::uuid
+				  and (
+				    responsible_user_id = $2::uuid
+				    or (responsible_user_id is null and created_by = $2::uuid)
+				  )
 			) as properties,
 			(
 				select count(*)
@@ -475,6 +556,7 @@ func (repo Repository) ListSummaries(ctx context.Context, tenantContext tenant.C
 		  on om.user_id = u.id
 		 and om.organization_id = $1::uuid
 		 and om.is_active = true
+		 and om.deleted_at is null
 		where u.id in (`+strings.Join(placeholders, ", ")+`)
 		  and coalesce(u.is_active, false) = true
 	`, args...)
@@ -537,7 +619,10 @@ func (repo Repository) getOrganizationUser(ctx context.Context, organizationID s
 			om.organization_id,
 			u.name,
 			u.email,
-			coalesce(nullif(lower(btrim(om.role)), ''), 'user'),
+			case
+			  when u.role = 'super_admin' then 'super_admin'
+			  else coalesce(nullif(lower(btrim(om.role)), ''), 'user')
+			end,
 			u.avatar_url,
 			(coalesce(u.is_active, false) and coalesce(om.is_active, false)),
 			u.whatsapp,
@@ -548,6 +633,7 @@ func (repo Repository) getOrganizationUser(ctx context.Context, organizationID s
 		  on om.user_id = u.id
 		 and om.organization_id = $1::uuid
 		where u.id = $2::uuid
+		  and om.deleted_at is null
 		limit 1
 	`, organizationID, userID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -567,6 +653,7 @@ func (repo Repository) organizationMemberRole(ctx context.Context, organizationI
 		from public.organization_members
 		where organization_id = $1::uuid
 		  and user_id = $2::uuid
+		  and deleted_at is null
 		limit 1
 	`, organizationID, userID).Scan(&role)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -605,6 +692,7 @@ func (repo Repository) linkExistingUser(ctx context.Context, tenantContext tenan
 		do update set
 			role = excluded.role,
 			is_active = true,
+			deleted_at = null,
 			updated_at = now()
 	`, tenantContext.OrganizationID, existing.ID, memberRoleFromUserRole(input.Role)); err != nil {
 		return User{}, err
@@ -660,6 +748,7 @@ func (repo Repository) insertNewUser(ctx context.Context, tenantContext tenant.C
 		do update set
 			role = excluded.role,
 			is_active = true,
+			deleted_at = null,
 			updated_at = now()
 	`, tenantContext.OrganizationID, authUserID, memberRoleFromUserRole(input.Role)); err != nil {
 		return err
@@ -878,6 +967,83 @@ func organizationMemberRoleRank(role string) int {
 	default:
 		return -1
 	}
+}
+
+func canListInactiveUserFilters(tenantContext tenant.Context) bool {
+	return tenantContext.HasPermission(permissions.LeadViewAll) ||
+		tenantContext.HasPermission(permissions.LeadViewTeam) ||
+		tenantContext.HasPermission(permissions.PropertyView)
+}
+
+func canListAllInactiveUserFilters(tenantContext tenant.Context) bool {
+	return canManageUsers(tenantContext) ||
+		tenantContext.HasPermission(permissions.LeadViewAll) ||
+		tenantContext.HasPermission(permissions.PropertyView)
+}
+
+func lockCanonicalUserAccess(ctx context.Context, runner queryRower, userID string) error {
+	var lockedUserID string
+	err := runner.QueryRow(ctx, `
+		select id::text
+		from public.users
+		where id = $1::uuid
+		for update
+	`, userID).Scan(&lockedUserID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrUserNotFound
+	}
+	return err
+}
+
+func syncCanonicalUserAccess(
+	ctx context.Context,
+	runner queryRowExecutor,
+	userID string,
+	preferredOrganizationID string,
+) error {
+	_, err := runner.Exec(ctx, `
+		with selected_membership as (
+			select
+				membership.organization_id,
+				membership.role
+			from public.organization_members membership
+			join public.users current_user on current_user.id = membership.user_id
+			join public.organizations organization on organization.id = membership.organization_id
+			where membership.user_id = $1::uuid
+			  and membership.is_active = true
+			  and membership.deleted_at is null
+			  and coalesce(organization.is_active, true) = true
+			order by
+				(membership.organization_id = current_user.organization_id) desc,
+				(membership.organization_id = $2::uuid) desc,
+				membership.updated_at desc,
+				membership.organization_id
+			limit 1
+		), selected_state as (
+			select organization_id, role
+			from selected_membership
+			union all
+			select null::uuid, 'user'::text
+			where not exists (select 1 from selected_membership)
+		)
+		update public.users target_user
+		set
+			organization_id = selected_state.organization_id,
+			is_active = selected_state.organization_id is not null,
+			role = case
+				when target_user.role = 'super_admin' then target_user.role
+				when selected_state.role in ('owner', 'admin') then 'admin'
+				else 'user'
+			end,
+			updated_at = now()
+		from selected_state
+		where target_user.id = $1::uuid
+	`, userID, preferredOrganizationID)
+	return err
+}
+
+func isMembershipStatusOnlyUpdate(input UpdateUserInput) bool {
+	return input.IsActive != nil && input.Name == nil && input.Role == nil && input.AvatarURL == nil && input.Whatsapp == nil
 }
 
 func normalizeUserIDs(values []string) []string {

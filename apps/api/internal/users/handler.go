@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
@@ -43,7 +44,23 @@ func (handler Handler) ListOrganizationUsers(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	users, err := handler.repo.ListOrganizationUsers(r.Context(), tenantContext)
+	listScope := OrganizationUserListActive
+	if rawValue := strings.TrimSpace(r.URL.Query().Get("include_inactive")); rawValue != "" {
+		if strings.EqualFold(rawValue, string(OrganizationUserListFilters)) {
+			listScope = OrganizationUserListFilters
+		} else {
+			parsedValue, err := strconv.ParseBool(rawValue)
+			if err != nil {
+				writeUserError(w, r, ErrInvalidInput)
+				return
+			}
+			if parsedValue {
+				listScope = OrganizationUserListManagement
+			}
+		}
+	}
+
+	users, err := handler.repo.ListOrganizationUsers(r.Context(), tenantContext, listScope)
 	if err != nil {
 		writeUserError(w, r, err)
 		return

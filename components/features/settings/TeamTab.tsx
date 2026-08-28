@@ -45,7 +45,6 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { useDeleteUser, useDeleteUserImpact, useOrganizationUsers, useUpdateUser } from '@/hooks/use-users';
 import { useCreateInvitation, useDeleteInvitation, useInvitations, useResendInvitation, type Invitation } from '@/hooks/use-invitations';
 import { toast } from 'sonner';
-import { useQueryClient } from '@tanstack/react-query';
 import { canManageOrganization } from '@/lib/access/organization';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 
@@ -59,7 +58,6 @@ type OrganizationMemberRole = 'admin' | 'manager' | 'user';
 export function TeamTab() {
   const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
   const { t } = useLanguage();
-  const queryClient = useQueryClient();
   const { hasPermission } = useUserPermissions();
   const roleLabel = (role: string) => {
     if (role === 'admin' || role === 'owner') return t.settings.users.admin;
@@ -67,12 +65,6 @@ export function TeamTab() {
     return t.settings.users.user;
   };
   
-  const {
-    data: users = [],
-    isLoading: usersLoading,
-    isError: usersFailed,
-    refetch: refetchUsers,
-  } = useOrganizationUsers();
   const {
     data: invitations = [],
     isLoading: invitationsLoading,
@@ -108,6 +100,14 @@ export function TeamTab() {
   const canManageUsers = isAdmin || hasPermission('users_manage');
   const canManagePermissions = isAdmin || hasPermission('permissions_manage');
   const canManageAdminRole = isAdmin && canManagePermissions;
+  const {
+    data: users = [],
+    isLoading: usersLoading,
+    isError: usersFailed,
+    refetch: refetchUsers,
+  } = useOrganizationUsers({
+    scope: canManageUsers ? 'management' : 'active',
+  });
   const { data: deleteImpact, isLoading: deleteImpactLoading, isError: deleteImpactFailed } = useDeleteUserImpact(
     userToDelete?.id,
     deleteUserDialogOpen && !!userToDelete,
@@ -165,7 +165,6 @@ export function TeamTab() {
       return;
     }
     await updateUser.mutateAsync({ id: userId, role });
-    await queryClient.invalidateQueries({ queryKey: ['organization-users'] });
   };
 
   const handleDeleteUser = async () => {
@@ -187,7 +186,6 @@ export function TeamTab() {
         transferPropertiesToUserId: transferPropertiesToUserId || null,
       });
       toast.success('Usuário excluído com sucesso!');
-      queryClient.invalidateQueries({ queryKey: ['organization-users'] });
       setDeleteUserDialogOpen(false);
       setUserToDelete(null);
       setTransferLeadsToUserId('');
@@ -270,8 +268,9 @@ export function TeamTab() {
                   <div className="space-y-4 mt-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label>{t.common.email}</Label>
+                        <Label htmlFor="team-invite-email">{t.common.email}</Label>
                         <Input 
+                          id="team-invite-email"
                           type="email" 
                           placeholder="email@company.com" 
                           value={newUserEmail} 
@@ -279,12 +278,12 @@ export function TeamTab() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label>{t.settings.users.role}</Label>
+                        <Label htmlFor="team-invite-role">{t.settings.users.role}</Label>
                         <Select
                           value={canManageAdminRole ? newUserRole : 'user'}
                           onValueChange={v => setNewUserRole(v as OrganizationMemberRole)}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger id="team-invite-role">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -682,9 +681,10 @@ export function TeamTab() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Desativar usuário?</AlertDialogTitle>
+            <AlertDialogTitle>Desativar acesso?</AlertDialogTitle>
             <AlertDialogDescription>
-              <strong>{userToDeactivate?.name}</strong> perderá o acesso ao CRM até ser ativado novamente.
+              <strong>{userToDeactivate?.name}</strong> perderá o acesso a esta organização até ser ativado novamente.
+              O login continuará existindo; sem outra organização ativa, a pessoa verá a tela de acesso indisponível.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -698,7 +698,7 @@ export function TeamTab() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {updateUser.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Desativar usuário
+              Desativar acesso
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
